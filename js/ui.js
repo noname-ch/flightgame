@@ -27,6 +27,7 @@
     selectedPlane: null,
     drafts: {}, // planeId -> stops being edited
     confirmNew: false,
+    confirmDispose: null, // planeId waiting for a second click on Sell/Return
     pointerDown: false,
     selectOpen: false,
     selectValues: {}, // dropdown id -> chosen value, survives re-renders
@@ -133,6 +134,12 @@
   }
 
   function updatePlanes() {
+    for (const id of Object.keys(ui.planeMarkers)) {
+      if (!G.plane(id)) {
+        ui.planeMarkers[id].remove();
+        delete ui.planeMarkers[id];
+      }
+    }
     for (const p of G.state.planes) {
       const pos = planePosition(p);
       let m = ui.planeMarkers[p.id];
@@ -194,7 +201,7 @@
 
     if (owned) {
       for (const p of s.planes) {
-        if (p.location !== code || p.status === 'flying') {
+        if ((p.location !== code || p.status === 'flying') && G.fitsAirport(p.type, code)) {
           h += ` <button data-action="sendPlane" data-plane="${p.id}" data-code="${code}">Send ${p.id} here</button>`;
         }
         if (ui.drafts[p.id]) {
@@ -244,7 +251,7 @@
     h += `</select><button data-action="draftAddSelect" data-plane="${p.id}">Add stop</button></div>`;
     if (owned.length < 2) h += `<div class="hint">Lease a slot at another airport (click it on the map) to build a route.</div>`;
 
-    const est = G.estimateSchedule(p.type, stops);
+    const est = G.estimateSchedule(p.type, stops, G.costMult(p));
     if (est.legs.length) {
       h += `<table class="small"><tr><th>Leg</th><th>km</th><th>time</th><th>pax</th><th>result</th></tr>`;
       for (const l of est.legs) {
@@ -270,7 +277,7 @@
       const sch = p.schedule;
       h += `<div class="panel plane-card ${ui.selectedPlane === p.id ? 'selected' : ''}">
         <h3>✈ ${p.id} <span class="muted">${ac.name}</span></h3>
-        <div class="muted">${ac.seats} seats · range ${ac.rangeKm} km · ${ac.speedKmh} km/h · lease ${G.fmtMoney(ac.leasePerWeek)}/week</div>
+        <div class="muted">${ac.seats} seats · range ${ac.rangeKm} km · ${ac.speedKmh} km/h · ${ownershipText(p)}</div>
         <div class="status">${planeStatus(p)}</div>`;
       if (crew) {
         h += `<div>👥 ${crew.name}: ${crew.pilots} pilots, ${crew.cabin} cabin crew ·
@@ -301,9 +308,100 @@
         }
         h += `</div>`;
       }
+      const confirm = ui.confirmDispose === p.id;
+      const label = p.ownership === 'owned' ? `Sell for ${G.fmtMoney(G.saleValue(p))}` : `Return lease (fee ${G.fmtMoney(G.returnFee(p))})`;
+      h += `<div class="row"><button class="mini dispose" data-action="dispose" data-plane="${p.id}"
+        ${p.status === 'flying' || s.planes.length === 1 ? 'disabled' : ''}>${confirm ? 'Really? Click again' : label}</button></div>`;
       h += `</div>`;
     }
+    h += `<div class="hint">Get more aircraft in the <a href="#" data-action="tab" data-tab-to="market">Market</a> tab.</div>`;
     return h;
+  }
+
+  function ownershipText(p) {
+    const age = G.planeAge(p);
+    const ageText = age >= 1 ? ` · ${Math.floor(age)} years old` : '';
+    return p.ownership === 'owned'
+      ? `owned${ageText}`
+      : `leased ${G.fmtMoney(D.aircraft[p.type].leasePerWeek)}/week${ageText}`;
+  }
+
+  // ---------- market ----------
+  const fmtM = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(n >= 1e7 ? 0 : 1)}M` : `${Math.round(n / 1000)}k`);
+  const sizeDots = (n) => `${'●'.repeat(n)}${'○'.repeat(5 - n)}`;
+  const MARKET_SORTS = {
+    price: ['Price', (a, b) => G.priceNew(a) - G.priceNew(b)],
+    seats: ['Seats', (a, b) => D.aircraft[b].seats - D.aircraft[a].seats],
+    range: ['Range', (a, b) => D.aircraft[b].rangeKm - D.aircraft[a].rangeKm],
+    costSeat: ['Cost per seat-hour', (a, b) =>
+      D.aircraft[a].costPerBlockHour / D.aircraft[a].seats - D.aircraft[b].costPerBlockHour / D.aircraft[b].seats],
+    name: ['Name', (a, b) => D.aircraft[a].name.localeCompare(D.aircraft[b].name)],
+  };
+
+  function marketTab() {
+    const s = G.state;
+    const slots = Object.keys(s.slots);
+    const cat = ui.selectValues['mkt-cat'] || 'all';
+    const sort = ui.selectValues['mkt-sort'] || 'price';
+    const at = slots.includes(ui.selectValues['mkt-at']) ? ui.selectValues['mkt-at'] : C.startAirport;
+    const atSize = G.airportByCode[at].size;
+
+    let h = `<div class="panel market-controls"><h3>Aircraft market</h3>
+      <div class="row">
+        <label>Type <select id="mkt-cat"><option value="all">All</option>`;
+    for (const [k, v] of Object.entries(D.aircraftCategories)) h += `<option value="${k}">${v}</option>`;
+    h += `</select></label><label>Sort <select id="mkt-sort">`;
+    for (const [k, [v]] of Object.entries(MARKET_SORTS)) h += `<option value="${k}">${v}</option>`;
+    h += `</select></label></div>
+      <div class="row"><label>Deliver to <select id="mkt-at">`;
+    for (const c of slots) h += `<option value="${c}">${c} · ${G.airportByCode[c].city} (size ${G.airportByCode[c].size})</option>`;
+    h += `</select></label></div>
+      <div class="muted">Buy: pay once, no weekly lease, sell any time. Lease: ${C.market.leaseDepositWeeks} weeks deposit,
+        then the weekly rate. Every plane comes with its own crew. Airport size ${sizeDots(atSize)} at ${at}.</div></div>`;
+
+    // Used planes
+    h += `<div class="panel"><h3>Used aircraft <span class="muted">· new offers every Monday</span></h3>`;
+    const used = s.market.listings.filter((l) => cat === 'all' || D.aircraft[l.type].category === cat);
+    if (!used.length) h += `<div class="muted">No offers in this category this week.</div>`;
+    for (const l of used) {
+      const ac = D.aircraft[l.type];
+      const fits = G.fitsAirport(l.type, at);
+      h += `<div class="mkt-item ${fits ? '' : 'too-big'}">
+        <div class="mkt-head"><b>${ac.name}</b> <span class="muted">${l.age} years · ${ac.seats} seats · ${ac.rangeKm} km</span></div>
+        ${fits ? '' : `<div class="neg small-text">Too big for ${at} – needs airport size ${ac.minAirport}+.</div>`}
+        <div class="row"><span class="muted">+${Math.round(C.market.agingCostPerYear * l.age * 100)}% operating cost</span>
+          <span class="spacer"></span>
+          <button class="primary" data-action="buyUsed" data-id="${l.id}" data-code="${at}"
+            ${!fits || s.money < l.price ? 'disabled' : ''}>Buy ${G.fmtMoney(l.price)}</button></div></div>`;
+    }
+    h += `</div>`;
+
+    // New planes
+    const types = Object.keys(D.aircraft)
+      .filter((t) => cat === 'all' || D.aircraft[t].category === cat)
+      .sort(MARKET_SORTS[sort][1]);
+    h += `<div class="panel"><h3>New aircraft <span class="muted">· ${types.length} types</span></h3>`;
+    for (const t of types) {
+      const ac = D.aircraft[t];
+      const fleet = s.planes.filter((p) => p.type === t).length;
+      const price = G.priceNew(t);
+      const deposit = G.leaseDeposit(t);
+      const fits = G.fitsAirport(t, at);
+      h += `<div class="mkt-item ${fits ? '' : 'too-big'}">
+        <div class="mkt-head"><b>${ac.name}</b> <span class="muted">${ac.maker} · ${D.aircraftCategories[ac.category]}</span>
+          ${fleet ? `<span class="tag">${fleet} in fleet</span>` : ''}</div>
+        <div class="muted">${ac.seats} seats · ${ac.rangeKm.toLocaleString('de-CH')} km · ${ac.speedKmh} km/h ·
+          ${G.fmtMoney(ac.costPerBlockHour)}/h · crew ${G.fmtMoney(G.crewFor(t).weeklySalary)}/wk ·
+          airport ${sizeDots(ac.minAirport || 1)}</div>
+        ${fits ? '' : `<div class="neg small-text">Too big for ${at} – pick a larger delivery airport.</div>`}
+        <div class="row">
+          <button class="primary" data-action="buyNew" data-type="${t}" data-code="${at}"
+            ${!fits || s.money < price ? 'disabled' : ''}>Buy ${fmtM(price)}</button>
+          <button data-action="leaseNew" data-type="${t}" data-code="${at}"
+            ${!fits || s.money < deposit ? 'disabled' : ''}>Lease ${fmtM(ac.leasePerWeek)}/wk</button>
+        </div></div>`;
+    }
+    return h + `</div>`;
   }
 
   function slotsTab() {
@@ -367,7 +465,7 @@
 
   function renderSidebar() {
     $('details').innerHTML = ui.selectedAirport ? airportPanel(ui.selectedAirport) : '';
-    const tabs = { fleet: fleetTab, slots: slotsTab, finance: financeTab, log: logTab };
+    const tabs = { fleet: fleetTab, market: marketTab, slots: slotsTab, finance: financeTab, log: logTab };
     $('tab-content').innerHTML = tabs[ui.tab]();
     document.querySelectorAll('[data-tab]').forEach((b) => b.classList.toggle('active', b.dataset.tab === ui.tab));
     restoreSelects();
@@ -400,6 +498,24 @@
       case 'sendPlane': act(G.sendPlane(plane, code)); break;
       case 'sendSelect': act(G.sendPlane(plane, $(`send-${plane}`).value)); break;
       case 'start': act(G.setScheduleActive(plane, true)); break;
+      case 'tab': e.preventDefault(); ui.tab = el.dataset.tabTo; break;
+      case 'buyNew': act(G.buyNew(el.dataset.type, code)); break;
+      case 'leaseNew': act(G.leaseNew(el.dataset.type, code)); break;
+      case 'buyUsed': act(G.buyUsed(el.dataset.id, code)); break;
+      case 'dispose': {
+        if (ui.confirmDispose !== plane) {
+          ui.confirmDispose = plane;
+          clearTimeout(ui.disposeTimer);
+          ui.disposeTimer = setTimeout(() => { ui.confirmDispose = null; G.dirty = true; }, 3000);
+          break;
+        }
+        ui.confirmDispose = null;
+        const err = G.disposePlane(plane);
+        if (err) { toast(err, true); return; }
+        delete ui.drafts[plane];
+        if (ui.selectedPlane === plane) ui.selectedPlane = null;
+        break;
+      }
       case 'pause': act(G.setScheduleActive(plane, false)); break;
       case 'editSchedule': {
         const p = G.plane(plane);
@@ -442,6 +558,7 @@
       if (e.target.tagName !== 'SELECT') return;
       ui.selectValues[e.target.id] = e.target.value;
       ui.selectOpen = false;
+      if (e.target.id.startsWith('mkt-')) G.dirty = true; // market filters re-render the list
     });
     $('sidebar').addEventListener('focusin', (e) => { if (e.target.tagName === 'SELECT') ui.selectOpen = true; });
     $('sidebar').addEventListener('focusout', (e) => { if (e.target.tagName === 'SELECT') ui.selectOpen = false; });

@@ -38,5 +38,20 @@ FG.config = {
   curfew: { start: 6 * 60, end: 22 * 60 }, // departures only allowed in this window
   crewMaxDutyMin: 12 * 60,  // max block time per crew per day
 
+  // Aircraft market
+  market: {
+    priceWeeks: 110,          // new price = this many weeks of lease (unless the type sets price)
+    leaseDepositWeeks: 2,     // paid upfront when leasing, not refunded
+    returnFeeWeeks: 2,        // fee for handing a leased plane back
+    resaleFactor: 0.9,        // you get this share of the current value when selling
+    depreciationPerYear: 0.07,
+    agingCostPerYear: 0.012,  // older planes burn more fuel and need more maintenance
+    usedListings: 8,          // refreshed every Monday
+    usedAge: [3, 28],         // years
+    registrationPrefix: 'HB-',
+    pilotSalary: 4000,        // per week
+    cabinSalary: 1500,
+  },
+
   bankruptcyLimit: -500000,
 };
