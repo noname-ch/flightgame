@@ -17,6 +17,11 @@ Or serve it locally: `python3 -m http.server` and open http://localhost:8000.
 4. Watch revenue in the **Log** and **Finance** tabs. Weekly costs (aircraft lease, crew, slots)
    are charged every Monday 00:00. Below CHF -500k you're bankrupt.
 
+5. More aircraft: the **Market** tab has 55 types, from the Ju 52 and Twin Otter to the A380 and
+   Concorde. Buy new, lease (deposit + weekly rate) or buy used (new offers every Monday; older
+   planes are cheaper but cost more to run). Each plane gets its own crew. Big jets need a big
+   enough airport. Sell owned planes or return leased ones from the **Fleet** tab.
+
 Rules: departures only 06:00–22:00, crew max 12h block time per day, each route has a limited
 daily demand shared by all your flights on it that day.
 
@@ -28,7 +33,7 @@ All content is plain data:
 
 - `js/data/airports.js` – add airports (`size` 1–5 sets slot price and fees)
 - `js/data/towns.js` – add towns; they generate demand for airports within 150 km
-- `js/data/aircraft.js` – aircraft types and crew templates
+- `js/data/aircraft.js` – aircraft types (market catalogue) and crew templates
 - `js/config.js` – starting conditions, map bounds, economy balance
 
 `js/game.js` is the simulation (no DOM), `js/ui.js` the map and sidebar.

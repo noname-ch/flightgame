@@ -13,10 +13,9 @@
     <div id="money"></div>
     <div id="clock"></div>
     <div class="speed">
-      <button data-speed="0" title="Pause (Space)">⏸</button>
-      <button data-speed="1" title="Normal (1)">▶</button>
-      <button data-speed="2" title="Fast (2)">▶▶</button>
-      <button data-speed="3" title="Very fast (3)">▶▶▶</button>
+      <button id="pause" title="Pause (Space)">⏸</button>
+      <input id="speed" type="range" min="0" max="1000" value="0" title="Game speed (← / →)">
+      <span id="speed-label"></span>
     </div>
     <div class="spacer"></div>
     <button id="save">Save</button>
@@ -29,6 +28,7 @@
       <div id="details"></div>
       <nav class="tabs">
         <button data-tab="fleet">Fleet</button>
+        <button data-tab="market">Market</button>
         <button data-tab="slots">Slots</button>
         <button data-tab="finance">Finance</button>
         <button data-tab="log">Log</button>

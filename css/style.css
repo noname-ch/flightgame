@@ -42,7 +42,9 @@ header button {
   border: 1px solid #475569;
 }
 header button.active { background: var(--accent); border-color: var(--accent); }
-.speed { display: flex; gap: 4px; }
+.speed { display: flex; gap: 6px; align-items: center; }
+.speed input[type=range] { width: 140px; accent-color: var(--accent); }
+#speed-label { min-width: 64px; font-variant-numeric: tabular-nums; opacity: 0.9; }
 
 main { flex: 1; display: flex; min-height: 0; }
 #map { flex: 1; min-width: 0; }
@@ -181,3 +183,15 @@ tr.click:hover { background: #f1f5f9; }
   #map { min-height: 50vh; }
   #sidebar { width: 100%; border-left: none; border-top: 1px solid var(--border); }
 }
+
+/* Aircraft market */
+.market-controls label { display: flex; gap: 4px; align-items: center; font-size: 12px; }
+.mkt-item { padding: 6px 0; border-bottom: 1px solid var(--border); }
+.mkt-item:last-child { border-bottom: 0; }
+.mkt-item > * + * { margin-top: 3px; }
+.mkt-item.too-big { opacity: 0.6; }
+.mkt-item .spacer { flex: 1; }
+.mkt-head { line-height: 1.3; }
+.tag { display: inline-block; padding: 0 6px; border-radius: 8px; background: #dcfce7; color: var(--pos); font-size: 11px; }
+.small-text { font-size: 12px; }
+button.dispose { color: var(--neg); }

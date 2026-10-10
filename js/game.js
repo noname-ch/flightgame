@@ -76,9 +76,31 @@
   const slotUpfront = (code) => C.slot.upfront[airportByCode[code].size];
   const slotWeekly = (code) => C.slot.weekly[airportByCode[code].size];
 
-  function flightCost(type, d, to, pax) {
+  function flightCost(type, d, to, pax, costMult = 1) {
     const block = blockMinutes(type, d);
-    return Math.round((block / 60) * D.aircraft[type].costPerBlockHour + landingFee(to) + pax * C.paxFee);
+    return Math.round((block / 60) * D.aircraft[type].costPerBlockHour * costMult + landingFee(to) + pax * C.paxFee);
+  }
+
+  // ---------- aircraft market ----------
+  const M = C.market;
+  const priceNew = (type) => D.aircraft[type].price || D.aircraft[type].leasePerWeek * M.priceWeeks;
+  const usedPrice = (type, age) => Math.round(priceNew(type) * Math.pow(1 - M.depreciationPerYear, age) / 1000) * 1000;
+  const agingMult = (age) => 1 + M.agingCostPerYear * age;
+  // Can this type operate at this airport (runway / gates)?
+  const fitsAirport = (type, code) => airportByCode[code].size >= (D.aircraft[type].minAirport || 1);
+
+  function crewFor(type) {
+    const seats = D.aircraft[type].seats;
+    const pilots = D.aircraft[type].category === 'widebody' ? 3 : 2;
+    const cabin = seats < 20 ? 0 : Math.ceil(seats / 50);
+    return { pilots, cabin, weeklySalary: pilots * M.pilotSalary + cabin * M.cabinSalary };
+  }
+
+  function randomUsedListing(n) {
+    const types = Object.keys(D.aircraft).filter((t) => D.aircraft[t].category !== 'classic' || Math.random() < 0.3);
+    const type = types[Math.floor(Math.random() * types.length)];
+    const age = M.usedAge[0] + Math.floor(Math.random() * (M.usedAge[1] - M.usedAge[0] + 1));
+    return { id: `U${n}`, type, age, price: usedPrice(type, age) };
   }
 
   // ---------- formatting ----------
@@ -101,6 +123,7 @@
 
     airportByCode, distanceKm, dist, bearing, interpolate, catchment, dailyDemand,
     ticketPrice, blockMinutes, landingFee, slotUpfront, slotWeekly,
+    priceNew, fitsAirport, crewFor,
     fmtMoney, fmtTime, fmtClock, fmtDuration,
 
     newGame() {
@@ -117,6 +140,9 @@
           type: C.startAircraft,
           location: C.startAirport,
           status: 'idle', // idle | flying | turnaround
+          ownership: 'leased', // leased | owned
+          age: 0, // years when acquired
+          acquiredAt: 0,
           readyAt: 0,
           flight: null,
           pendingFerry: null,
@@ -137,8 +163,10 @@
         today: { revenue: 0, cost: 0, fixed: 0, flights: 0, pax: 0 },
         history: [],
         log: [],
+        market: { listings: [], nextId: 1 },
         gameOver: false,
       };
+      this.refreshMarket();
       this.log(`Welcome to ${this.state.company}! You start with a slot at ${home.name}, ` +
         `the ${D.aircraft[C.startAircraft].name} ${C.startRegistration} and a base crew.`);
       this.dirty = true;
@@ -149,10 +177,26 @@
         const raw = localStorage.getItem(SAVE_KEY);
         if (!raw) return false;
         this.state = JSON.parse(raw);
+        this.migrate();
         this.dirty = true;
         return true;
       } catch (e) {
         return false;
+      }
+    },
+
+    // Bring older save games up to date.
+    migrate() {
+      const s = this.state;
+      s.planes = s.planes.filter((p) => D.aircraft[p.type]);
+      for (const p of s.planes) {
+        if (!p.ownership) p.ownership = 'leased';
+        if (p.age == null) p.age = 0;
+        if (p.acquiredAt == null) p.acquiredAt = 0;
+      }
+      if (!s.market) {
+        s.market = { listings: [], nextId: 1 };
+        this.refreshMarket();
       }
     },
 
@@ -178,7 +222,8 @@
 
     weeklyCosts() {
       const s = this.state;
-      const planes = s.planes.reduce((sum, p) => sum + D.aircraft[p.type].leasePerWeek, 0);
+      const planes = s.planes.reduce((sum, p) =>
+        sum + (p.ownership === 'owned' ? 0 : D.aircraft[p.type].leasePerWeek), 0);
       const crews = s.crews.reduce((sum, c) => sum + c.weeklySalary, 0);
       const slots = Object.keys(s.slots).reduce((sum, code) => sum + slotWeekly(code), 0);
       return { planes, crews, slots, total: planes + crews + slots };
@@ -211,6 +256,7 @@
         s.today.fixed += w.total;
         this.log(`Weekly costs paid: ${fmtMoney(w.total)} (aircraft ${fmtMoney(w.planes)}, ` +
           `crew ${fmtMoney(w.crews)}, slots ${fmtMoney(w.slots)}).`, 'cost');
+        this.refreshMarket();
       }
       if (s.money < C.bankruptcyLimit) {
         s.gameOver = true;
@@ -284,6 +330,10 @@
         this.stopPlane(p, `${p.id} has no slot at ${leg.to} – stopped.`);
         return;
       }
+      if (!fitsAirport(p.type, leg.to)) {
+        this.stopPlane(p, `${leg.to} is too small for ${p.id} – stopped.`);
+        return;
+      }
       const ac = D.aircraft[p.type];
       const d = dist(p.location, leg.to);
       if (d > ac.rangeKm) {
@@ -312,7 +362,7 @@
       p.flight = {
         from: p.location, to: leg.to, kind: leg.kind,
         dep: t, arr: t + block, distance: Math.round(d),
-        pax, revenue, cost: flightCost(p.type, d, leg.to, pax),
+        pax, revenue, cost: flightCost(p.type, d, leg.to, pax, this.costMult(p)),
       };
       p.status = 'flying';
       crew.dutyToday += block;
@@ -355,6 +405,7 @@
       const p = this.plane(planeId);
       if (!this.ownsSlot(code)) return `You need a slot at ${code} first.`;
       if (p.location === code && p.status !== 'flying') return `${p.id} is already at ${code}.`;
+      if (!fitsAirport(p.type, code)) return `${code} is too small for the ${D.aircraft[p.type].name}.`;
       if (dist(p.location, code) > D.aircraft[p.type].rangeKm) return 'Out of range.';
       p.schedule.active = false;
       p.pendingFerry = code;
@@ -371,6 +422,7 @@
         const b = stops[(i + 1) % stops.length];
         if (!this.ownsSlot(a)) return `No slot at ${a}.`;
         if (a === b) return `${a} follows itself – remove the duplicate.`;
+        if (!fitsAirport(p.type, a)) return `${a} is too small for the ${ac.name}.`;
         if (dist(a, b) > ac.rangeKm) return `${a}→${b} is out of range.`;
       }
       const here = stops.indexOf(p.location);
@@ -388,8 +440,117 @@
       return null;
     },
 
+    // ---------- fleet & market ----------
+    planeAge(p) { return p.age + (this.state.time - p.acquiredAt) / DAY / 365; },
+    costMult(p) { return agingMult(this.planeAge(p)); },
+    // What you get for selling an owned plane today.
+    saleValue(p) { return Math.round(usedPrice(p.type, this.planeAge(p)) * M.resaleFactor); },
+    returnFee(p) { return D.aircraft[p.type].leasePerWeek * M.returnFeeWeeks; },
+    leaseDeposit(type) { return D.aircraft[type].leasePerWeek * M.leaseDepositWeeks; },
+
+    refreshMarket() {
+      const m = this.state.market;
+      m.listings = [];
+      for (let i = 0; i < M.usedListings; i++) m.listings.push(randomUsedListing(m.nextId++));
+      m.listings.sort((a, b) => a.price - b.price);
+      this.dirty = true;
+    },
+
+    nextRegistration() {
+      const used = new Set(this.state.planes.map((p) => p.id));
+      const L = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+      for (let i = 0; i < L.length ** 3; i++) {
+        const id = M.registrationPrefix + L[Math.floor(i / 676) % 26] + L[Math.floor(i / 26) % 26] + L[i % 26];
+        if (!used.has(id)) return id;
+      }
+      return `${M.registrationPrefix}${Date.now()}`;
+    },
+
+    // Shared checks for a delivery; returns an error string or null.
+    checkDelivery(type, code, cost) {
+      if (!this.ownsSlot(code)) return `You need a slot at ${code} for the delivery.`;
+      if (!fitsAirport(type, code)) return `${code} is too small for the ${D.aircraft[type].name}.`;
+      if (this.state.money < cost) return `Not enough money (${fmtMoney(cost)} needed).`;
+      return null;
+    },
+
+    addPlane(type, code, ownership, age) {
+      const s = this.state;
+      const id = this.nextRegistration();
+      const crewT = crewFor(type);
+      const crewId = `crew-${id}`;
+      s.crews.push({
+        id: crewId, name: `Crew ${id}`, base: code,
+        pilots: crewT.pilots, cabin: crewT.cabin, weeklySalary: crewT.weeklySalary, dutyToday: 0,
+      });
+      s.planes.push({
+        id, type, location: code, status: 'idle', readyAt: 0, flight: null, pendingFerry: null,
+        ownership, age, acquiredAt: s.time, crewId,
+        schedule: { stops: [], index: 0, active: false },
+        stats: { flights: 0, pax: 0, profit: 0 },
+      });
+      return id;
+    },
+
+    buyNew(type, code) {
+      const cost = priceNew(type);
+      const err = this.checkDelivery(type, code, cost);
+      if (err) return err;
+      this.state.money -= cost;
+      const id = this.addPlane(type, code, 'owned', 0);
+      this.log(`Bought a new ${D.aircraft[type].name} (${id}) for ${fmtMoney(cost)}, delivered to ${code}.`, 'cost');
+      return null;
+    },
+
+    leaseNew(type, code) {
+      const cost = this.leaseDeposit(type);
+      const err = this.checkDelivery(type, code, cost);
+      if (err) return err;
+      this.state.money -= cost;
+      const id = this.addPlane(type, code, 'leased', 0);
+      this.log(`Leased a ${D.aircraft[type].name} (${id}) – deposit ${fmtMoney(cost)}, ` +
+        `${fmtMoney(D.aircraft[type].leasePerWeek)}/week. Delivered to ${code}.`, 'cost');
+      return null;
+    },
+
+    buyUsed(listingId, code) {
+      const m = this.state.market;
+      const l = m.listings.find((x) => x.id === listingId);
+      if (!l) return 'That aircraft has already been sold.';
+      const err = this.checkDelivery(l.type, code, l.price);
+      if (err) return err;
+      this.state.money -= l.price;
+      m.listings = m.listings.filter((x) => x !== l);
+      const id = this.addPlane(l.type, code, 'owned', l.age);
+      this.log(`Bought a used ${D.aircraft[l.type].name} (${id}, ${l.age} years) for ${fmtMoney(l.price)}, ` +
+        `delivered to ${code}.`, 'cost');
+      return null;
+    },
+
+    // Sell an owned plane or hand a leased one back.
+    disposePlane(planeId) {
+      const s = this.state;
+      const p = this.plane(planeId);
+      if (!p) return 'No such plane.';
+      if (s.planes.length === 1) return 'You cannot give up your last plane.';
+      if (p.status === 'flying') return `${p.id} is in the air – wait until it lands.`;
+      const name = D.aircraft[p.type].name;
+      if (p.ownership === 'owned') {
+        const v = this.saleValue(p);
+        s.money += v;
+        this.log(`Sold ${p.id} (${name}) for ${fmtMoney(v)}.`, 'good');
+      } else {
+        const fee = this.returnFee(p);
+        s.money -= fee;
+        this.log(`Returned leased ${p.id} (${name}), return fee ${fmtMoney(fee)}.`, 'cost');
+      }
+      s.planes = s.planes.filter((x) => x !== p);
+      s.crews = s.crews.filter((c) => c.id !== p.crewId);
+      return null;
+    },
+
     // Rough forecast for a schedule loop (first flight of the day, no randomness).
-    estimateSchedule(type, stops) {
+    estimateSchedule(type, stops, costMult = 1) {
       const ac = D.aircraft[type];
       const legs = [];
       if (stops.length < 2) return { legs, loopMin: 0, profit: 0 };
@@ -400,7 +561,7 @@
         const demand = dailyDemand(from, to);
         const pax = Math.min(ac.seats, demand);
         const revenue = pax * ticketPrice(d);
-        const cost = flightCost(type, d, to, pax);
+        const cost = flightCost(type, d, to, pax, costMult);
         legs.push({ from, to, d: Math.round(d), block: blockMinutes(type, d), demand, pax, revenue, cost });
       }
       const loopMin = legs.reduce((s, l) => s + l.block + C.turnaroundMin, 0);
