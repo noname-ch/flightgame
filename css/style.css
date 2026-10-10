@@ -42,7 +42,9 @@ header button {
   border: 1px solid #475569;
 }
 header button.active { background: var(--accent); border-color: var(--accent); }
-.speed { display: flex; gap: 4px; }
+.speed { display: flex; gap: 6px; align-items: center; }
+.speed input[type=range] { width: 140px; accent-color: var(--accent); }
+#speed-label { min-width: 64px; font-variant-numeric: tabular-nums; opacity: 0.9; }
 
 main { flex: 1; display: flex; min-height: 0; }
 #map { flex: 1; min-width: 0; }

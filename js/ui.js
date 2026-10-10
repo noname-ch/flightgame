@@ -5,7 +5,14 @@
   const D = FG.data;
 
   const TICK_MS = 100;
-  const SPEEDS = [0, 2, 8, 30]; // game minutes per tick (0 = paused)
+  // Speed is a multiple of real time: 1 = one game minute per real minute.
+  // The slider is logarithmic, from real time up to twice the old top speed
+  // (30 game minutes per tick).
+  const MAX_SPEED = 2 * 30 * (60000 / TICK_MS);
+  const SLIDER_MAX = 1000;
+  const sliderToSpeed = (v) => Math.round(Math.pow(MAX_SPEED, v / SLIDER_MAX));
+  const speedToSlider = (x) => Math.round((Math.log(x) / Math.log(MAX_SPEED)) * SLIDER_MAX);
+  const fmtSpeed = (x) => (x >= 1000 ? `${(x / 1000).toFixed(x >= 10000 ? 0 : 1)}k×` : `${x}×`);
 
   const ui = {
     map: null,
@@ -13,7 +20,9 @@
     planeMarkers: {},
     routeLayer: null,
     tab: 'fleet',
-    speed: 1,
+    speed: 1, // multiple of real time
+    paused: false,
+    pendingMinutes: 0, // fractional game minutes carried between ticks
     selectedAirport: null,
     selectedPlane: null,
     drafts: {}, // planeId -> stops being edited
@@ -157,9 +166,8 @@
     money.textContent = G.fmtMoney(s.money);
     money.classList.toggle('negative', s.money < 0);
     $('clock').textContent = G.fmtTime(s.time);
-    document.querySelectorAll('[data-speed]').forEach((b) => {
-      b.classList.toggle('active', Number(b.dataset.speed) === ui.speed);
-    });
+    $('pause').classList.toggle('active', ui.paused);
+    $('speed-label').textContent = ui.speed === 1 ? 'Real time' : fmtSpeed(ui.speed);
     $('newgame').textContent = ui.confirmNew ? 'Really restart?' : 'New game';
     $('gameover').hidden = !s.gameOver;
   }
@@ -421,9 +429,8 @@
       ui.tab = b.dataset.tab;
       G.dirty = true;
     }));
-    document.querySelectorAll('[data-speed]').forEach((b) => b.addEventListener('click', () => {
-      ui.speed = Number(b.dataset.speed);
-    }));
+    $('pause').addEventListener('click', () => { ui.paused = !ui.paused; });
+    $('speed').addEventListener('input', (e) => { ui.speed = sliderToSpeed(Number(e.target.value)); });
     $('save').addEventListener('click', () => {
       const ok = G.save();
       toast(ok ? 'Game saved.' : 'Could not save.', !ok);
@@ -454,8 +461,14 @@
     });
     document.addEventListener('keydown', (e) => {
       if (e.target.matches('input, select, textarea')) return;
-      if (e.key === ' ') { ui.speed = ui.speed ? 0 : 1; e.preventDefault(); }
-      if (['1', '2', '3'].includes(e.key)) ui.speed = Number(e.key);
+      if (e.key === ' ') { ui.paused = !ui.paused; e.preventDefault(); }
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        const step = e.key === 'ArrowRight' ? 50 : -50;
+        const v = Math.min(SLIDER_MAX, Math.max(0, speedToSlider(ui.speed) + step));
+        $('speed').value = v;
+        ui.speed = sliderToSpeed(v);
+        e.preventDefault();
+      }
     });
   }
 
@@ -473,7 +486,12 @@
   }
 
   function loop() {
-    if (ui.speed > 0) G.advance(SPEEDS[ui.speed]);
+    if (!ui.paused) {
+      ui.pendingMinutes += (ui.speed * TICK_MS) / 60000;
+      const whole = Math.floor(ui.pendingMinutes);
+      ui.pendingMinutes -= whole;
+      if (whole > 0) G.advance(whole);
+    }
     renderHeader();
     updatePlanes();
     if (G.dirty && !sidebarBusy()) {
