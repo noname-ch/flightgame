@@ -195,3 +195,43 @@ tr.click:hover { background: #f1f5f9; }
 .tag { display: inline-block; padding: 0 6px; border-radius: 8px; background: #dcfce7; color: var(--pos); font-size: 11px; }
 .small-text { font-size: 12px; }
 button.dispose { color: var(--neg); }
+
+/* finance charts */
+:root {
+  --s-rev: #2a78d6;
+  --s-cost: #eb6834;
+  --s-loss: #e34948;
+}
+.chart { display: block; width: 100%; height: auto; overflow: visible; }
+.chart .grid { stroke: var(--border); stroke-width: 1; }
+.chart .grid.zero { stroke: var(--muted); }
+.chart .ref { stroke: var(--neg); stroke-width: 1; stroke-dasharray: 3 3; }
+.chart .tick { font-size: 9px; fill: var(--muted); font-variant-numeric: tabular-nums; }
+.chart .line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.chart .dot { stroke: var(--panel); stroke-width: 2; }
+.chart .line.s-cash, .chart .line.s-rev { stroke: var(--s-rev); }
+.chart .dot.s-cash, .chart .dot.s-rev { fill: var(--s-rev); }
+.chart .line.s-cost { stroke: var(--s-cost); }
+.chart .dot.s-cost { fill: var(--s-cost); }
+.chart .bar.gain { fill: var(--s-rev); }
+.chart .bar.loss { fill: var(--s-loss); }
+.chart .crosshair { stroke: var(--muted); stroke-width: 1; pointer-events: none; opacity: 0; }
+.legend { display: flex; gap: 12px; font-size: 12px; color: var(--muted); }
+.legend i, #chart-tip i { display: inline-block; width: 10px; height: 3px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
+i.s-cash, i.s-rev { background: var(--s-rev); }
+i.s-cost { background: var(--s-cost); }
+i.s-net { background: var(--muted); }
+#chart-tip {
+  position: fixed;
+  z-index: 2000;
+  pointer-events: none;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  font-variant-numeric: tabular-nums;
+}
+#chart-tip div { display: flex; align-items: center; gap: 4px; }
+#chart-tip span { margin-left: auto; padding-left: 12px; font-weight: 600; }

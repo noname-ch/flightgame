@@ -9,6 +9,16 @@
   const airportByCode = {};
   D.airports.forEach((a) => { airportByCode[a.code] = a; });
 
+  // Factories are map points new planes are delivered from (not airports you can use).
+  const factoryOfType = {};
+  for (const f of D.factories || []) {
+    if (!airportByCode[f.code]) {
+      airportByCode[f.code] = { code: f.code, name: f.name, city: f.name, country: f.country, lat: f.lat, lon: f.lon, size: 0, factory: true };
+    }
+    for (const t of f.types) factoryOfType[t] = f;
+  }
+  const factoryOf = (type) => factoryOfType[type] || null;
+
   // ---------- geo helpers ----------
   const toRad = (d) => (d * Math.PI) / 180;
   const toDeg = (r) => (r * 180) / Math.PI;
@@ -92,7 +102,9 @@
     const types = Object.keys(D.aircraft).filter((t) => D.aircraft[t].category !== 'classic' || Math.random() < 0.3);
     const type = types[Math.floor(Math.random() * types.length)];
     const age = M.usedAge[0] + Math.floor(Math.random() * (M.usedAge[1] - M.usedAge[0] + 1));
-    return { id: `U${n}`, type, age, price: usedPrice(type, age) };
+    const homes = D.airports.filter((a) => fitsAirport(type, a.code));
+    const at = homes[Math.floor(Math.random() * homes.length)].code; // seller's base
+    return { id: `U${n}`, type, age, price: usedPrice(type, age), at };
   }
 
   // ---------- formatting ----------
@@ -115,7 +127,7 @@
 
     airportByCode, distanceKm, dist, bearing, interpolate, catchment, dailyDemand,
     ticketPrice, blockMinutes, landingFee, slotUpfront, slotWeekly,
-    priceNew, fitsAirport, crewFor,
+    priceNew, fitsAirport, crewFor, factoryOf,
     fmtMoney, fmtTime, fmtClock, fmtDuration,
 
     newGame() {
@@ -234,7 +246,7 @@
       const s = this.state;
       const day = s.time / DAY;
       const t = s.today;
-      s.history.unshift({ day: day - 1, ...t });
+      s.history.unshift({ day: day - 1, ...t, cash: s.money });
       if (s.history.length > 60) s.history.length = 60;
       this.log(`Day ${day} closed: ${t.flights} flights, ${t.pax} pax, ` +
         `operating result ${fmtMoney(t.revenue - t.cost)}.`, 'summary');
@@ -286,6 +298,8 @@
         const seats = D.aircraft[p.type].seats;
         this.log(`${p.id} ${f.from}→${f.to}: ${f.pax}/${seats} pax, revenue ${fmtMoney(f.revenue)}, ` +
           `cost ${fmtMoney(f.cost)} → ${fmtMoney(result)}`, result >= 0 ? 'good' : 'bad');
+      } else if (f.kind === 'delivery') {
+        this.log(`${p.id} (${D.aircraft[p.type].name}) delivered to ${f.to} from ${airportByCode[f.from].name}.`, 'good');
       } else {
         this.log(`${p.id} ferried ${f.from}→${f.to} (cost ${fmtMoney(f.cost)}).`, 'cost');
       }
@@ -466,7 +480,17 @@
       return null;
     },
 
-    addPlane(type, code, ownership, age) {
+    // How a new plane gets to `code`: from its factory (new) or the seller's airport (used).
+    deliveryFrom(type, code, used) {
+      if (used) return used;
+      const f = factoryOf(type);
+      return f && f.code !== code ? f.code : null;
+    },
+    deliveryMinutes(type, from, code) {
+      return from ? blockMinutes(type, dist(from, code)) : 0;
+    },
+
+    addPlane(type, code, ownership, age, from = null) {
       const s = this.state;
       const id = this.nextRegistration();
       const crewT = crewFor(type);
@@ -475,12 +499,22 @@
         id: crewId, name: `Crew ${id}`, base: code,
         pilots: crewT.pilots, cabin: crewT.cabin, weeklySalary: crewT.weeklySalary, dutyToday: 0,
       });
-      s.planes.push({
+      const p = {
         id, type, location: code, status: 'idle', readyAt: 0, flight: null, pendingFerry: null,
         ownership, age, acquiredAt: s.time, crewId,
         schedule: { stops: [], index: 0, active: false },
         stats: { flights: 0, pax: 0, profit: 0 },
-      });
+      };
+      if (from) {
+        // Delivery flight, paid by the seller; ignores curfew and crew duty.
+        const d = dist(from, code);
+        p.location = from;
+        p.status = 'flying';
+        p.flight = { from, to: code, kind: 'delivery', dep: s.time, arr: s.time + blockMinutes(type, d),
+          distance: Math.round(d), pax: 0, revenue: 0, cost: 0 };
+      }
+      s.planes.push(p);
+      this.dirty = true;
       return id;
     },
 
@@ -489,8 +523,10 @@
       const err = this.checkDelivery(type, code, cost);
       if (err) return err;
       this.state.money -= cost;
-      const id = this.addPlane(type, code, 'owned', 0);
-      this.log(`Bought a new ${D.aircraft[type].name} (${id}) for ${fmtMoney(cost)}, delivered to ${code}.`, 'cost');
+      const from = this.deliveryFrom(type, code);
+      const id = this.addPlane(type, code, 'owned', 0, from);
+      this.log(`Bought a new ${D.aircraft[type].name} (${id}) for ${fmtMoney(cost)}` +
+        (from ? ` – delivery flight ${from} → ${code}.` : `, delivered to ${code}.`), 'cost');
       return null;
     },
 
@@ -499,9 +535,11 @@
       const err = this.checkDelivery(type, code, cost);
       if (err) return err;
       this.state.money -= cost;
-      const id = this.addPlane(type, code, 'leased', 0);
+      const from = this.deliveryFrom(type, code);
+      const id = this.addPlane(type, code, 'leased', 0, from);
       this.log(`Leased a ${D.aircraft[type].name} (${id}) – deposit ${fmtMoney(cost)}, ` +
-        `${fmtMoney(D.aircraft[type].leasePerWeek)}/week. Delivered to ${code}.`, 'cost');
+        `${fmtMoney(D.aircraft[type].leasePerWeek)}/week` +
+        (from ? ` – delivery flight ${from} → ${code}.` : `. Delivered to ${code}.`), 'cost');
       return null;
     },
 
@@ -513,9 +551,10 @@
       if (err) return err;
       this.state.money -= l.price;
       m.listings = m.listings.filter((x) => x !== l);
-      const id = this.addPlane(l.type, code, 'owned', l.age);
-      this.log(`Bought a used ${D.aircraft[l.type].name} (${id}, ${l.age} years) for ${fmtMoney(l.price)}, ` +
-        `delivered to ${code}.`, 'cost');
+      const from = l.at && l.at !== code ? l.at : null;
+      const id = this.addPlane(l.type, code, 'owned', l.age, from);
+      this.log(`Bought a used ${D.aircraft[l.type].name} (${id}, ${l.age} years) for ${fmtMoney(l.price)}` +
+        (from ? ` – ferried in from ${from}.` : `, delivered to ${code}.`), 'cost');
       return null;
     },
 

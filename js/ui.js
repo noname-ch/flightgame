@@ -15,6 +15,7 @@
   const fmtSpeed = (x) => (x >= 1000 ? `${(x / 1000).toFixed(x >= 10000 ? 0 : 1)}k×` : `${x}×`);
 
   const ui = {
+    charts: {}, // chart id -> data for hover tooltips
     map: null,
     airportMarkers: {},
     planeMarkers: {},
@@ -429,6 +430,124 @@
     return h + `</table></div>`;
   }
 
+  // ---------- finance charts ----------
+  const CHART_W = 360;
+  const CHART_H = 130;
+  const PAD = { l: 44, r: 8, t: 8, b: 18 };
+  const CHART_DAYS = 30;
+
+  // Oldest first, ending with today so far.
+  function financeRows() {
+    const s = G.state;
+    const day = Math.floor(s.time / 1440);
+    const rows = s.history.slice(0, CHART_DAYS - 1).reverse().map((d) => ({
+      label: `Day ${d.day + 1}`,
+      revenue: d.revenue,
+      costs: d.cost + (d.fixed || 0),
+      cash: d.cash,
+    }));
+    const t = s.today;
+    rows.push({ label: `Day ${day + 1} (so far)`, revenue: t.revenue, costs: t.cost + (t.fixed || 0), cash: s.money });
+    for (const r of rows) r.net = r.revenue - r.costs;
+    return rows;
+  }
+
+  // Short money labels for axes: 1.2M, 350k.
+  function fmtShort(v) {
+    const a = Math.abs(v);
+    const sign = v < 0 ? '-' : '';
+    if (a >= 1e6) return `${sign}${(a / 1e6).toFixed(a >= 1e7 ? 0 : 1)}M`;
+    if (a >= 1e3) return `${sign}${Math.round(a / 1e3)}k`;
+    return `${sign}${Math.round(a)}`;
+  }
+
+  function niceTicks(min, max) {
+    if (min === max) { min -= 1; max += 1; }
+    const raw = (max - min) / 3;
+    const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+    const step = [1, 2, 5, 10].map((m) => m * mag).find((x) => x >= raw);
+    const lo = Math.floor(min / step) * step;
+    const hi = Math.ceil(max / step) * step;
+    const ticks = [];
+    for (let v = lo; v <= hi + step / 2; v += step) ticks.push(v);
+    return { lo, hi, ticks };
+  }
+
+  // series: [{ key, label, cls }]; kind: 'line' | 'bar'. Hover data lives in ui.charts[id].
+  function chart(id, rows, series, kind, refs = []) {
+    const vals = rows.flatMap((r) => series.map((s) => r[s.key])).filter((v) => v != null);
+    if (!vals.length) return '<div class="muted">No data yet.</div>';
+    const { lo, hi, ticks } = niceTicks(Math.min(0, ...vals, ...refs.map((r) => r.v)), Math.max(0, ...vals));
+    const iw = CHART_W - PAD.l - PAD.r;
+    const ih = CHART_H - PAD.t - PAD.b;
+    const n = rows.length;
+    const slot = iw / n;
+    const x = (i) => PAD.l + slot * (i + 0.5);
+    const y = (v) => PAD.t + ih - ((v - lo) / (hi - lo)) * ih;
+
+    let g = '';
+    for (const v of ticks) {
+      g += `<line class="grid${v === 0 ? ' zero' : ''}" x1="${PAD.l}" x2="${CHART_W - PAD.r}" y1="${y(v)}" y2="${y(v)}"/>
+        <text class="tick" x="${PAD.l - 4}" y="${y(v) + 3}" text-anchor="end">${fmtShort(v)}</text>`;
+    }
+    for (const r of refs) {
+      g += `<line class="ref" x1="${PAD.l}" x2="${CHART_W - PAD.r}" y1="${y(r.v)}" y2="${y(r.v)}"/>
+        <text class="tick" x="${CHART_W - PAD.r}" y="${y(r.v) - 3}" text-anchor="end">${r.label}</text>`;
+    }
+    g += `<text class="tick" x="${x(0)}" y="${CHART_H - 4}" text-anchor="start">${rows[0].label}</text>`;
+    if (n > 1) g += `<text class="tick" x="${x(n - 1)}" y="${CHART_H - 4}" text-anchor="end">Today</text>`;
+
+    if (kind === 'bar') {
+      const key = series[0].key;
+      const bw = Math.max(2, Math.min(18, slot - 2));
+      rows.forEach((r, i) => {
+        const v = r[key];
+        if (!v) return;
+        const top = y(Math.max(0, v));
+        const h = Math.max(1, Math.abs(y(v) - y(0)));
+        g += `<rect class="bar ${v >= 0 ? 'gain' : 'loss'}" x="${x(i) - bw / 2}" y="${top}" width="${bw}" height="${h}" rx="2"/>`;
+      });
+    } else {
+      for (const s of series) {
+        const pts = rows.map((r, i) => (r[s.key] == null ? null : `${x(i)},${y(r[s.key])}`)).filter(Boolean);
+        if (pts.length > 1) g += `<polyline class="line ${s.cls}" points="${pts.join(' ')}"/>`;
+        const last = rows.length - 1;
+        if (rows[last][s.key] != null) g += `<circle class="dot ${s.cls}" cx="${x(last)}" cy="${y(rows[last][s.key])}" r="3.5"/>`;
+      }
+    }
+    g += `<line class="crosshair" y1="${PAD.t}" y2="${PAD.t + ih}" x1="-10" x2="-10"/>`;
+
+    ui.charts[id] = { rows, series, n, slot };
+    const legend = series.length > 1
+      ? `<div class="legend">${series.map((s) => `<span><i class="${s.cls}"></i>${s.label}</span>`).join('')}</div>`
+      : '';
+    return `${legend}<svg class="chart" data-chart="${id}" viewBox="0 0 ${CHART_W} ${CHART_H}" role="img"
+      aria-label="${series.map((s) => s.label).join(', ')} over the last ${n} days">${g}</svg>`;
+  }
+
+  function chartHover(e) {
+    const svg = e.target.closest && e.target.closest('svg.chart');
+    const tip = $('chart-tip');
+    if (!svg) { tip.hidden = true; return; }
+    const c = ui.charts[svg.dataset.chart];
+    if (!c) return;
+    const box = svg.getBoundingClientRect();
+    const sx = ((e.clientX - box.left) / box.width) * CHART_W;
+    const i = Math.min(c.n - 1, Math.max(0, Math.floor((sx - PAD.l) / c.slot)));
+    const r = c.rows[i];
+    const cx = PAD.l + c.slot * (i + 0.5);
+    const line = svg.querySelector('.crosshair');
+    line.setAttribute('x1', cx);
+    line.setAttribute('x2', cx);
+    line.style.opacity = 1;
+    tip.innerHTML = `<b>${r.label}</b>${c.series.map((s) => `<div><i class="${s.cls}"></i>${s.label}
+      <span>${r[s.key] == null ? '–' : G.fmtMoney(r[s.key])}</span></div>`).join('')}`;
+    tip.hidden = false;
+    const tx = Math.min(window.innerWidth - tip.offsetWidth - 8, e.clientX + 12);
+    tip.style.left = `${tx}px`;
+    tip.style.top = `${e.clientY + 12}px`;
+  }
+
   function financeTab() {
     const s = G.state;
     const w = G.weeklyCosts();
@@ -447,6 +566,16 @@
       <h4>Today so far</h4>
       <div>${t.flights} flights · ${t.pax} pax · revenue ${G.fmtMoney(t.revenue)} · costs ${G.fmtMoney(t.cost)}
         → <b class="${t.revenue - t.cost >= 0 ? 'pos' : 'neg'}">${G.fmtMoney(t.revenue - t.cost)}</b></div></div>`;
+
+    const rows = financeRows();
+    h += `<div class="panel"><h3>Cash balance (CHF)</h3>
+      ${chart('cash', rows, [{ key: 'cash', label: 'Cash', cls: 's-cash' }], 'line',
+        [{ v: C.bankruptcyLimit, label: 'Bankruptcy' }])}
+      <h4>Revenue vs costs per day</h4>
+      ${chart('flow', rows, [{ key: 'revenue', label: 'Revenue', cls: 's-rev' }, { key: 'costs', label: 'Costs', cls: 's-cost' }], 'line')}
+      <h4>Daily result</h4>
+      ${chart('net', rows, [{ key: 'net', label: 'Result', cls: 's-net' }], 'bar')}
+      <div class="muted">Costs include weekly fixed charges. Hover a chart for exact values.</div></div>`;
 
     h += `<div class="panel"><h3>History</h3><table class="small">
       <tr><th>Day</th><th>flights</th><th>pax</th><th>operating</th><th>fixed</th></tr>`;
@@ -541,6 +670,8 @@
 
   function bindControls() {
     $('sidebar').addEventListener('click', onAction);
+    $('sidebar').addEventListener('mousemove', chartHover);
+    $('sidebar').addEventListener('mouseleave', () => { $('chart-tip').hidden = true; });
     document.querySelectorAll('[data-tab]').forEach((b) => b.addEventListener('click', () => {
       ui.tab = b.dataset.tab;
       G.dirty = true;
