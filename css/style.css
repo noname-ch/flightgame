@@ -122,6 +122,7 @@ select { font: inherit; padding: 3px; border-radius: 6px; border: 1px solid #cbd
 
 table.small { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
 table.small th, table.small td { text-align: left; padding: 3px 4px; border-bottom: 1px solid var(--border); }
+td.fare { white-space: nowrap; }
 tr.click { cursor: pointer; }
 tr.click:hover { background: #f1f5f9; }
 
@@ -130,23 +131,156 @@ tr.click:hover { background: #f1f5f9; }
 .log .entry.bad { color: var(--neg); }
 .log .entry.summary { font-weight: 600; }
 
-/* map */
-.plane-icon .plane {
-  font-size: 22px;
-  line-height: 26px;
-  text-align: center;
-  color: var(--accent);
-  text-shadow: 0 0 3px #fff, 0 0 3px #fff;
+/* map – Apple-Maps-like look. Colours mirror COLORS in ui.js. */
+#map {
+  --m-blue: #007aff;
+  --m-green: #34c759;
+  --m-orange: #ff9500;
+  --m-red: #ff3b30;
+  --m-purple: #af52de;
+  --m-gray: #8e8e93;
+  --m-panel: rgba(255, 255, 255, 0.8);
+  --m-ink: #1c1c1e;
+  --m-halo: #fff;
+  --m-hairline: rgba(0, 0, 0, 0.12);
+  --m-label: #0062cc;
+  --m-label-own: #1d8a3a;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "Segoe UI", sans-serif;
+  background: #f5f3ee;
 }
-.plane-icon .plane.grounded { color: #7f1d1d; font-size: 18px; }
-.leaflet-tooltip.owned-label {
-  background: #166534;
-  color: #fff;
+/* Dark and Satellite base maps */
+#map.map-dark {
+  --m-panel: rgba(44, 44, 46, 0.78);
+  --m-ink: #f2f2f7;
+  --m-halo: #1c1c1e;
+  --m-hairline: rgba(255, 255, 255, 0.16);
+  --m-label: #64b0ff;
+  --m-label-own: #30d158;
+  background: #1c1c1e;
+}
+
+/* Frosted-glass controls */
+#map .leaflet-bar,
+#map .leaflet-control-layers {
   border: none;
-  font-weight: 700;
-  padding: 1px 5px;
+  border-radius: 10px;
+  background: var(--m-panel);
+  color: var(--m-ink);
+  -webkit-backdrop-filter: saturate(180%) blur(14px);
+  backdrop-filter: saturate(180%) blur(14px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.16), 0 0 0 0.5px var(--m-hairline);
 }
-.leaflet-tooltip.owned-label::before { display: none; }
+#map .leaflet-bar { overflow: hidden; }
+#map .leaflet-bar a {
+  width: 34px;
+  height: 34px;
+  line-height: 34px;
+  background: transparent;
+  color: var(--m-ink);
+  border-bottom: 0.5px solid var(--m-hairline);
+}
+#map .leaflet-bar a:last-child { border-bottom: none; }
+#map .leaflet-bar a:hover { background: rgba(127, 127, 127, 0.18); }
+#map .leaflet-bar a.leaflet-disabled { opacity: 0.35; }
+#map .leaflet-control-zoom a { font-family: inherit; font-size: 22px; font-weight: 300; line-height: 32px; }
+#map .leaflet-bar a.fit-network { font-size: 18px; color: var(--m-blue); }
+#map .leaflet-control-layers-expanded { padding: 8px 12px; font-size: 13px; }
+#map .leaflet-control-layers-separator { border-top: 0.5px solid var(--m-hairline); }
+#map .leaflet-control-layers input { accent-color: var(--m-blue); }
+#map.map-dark .leaflet-control-layers-toggle { filter: invert(1); }
+
+#map .leaflet-control-scale-line {
+  background: none;
+  border: 1.5px solid var(--m-ink);
+  border-top: none;
+  color: var(--m-ink);
+  font-size: 10px;
+  text-shadow: 0 0 2px var(--m-halo), 0 0 2px var(--m-halo);
+}
+#map .leaflet-control-attribution {
+  background: var(--m-panel);
+  color: var(--m-ink);
+  font-size: 10px;
+  border-top-left-radius: 6px;
+}
+
+/* Callouts */
+#map .leaflet-tooltip:not(.ap-label) {
+  border: none;
+  border-radius: 8px;
+  padding: 4px 9px;
+  background: #fff;
+  color: #1c1c1e;
+  font-size: 12px;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.22);
+}
+
+/* Airports: coloured pin with white rim, label as haloed text */
+.ap-dot { filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, 0.35)); }
+.leaflet-tooltip.ap-label {
+  background: none;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  color: var(--m-label);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.2;
+  text-shadow: -1px -1px 0 var(--m-halo), 1px -1px 0 var(--m-halo), -1px 1px 0 var(--m-halo),
+    1px 1px 0 var(--m-halo), 0 0 3px var(--m-halo);
+}
+.leaflet-tooltip.ap-label::before { display: none; }
+.ap-label.hidden { display: none; }
+.ap-label .city { display: none; font-weight: 500; }
+.ap-label.hover, .ap-label.selected { z-index: 1; font-size: 13px; }
+.ap-label.hover .city, .ap-label.selected .city { display: inline; }
+.ap-label.owned { color: var(--m-label-own); }
+.ap-label.home b::after { content: " ★"; }
+
+/* Only the aircraft shape itself catches the mouse, not its square box. */
+.plane-icon.leaflet-interactive { pointer-events: none; }
+.plane-icon .plane { width: 28px; height: 28px; }
+.plane-icon svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  fill: var(--m-red);
+  stroke: #fff;
+  stroke-width: 1.6;
+  stroke-linejoin: round;
+  paint-order: stroke;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.35));
+}
+.plane-icon path { pointer-events: auto; cursor: pointer; }
+.plane-icon .plane.grounded svg { fill: var(--m-gray); }
+.plane-icon .plane.selected svg { stroke: #ffcc00; stroke-width: 2.6; }
+
+#map .map-legend {
+  padding: 6px 10px;
+  font-size: 12px;
+  line-height: 1.8;
+}
+.map-legend summary { cursor: pointer; font-weight: 600; }
+.map-legend i { display: inline-block; vertical-align: middle; margin-right: 6px; }
+.map-legend .dot {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 1.5px solid #fff;
+  margin-left: 4px;
+  margin-right: 9px;
+  box-shadow: 0 0.5px 2px rgba(0, 0, 0, 0.4);
+}
+.map-legend .dot.own { background: var(--m-green); }
+.map-legend .dot.ap { background: var(--m-blue); }
+.map-legend .dot.town { background: var(--m-gray); }
+.map-legend .dot.catch { background: var(--m-orange); }
+.map-legend .line { width: 18px; border-top: 3px solid; border-radius: 2px; }
+.map-legend .line.active { border-color: var(--m-blue); }
+.map-legend .line.paused { border-color: var(--m-gray); }
+.map-legend .line.draft { border-color: var(--m-orange); border-top-style: dotted; }
+.map-legend .line.ferry { border-color: var(--m-purple); border-top-style: dashed; }
 
 #toast {
   position: fixed;
