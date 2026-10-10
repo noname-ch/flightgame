@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Flightgame</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header>
+    <div class="brand">✈ <span id="company"></span></div>
+    <div id="money"></div>
+    <div id="clock"></div>
+    <div class="speed">
+      <button data-speed="0" title="Pause (Space)">⏸</button>
+      <button data-speed="1" title="Normal (1)">▶</button>
+      <button data-speed="2" title="Fast (2)">▶▶</button>
+      <button data-speed="3" title="Very fast (3)">▶▶▶</button>
+    </div>
+    <div class="spacer"></div>
+    <button id="save">Save</button>
+    <button id="newgame">New game</button>
+  </header>
+
+  <main>
+    <div id="map"></div>
+    <aside id="sidebar">
+      <div id="details"></div>
+      <nav class="tabs">
+        <button data-tab="fleet">Fleet</button>
+        <button data-tab="slots">Slots</button>
+        <button data-tab="finance">Finance</button>
+        <button data-tab="log">Log</button>
+      </nav>
+      <div id="tab-content"></div>
+    </aside>
+  </main>
+
+  <div id="gameover" hidden>Bankrupt! Press "New game" to try again.</div>
+  <div id="toast"></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="js/config.js"></script>
+  <script src="js/data/aircraft.js"></script>
+  <script src="js/data/airports.js"></script>
+  <script src="js/data/towns.js"></script>
+  <script src="js/game.js"></script>
+  <script src="js/ui.js"></script>
+</body>
+</html>
