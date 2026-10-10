@@ -18,7 +18,13 @@
     map: null,
     airportMarkers: {},
     planeMarkers: {},
+    townMarkers: [], // { t, m }
+    townLayer: null,
+    catchmentLayer: null,
     routeLayer: null,
+    selectRing: null,
+    shownAirport: null, // airport the catchment overlay is currently drawn for
+    hoverAirport: null,
     tab: 'fleet',
     speed: 1, // multiple of real time
     paused: false,
@@ -50,73 +56,280 @@
   }
 
   // ---------- map ----------
+  // Apple-Maps-like look: recoloured Esri canvas tiles plus the iOS system colours (mirrored in style.css).
+  const COLORS = {
+    blue: '#007aff', blueDark: '#0058d0', green: '#34c759', orange: '#ff9500',
+    purple: '#af52de', gray: '#8e8e93', grayDark: '#6d6d72',
+  };
+  const ESRI = 'https://server.arcgisonline.com/ArcGIS/rest/services';
+  const tileUrl = (service) => `${ESRI}/${service}/MapServer/tile/{z}/{y}/{x}`;
+  const TILE_OPTS = {
+    attribution: 'Tiles &copy; Esri &mdash; Esri, HERE, Garmin, &copy; OpenStreetMap contributors',
+    maxZoom: 10,
+  };
+  const tiles = (service, opts) => L.tileLayer(tileUrl(service), Object.assign({}, TILE_OPTS, opts));
+  const NAME_TILES = {
+    Standard: 'Canvas/World_Light_Gray_Reference',
+    Dark: 'Canvas/World_Dark_Gray_Reference',
+    Satellite: 'Canvas/World_Dark_Gray_Reference',
+  };
+
+  // Esri's light grey tiles, repainted once per tile: the neutral greys (land = 239) become warm
+  // land with darker borders and labels, the faintly bluish water (208, B > G) becomes flat blue.
+  const LAND = [246, 243, 236];
+  const SEA = [166, 208, 245];
+  function tint(px) {
+    for (let i = 0; i < px.length; i += 4) {
+      const g = px[i + 1];
+      const water = Math.min(1, Math.max(0, (px[i + 2] - g) / 4));
+      const land = (g - 239) * 1.5; // contrast for borders and labels
+      const sea = (g - 208) * 1.2;
+      for (let c = 0; c < 3; c++) px[i + c] = (LAND[c] + land) * (1 - water) + (SEA[c] + sea) * water;
+    }
+  }
+  const TintedTiles = L.TileLayer.extend({
+    createTile(coords, done) {
+      const canvas = document.createElement('canvas');
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        const data = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        tint(data.data);
+        ctx.putImageData(data, 0, 0);
+        canvas.complete = true; // Leaflet drops tiles it thinks are still loading
+        done(null, canvas);
+      };
+      img.onerror = () => done(new Error('Tile failed to load'), canvas);
+      img.src = this.getTileUrl(coords);
+      return canvas;
+    },
+  });
+
+  // Top-down aircraft pointing north (Material Icons "flight").
+  const PLANE_SVG = '<svg viewBox="0 0 24 24"><path d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/></svg>';
+
+  const TOWN_STYLE = { color: '#fff', weight: 1, fillColor: COLORS.gray, fillOpacity: 0.75 };
+  const TOWN_IN_CATCHMENT = { color: '#fff', weight: 1, fillColor: COLORS.orange, fillOpacity: 1 };
+
+  const LEGEND = `<details class="legend leaflet-bar"><summary>Legend</summary>
+    <div><i class="dot own"></i>Your slot (★ home base)</div>
+    <div><i class="dot ap"></i>Airport · bigger = larger hub</div>
+    <div><i class="dot town"></i>Town · bigger = more people</div>
+    <div><i class="dot catch"></i>Town feeding the selected airport</div>
+    <div><i class="line active"></i>Schedule running</div>
+    <div><i class="line paused"></i>Schedule paused</div>
+    <div><i class="line draft"></i>Schedule being edited</div>
+    <div><i class="line ferry"></i>Ferry flight</div>
+  </details>`;
+
+  // Markers shrink when zoomed out so Europe doesn't turn into one blob.
+  const zoomScale = () => Math.min(1.5, Math.max(0.6, 0.6 + (ui.map.getZoom() - 3) * 0.2));
+  const airportRadius = (a) => (4 + a.size) * zoomScale();
+  const townRadius = (t) => Math.max(2.5, Math.sqrt(t.pop) / 450) * zoomScale();
+
+  // Great-circle path between two airports as a list of [lat, lon].
+  function arc(a, b) {
+    const n = Math.max(2, Math.ceil(G.distanceKm(a, b) / 150));
+    const pts = [];
+    for (let i = 0; i <= n; i++) pts.push(G.interpolate(a, b, i / n));
+    return pts;
+  }
+
+  function addControl(position, build) {
+    const c = L.control({ position });
+    c.onAdd = () => {
+      const el = build();
+      L.DomEvent.disableClickPropagation(el);
+      L.DomEvent.disableScrollPropagation(el);
+      return el;
+    };
+    c.addTo(ui.map);
+  }
+
+  function selectPlane(id) {
+    ui.selectedPlane = id;
+    ui.tab = 'fleet';
+    G.dirty = true;
+  }
+
   function initMap() {
-    ui.map = L.map('map', {
+    const map = ui.map = L.map('map', {
       minZoom: C.map.minZoom,
+      maxZoom: 10,
       maxBounds: C.map.bounds,
       maxBoundsViscosity: 0.8,
     }).setView(C.map.center, C.map.zoom);
 
-    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
-      attribution: 'Tiles &copy; Esri &mdash; Esri, HERE, Garmin, &copy; OpenStreetMap contributors',
-      maxZoom: 10,
-    }).addTo(ui.map);
+    // Stacking: tiles < towns + catchment < routes < airports < planes.
+    map.createPane('towns').style.zIndex = 350;
+    map.createPane('routes').style.zIndex = 390;
+
+    const base = {
+      Standard: new TintedTiles(tileUrl('Canvas/World_Light_Gray_Base'), TILE_OPTS).addTo(map),
+      Dark: tiles('Canvas/World_Dark_Gray_Base'),
+      Satellite: tiles('World_Imagery'),
+    };
+    // City names; off by default because they collide with the airport dots.
+    const names = tiles(NAME_TILES.Standard, { zIndex: 2 });
+    map.on('baselayerchange', (e) => {
+      names.setUrl(tileUrl(NAME_TILES[e.name]));
+      map.getContainer().classList.toggle('map-dark', e.name !== 'Standard');
+    });
+
+    ui.townLayer = L.layerGroup().addTo(map);
+    ui.catchmentLayer = L.layerGroup().addTo(map);
+    ui.routeLayer = L.layerGroup().addTo(map);
 
     for (const t of D.towns) {
-      L.circleMarker([t.lat, t.lon], {
-        radius: Math.max(2.5, Math.sqrt(t.pop) / 450),
-        color: '#6b7280', weight: 1, fillColor: '#9ca3af', fillOpacity: 0.7,
-      }).bindTooltip(`${t.name} · ${fmtPop(t.pop)}`).addTo(ui.map);
+      const m = L.circleMarker([t.lat, t.lon], Object.assign({ pane: 'towns' }, TOWN_STYLE))
+        .bindTooltip(`${t.name} · ${fmtPop(t.pop)}`).addTo(ui.townLayer);
+      ui.townMarkers.push({ t, m });
     }
 
-    ui.routeLayer = L.layerGroup().addTo(ui.map);
-
     for (const a of D.airports) {
-      const m = L.circleMarker([a.lat, a.lon], { radius: 4 + a.size, weight: 2 });
+      const m = L.circleMarker([a.lat, a.lon], {
+        color: '#fff', weight: 2, fillOpacity: 1, className: 'ap-dot', bubblingMouseEvents: false,
+      });
+      m.bindTooltip(`<b>${a.code}</b><span class="city"> · ${a.city}</span>`, {
+        permanent: true, direction: 'right', className: `ap-label${a.code === C.startAirport ? ' home' : ''}`,
+      });
       m.on('click', () => {
         ui.selectedAirport = a.code;
         G.dirty = true;
       });
-      m.addTo(ui.map);
+      m.on('mouseover', () => { ui.hoverAirport = a.code; m.setRadius(airportRadius(a) + 2); updateLabel(a); });
+      m.on('mouseout', () => { ui.hoverAirport = null; m.setRadius(airportRadius(a)); updateLabel(a); });
+      m.addTo(map);
       ui.airportMarkers[a.code] = m;
     }
+
+    L.control.scale({ imperial: false }).addTo(map);
+    L.control.layers(base, { Towns: ui.townLayer, Routes: ui.routeLayer, 'Place names': names }).addTo(map);
+    addControl('topleft', () => {
+      const bar = L.DomUtil.create('div', 'leaflet-bar');
+      const btn = L.DomUtil.create('a', 'fit-network', bar);
+      btn.href = '#';
+      btn.title = 'Show my network';
+      btn.textContent = '⌂';
+      L.DomEvent.on(btn, 'click', (e) => { L.DomEvent.preventDefault(e); fitNetwork(); });
+      return bar;
+    });
+    addControl('bottomleft', () => {
+      const box = L.DomUtil.create('div');
+      box.innerHTML = LEGEND;
+      return box.firstChild;
+    });
+
+    map.on('zoomend', resizeMarkers);
+    map.on('click', () => {
+      if (!ui.selectedAirport && !ui.selectedPlane) return;
+      ui.selectedAirport = null;
+      ui.selectedPlane = null;
+      G.dirty = true;
+    });
+    resizeMarkers();
+  }
+
+  function fitNetwork() {
+    const pts = Object.keys(G.state.slots).map((c) => [G.airportByCode[c].lat, G.airportByCode[c].lon]);
+    ui.map.fitBounds(L.latLngBounds(pts).pad(0.25), { maxZoom: 6 });
+  }
+
+  function resizeMarkers() {
+    for (const { t, m } of ui.townMarkers) m.setRadius(townRadius(t));
+    for (const a of D.airports) {
+      const m = ui.airportMarkers[a.code];
+      const r = airportRadius(a);
+      m.setRadius(r);
+      const tip = m.getTooltip();
+      tip.options.offset = L.point(r - 2, 0); // keep the label clear of the dot
+      tip.update();
+      updateLabel(a);
+    }
+    if (ui.selectRing) ui.selectRing.setRadius(airportRadius(G.airportByCode[ui.selectedAirport]) + 5);
+  }
+
+  // Codes of small airports only appear when zoomed in; own, selected and hovered ones always show.
+  function updateLabel(a) {
+    const el = ui.airportMarkers[a.code].getTooltip().getElement();
+    if (!el) return;
+    const owned = G.ownsSlot(a.code);
+    const selected = ui.selectedAirport === a.code;
+    const hover = ui.hoverAirport === a.code;
+    el.classList.toggle('owned', owned);
+    el.classList.toggle('selected', selected);
+    el.classList.toggle('hover', hover);
+    el.classList.toggle('hidden', !(owned || selected || hover || ui.map.getZoom() >= C.map.labelZoom - a.size));
   }
 
   function refreshAirports() {
     for (const a of D.airports) {
-      const m = ui.airportMarkers[a.code];
-      const owned = G.ownsSlot(a.code);
-      const selected = ui.selectedAirport === a.code;
-      m.setStyle({
-        color: selected ? '#111' : owned ? '#0d7a3a' : '#1f5fbf',
-        fillColor: owned ? '#22c55e' : '#60a5fa',
-        fillOpacity: owned ? 0.95 : 0.7,
-      });
-      m.unbindTooltip();
-      m.bindTooltip(owned ? a.code : `${a.code} · ${a.city}`, {
-        permanent: owned, direction: 'right', className: owned ? 'owned-label' : '',
-      });
+      ui.airportMarkers[a.code].setStyle({ fillColor: G.ownsSlot(a.code) ? COLORS.green : COLORS.blue });
+      updateLabel(a);
     }
+    drawCatchment();
+  }
+
+  // Ring around the selected airport plus the towns that feed it.
+  function drawCatchment() {
+    if (ui.shownAirport === ui.selectedAirport) return;
+    ui.shownAirport = ui.selectedAirport;
+    ui.catchmentLayer.clearLayers();
+    ui.selectRing = null;
+    const a = G.airportByCode[ui.selectedAirport];
+    for (const { t, m } of ui.townMarkers) {
+      m.setStyle(a && G.distanceKm(a, t) < C.catchmentRadiusKm ? TOWN_IN_CATCHMENT : TOWN_STYLE);
+    }
+    if (!a) return;
+    L.circle([a.lat, a.lon], {
+      radius: C.catchmentRadiusKm * 1000, pane: 'towns', interactive: false,
+      color: COLORS.blue, weight: 1, opacity: 0.5, fillOpacity: 0.12,
+    }).addTo(ui.catchmentLayer).bringToBack();
+    ui.selectRing = L.circleMarker([a.lat, a.lon], {
+      radius: airportRadius(a) + 5, interactive: false, color: COLORS.blue, weight: 3, fill: false,
+    }).addTo(ui.catchmentLayer);
   }
 
   function drawRoutes() {
     ui.routeLayer.clearLayers();
-    for (const p of G.state.planes) {
-      const stops = ui.drafts[p.id] || p.schedule.stops;
+    const ap = (c) => G.airportByCode[c];
+    // Selected plane last so its route ends up on top.
+    const planes = G.state.planes.slice().sort((p, q) => (p.id === ui.selectedPlane) - (q.id === ui.selectedPlane));
+    for (const p of planes) {
+      const draft = ui.drafts[p.id];
+      const stops = draft || p.schedule.stops;
+      const selected = ui.selectedPlane === p.id;
       if (stops.length >= 2) {
-        const pts = stops.concat(stops[0]).map((c) => [G.airportByCode[c].lat, G.airportByCode[c].lon]);
+        const pts = [];
+        stops.forEach((c, i) => pts.push(...arc(ap(c), ap(stops[(i + 1) % stops.length]))));
+        const weight = selected ? 5 : 3;
+        const active = p.schedule.active;
+        // Solid routes get a darker casing, drafts are a row of dots.
+        if (!draft) {
+          L.polyline(pts, {
+            pane: 'routes', interactive: false,
+            color: active ? COLORS.blueDark : COLORS.grayDark, weight: weight + 2,
+          }).addTo(ui.routeLayer);
+        }
         L.polyline(pts, {
-          color: ui.drafts[p.id] ? '#f59e0b' : p.schedule.active ? '#dc2626' : '#9ca3af',
-          weight: 2.5, opacity: 0.85,
-        }).addTo(ui.routeLayer);
+          pane: 'routes', bubblingMouseEvents: false,
+          color: draft ? COLORS.orange : active ? COLORS.blue : COLORS.gray,
+          weight: draft ? weight + 1 : weight, opacity: 1,
+          dashArray: draft ? '0.1 9' : null,
+        }).bindTooltip(`${p.id}: ${stops.join(' → ')} ↺`, { sticky: true })
+          .on('click', () => selectPlane(p.id)).addTo(ui.routeLayer);
       }
       const ferryTo = p.pendingFerry || (p.flight && p.flight.kind === 'ferry' ? p.flight.to : null);
       if (ferryTo) {
-        const from = G.airportByCode[p.flight ? p.flight.from : p.location];
-        const to = G.airportByCode[ferryTo];
-        L.polyline([[from.lat, from.lon], [to.lat, to.lon]], {
-          color: '#7c3aed', weight: 2, dashArray: '6 6',
-        }).addTo(ui.routeLayer);
+        L.polyline(arc(ap(p.flight ? p.flight.from : p.location), ap(ferryTo)), {
+          pane: 'routes', bubblingMouseEvents: false,
+          color: COLORS.purple, weight: selected ? 4 : 2.5, opacity: 1, dashArray: '7 7',
+        }).bindTooltip(`${p.id}: ferry to ${ferryTo}`, { sticky: true })
+          .on('click', () => selectPlane(p.id)).addTo(ui.routeLayer);
       }
     }
   }
@@ -127,13 +340,24 @@
       const a = G.airportByCode[f.from];
       const b = G.airportByCode[f.to];
       const frac = Math.min(1, Math.max(0, (G.state.time - f.dep) / (f.arr - f.dep)));
-      return { latlng: G.interpolate(a, b, frac), heading: G.bearing(a, b) };
+      const at = G.interpolate(a, b, Math.min(frac, 0.99)); // no heading at the destination itself
+      return { latlng: G.interpolate(a, b, frac), heading: G.bearing({ lat: at[0], lon: at[1] }, b) };
     }
     const ap = G.airportByCode[p.location];
     return { latlng: [ap.lat, ap.lon], heading: 0 };
   }
 
+  const planeTip = (p) => `<b>${p.id}</b> · ${planeStatus(p)}`;
+
+  function refreshPlanes() {
+    for (const p of G.state.planes) {
+      const m = ui.planeMarkers[p.id];
+      if (m) m.setTooltipContent(planeTip(p));
+    }
+  }
+
   function updatePlanes() {
+    const parked = {}; // airport code -> planes on the ground there so far
     for (const id of Object.keys(ui.planeMarkers)) {
       if (!G.plane(id)) {
         ui.planeMarkers[id].remove();
@@ -145,22 +369,22 @@
       let m = ui.planeMarkers[p.id];
       if (!m) {
         m = L.marker(pos.latlng, {
-          icon: L.divIcon({ className: 'plane-icon', html: '<div class="plane">✈</div>', iconSize: [26, 26], iconAnchor: [13, 13] }),
+          icon: L.divIcon({ className: 'plane-icon', html: `<div class="plane">${PLANE_SVG}</div>`, iconSize: [28, 28], iconAnchor: [14, 14] }),
           zIndexOffset: 1000,
-        }).bindTooltip(p.id, { direction: 'top', offset: [0, -10] }).addTo(ui.map);
-        m.on('click', () => {
-          ui.selectedPlane = p.id;
-          ui.tab = 'fleet';
-          G.dirty = true;
-        });
+        }).bindTooltip(planeTip(p), { direction: 'top', offset: [0, -14] }).addTo(ui.map);
+        m.on('click', () => selectPlane(p.id));
         ui.planeMarkers[p.id] = m;
       }
       m.setLatLng(pos.latlng);
       const el = m.getElement();
       if (el) {
         const glyph = el.querySelector('.plane');
-        glyph.style.transform = `rotate(${pos.heading - 90}deg)`; // ✈ glyph points east
-        glyph.classList.toggle('grounded', p.status !== 'flying');
+        const flying = p.status === 'flying';
+        // Parked planes line up above their airport so it stays clickable.
+        const n = flying ? 0 : (parked[p.location] = (parked[p.location] || 0) + 1) - 1;
+        glyph.style.transform = flying ? `rotate(${pos.heading}deg)` : `translate(${n * 13}px, -15px) scale(0.75)`;
+        glyph.classList.toggle('grounded', !flying);
+        glyph.classList.toggle('selected', ui.selectedPlane === p.id);
       }
     }
   }
@@ -180,6 +404,28 @@
   }
 
   // ---------- sidebar ----------
+  // Ticket price of a route with − / + to change it (applies to both directions).
+  function fareCell(a, b) {
+    const f = G.fareFactor(a, b);
+    const btn = (dir, label, off) => `<button class="mini" data-action="fare" data-from="${a}" data-to="${b}"
+      data-dir="${dir}" ${off ? 'disabled' : ''}>${label}</button>`;
+    return `<td class="fare">${btn(-1, '−', f <= C.ticket.minFactor)} ${G.fmtMoney(G.fare(a, b))}
+      ${btn(1, '+', f >= C.ticket.maxFactor)} <span class="muted">${Math.round(f * 100)}%</span></td>`;
+  }
+
+  // Prices for every route a schedule flies.
+  function fareTable(stops) {
+    const seen = new Set();
+    let h = `<table class="small"><tr><th>Route</th><th>pax/day</th><th>ticket</th></tr>`;
+    stops.forEach((a, i) => {
+      const b = stops[(i + 1) % stops.length];
+      if (a === b || seen.has(G.routeKey(a, b))) return;
+      seen.add(G.routeKey(a, b));
+      h += `<tr><td>${a} ↔ ${b}</td><td>${G.demand(a, b)}</td>${fareCell(a, b)}</tr>`;
+    });
+    return h + `</table>`;
+  }
+
   function airportPanel(code) {
     const a = G.airportByCode[code];
     const s = G.state;
@@ -215,8 +461,8 @@
       h += `<table class="small"><tr><th>From your slot</th><th>km</th><th>pax/day</th><th>ticket</th></tr>`;
       for (const o of others) {
         const d = G.dist(o, code);
-        h += `<tr><td>${o} → ${code}</td><td>${Math.round(d)}</td><td>${G.dailyDemand(o, code)}</td>
-          <td>${G.fmtMoney(G.ticketPrice(d))}</td></tr>`;
+        h += `<tr><td>${o} → ${code}</td><td>${Math.round(d)}</td><td>${G.demand(o, code)}</td>
+          ${fareCell(o, code)}</tr>`;
       }
       h += `</table>`;
     }
@@ -296,6 +542,8 @@
       } else {
         h += `<div class="muted">No schedule yet.</div>`;
       }
+      const flown = ui.drafts[p.id] || sch.stops;
+      if (flown.length >= 2) h += fareTable(flown);
 
       if (ui.drafts[p.id]) {
         h += scheduleEditor(p);
@@ -418,7 +666,7 @@
       <tr><th>Airport</th><th>km</th><th>pax/day</th><th>slot</th></tr>`;
     const ranked = D.airports
       .filter((a) => a.code !== C.startAirport)
-      .map((a) => ({ a, demand: G.dailyDemand(C.startAirport, a.code) }))
+      .map((a) => ({ a, demand: G.demand(C.startAirport, a.code) }))
       .sort((x, y) => y.demand - x.demand)
       .slice(0, 15);
     for (const { a, demand } of ranked) {
@@ -474,6 +722,7 @@
   function renderAll() {
     renderSidebar();
     refreshAirports();
+    refreshPlanes();
     drawRoutes();
   }
 
@@ -497,6 +746,7 @@
       case 'releaseSlot': act(G.releaseSlot(code)); break;
       case 'sendPlane': act(G.sendPlane(plane, code)); break;
       case 'sendSelect': act(G.sendPlane(plane, $(`send-${plane}`).value)); break;
+      case 'fare': G.changeFare(el.dataset.from, el.dataset.to, Number(el.dataset.dir)); break;
       case 'start': act(G.setScheduleActive(plane, true)); break;
       case 'tab': e.preventDefault(); ui.tab = el.dataset.tabTo; break;
       case 'buyNew': act(G.buyNew(el.dataset.type, code)); break;

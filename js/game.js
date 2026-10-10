@@ -70,7 +70,8 @@
     return Math.round(C.demandFactor * Math.sqrt(catchment(from) * catchment(to)) * distanceFactor(d));
   }
 
-  const ticketPrice = (d) => Math.round(C.ticket.base + C.ticket.perKm * d);
+  const ticketPrice = (d) => Math.round(C.ticket.base + C.ticket.perKm * d); // standard fare
+  const routeKey = (a, b) => (a < b ? `${a}-${b}` : `${b}-${a}`); // same for both directions
   const blockMinutes = (type, d) => Math.round((d / D.aircraft[type].speedKmh) * 60 + C.taxiMin);
   const landingFee = (code) => C.landingFee.base + C.landingFee.perSize * airportByCode[code].size;
   const slotUpfront = (code) => C.slot.upfront[airportByCode[code].size];
@@ -122,7 +123,7 @@
     dirty: true, // UI needs a full re-render
 
     airportByCode, distanceKm, dist, bearing, interpolate, catchment, dailyDemand,
-    ticketPrice, blockMinutes, landingFee, slotUpfront, slotWeekly,
+    ticketPrice, routeKey, blockMinutes, landingFee, slotUpfront, slotWeekly,
     priceNew, fitsAirport, crewFor,
     fmtMoney, fmtTime, fmtClock, fmtDuration,
 
@@ -159,6 +160,7 @@
           weeklySalary: crewT.weeklySalary,
           dutyToday: 0,
         }],
+        fares: {}, // routeKey -> price factor on the standard fare (missing = 1)
         carriedToday: {},
         today: { revenue: 0, cost: 0, fixed: 0, flights: 0, pax: 0 },
         history: [],
@@ -198,6 +200,7 @@
         s.market = { listings: [], nextId: 1 };
         this.refreshMarket();
       }
+      if (!s.fares) s.fares = {};
     },
 
     save() {
@@ -227,6 +230,21 @@
       const crews = s.crews.reduce((sum, c) => sum + c.weeklySalary, 0);
       const slots = Object.keys(s.slots).reduce((sum, code) => sum + slotWeekly(code), 0);
       return { planes, crews, slots, total: planes + crews + slots };
+    },
+
+    // ---------- ticket prices ----------
+    // Every route has its own price factor; dearer tickets sell fewer seats.
+    fareFactor(a, b) { return this.state.fares[routeKey(a, b)] || 1; },
+    fare(a, b) { return Math.round(ticketPrice(dist(a, b)) * this.fareFactor(a, b)); },
+    demand(a, b) {
+      return Math.round(dailyDemand(a, b) * Math.pow(this.fareFactor(a, b), -C.ticket.elasticity));
+    },
+
+    changeFare(a, b, steps) {
+      const T = C.ticket;
+      const f = Math.round((this.fareFactor(a, b) + steps * T.step) * 100) / 100;
+      this.state.fares[routeKey(a, b)] = Math.min(T.maxFactor, Math.max(T.minFactor, f));
+      this.dirty = true;
     },
 
     // ---------- simulation ----------
@@ -349,11 +367,11 @@
       let revenue = 0;
       if (leg.kind === 'scheduled') {
         const key = `${p.location}-${leg.to}`;
-        const left = Math.max(0, dailyDemand(p.location, leg.to) - (s.carriedToday[key] || 0));
+        const left = Math.max(0, this.demand(p.location, leg.to) - (s.carriedToday[key] || 0));
         const luck = 0.85 + Math.random() * 0.3;
         pax = Math.min(ac.seats, left, Math.round(left * luck));
         s.carriedToday[key] = (s.carriedToday[key] || 0) + pax;
-        revenue = pax * ticketPrice(d);
+        revenue = pax * this.fare(p.location, leg.to);
         p.schedule.index = leg.nextIndex;
       } else if (p.pendingFerry === leg.to) {
         p.pendingFerry = null;
@@ -397,6 +415,7 @@
         (p.flight && p.flight.to === code) || p.schedule.stops.includes(code));
       if (used) return 'A plane is there, heading there or scheduled there.';
       delete s.slots[code];
+      for (const key of Object.keys(s.fares)) if (key.split('-').includes(code)) delete s.fares[key];
       this.log(`Released slot at ${airportByCode[code].name}.`);
       return null;
     },
@@ -558,9 +577,9 @@
         const from = stops[i];
         const to = stops[(i + 1) % stops.length];
         const d = dist(from, to);
-        const demand = dailyDemand(from, to);
+        const demand = this.demand(from, to);
         const pax = Math.min(ac.seats, demand);
-        const revenue = pax * ticketPrice(d);
+        const revenue = pax * this.fare(from, to);
         const cost = flightCost(type, d, to, pax, costMult);
         legs.push({ from, to, d: Math.round(d), block: blockMinutes(type, d), demand, pax, revenue, cost });
       }

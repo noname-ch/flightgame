@@ -23,7 +23,11 @@ FG.config = {
   // Demand model
   catchmentRadiusKm: 150,   // towns within this radius feed an airport
   demandFactor: 0.00004,    // daily pax per direction = factor * sqrt(catchA * catchB) * distanceFactor
-  ticket: { base: 60, perKm: 0.11 },
+  ticket: {
+    base: 60, perKm: 0.11,    // standard fare = base + perKm * distance
+    elasticity: 1.5,          // demand = standard demand * priceFactor ^ -elasticity
+    minFactor: 0.5, maxFactor: 2, step: 0.05, // player's price factor per route
+  },
   paxFee: 8,                // airport fee per passenger
   landingFee: { base: 300, perSize: 400 },
 
