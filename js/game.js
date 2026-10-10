@@ -28,8 +28,16 @@
     return (toDeg(Math.atan2(y, x)) + 360) % 360;
   }
 
+  // Point at fraction f along the great circle from a to b.
   function interpolate(a, b, f) {
-    return [a.lat + (b.lat - a.lat) * f, a.lon + (b.lon - a.lon) * f];
+    const delta = distanceKm(a, b) / 6371;
+    if (delta < 1e-6) return [a.lat, a.lon];
+    const wa = Math.sin((1 - f) * delta) / Math.sin(delta);
+    const wb = Math.sin(f * delta) / Math.sin(delta);
+    const x = wa * Math.cos(toRad(a.lat)) * Math.cos(toRad(a.lon)) + wb * Math.cos(toRad(b.lat)) * Math.cos(toRad(b.lon));
+    const y = wa * Math.cos(toRad(a.lat)) * Math.sin(toRad(a.lon)) + wb * Math.cos(toRad(b.lat)) * Math.sin(toRad(b.lon));
+    const z = wa * Math.sin(toRad(a.lat)) + wb * Math.sin(toRad(b.lat));
+    return [toDeg(Math.atan2(z, Math.hypot(x, y))), toDeg(Math.atan2(y, x))];
   }
 
   function dist(codeA, codeB) {

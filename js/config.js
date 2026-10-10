@@ -17,6 +17,7 @@ FG.config = {
     zoom: 5,
     minZoom: 3,
     bounds: [[25, -40], [75, 50]],
+    labelZoom: 10,          // airport code shown from zoom (labelZoom - size); own slots always
   },
 
   // Demand model
