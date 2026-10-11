@@ -11,7 +11,8 @@ leased aircraft (ATR 72, Dash 8-400, E190, A220-300, A320neo or 737-800). The de
 ## Run
 
 Open `index.html` in a browser (needs internet for the map tiles and Leaflet).
-Or serve it locally: `python3 -m http.server` and open http://localhost:8000.
+Or run it locally: `./play.sh` starts a small server and opens http://localhost:8000 in the browser.
+Double-clicking `index.html` (a `file://` page) is not enough: browsers block the 3D view's modules there.
 
 ## How to play
 

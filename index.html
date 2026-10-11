@@ -91,7 +91,10 @@
       document.getElementById('view3d-toggle').addEventListener('click', () => setTimeout(() => {
         if (window.FG && FG.view3d) return;
         const t = document.getElementById('toast');
-        t.textContent = `3D view not loaded${why ? `: ${why}` : ' yet'}. Reload with Ctrl+Shift+R (needs internet).`;
+        t.textContent = location.protocol === 'file:'
+          // Browsers never load ES modules from file:// pages.
+          ? '3D needs the game served over http: open https://noname-ch.github.io/flightgame/ or run ./play.sh.'
+          : `3D view not loaded${why ? `: ${why}` : ' yet'}. Reload with Ctrl+Shift+R (needs internet).`;
         t.className = 'show bad';
         clearTimeout(t.devTimer);
         t.devTimer = setTimeout(() => { t.className = ''; }, 6000);
