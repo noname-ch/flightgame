@@ -86,7 +86,9 @@ Gates: every airport has an apron beside its longest runway with a terminal, gat
 terminal expansions add more. Zoom in on an airport to see them (2D from zoom 14, 3D from zoom 12). A plane
 gets a free stand when it leaves for an airport, taxis nose-in onto it, parks there (the fleet card shows
 the gate) and is pushed back from it tail first by a tug. `G.apronOf(code)` has the layout, `G.gateOf`
-the stand of a plane.
+the stand of a plane. The stands the game lays out itself have lead-in curves from the taxi lane, white limits
+between them, a service road in front of the noses and jet bridges with a rotunda at the terminal, an angled
+tunnel and a cab at the front left door (`ap.markings`, bridge parts in `ap.buildings`).
 
 Airports in 3D: the 3D view also draws the runways (from zoom 10), a taxiway parallel to each runway with
 links to the runway ends, the runway exits and the apron, and the buildings: the terminal in one of five

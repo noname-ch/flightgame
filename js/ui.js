@@ -419,7 +419,7 @@
       for (const r of ap.aprons || [ap.apron]) L.polygon(r, { ...quiet, stroke: false, fillColor: '#3a4049', fillOpacity: 0.92 }).addTo(ui.gateLayer);
       for (const b of ap.buildings) {
         if (b.kind === 'cab') continue;
-        L.polygon(b.ring, { ...quiet, color: '#e2e8f0', weight: 1, fillColor: b.kind === 'tower' ? '#cbd5e1' : b.kind === 'terminal' ? '#64748b' : '#57606c', fillOpacity: 1 }).addTo(ui.gateLayer);
+        L.polygon(b.ring, { ...quiet, color: '#e2e8f0', weight: 1, fillColor: b.kind === 'tower' || b.kind === 'bridge' ? '#cbd5e1' : b.kind === 'terminal' ? '#64748b' : '#57606c', fillOpacity: 1 }).addTo(ui.gateLayer);
       }
       // developer tools: where construction at the selected airport would go
       if (FG.devPreview && ui.selectedAirport === a.code) {
@@ -434,6 +434,9 @@
       L.polygon(ap.terminal, { pane: 'gates', color: '#e2e8f0', weight: 1, fillColor: '#64748b', fillOpacity: 1, bubblingMouseEvents: false })
         .bindTooltip(`${a.code} terminal · ${ap.gates.length} gates with jet bridges · ${ap.stands.length - ap.gates.length} remote stands`, { sticky: true })
         .addTo(ui.gateLayer);
+      for (const mk of ap.markings || []) {
+        L.polyline(mk.line, { ...quiet, color: mk.kind === 'w' ? '#e5e7eb' : '#facc15', weight: 1, opacity: 0.8 }).addTo(ui.gateLayer);
+      }
       for (const st of ap.stands) {
         L.polyline(st.lead, { ...quiet, color: '#facc15', weight: 1.2, opacity: 0.85 }).addTo(ui.gateLayer);
         L.polyline(st.stopBar, { ...quiet, color: '#facc15', weight: 2.5 }).addTo(ui.gateLayer);

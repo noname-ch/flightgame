@@ -296,6 +296,7 @@ function gateFeatures(list, gates) {
     const ap = G.apronOf(a.code);
     for (const r of ap.aprons || [ap.apron]) poly(r, { kind: 'apron' });
     for (const b of ap.buildings) poly(b.ring, { kind: 'building', part: b.kind, base: b.base, h: b.h });
+    for (const m of ap.markings || []) path(m.line, { kind: m.kind === 'w' ? 'paint' : 'lead' });
     for (const st of ap.stands) {
       path(st.lead, { kind: 'lead' });
       path(st.stopBar, { kind: 'stop' });
@@ -427,12 +428,14 @@ function transformStyle(_prev, style) {
       paint: { 'line-color': '#e3b70f', 'line-width': 1 } },
     { id: 'fg-runway-lines', type: 'line', source: 'fg-gates', minzoom: 12, filter: kind('rwline'),
       paint: { 'line-color': '#f3f4f6', 'line-width': ['interpolate', ['linear'], ['zoom'], 12, 0.6, 16, 2], 'line-dasharray': [6, 5] } },
+    { id: 'fg-paint', type: 'line', source: 'fg-gates', minzoom: 15, filter: kind('paint'),
+      paint: { 'line-color': '#e5e7eb', 'line-width': 1, 'line-opacity': 0.8 } },
     { id: 'fg-stands', type: 'line', source: 'fg-gates', minzoom: 14, filter: ['in', ['get', 'kind'], ['literal', ['lead', 'stop']]],
       layout: { 'line-cap': 'butt' },
       paint: { 'line-color': '#facc15', 'line-width': ['case', ['==', ['get', 'kind'], 'stop'], 3, 1.2] } },
     { id: 'fg-terminals', type: 'fill-extrusion', source: 'fg-gates', minzoom: GATE_MINZOOM, filter: kind('building'),
       paint: {
-        'fill-extrusion-color': ['match', ['get', 'part'], 'tower', '#aab4c2', 'cab', '#27313f', 'hangar', '#7b8590', 'carpark', '#6b7280', 'hall', '#97a3b4', '#8a96a8'],
+        'fill-extrusion-color': ['match', ['get', 'part'], 'tower', '#aab4c2', 'cab', '#27313f', 'hangar', '#7b8590', 'carpark', '#6b7280', 'hall', '#97a3b4', 'bridge', '#c3ccd8', '#8a96a8'],
         'fill-extrusion-base': ['get', 'base'], 'fill-extrusion-height': ['get', 'h'], 'fill-extrusion-opacity': 0.95,
       } },
     { id: 'fg-bridges', type: 'fill-extrusion', source: 'fg-gates', minzoom: 14, filter: kind('bridge'),

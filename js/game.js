@@ -327,13 +327,41 @@
       const p = offsetPoint(base[0], base[1], hdg, along);
       return offsetPoint(p[0], p[1], nose, out);
     };
+    const bridgeParts = []; // jet bridge pieces above the apron, as buildings
+    const markings = [];    // paint on the apron: { line, kind: 'y' yellow or 'w' white }
     const stand = (along, name, bridge) => {
       const [lat, lon] = at(along, 0);
       const s = { lat, lon, heading: nose, name, bridge, along,
         lead: [at(along, -TAXI_LANE), at(along, stop)], stopBar: [at(along - 4, stop), at(along + 4, stop)] };
-      if (bridge) { // from the terminal to the front left door
-        const x = along + side * 4.5;
-        s.bridgePoly = [at(x - 1.8, front), at(x + 1.8, front), at(x + 1.8, stop - 7), at(x - 1.8, stop - 7)];
+      // lead-in curves from the taxi lane onto the stand centre line, from both directions
+      const turn = 22;
+      for (const d of [-1, 1]) {
+        const arc = [];
+        for (let i = 0; i <= 6; i++) {
+          const a = (i / 6) * Math.PI / 2;
+          arc.push(at(along + d * turn * (1 - Math.sin(a)), -TAXI_LANE + turn * (1 - Math.cos(a))));
+        }
+        markings.push({ line: arc, kind: 'y' });
+      }
+      if (bridge) {
+        // Jet bridge to the front left door: a short link out of the terminal to a rotunda, from there the
+        // tunnel runs at an angle to the cab at the door; a wheeled support carries it.
+        const r = [along + side * 13, front - 3];
+        const c = [along + side * 4.6, stop - 6];
+        const len = Math.hypot(c[0] - r[0], c[1] - r[1]);
+        const nx = -(c[1] - r[1]) / len * 1.3;
+        const ny = (c[0] - r[0]) / len * 1.3;
+        s.bridgePoly = [at(r[0] + nx, r[1] + ny), at(c[0] + nx, c[1] + ny), at(c[0] - nx, c[1] - ny), at(r[0] - nx, r[1] - ny)];
+        const round = [];
+        for (let i = 0; i < 8; i++) round.push(at(r[0] + 2.6 * Math.cos(i * Math.PI / 4), r[1] + 2.6 * Math.sin(i * Math.PI / 4)));
+        const sq = (p, h) => [at(p[0] - h, p[1] - h), at(p[0] + h, p[1] - h), at(p[0] + h, p[1] + h), at(p[0] - h, p[1] + h)];
+        const leg = [r[0] + (c[0] - r[0]) * 0.7, r[1] + (c[1] - r[1]) * 0.7];
+        bridgeParts.push(
+          { ring: [at(r[0] - 1.4, front - 3), at(r[0] + 1.4, front - 3), at(r[0] + 1.4, front), at(r[0] - 1.4, front)], base: 3.5, h: 6.5, kind: 'bridge' },
+          { ring: round, base: 0, h: 7, kind: 'bridge' },
+          { ring: sq(c, 1.9), base: 3.3, h: 6.8, kind: 'bridge' },
+          { ring: sq(leg, 0.9), base: 0, h: 3.5, kind: 'bridge' },
+        );
       }
       return s;
     };
@@ -374,9 +402,18 @@
       const x = (k % 2 ? 1 : -1) * (reach + 45 + 75 * Math.floor(k / 2));
       buildings.push(box(x - 30, x + 30, front + 5, front + 50, 14, 'hangar'));
     }
+    buildings.push(...bridgeParts);
+    // White paint: the limits between the stands, and the service road in front of the aircraft noses.
+    const alongs = stands.map((s) => s.along).sort((x, y) => x - y);
+    for (let i = 0; i <= alongs.length; i++) {
+      const m = i === 0 ? alongs[0] - sp / 2 : i === alongs.length ? alongs[i - 1] + sp / 2 : (alongs[i - 1] + alongs[i]) / 2;
+      markings.push({ line: [at(m, -TAXI_LANE + 28), at(m, stop + 3)], kind: 'w' });
+    }
+    markings.push({ line: [at(-reach + 10, stop + 4), at(reach - 10, stop + 4)], kind: 'w' });
+    markings.push({ line: [at(-half - 5, stop + 10), at(half + 5, stop + 10)], kind: 'w' });
     const lane = (along) => at(along, -TAXI_LANE);
     ap = {
-      code, hdg, side, nose, spacing: sp, gates: contact, stands, buildings,
+      code, hdg, side, nose, spacing: sp, gates: contact, stands, buildings, markings,
       terminal: [at(-half - 5, front), at(half + 5, front), at(half + 5, front + depth), at(-half - 5, front + depth)],
       apron: [at(-reach, -TAXI_LANE - 25), at(reach, -TAXI_LANE - 25), at(reach, front), at(-reach, front)],
       // The apron taxi lane behind the stands, its middle, and where taxiways leave it.
