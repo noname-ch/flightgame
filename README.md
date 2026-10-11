@@ -1,5 +1,7 @@
 # Flightgame
 
+**Play online: https://noname-ch.github.io/flightgame/** (updates automatically with every push to `main`)
+
 A small airline management game in the browser, in a dark theme. The start screen lets you
 continue your saved airline or found a new one: pick its name, the mode, the difficulty, your home
 airport (30 small airports across the world with cheap slots, `startAirports` in `config.js`) and your first
