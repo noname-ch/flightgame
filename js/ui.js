@@ -451,8 +451,9 @@
       }
       for (const r of ap.aprons || [ap.apron]) L.polygon(r, { ...quiet, stroke: false, fillColor: '#3a4049', fillOpacity: 0.92 }).addTo(ui.gateLayer);
       for (const b of ap.buildings) {
-        if (b.kind === 'cab') continue;
-        L.polygon(b.ring, { ...quiet, color: '#e2e8f0', weight: 1, fillColor: b.kind === 'tower' || b.kind === 'bridge' ? '#cbd5e1' : b.kind === 'terminal' ? '#64748b' : '#57606c', fillOpacity: 1 }).addTo(ui.gateLayer);
+        const fill = { terminal: '#64748b', hall: '#6b7a90', roof: '#94a3b8', tower: '#cbd5e1', bridge: '#cbd5e1', road: '#3b4048', carpark: '#57606c', hangar: '#57606c' }[b.kind];
+        if (!fill) continue; // glazing, roof plant, masts and the like are too small to show from above
+        L.polygon(b.ring, { ...quiet, color: '#e2e8f0', weight: b.kind === 'road' ? 0 : 1, fillColor: fill, fillOpacity: 1 }).addTo(ui.gateLayer);
       }
       // developer tools: where construction at the selected airport would go
       if (FG.devPreview && ui.selectedAirport === a.code) {

@@ -323,7 +323,6 @@
     const nose = (hdg + 90 * side + 360) % 360;
     const stop = Math.round(sp * 0.4); // nose stop bar ahead of the stand point
     const front = stop + 12;           // terminal front
-    const depth = 25 + 6 * size;
     // metres along the runway direction / out towards the terminal -> [lat, lon]
     const at = (along, out) => {
       const p = offsetPoint(base[0], base[1], hdg, along);
@@ -378,31 +377,78 @@
       stands.push(stand(along, `R${j + 1}`, false));
     }
     const reach = half + sp * Math.ceil(n / 2) + 10;
-    // Buildings by tier (the airport's size) and one of five layouts per airport: the gate concourse, what
-    // stands behind it, the control tower and hangars. Each is { ring, base, h, kind } with heights in metres.
+    // Buildings by tier (the airport's size), composed like real terminals in one of five layouts per airport:
+    // a low concourse with a glazed front along the gates, the taller main hall behind it with a stepped roof,
+    // a canopy over the forecourt road, a multi-storey car park, the control tower, hangars and a cargo shed.
+    // Each is { ring, base, h, kind } with heights in metres.
     const W = 2 * half + 10;
-    const back = front + depth;
-    const roof = 10 + 3 * size;
     const box = (a0, a1, o0, o1, h, kind, base = 0) => ({ ring: [at(a0, o0), at(a1, o0), at(a1, o1), at(a0, o1)], base, h, kind });
-    const buildings = [box(-W / 2, W / 2, front, back, roof, 'terminal')];
     const layout = size >= 2 ? Math.floor(hash01(code.charCodeAt(0), code.charCodeAt(1) || 0, code.charCodeAt(2) || 0, 7) * 5) : 0;
-    if (layout === 1) buildings.push(box(-0.3 * W, 0.3 * W, back, back + 0.8 * depth, roof + 6, 'hall'));
-    if (layout === 2) for (const s of [-1, 1]) buildings.push(box(s * W / 2, s * 0.28 * W, back, back + 0.7 * depth, roof + 4, 'hall'));
-    if (layout === 3) buildings.push(box(-0.12 * W, 0.12 * W, back, back + 2.2 * depth, roof + 2, 'hall'));
-    if (layout === 4) {
-      buildings.push(box(-0.45 * W, 0.45 * W, front + 0.35 * depth, back, roof + 5, 'hall', roof));
-      buildings.push(box(0.1 * W, 0.5 * W, back + 15, back + 15 + depth, 8, 'carpark'));
+    const concD = 14 + 2 * size;          // depth of the concourse
+    const concH = 7 + size;
+    const back = front + concD;
+    const cut = Math.min(6, W / 8);       // its airside corners are cut off
+    const buildings = [
+      { ring: [at(-W / 2 + cut, front), at(W / 2 - cut, front), at(W / 2, front + cut), at(W / 2, back), at(-W / 2, back), at(-W / 2, front + cut)], base: 0, h: concH, kind: 'terminal' },
+      box(-W / 2 + cut, W / 2 - cut, front - 0.6, front, concH - 1.5, 'glass', 2),
+    ];
+    for (let x = -W / 2 + 30; x < W / 2 - 20; x += 60) buildings.push(box(x - 4, x + 4, front + concD * 0.4, front + concD * 0.7, concH + 2, 'plant', concH));
+    // A hall with a roof that rises in two steps towards its ridge, a canopy and the road in front of it.
+    const hallD = 22 + 8 * size;
+    const hallH = 12 + 3 * size;
+    const hall = (a0, a1, deep = hallD, h = hallH) => {
+      const o1 = back + deep;
+      buildings.push(box(a0, a1, back, o1, h, 'hall'));
+      buildings.push(box(a0 + 2, a1 - 2, back + deep * 0.15, back + deep * 0.85, h + 2.2, 'roof', h));
+      buildings.push(box(a0 + 4, a1 - 4, back + deep * 0.32, back + deep * 0.68, h + 3.8, 'roof', h + 2.2));
+      buildings.push(box(a0, a1, o1 - 0.6, o1, h - 2, 'glass', 2));
+      if (size >= 2) {
+        buildings.push(box(a0 + 3, a1 - 3, o1, o1 + 9, 6, 'canopy', 5.2));
+        buildings.push(box(a0 - 25, a1 + 25, o1 + 1, o1 + 10, 0.15, 'road'));
+      }
+      return o1;
+    };
+    let landside = back;
+    if (size === 0) landside = back;
+    else if (layout === 0) landside = hall(-0.32 * W, 0.32 * W);
+    else if (layout === 1) landside = hall(-0.48 * W, 0.08 * W);
+    else if (layout === 2) { // two halls with a lower link between them
+      landside = Math.max(hall(-0.46 * W, -0.1 * W), hall(0.1 * W, 0.46 * W));
+      buildings.push(box(-0.1 * W, 0.1 * W, back, back + hallD * 0.45, hallH - 4, 'terminal'));
+    } else if (layout === 3) landside = hall(-0.14 * W, 0.14 * W, hallD * 1.9); // deep and narrow
+    else { // the hall bulges out landside in a curve
+      const curve = [];
+      for (let i = 0; i <= 8; i++) { const t = -1 + i / 4; curve.push(at(t * 0.36 * W, back + hallD * (0.55 + 0.6 * Math.sqrt(1 - t * t)))); }
+      buildings.push({ ring: [at(-0.36 * W, back), at(0.36 * W, back), ...curve.reverse()], base: 0, h: hallH, kind: 'hall' });
+      const top = [];
+      for (let i = 0; i <= 8; i++) { const t = -1 + i / 4; top.push(at(t * 0.3 * W, back + hallD * (0.5 + 0.45 * Math.sqrt(1 - t * t)))); }
+      buildings.push({ ring: [at(-0.3 * W, back + 4), at(0.3 * W, back + 4), ...top.reverse()], base: hallH, h: hallH + 3, kind: 'roof' });
+      landside = back + hallD * 1.15;
+      if (size >= 2) buildings.push(box(-0.36 * W - 25, 0.36 * W + 25, landside + 2, landside + 11, 0.15, 'road'));
+    }
+    if (size >= 3) { // multi-storey car park across the road: its decks show as stripes
+      const p0 = landside + 22;
+      const px = layout % 2 ? -0.3 * W : 0.05 * W;
+      const decks = 2 + size;
+      for (let d = 0; d < decks; d++) buildings.push(box(px, px + Math.min(0.3 * W, 110), p0, p0 + 42, d * 3 + 1.2, 'carpark', d * 3));
     }
     if (size >= 1) { // control tower beside one end of the terminal: taller and wider with every tier
       const tw = 5 + size;
       const th = [0, 14, 20, 30, 42, 55][size];
       const tx = -(W / 2 + 30);
-      buildings.push(box(tx - tw / 2, tx + tw / 2, back + 15, back + 15 + tw, th, 'tower'));
-      buildings.push(box(tx - tw / 2 - 2, tx + tw / 2 + 2, back + 13, back + 17 + tw, th + 5, 'cab', th));
+      const ty = back + 15 + tw / 2;
+      const sq = (halfW, h, kind, base) => box(tx - halfW, tx + halfW, ty - halfW, ty + halfW, h, kind, base);
+      buildings.push(sq(tw / 2 + 2.5, th * 0.22, 'tower', 0), sq(tw / 2, th, 'tower', th * 0.22), sq(tw / 2 + 2.2, th + 4.5, 'cab', th),
+        sq(tw / 2 + 1.2, th + 5.3, 'roof', th + 4.5), sq(0.4, th + 11, 'mast', th + 5.3));
     }
-    for (let k = 0; k < size - 1; k++) { // hangars beyond the remote stands
+    for (let k = 0; k < size - 1; k++) { // hangars beyond the remote stands, with a ridge and a low annex
       const x = (k % 2 ? 1 : -1) * (reach + 45 + 75 * Math.floor(k / 2));
-      buildings.push(box(x - 30, x + 30, front + 5, front + 50, 14, 'hangar'));
+      buildings.push(box(x - 30, x + 30, front + 5, front + 50, 13, 'hangar'), box(x - 30, x + 30, front + 20, front + 35, 16, 'roof', 13),
+        box(x - 30, x + 30, front + 50, front + 62, 6, 'hangar'));
+    }
+    if (size >= 3) { // cargo shed behind the hangars on one side
+      const x = -(reach + 45 + 75 * Math.ceil((size - 1) / 2) + 20);
+      buildings.push(box(x - 55, x + 35, front + 8, front + 44, 9, 'hangar'), box(x - 55, x + 35, front + 8, front + 44, 9.6, 'roof', 9));
     }
     buildings.push(...bridgeParts);
     // White paint: the limits between the stands, and the service road in front of the aircraft noses.
@@ -416,7 +462,7 @@
     const lane = (along) => at(along, -TAXI_LANE);
     ap = {
       code, hdg, side, nose, spacing: sp, gates: contact, stands, buildings, markings,
-      terminal: [at(-half - 5, front), at(half + 5, front), at(half + 5, front + depth), at(-half - 5, front + depth)],
+      terminal: [at(-half - 5, front), at(half + 5, front), at(half + 5, back), at(-half - 5, back)],
       apron: [at(-reach, -TAXI_LANE - 25), at(reach, -TAXI_LANE - 25), at(reach, front), at(-reach, front)],
       // The apron taxi lane behind the stands, its middle, and where taxiways leave it.
       lane: [lane(-reach + 15), lane(reach - 15)],
