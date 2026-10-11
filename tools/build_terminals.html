@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Terminals to copy</title>
+<style>body { margin: 16px; background: #0c1118; color: #e5e7eb; font: 13px/1.5 ui-monospace, monospace; white-space: pre-wrap; word-break: break-all; }</style>
+</head>
+<body>Terminals to copy: the list for js/data/terminals.js (open this page through a local web server)
+<span id="log"></span>
+<script src="../js/config.js"></script>
+<script src="../js/data/aircraft.js"></script>
+<script src="../js/data/airports.js"></script>
+<script src="../js/data/airports-more.js"></script>
+<script src="../js/data/runways.js"></script>
+<script src="../js/data/towns.js"></script>
+<script src="../js/data/cities.js"></script>
+<script src="../js/data/factories.js"></script>
+<script src="../js/data/looks.js"></script>
+<script src="../js/data/models.js"></script>
+<script src="../js/data/layouts.js"></script>
+<script src="../js/data/events.js"></script>
+<script src="../js/data/rivals.js"></script>
+<script src="../js/game.js"></script>
+<script>
+// Goes through the layouts of the big airports (size 5) and lists the terminals whose layout a terminal the
+// player builds can copy (game.js terminalPiece / copiedApron): at least 10 stands, half of them or more at
+// the building, a building of 8000 m² or more, taxi lanes, and no bigger than 1500 m along the runway and
+// 1000 m away from it. At most three per airport, none inside another one's piece. Fewest stands first.
+(async () => {
+  const G = FG.game;
+  const log = (s) => { document.getElementById('log').textContent += s + '\n'; };
+  const area = (r) => Math.abs(r.reduce((s, p, i) => { const q = r[(i + 1) % r.length]; return s + p[0] * q[1] - q[0] * p[1]; }, 0)) / 2;
+  const out = [];
+  for (const code of FG.data.layouts.filter((c) => G.airportByCode[c] && G.airportByCode[c].size >= 5)) {
+    const lay = await fetch(`../js/data/layouts/${code}.json`).then((r) => r.json());
+    const cand = [];
+    lay.terminals.forEach((t, ti) => {
+      const p = G.terminalPiece(code, ti, lay);
+      const n = p.stands.length;
+      const atBuilding = p.stands.filter((s) => s.d < 45).length;
+      if (n >= 10 && atBuilding >= n / 2 && area(p.rings[0]) >= 8000 && p.taxiways.length >= 2 && p.w <= 1500 && p.d <= 1000) cand.push({ ti, n, also: p.also });
+    });
+    cand.sort((x, y) => y.n - x.n);
+    const covered = new Set();
+    let kept = 0;
+    for (const k of cand) {
+      if (covered.has(k.ti) || kept >= 3) continue;
+      kept++;
+      covered.add(k.ti);
+      k.also.forEach((i) => covered.add(i));
+      out.push([code, k.ti, k.n]);
+    }
+  }
+  out.sort((x, y) => x[2] - y[2]);
+  log(`${out.length} terminals at ${new Set(out.map((o) => o[0])).size} airports:\n`);
+  log(`FG.data.terminals = ${JSON.stringify(out)};`);
+})();
+</script>
+</body>
+</html>

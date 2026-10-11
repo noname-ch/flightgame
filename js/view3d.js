@@ -307,8 +307,62 @@ function gateFeatures(list, gates) {
   return { type: 'FeatureCollection', features: feats };
 }
 
+// Real taxiways and buildings around the airports the game lays out itself, so that it keeps its own apron
+// clear of them (game.js apronOf looks at FG.obstacles[code]). When such an airport comes into view from
+// zoom 13, a hidden map of 2000 px at zoom 14 (about 3 km each way) is opened over it once and its vector
+// tiles are read. The result is kept in the browser for the airports seen last.
+const OBSTACLE_KEY = 'flightgame.obstacles';
+FG.obstacles = FG.obstacles || {};
+try { Object.assign(FG.obstacles, JSON.parse(localStorage.getItem(OBSTACLE_KEY)) || {}); } catch (e) { /* none kept */ }
+let obstacleBusy = false;
+function readObstacles() {
+  const map = v.map;
+  if (obstacleBusy || map.getZoom() < 13) return;
+  const b = map.getBounds();
+  const real = new Set(D.layouts || []);
+  const a = D.airports.find((x) => !x.factory && !real.has(x.code) && !FG.obstacles[x.code] && b.contains([x.lon, x.lat]));
+  if (!a) return;
+  obstacleBusy = true;
+  const box = document.createElement('div');
+  box.style.cssText = 'position:absolute;left:-9999px;top:0;width:2000px;height:2000px';
+  document.body.appendChild(box);
+  const side = new maplibregl.Map({ container: box, style: 'https://tiles.openfreemap.org/styles/liberty', center: [a.lon, a.lat], zoom: 14,
+    interactive: false, pixelRatio: 1, attributionControl: false });
+  const finish = () => {
+    if (!box.isConnected) return;
+    const r5 = (n) => Math.round(n * 1e5) / 1e5;
+    const lines = [];
+    const rings = [];
+    for (const f of side.querySourceFeatures('openmaptiles', { sourceLayer: 'aeroway' })) {
+      if (f.properties.class !== 'taxiway') continue;
+      const parts = f.geometry.type === 'LineString' ? [f.geometry.coordinates] : f.geometry.type === 'MultiLineString' ? f.geometry.coordinates : [];
+      for (const l of parts) for (let i = 1; i < l.length; i++) lines.push([[r5(l[i - 1][1]), r5(l[i - 1][0])], [r5(l[i][1]), r5(l[i][0])]]);
+    }
+    for (const f of side.querySourceFeatures('openmaptiles', { sourceLayer: 'building' })) {
+      const polys = f.geometry.type === 'Polygon' ? [f.geometry.coordinates] : f.geometry.type === 'MultiPolygon' ? f.geometry.coordinates : [];
+      // one point in three is enough to tell whether the building lies in a rectangle
+      for (const p of polys) rings.push(p[0].filter((c, i) => i % 3 === 0).map((c) => [r5(c[1]), r5(c[0])]));
+    }
+    const sb = side.getBounds();
+    side.remove();
+    box.remove();
+    // `reach`: how far from the airport the surroundings are known, in metres
+    FG.obstacles[a.code] = { lines, rings, reach: Math.round((sb.getNorth() - sb.getSouth()) * 111320 / 2) };
+    try {
+      const keep = Object.keys(FG.obstacles).slice(-25);
+      localStorage.setItem(OBSTACLE_KEY, JSON.stringify(Object.fromEntries(keep.map((k) => [k, FG.obstacles[k]]))));
+    } catch (e) { /* too big to keep: read again next time */ }
+    if (FG.layouts) FG.layouts.version++; // layouts and taxi ways made without them are dropped
+    v.gatesDirty = true;
+    obstacleBusy = false;
+  };
+  side.once('idle', finish);
+  setTimeout(finish, 45000);
+}
+
 function refreshGates() {
   const map = v.map;
+  readObstacles();
   const infra = (FG.layouts ? FG.layouts.version : 0) + (FG.devPreview ? `pv${FG.ui && FG.ui.selectedAirport}` : '') + Object.entries(G.state.infra).map(([c, i]) => `${c}${i.terminal || 0}${i.runways ? i.runways.length : ''}`).join();
   if (!v.gatesDirty && infra === v.gatesInfra) return;
   v.gatesDirty = false;
@@ -317,7 +371,8 @@ function refreshGates() {
   const gates = map.getZoom() >= GATE_MINZOOM;
   if (G.apronOf && map.getZoom() >= RUNWAY_MINZOOM) {
     const b = map.getBounds();
-    list = D.airports.filter((a) => !a.factory && b.contains([a.lon, a.lat]));
+    // (also those just outside: an apron can lie up to 3 km from the airport's reference point)
+    list = D.airports.filter((a) => !a.factory && a.lat > b.getSouth() - 0.03 && a.lat < b.getNorth() + 0.03 && a.lon > b.getWest() - 0.05 && a.lon < b.getEast() + 0.05);
   }
   const sig = gates + infra + list.map((a) => `${a.code}:${G.airportSize(a.code)}:${G.airportRunways(a.code).length}`).join(',');
   if (sig === v.sig.gates) return;

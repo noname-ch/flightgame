@@ -95,7 +95,10 @@ routes – sometimes one of yours (low-cost carriers even open a base for it). T
 routes with your share and every rival's network; route tables show competitors as coloured dots and your share.
 A rival can also go bust (newspaper), and its routes are gone.
 
-Gates: every airport has an apron beside its longest runway with a terminal, gates with jet bridges
+Gates: every airport has an apron beside its longest runway, where nothing is in the way: it keeps clear of
+the other runways and of the real taxiways and buildings there (read off the 3D map the first time the
+airport is looked at in 3D from zoom 13, kept in the browser). Up to size 2 the gates are one row; from size 3
+they stand on both sides of piers, so even a hub's apron is about 1 km wide. It has a terminal, gates with jet bridges
 (A1, A2, …) and remote stands without bridges (R1, …): from 2 gates at small airfields to 32 at hubs, and
 terminal expansions add more. Zoom in on an airport to see them (2D from zoom 14, 3D from zoom 12). A plane
 gets a free stand when it leaves for an airport, taxis nose-in onto it, parks there (the fleet card shows
@@ -116,6 +119,18 @@ along the real taxiways. The data is © OpenStreetMap contributors (ODbL); `tool
 files, from Overpass API downloads where there are any and else from the vector tiles of the 3D map
 (OpenFreeMap): there the stands are placed in front of the mapped gates. Every other airport, and one with
 too few mapped gates, is laid out by the game as described above.
+
+Terminal concepts: the game lays terminals out in the three common ways. Linear: the gates in one row along
+the building (up to size 2; a longer one has its remote stands across the taxi lane). Pier: on both sides of
+piers (from size 3). Satellite: most gates round a building that stands free on the apron, taxi lanes all
+round it, planes taxi round its ends (only where chosen). A terminal you build yourself (a terminal
+expansion) is the copy of a real one instead: the outline, stands, taxi lanes and apron of a terminal at one
+of the big airports (`js/data/terminals.js`, 76 terminals at 40 airports, made by `tools/build_terminals.html`
+from the OpenStreetMap layouts), with about as many stands as the airport's size has, turned to lie beside
+the runway; the tower and the taxiways to the runway are the game's. In the developer tools the terminal of
+the selected airport can be set to any of these (`infra.style`), and "Build desert examples" puts four
+airports into the Sahara (Gilf Kebir) that differ only in the terminal: XLI linear, XPI pier, XSA satellite,
+XRE copy of a real one; the same button removes them again.
 
 Expansion preview: in the developer tools (F2), "Show expansion preview" draws in cyan where construction
 at the selected airport would go, in 2D and 3D: each kind of new runway with its taxiway, the runway

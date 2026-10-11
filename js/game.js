@@ -253,21 +253,23 @@
     return (across < 0 ? -1 : 1) * Math.min(180, Math.max(120, Math.abs(across) * 0.6));
   }
   // The way between a point on the apron taxi lane and the runway point `alongM` metres from the threshold:
-  // [apron exit, foot of its link on the parallel taxiway, point on the taxiway abeam the runway point].
+  // [(the way along the apron's lanes to) the apron exit, foot of its link on the parallel taxiway, point on
+  // the taxiway abeam the runway point].
   function taxiPath(code, rwy, lanePt, alongM) {
     const ap = apronOf(code);
     if (ap.real) return realTaxiPath(code, ap.real, lanePt, rwyPoint(rwy, alongM, 0));
     const far = (e) => distanceKm({ lat: e[0], lon: e[1] }, { lat: lanePt[0], lon: lanePt[1] });
-    const exit = ap.exits.reduce((b, e) => (far(e) < far(b) ? e : b));
+    const inside = (ap.way && ap.way(lanePt)) || [ap.exits.reduce((b, e) => (far(e) < far(b) ? e : b))];
+    const exit = inside[inside.length - 1];
     const off = taxiwayOffset(rwy, ap.ref);
     const a = Math.min(rwy.len, Math.max(0, rwyCoords(rwy, exit).along));
-    return [exit, rwyPoint(rwy, a, off), rwyPoint(rwy, alongM, off)];
+    return [...inside, rwyPoint(rwy, a, off), rwyPoint(rwy, alongM, off)];
   }
   // All taxiway centre lines of an airport, for drawing: [[lat, lon], [lat, lon]] each.
   function taxiwaysOf(code) {
     const ap = apronOf(code);
     if (ap.real) return ap.real.taxiways.flatMap((l) => l.slice(1).map((p, i) => [l[i], p]));
-    const lines = [ap.lane];
+    const lines = [...(ap.lanes || [ap.lane])];
     for (const r of airportRunways(code)) {
       const len = runwayLength(r);
       const rwy = { thr: [r[0], r[1]], hdg: bearing({ lat: r[0], lon: r[1] }, { lat: r[2], lon: r[3] }), len };
@@ -283,82 +285,202 @@
   }
 
   // ---------- gates ----------
-  // Every airport has an apron beside its longest runway, on the side of the airport reference
-  // point (where the terminal usually is): a row of contact gates with jet bridges in front of the
-  // terminal, then remote stands without bridges beyond both ends of it. Bigger airports (including
-  // the player's terminal expansions) have more and wider gates. Planes park nose-in, facing the
-  // terminal, and are pushed back tail first onto the apron taxi lane.
+  // Every airport has an apron beside its longest runway, on the side of the airport reference point if
+  // nothing is in the way there (apronPlace looks for a place clear of the other runways and, where they
+  // are known, of real taxiways and buildings). Up to size 2 it is one row (linear terminal): contact gates
+  // with jet bridges in front of the terminal, remote stands beyond both ends. From size 3 the gates stand
+  // on both sides of piers, with rows of remote stands beside them, so the apron stays about a kilometre
+  // wide. An airport can also be given a satellite terminal, and a terminal the player builds is the copy
+  // of a real one (copiedApron). Bigger airports (including the player's terminal expansions) have more and
+  // wider gates. Planes park nose-in and are pushed back tail first onto the apron taxi lane.
   const GATE_COUNT = [2, 3, 6, 12, 20, 32];      // contact gates by airport size 0..5
   const GATE_SPACING = [42, 45, 55, 65, 75, 80]; // m between stands by size
   const TAXI_LANE = 70;  // m from a stand back to the apron taxi lane (= pushback distance)
   const apronCache = new Map();
+
+  // Where to put an apron: beside the main runway on the airport reference point's side if nothing is in the
+  // way there, else further along, further out or on the other side. In the way are the other runways and,
+  // where they are known (FG.obstacles: read off the 3D map), real taxiways and buildings. The apron reaches
+  // `reach` metres along the runway to both sides and `depth` metres away from it. Returns the runway, the
+  // side (+1 = right of it), and where the apron's runway-side edge begins: metres along and from the runway.
+  function apronPlace(code, rws, reach, depth) {
+    const a = airportByCode[code];
+    const r = rws.reduce((x, y) => (runwayLength(y) > runwayLength(x) ? y : x));
+    const main = { thr: [r[0], r[1]], hdg: bearing({ lat: r[0], lon: r[1] }, { lat: r[2], lon: r[3] }), len: runwayLength(r) };
+    const refC = rwyCoords(main, [a.lat, a.lon]);
+    const known = (FG.obstacles && FG.obstacles[code]) || { lines: [], rings: [] };
+    const C = (p) => rwyCoords(main, p);
+    const segs = [
+      ...rws.filter((x) => x !== r).map((x) => [C([x[0], x[1]]), C([x[2], x[3]]), 110]),
+      ...known.lines.map(([p, q]) => [C(p), C(q), 18]),
+    ];
+    const pts = known.rings.flat().map(C);
+    // Does the segment p-q (runway coordinates) come within `m` of the rectangle?
+    const hits = (p, q, m, x0, x1, y0, y1) => {
+      let t0 = 0;
+      let t1 = 1;
+      const dx = q.along - p.along;
+      const dy = q.across - p.across;
+      for (const [d, lo, hi, v] of [[dx, x0 - m, x1 + m, p.along], [dy, y0 - m, y1 + m, p.across]]) {
+        if (Math.abs(d) < 1e-9) { if (v < lo || v > hi) return false; continue; }
+        const ta = (lo - v) / d;
+        const tb = (hi - v) / d;
+        t0 = Math.max(t0, Math.min(ta, tb));
+        t1 = Math.min(t1, Math.max(ta, tb));
+        if (t0 > t1) return false;
+      }
+      return true;
+    };
+    let best = null;
+    const side0 = refC.across < 0 ? -1 : 1;
+    search:
+    for (const sd of [side0, -side0]) {
+      for (const edge of [155, 325, 525, 785]) {
+        for (const shift of [0, 250, -250, 500, -500, 800, -800, 1200, -1200, 1700, -1700]) {
+          const along = Math.min(main.len + 300, Math.max(-300, refC.along)) + shift;
+          // the apron's rectangle in runway coordinates
+          const x0 = along - reach;
+          const x1 = along + reach;
+          const ya = sd * edge;
+          const yb = sd * (edge + depth);
+          const y0 = Math.min(ya, yb);
+          const y1 = Math.max(ya, yb);
+          let bad = 0;
+          for (const [p, q, m] of segs) if (hits(p, q, m, x0, x1, y0, y1)) bad++;
+          for (const p of pts) if (p.along > x0 && p.along < x1 && p.across > y0 && p.across < y1) bad++;
+          if (known.reach) { // not where the surroundings are not known
+            const far = Math.max(Math.abs(x0 - refC.along), Math.abs(x1 - refC.along), Math.abs(y0 - refC.across), Math.abs(y1 - refC.across));
+            if (far > known.reach) bad++;
+          }
+          if (!best || bad < best.bad) best = { bad, side: sd, edge, along };
+          if (!bad) break search;
+        }
+      }
+    }
+    return { main, side: best.side, along: best.along, edge: best.edge };
+  }
 
   // `sizeAs`: lay the airport out as if it had this size (for the expansion preview).
   function apronOf(code, sizeAs) {
     const size = Math.max(0, Math.min(5, sizeAs == null ? airportSize(code) : sizeAs));
     const rws = airportRunways(code);
     const real = FG.layouts ? FG.layouts.get(code) : null;
-    const key = `${code}|${size}|${rws.length}|${real ? 1 : 0}`;
+    // A terminal the player built is the copy of a real one, once that one's layout is there.
+    const tpl = real || !rws.length ? null : copyTemplate(code, size);
+    const from = tpl && FG.layouts ? FG.layouts.get(tpl[0]) : null;
+    const key = `${code}|${size}|${rws.length}|${real ? 1 : 0}${FG.obstacles && FG.obstacles[code] ? 2 : 0}${infra(code).style || ''}${from ? tpl : ''}`;
     let ap = apronCache.get(key);
     if (ap) return ap;
-    if (real) {
-      ap = realApron(code, size, real);
+    if (real || from) ap = real ? realApron(code, size, real) : copiedApron(code, size, tpl, from, rws);
+    if (ap) {
       apronCache.set(key, ap);
       return ap;
     }
     const a = airportByCode[code];
+    const n = GATE_COUNT[size];
+    const sp = GATE_SPACING[size];
+    const stop = Math.round(sp * 0.4); // nose stop bar ahead of the stand point
+    const front = stop + 12;           // terminal face ahead of the stand point
+    // The three common terminal concepts. 'linear': the gates in one row along a concourse (small airports).
+    // 'pier': on both sides of piers that point away from the runway, with as many rows of remote stands
+    // beside them: that keeps even a hub's apron about a kilometre wide instead of several (from size 3).
+    // 'satellite': most gates round a building that stands free on the apron, taxi lanes all round it; only
+    // where an airport is given this concept (infra.style, which can also ask for one of the other two).
+    let style = infra(code).style;
+    if (style !== 'linear' && style !== 'pier' && style !== 'satellite') style = size >= 3 ? 'pier' : 'linear';
+    if (style === 'satellite' && n < 6) style = 'linear'; // too few gates for a building of their own
+    if (style === 'linear' && n > 20) style = 'pier';     // one row would be more than 2.5 km long
+    const piers = style !== 'pier' ? 0 : size >= 4 ? 2 : 1;
+    const perSide = piers ? Math.ceil(n / (2 * piers)) : 0;
+    const pierHalf = 11;
+    const pitch = 2 * (pierHalf + front + TAXI_LANE);     // from one pier to the next
+    const o0 = -TAXI_LANE + 40;                           // the first stand of a pier starts here
+    const root = o0 + sp * perSide + 12;                  // landside end of the piers
+    const centres = piers === 1 ? [0, pitch] : [-1.5 * pitch, -0.5 * pitch, 0.5 * pitch, 1.5 * pitch];
+    const withGates = piers === 1 ? [true, false] : [false, true, true, false];
+    // Satellites: rows of stands along the runway, one on each side of every satellite and one at the main
+    // terminal, each with its gates in the middle and remote stands beyond them.
+    const sats = style !== 'satellite' ? 0 : size >= 5 ? 2 : 1;
+    const rows = 2 * sats + 1;
+    const mainN = sats ? Math.max(2, Math.round(n / (rows + 1))) : n; // gates at the main terminal
+    const satN = sats ? Math.ceil((n - mainN) / (2 * sats)) : 0;      // gates on each side of a satellite
+    const perRow = Math.ceil((2 * n) / rows);                         // stands in a row
+    const satD = 26;                                                  // depth of a satellite
+    const period = 2 * (front + TAXI_LANE) + satD;                    // from one row's taxi lane to the next
+    const m = sats * period;                              // the main terminal's stands are this far out
+    const cross = (sp * (perRow + 1)) / 2 + 40;           // the lanes round the ends of the satellites
+    const half = (mainN * sp) / 2;                        // (one row) half length of the terminal's gates
+    // A long linear terminal has its remote stands across the taxi lane, facing it, with gaps for the exits.
+    const opposite = style === 'linear' && n > 6;
+    const gap = Math.round(0.6 * half);
+    const across = [];
+    if (opposite) {
+      for (let x = 25 + sp / 2; across.length < Math.ceil(n / 2); x += sp) {
+        if (Math.abs(x - gap) < sp / 2 + 25) x = gap + sp / 2 + 25;
+        across.push(x);
+      }
+    }
+    const reach = piers ? Math.max(...centres.map(Math.abs)) + pitch / 2 + 20
+      : sats ? cross + 40
+        : opposite ? Math.max(half, across[across.length - 1] + sp / 2) + 15 : half + sp * Math.ceil(n / 2) + 10;
+    const W = piers ? (piers - 1) * pitch + 2 * pierHalf + 70 : 2 * half + 10;   // width of the terminal
+    const concD = 14 + 2 * size;          // depth of the one-row concourse
+    const concH = 7 + size;
+    const face = m + front;               // (one row, satellite) airside face of the main terminal
+    const near = opposite ? -2 * TAXI_LANE - front - 12 : -TAXI_LANE - 25; // runway-side edge of the apron
+    const back = piers ? root + 8 : face + concD;         // where the hall begins
+    const deepest = back + (22 + 8 * size) * 2 + 80;      // landside end of everything
+
+    // Where it goes (apronPlace); the stands' frame starts `-near` metres behind the apron's runway-side edge.
     let hdg = 0;
     let side = 1;
     let base = [a.lat, a.lon];
     if (rws.length) {
-      const r = rws.reduce((x, y) => (runwayLength(y) > runwayLength(x) ? y : x));
-      hdg = bearing({ lat: r[0], lon: r[1] }, { lat: r[2], lon: r[3] });
-      const kx = 111320 * Math.cos(toRad(r[0]));
-      const across = (a.lon - r[1]) * kx * Math.cos(toRad(hdg)) - (a.lat - r[0]) * 111320 * Math.sin(toRad(hdg));
-      side = across < 0 ? -1 : 1; // positive = right of the runway
-      base = offsetPoint(a.lat, a.lon, hdg + 90 * side, Math.max(0, 250 - Math.abs(across)));
+      const place = apronPlace(code, rws, reach, deepest - near);
+      hdg = place.main.hdg;
+      side = place.side;
+      base = rwyPoint(place.main, place.along, place.side * (place.edge - near));
     }
-    const n = GATE_COUNT[size];
-    const sp = GATE_SPACING[size];
     const nose = (hdg + 90 * side + 360) % 360;
-    const stop = Math.round(sp * 0.4); // nose stop bar ahead of the stand point
-    const front = stop + 12;           // terminal front
-    // metres along the runway direction / out towards the terminal -> [lat, lon]
+    // metres along the runway direction / out away from the runway -> [lat, lon]
     const at = (along, out) => {
       const p = offsetPoint(base[0], base[1], hdg, along);
       return offsetPoint(p[0], p[1], nose, out);
     };
+    const box = (a0, a1, o0b, o1, h, kind, baseH = 0) => ({ ring: [at(a0, o0b), at(a1, o0b), at(a1, o1), at(a0, o1)], base: baseH, h, kind });
     const bridgeParts = []; // jet bridge pieces above the apron, as buildings
     const markings = [];    // paint on the apron: { line, kind: 'y' yellow or 'w' white }
-    const stand = (along, name, bridge) => {
-      const [lat, lon] = at(along, 0);
-      const s = { lat, lon, heading: nose, name, bridge, along,
-        lead: [at(along, -TAXI_LANE), at(along, stop)], stopBar: [at(along - 4, stop), at(along + 4, stop)] };
-      // lead-in curves from the taxi lane onto the stand centre line, from both directions
+    // A stand at (along, out) in the frame; dir: 0 = nose away from the runway, 2 = towards it,
+    // +1 / -1 = nose along it.
+    const stand = (along, out, dir, name, bridge) => {
+      const [lat, lon] = at(along, out);
+      const heading = dir === 0 ? nose : dir === 2 ? (nose + 180) % 360 : (hdg + (dir > 0 ? 0 : 180)) % 360;
+      // f metres ahead of the stand point, l metres to the aircraft's left
+      const L = (f, l) => { const q = offsetPoint(lat, lon, heading, f); return offsetPoint(q[0], q[1], heading - 90, l); };
+      const s = { lat, lon, heading, name, bridge, along, lead: [L(-TAXI_LANE, 0), L(stop, 0)], stopBar: [L(stop, -4), L(stop, 4)] };
+      // lead-in curves from the taxi lane onto the stand centre line, the limits of the stand, the road
       const turn = 22;
       for (const d of [-1, 1]) {
         const arc = [];
-        for (let i = 0; i <= 6; i++) {
-          const a = (i / 6) * Math.PI / 2;
-          arc.push(at(along + d * turn * (1 - Math.sin(a)), -TAXI_LANE + turn * (1 - Math.cos(a))));
-        }
-        markings.push({ line: arc, kind: 'y' });
+        for (let i = 0; i <= 6; i++) { const t = (i / 6) * Math.PI / 2; arc.push(L(-TAXI_LANE + turn * (1 - Math.cos(t)), d * turn * (1 - Math.sin(t)))); }
+        markings.push({ line: arc, kind: 'y' }, { line: [L(-TAXI_LANE + 28, d * sp / 2), L(stop + 3, d * sp / 2)], kind: 'w' });
       }
+      markings.push({ line: [L(stop + 4, -sp / 2), L(stop + 4, sp / 2)], kind: 'w' });
       if (bridge) {
         // Jet bridge to the front left door: a short link out of the terminal to a rotunda, from there the
         // tunnel runs at an angle to the cab at the door; a wheeled support carries it.
-        const r = [along + side * 13, front - 3];
-        const c = [along + side * 4.6, stop - 6];
+        const r = [front - 3, 13];
+        const c = [stop - 6, 4.6];
         const len = Math.hypot(c[0] - r[0], c[1] - r[1]);
-        const nx = -(c[1] - r[1]) / len * 1.3;
-        const ny = (c[0] - r[0]) / len * 1.3;
-        s.bridgePoly = [at(r[0] + nx, r[1] + ny), at(c[0] + nx, c[1] + ny), at(c[0] - nx, c[1] - ny), at(r[0] - nx, r[1] - ny)];
+        const nf = -(c[1] - r[1]) / len * 1.3;
+        const nl = (c[0] - r[0]) / len * 1.3;
+        s.bridgePoly = [L(r[0] + nf, r[1] + nl), L(c[0] + nf, c[1] + nl), L(c[0] - nf, c[1] - nl), L(r[0] - nf, r[1] - nl)];
         const round = [];
-        for (let i = 0; i < 8; i++) round.push(at(r[0] + 2.6 * Math.cos(i * Math.PI / 4), r[1] + 2.6 * Math.sin(i * Math.PI / 4)));
-        const sq = (p, h) => [at(p[0] - h, p[1] - h), at(p[0] + h, p[1] - h), at(p[0] + h, p[1] + h), at(p[0] - h, p[1] + h)];
+        for (let i = 0; i < 8; i++) round.push(L(r[0] + 2.6 * Math.cos(i * Math.PI / 4), r[1] + 2.6 * Math.sin(i * Math.PI / 4)));
+        const sq = (p, h) => [L(p[0] - h, p[1] - h), L(p[0] + h, p[1] - h), L(p[0] + h, p[1] + h), L(p[0] - h, p[1] + h)];
         const leg = [r[0] + (c[0] - r[0]) * 0.7, r[1] + (c[1] - r[1]) * 0.7];
         bridgeParts.push(
-          { ring: [at(r[0] - 1.4, front - 3), at(r[0] + 1.4, front - 3), at(r[0] + 1.4, front), at(r[0] - 1.4, front)], base: 3.5, h: 6.5, kind: 'bridge' },
+          { ring: [L(front - 3, 11.6), L(front - 3, 14.4), L(front, 14.4), L(front, 11.6)], base: 3.5, h: 6.5, kind: 'bridge' },
           { ring: round, base: 0, h: 7, kind: 'bridge' },
           { ring: sq(c, 1.9), base: 3.3, h: 6.8, kind: 'bridge' },
           { ring: sq(leg, 0.9), base: 0, h: 3.5, kind: 'bridge' },
@@ -366,33 +488,94 @@
       }
       return s;
     };
-    const half = (n * sp) / 2;
     const contact = [];
-    for (let i = 0; i < n; i++) contact.push(stand((i - (n - 1) / 2) * sp, `A${i + 1}`, true));
-    // Allocation order: from the middle of the terminal outwards, then remote stands at alternating ends.
-    const byCentre = contact.map((s, i) => [Math.abs(s.along), i]).sort((x, y) => x[0] - y[0] || x[1] - y[1]);
-    const stands = byCentre.map(([, i]) => contact[i]);
-    for (let j = 0; j < n; j++) {
-      const along = (j % 2 ? 1 : -1) * (half + sp * (Math.floor(j / 2) + 0.5));
-      stands.push(stand(along, `R${j + 1}`, false));
-    }
-    const reach = half + sp * Math.ceil(n / 2) + 10;
-    // Buildings by tier (the airport's size), composed like real terminals in one of five layouts per airport:
-    // a low concourse with a glazed front along the gates, the taller main hall behind it with a stepped roof,
-    // a canopy over the forecourt road, a multi-storey car park, the control tower, hangars and a cargo shed.
-    // Each is { ring, base, h, kind } with heights in metres.
-    const W = 2 * half + 10;
-    const box = (a0, a1, o0, o1, h, kind, base = 0) => ({ ring: [at(a0, o0), at(a1, o0), at(a1, o1), at(a0, o1)], base, h, kind });
+    const remote = [];
+    const lanes = [];      // apron taxi lanes, as lines
+    const exits = [];      // where taxiways leave the apron
+    const buildings = [];
     const layout = size >= 2 ? Math.floor(hash01(code.charCodeAt(0), code.charCodeAt(1) || 0, code.charCodeAt(2) || 0, 7) * 5) : 0;
-    const concD = 14 + 2 * size;          // depth of the concourse
-    const concH = 7 + size;
-    const back = front + concD;
-    const cut = Math.min(6, W / 8);       // its airside corners are cut off
-    const buildings = [
-      { ring: [at(-W / 2 + cut, front), at(W / 2 - cut, front), at(W / 2, front + cut), at(W / 2, back), at(-W / 2, back), at(-W / 2, front + cut)], base: 0, h: concH, kind: 'terminal' },
-      box(-W / 2 + cut, W / 2 - cut, front - 0.6, front, concH - 1.5, 'glass', 2),
-    ];
-    for (let x = -W / 2 + 30; x < W / 2 - 20; x += 60) buildings.push(box(x - 4, x + 4, front + concD * 0.4, front + concD * 0.7, concH + 2, 'plant', concH));
+    let terminal;
+    let way = null;        // (satellite) the way along the taxi lanes from a point on one to an exit
+    if (!piers) {
+      for (let i = 0; i < mainN; i++) contact.push(stand((i - (mainN - 1) / 2) * sp, m, 0, `A${i + 1}`, true));
+      // remote stands beyond both ends of a row of `have` gates
+      const beside = (have, count, out, dir) => {
+        for (let j = 0; j < count && remote.length < n; j++) {
+          remote.push(stand((j % 2 ? 1 : -1) * ((have * sp) / 2 + sp * (Math.floor(j / 2) + 0.5)), out, dir, `R${remote.length + 1}`, false));
+        }
+      };
+      if (sats) {
+        beside(mainN, perRow - mainN, m, 0);
+        const sh = (satN * sp) / 2 + 6; // half length of a satellite
+        const cut = 8;
+        for (let j = sats - 1; j >= 0; j--) { // the satellite nearest the terminal first
+          const a0 = j * period + front;
+          const a1 = a0 + satD;
+          [[a1 + front, 2], [a0 - front, 0]].forEach(([out, dir], k) => {
+            for (let i = 0; i < satN; i++) { // a gate too many for the airport's size is a stand without a bridge
+              const x = (i - (satN - 1) / 2) * sp;
+              if (contact.length < n) contact.push(stand(x, out, dir, `${'BCDE'[2 * (sats - 1 - j) + k]}${i + 1}`, true));
+              else if (remote.length < n) remote.push(stand(x, out, dir, `R${remote.length + 1}`, false));
+            }
+            beside(satN, perRow - satN, out, dir);
+          });
+          buildings.push(
+            { ring: [at(-sh + cut, a0), at(sh - cut, a0), at(sh, a0 + cut), at(sh, a1 - cut), at(sh - cut, a1), at(-sh + cut, a1), at(-sh, a1 - cut), at(-sh, a0 + cut)], base: 0, h: concH, kind: 'terminal' },
+            box(-sh + cut, sh - cut, a0 - 0.6, a0, concH - 1.5, 'glass', 2), box(-sh + cut, sh - cut, a1, a1 + 0.6, concH - 1.5, 'glass', 2),
+            // the middle, above the station of the train from the terminal, is a storey higher
+            box(-20, 20, a0 + 3, a1 - 3, concH + 4.5, 'roof', concH), box(-14, 14, a0 + 7, a1 - 7, concH + 6, 'roof', concH + 4.5),
+          );
+          for (let x = 55; x < sh - 20; x += 70) for (const s of [-1, 1]) buildings.push(box(s * x - 4, s * x + 4, a0 + 8, a1 - 8, concH + 2, 'plant', concH));
+        }
+        for (const x of [-cross, cross]) lanes.push([at(x, -TAXI_LANE), at(x, m - TAXI_LANE)]);
+        for (let j = sats; j >= 0; j--) lanes.push([at(-cross, j * period - TAXI_LANE), at(cross, j * period - TAXI_LANE)]);
+        exits.push(at(-cross, -TAXI_LANE), at(0, -TAXI_LANE), at(cross, -TAXI_LANE));
+        // From a lane behind a satellite: along it to the nearer end, round the satellite to the runway side.
+        way = (pt) => {
+          const c = rwyCoords({ thr: base, hdg }, pt);
+          const out = c.across * side;
+          if (out < -TAXI_LANE + 30) return null;
+          const x = c.along < 0 ? -cross : cross;
+          return [at(x, out), at(x, -TAXI_LANE)];
+        };
+      } else if (opposite) {
+        for (const x of across) for (const s of [-1, 1]) if (remote.length < n) remote.push(stand(s * x, -2 * TAXI_LANE, 2, `R${remote.length + 1}`, false));
+        lanes.push([at(-reach + 15, -TAXI_LANE), at(reach - 15, -TAXI_LANE)]);
+        exits.push(at(-gap, -TAXI_LANE), at(0, -TAXI_LANE), at(gap, -TAXI_LANE));
+      } else {
+        beside(n, n, 0, 0);
+        lanes.push([at(-reach + 15, -TAXI_LANE), at(reach - 15, -TAXI_LANE)]);
+        exits.push(at(0, -TAXI_LANE));
+      }
+      contact.sort((x, y) => Math.abs(x.along) - Math.abs(y.along)); // used from the middle outwards
+      const cut = Math.min(6, W / 8); // the concourse's airside corners are cut off
+      terminal = [at(-W / 2, face), at(W / 2, face), at(W / 2, back), at(-W / 2, back)];
+      buildings.push(
+        { ring: [at(-W / 2 + cut, face), at(W / 2 - cut, face), at(W / 2, face + cut), at(W / 2, back), at(-W / 2, back), at(-W / 2, face + cut)], base: 0, h: concH, kind: 'terminal' },
+        box(-W / 2 + cut, W / 2 - cut, face - 0.6, face, concH - 1.5, 'glass', 2),
+      );
+      for (let x = -W / 2 + 30; x < W / 2 - 20; x += 60) buildings.push(box(x - 4, x + 4, face + concD * 0.4, face + concD * 0.7, concH + 2, 'plant', concH));
+    } else {
+      centres.forEach((c, i) => {
+        for (let k = perSide - 1; k >= 0; k--) { // used from the hall outwards
+          for (const s of [-1, 1]) {
+            const list = withGates[i] ? contact : remote;
+            if (list.length >= n) continue;
+            list.push(stand(c + s * (pierHalf + front), o0 + sp * (k + 0.5), -s, `${withGates[i] ? 'A' : 'R'}${list.length + 1}`, withGates[i]));
+          }
+        }
+        if (!withGates[i]) return;
+        buildings.push(box(c - pierHalf, c + pierHalf, o0 - 14, root, concH, 'terminal'),
+          box(c - pierHalf - 0.6, c - pierHalf, o0 - 8, root, concH - 1.5, 'glass', 2), box(c + pierHalf, c + pierHalf + 0.6, o0 - 8, root, concH - 1.5, 'glass', 2));
+        for (let o = o0 + 30; o < root - 20; o += 70) buildings.push(box(c - 4, c + 4, o, o + 9, concH + 2, 'plant', concH));
+        if (!terminal) terminal = [at(c - pierHalf, o0 - 14), at(c + pierHalf, o0 - 14), at(c + pierHalf, root), at(c - pierHalf, root)];
+      });
+      const mouths = [...new Set(centres.flatMap((c) => [c - pitch / 2, c + pitch / 2]).map((x) => Math.round(x)))].sort((x, y) => x - y);
+      for (const x of mouths) { lanes.push([at(x, -TAXI_LANE), at(x, root - 20)]); exits.push(at(x, -TAXI_LANE)); }
+      lanes.push([at(mouths[0] - 20, -TAXI_LANE), at(mouths[mouths.length - 1] + 20, -TAXI_LANE)]);
+      buildings.push(box(-W / 2, W / 2, root, root + 8, concH + 2, 'terminal')); // joins the piers to the hall
+    }
+    const stands = [...contact, ...remote];
     // A hall with a roof that rises in two steps towards its ridge, a canopy and the road in front of it.
     const hallD = 22 + 8 * size;
     const hallH = 12 + 3 * size;
@@ -443,31 +626,20 @@
     }
     for (let k = 0; k < size - 1; k++) { // hangars beyond the remote stands, with a ridge and a low annex
       const x = (k % 2 ? 1 : -1) * (reach + 45 + 75 * Math.floor(k / 2));
-      buildings.push(box(x - 30, x + 30, front + 5, front + 50, 13, 'hangar'), box(x - 30, x + 30, front + 20, front + 35, 16, 'roof', 13),
-        box(x - 30, x + 30, front + 50, front + 62, 6, 'hangar'));
+      buildings.push(box(x - 30, x + 30, face + 5, face + 50, 13, 'hangar'), box(x - 30, x + 30, face + 20, face + 35, 16, 'roof', 13),
+        box(x - 30, x + 30, face + 50, face + 62, 6, 'hangar'));
     }
     if (size >= 3) { // cargo shed behind the hangars on one side
       const x = -(reach + 45 + 75 * Math.ceil((size - 1) / 2) + 20);
-      buildings.push(box(x - 55, x + 35, front + 8, front + 44, 9, 'hangar'), box(x - 55, x + 35, front + 8, front + 44, 9.6, 'roof', 9));
+      buildings.push(box(x - 55, x + 35, face + 8, face + 44, 9, 'hangar'), box(x - 55, x + 35, face + 8, face + 44, 9.6, 'roof', 9));
     }
     buildings.push(...bridgeParts);
-    // White paint: the limits between the stands, and the service road in front of the aircraft noses.
-    const alongs = stands.map((s) => s.along).sort((x, y) => x - y);
-    for (let i = 0; i <= alongs.length; i++) {
-      const m = i === 0 ? alongs[0] - sp / 2 : i === alongs.length ? alongs[i - 1] + sp / 2 : (alongs[i - 1] + alongs[i]) / 2;
-      markings.push({ line: [at(m, -TAXI_LANE + 28), at(m, stop + 3)], kind: 'w' });
-    }
-    markings.push({ line: [at(-reach + 10, stop + 4), at(reach - 10, stop + 4)], kind: 'w' });
-    markings.push({ line: [at(-half - 5, stop + 10), at(half + 5, stop + 10)], kind: 'w' });
-    const lane = (along) => at(along, -TAXI_LANE);
     ap = {
-      code, hdg, side, nose, spacing: sp, gates: contact, stands, buildings, markings,
-      terminal: [at(-half - 5, front), at(half + 5, front), at(half + 5, back), at(-half - 5, back)],
-      apron: [at(-reach, -TAXI_LANE - 25), at(reach, -TAXI_LANE - 25), at(reach, front), at(-reach, front)],
-      // The apron taxi lane behind the stands, its middle, and where taxiways leave it.
-      lane: [lane(-reach + 15), lane(reach - 15)],
-      ref: lane(0),
-      exits: n > 6 ? [lane(-0.6 * reach), lane(0), lane(0.6 * reach)] : [lane(0)],
+      code, hdg, side, nose, spacing: sp, gates: contact, stands, buildings, markings, terminal,
+      apron: [at(-reach, near), at(reach, near), at(reach, piers ? root : face), at(-reach, piers ? root : face)],
+      // The apron taxi lanes (last the one along the runway side), its middle, and where taxiways leave it.
+      lane: lanes[lanes.length - 1], lanes,
+      ref: at(0, near + 25), exits, way, style,
     };
     if (apronCache.size > 500) apronCache.clear();
     apronCache.set(key, ap);
@@ -487,8 +659,17 @@
     const square = (p, half) => [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([i, j]) => { const q = offsetPoint(p[0], p[1], 0, i * half); return offsetPoint(q[0], q[1], 90, j * half); });
     const mainTerminal = biggest(lay.terminals);
     const main = mainTerminal ? middle(mainTerminal) : [a.lat, a.lon];
-    const termPts = lay.terminals.flat();
-    const toTerminal = (p) => termPts.reduce((d, q) => Math.min(d, metres(p, q)), Infinity);
+    const walls = lay.terminals.flatMap((r) => r.map((q, i) => [q, r[(i + 1) % r.length]]));
+    const toTerminal = (p) => { // metres to the nearest terminal wall
+      const kx = 111320 * Math.cos(toRad(p[0]));
+      let best = Infinity;
+      for (const [w0, w1] of walls) {
+        const bx = (w1[1] - w0[1]) * kx, by = (w1[0] - w0[0]) * 111320, px = (p[1] - w0[1]) * kx, py = (p[0] - w0[0]) * 111320;
+        const t = Math.max(0, Math.min(1, (px * bx + py * by) / (bx * bx + by * by || 1)));
+        best = Math.min(best, Math.hypot(px - t * bx, py - t * by));
+      }
+      return best;
+    };
     const stop = 14; // nose stop bar ahead of the stand point
     const stands = lay.stands.map((s) => [s, metres(s, main)]).sort((x, y) => x[1] - y[1]).slice(0, 2 * GATE_COUNT[size])
       .map(([[lat, lon, heading, name]], i) => {
@@ -515,10 +696,161 @@
     };
   }
 
+  // ---------- copies of real terminals ----------
+  // A terminal the player builds takes its layout from a real one at one of the big airports
+  // (FG.data.terminals: [airport, number of the terminal in its layout, stands], fewest stands first): the
+  // terminal's outline, the stands at it and the taxi lanes and apron round them, turned to lie beside the
+  // main runway here. Only the layout: the tower, the taxiways along the runways and the links to them are
+  // the game's. Which terminal: by the airport's code, among those with about as many stands as its size has.
+  function copyTemplate(code, size) {
+    const style = infra(code).style;
+    const list = D.terminals || [];
+    if (!list.length || (style ? style !== 'copy' : !(infra(code).terminal > 0))) return null;
+    const need = 2 * GATE_COUNT[size];
+    let fits = list.filter((t) => t[2] >= 0.8 * need).slice(0, 10);
+    if (fits.length < 3) fits = list.slice(-3); // none as big: one of the biggest
+    return fits[Math.floor(hash01(code.charCodeAt(0), code.charCodeAt(1) || 0, code.charCodeAt(2) || 0, 11) * fits.length)];
+  }
+
+  // The piece of airport `from`'s layout round its terminal number `ti`, in metres: [u, v] with u along the
+  // runway nearest that terminal and v away from it (0 = the piece's runway-side edge, u = 0 its middle),
+  // headings relative to the runway. { w, d, rings, stands: { p, h, name, d } nearest first, taxiways, aprons }.
+  const pieces = new Map();
+  function terminalPiece(from, ti, lay) {
+    const key = `${from}|${ti}`;
+    if (pieces.has(key)) return pieces.get(key);
+    const mid = middle(lay.terminals[ti]);
+    let rwy = { thr: mid, hdg: 0, len: 0 };
+    let nearest = Infinity;
+    for (const r of D.runways[from] || []) {
+      const cand = { thr: [r[0], r[1]], hdg: bearing({ lat: r[0], lon: r[1] }, { lat: r[2], lon: r[3] }), len: runwayLength(r) };
+      const c = rwyCoords(cand, mid);
+      const d = Math.hypot(c.across, c.along < 0 ? c.along : Math.max(0, c.along - cand.len));
+      if (d < nearest) { nearest = d; rwy = cand; }
+    }
+    // Seen from the runway's other end if the terminal is on its left, so that v grows away from the runway.
+    const turn = rwyCoords(rwy, mid).across < 0 ? -1 : 1;
+    const F = (p) => { const c = rwyCoords(rwy, p); return [turn * c.along, turn * c.across]; };
+    const ring = lay.terminals[ti].map(F);
+    const toRing = (q) => { // metres from q to the terminal's outline
+      let best = Infinity;
+      for (let i = 0; i < ring.length; i++) {
+        const a = ring[i];
+        const b = ring[(i + 1) % ring.length];
+        const bx = b[0] - a[0], by = b[1] - a[1], px = q[0] - a[0], py = q[1] - a[1];
+        const t = Math.max(0, Math.min(1, (px * bx + py * by) / (bx * bx + by * by || 1)));
+        best = Math.min(best, Math.hypot(px - t * bx, py - t * by));
+      }
+      return best;
+    };
+    const ahead = (s, m) => [s.p[0] + m * Math.cos(toRad(s.h)), s.p[1] + m * Math.sin(toRad(s.h))];
+    const stands = lay.stands.map(([lat, lon, heading, name]) => ({ p: F([lat, lon]), h: (heading - rwy.hdg + (turn < 0 ? 180 : 0) + 720) % 360, name }));
+    for (const s of stands) s.d = Math.min(toRing(s.p), toRing(ahead(s, 24)));
+    const mine = stands.filter((s) => s.d < 110).sort((x, y) => x.d - y.d);
+    const all = [...ring, ...mine.flatMap((s) => [s.p, ahead(s, -TAXI_LANE)])];
+    const u0 = Math.min(...all.map((p) => p[0])) - 25;
+    const u1 = Math.max(...all.map((p) => p[0])) + 25;
+    const v0 = Math.min(...all.map((p) => p[1])) - 25;
+    const v1 = Math.max(...all.map((p) => p[1])) + 25;
+    const inside = (p, m = 0) => p[0] >= u0 - m && p[0] <= u1 + m && p[1] >= v0 - m && p[1] <= v1 + m;
+    const local = (p) => [p[0] - (u0 + u1) / 2, p[1] - v0];
+    // A polygon cut to the piece's rectangle, one edge of the rectangle after the other.
+    const clip = (poly) => {
+      let out = poly;
+      for (const [i, lim, below] of [[0, u0, false], [0, u1, true], [1, v0, false], [1, v1, true]]) {
+        const src = out;
+        out = [];
+        const ok = (p) => (below ? p[i] <= lim : p[i] >= lim);
+        src.forEach((p, k) => {
+          const q = src[(k + 1) % src.length];
+          if (ok(p)) out.push(p);
+          if (ok(p) !== ok(q)) { const t = (lim - p[i]) / (q[i] - p[i]); out.push([p[0] + t * (q[0] - p[0]), p[1] + t * (q[1] - p[1])]); }
+        });
+      }
+      return out;
+    };
+    const taxiways = [];
+    for (const line of lay.taxiways) { // the stretches of the taxiways within 40 m of the rectangle
+      let run = [];
+      for (const p of [...line.map(F), null]) {
+        if (p && inside(p, 40)) { run.push(local(p)); continue; }
+        if (run.length > 1) taxiways.push(run);
+        run = [];
+      }
+    }
+    // One apron under it all (many airports are mapped stand by stand): the hull of the stands and taxi lanes.
+    const hullOf = (pts) => {
+      const s = [...pts].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+      const turnsLeft = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]) > 0;
+      const chain = (list) => {
+        const h = [];
+        for (const p of list) {
+          while (h.length > 1 && !turnsLeft(h[h.length - 2], h[h.length - 1], p)) h.pop();
+          h.push(p);
+        }
+        return h.slice(0, -1);
+      };
+      return [...chain(s), ...chain(s.reverse())];
+    };
+    const hull = hullOf([...mine.flatMap((s) => [ahead(s, -TAXI_LANE - 20), ahead(s, 30)]).map(local), ...taxiways.flat()]);
+    const also = lay.terminals.map((t, i) => i).filter((i) => i !== ti && inside(F(middle(lay.terminals[i]))));
+    const piece = {
+      w: u1 - u0, d: v1 - v0,
+      rings: [ring, ...also.map((i) => lay.terminals[i].map(F))].map((r) => r.map(local)),
+      also, // the other terminals (parts of this one, mostly) that lie in the piece
+      stands: mine.map((s) => ({ p: local(s.p), h: s.h, name: s.name, d: s.d })),
+      taxiways,
+      aprons: [hull, ...lay.aprons.map((r) => clip(r.map(F))).filter((r) => r.length > 2).map((r) => r.map(local))],
+    };
+    pieces.set(key, piece);
+    return piece;
+  }
+
+  // The apron of airport `code` as a copy of the terminal `tpl` = [airport, terminal] in the layout `lay`: a
+  // layout like the real ones (realApron), with the taxiways of the piece joined to taxiways along the runways.
+  function copiedApron(code, size, tpl, lay, rws) {
+    const piece = terminalPiece(tpl[0], tpl[1], lay);
+    if (!piece.stands.length) return null;
+    const { main, side, along, edge } = apronPlace(code, rws, piece.w / 2 + 20, piece.d);
+    // The piece is turned half round where it lies on the runway's left.
+    const P = ([u, v]) => rwyPoint(main, along + side * u, side * (edge + v));
+    const ref = rwyPoint(main, along, side * edge);
+    // Links from the taxi lanes to the runways: from the lane points nearest the runway in each third.
+    const lanePts = piece.taxiways.flat();
+    const links = [];
+    for (let k = 0; k < 3; k++) {
+      const lo = -piece.w / 2 - 40 + (k * (piece.w + 80)) / 3;
+      const best = lanePts.filter((p) => p[0] >= lo && p[0] <= lo + (piece.w + 80) / 3).reduce((b, p) => (!b || p[1] < b[1] ? p : b), null);
+      if (best) links.push(P(best));
+    }
+    if (!links.length) links.push(ref);
+    const taxiways = piece.taxiways.map((l) => l.map(P));
+    for (const r of rws) { // as taxiwaysOf: a parallel taxiway, joined to the runway and to the links
+      const len = runwayLength(r);
+      const rwy = { thr: [r[0], r[1]], hdg: bearing({ lat: r[0], lon: r[1] }, { lat: r[2], lon: r[3] }), len };
+      const off = taxiwayOffset(rwy, ref);
+      const leave = Math.min(len * 0.65, 2200);
+      const feet = links.map((e) => Math.min(len, Math.max(0, rwyCoords(rwy, e).along)));
+      taxiways.push([...new Set([0, len, leave, len - leave, ...feet])].sort((x, y) => x - y).map((x) => rwyPoint(rwy, x, off)));
+      for (const x of [0, len, leave, len - leave]) taxiways.push([rwyPoint(rwy, x, off), rwyPoint(rwy, x, 0)]);
+      links.forEach((e, i) => taxiways.push([e, rwyPoint(rwy, feet[i], off)]));
+    }
+    const ap = realApron(code, size, {
+      copy: tpl[0], key: `${code}|${tpl[0]}|${tpl[1]}|${size}|${side}|${Math.round(along)}|${edge}|${rws.length}`,
+      terminals: piece.rings.map((r) => r.map(P)), hangars: [], towers: [P([-piece.w / 2 - 15, piece.d / 2])],
+      aprons: piece.aprons.map((r) => r.map(P)), taxiways,
+      stands: piece.stands.slice(0, 2 * GATE_COUNT[size]).map((s) => [...P(s.p), (main.hdg + s.h + (side < 0 ? 180 : 0)) % 360, s.name]),
+    });
+    ap.hdg = main.hdg;
+    ap.side = side;
+    return ap;
+  }
+
   // The taxiways of a layout as a graph: points, and for each point its neighbours with the distance.
   const taxiGraphs = new Map();
   function taxiGraph(code, lay) {
-    let g = taxiGraphs.get(code);
+    const key = lay.key || code; // a copied terminal's layout changes with the airport
+    let g = taxiGraphs.get(key);
     if (g) return g;
     g = { pts: [], adj: [] };
     const index = new Map();
@@ -576,7 +908,8 @@
     }
     const biggest = sizes.indexOf(Math.max(...sizes));
     g.main = Array.from(piece, (c) => c === biggest);
-    taxiGraphs.set(code, g);
+    if (taxiGraphs.size > 300) taxiGraphs.clear();
+    taxiGraphs.set(key, g);
     return g;
   }
   // Shortest way along the real taxiways from near `from` to near `to`: the points on the way, or [] if
@@ -925,7 +1258,7 @@
     ticketPrice, routeKey, blockMinutes, landingFee, slotUpfront, slotWeekly,
     priceNew, fitsAirport, fitsReason, crewFor, factoryOf,
     airportSize, airportRunways, runwayLength, longestRunway, runwayNeed, attraction,
-    flightTrack, flightState, legTrack, cruiseFt, windFrom, gateOf, apronOf, taxiwaysOf, expansionPreview,
+    flightTrack, flightState, legTrack, cruiseFt, windFrom, gateOf, apronOf, taxiwaysOf, expansionPreview, terminalPiece,
     fmtMoney, fmtTime, fmtClock, fmtDuration,
 
     // opts: { mode, difficulty, airport, aircraft, company } from the start screen; all optional.
