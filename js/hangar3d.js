@@ -1,9 +1,9 @@
 // Live 3D aircraft in the marketplace showcase: the selected type's model stands on a turntable in front of
 // the hangar drawing (js/hangar.js) and can be turned with the mouse. Types without a model keep the drawing.
 import * as THREE from 'three';
-import { loadModel } from './models3d.js';
+import { loadModel, modelSize } from './models3d.js';
 
-const { W, H, GROUND, LIFT } = FG.hangar;
+const { W, H, GROUND } = FG.hangar;
 const START = { yaw: 18 * Math.PI / 180, tilt: 6 * Math.PI / 180 };   // the view of the hangar pictures
 const TILT = [0.02, 0.24];
 const SPIN = 0.2;                 // rad/s until the player turns the aircraft
@@ -44,7 +44,7 @@ function setup() {
   canvas.addEventListener('dblclick', () => { v.yaw = START.yaw; v.tilt = START.tilt; v.spin = true; });
 }
 
-// Puts the model of a type on the turntable, just above the floor line of the drawing (the models have no gear).
+// Puts the model of a type on the turntable: on the floor line of the drawing, or just above it without gear.
 function show(type, scene) {
   const m = FG.hangar.model(type);
   const k = m.len * m.scale;
@@ -54,11 +54,14 @@ function show(type, scene) {
   // Model axes (x = right wing, y = nose, z = up) to the scene: nose to the left, left wing towards the viewer.
   const holder = new THREE.Group();
   holder.matrixAutoUpdate = false;
-  holder.matrix.makeBasis(new THREE.Vector3(0, 0, -1), new THREE.Vector3(-1, 0, 0), new THREE.Vector3(0, 1, 0)).scale(new THREE.Vector3(k, k, k));
+  // The fuselage axis (y) gets the type's length, the others the model's width (js/models3d.js modelSize).
+  const size = modelSize(type);
+  holder.matrix.makeBasis(new THREE.Vector3(0, 0, -1), new THREE.Vector3(-1, 0, 0), new THREE.Vector3(0, 1, 0))
+    .scale(new THREE.Vector3(size.wide * m.scale, k, size.wide * m.scale));
   holder.add(plane);
   v.table.clear();
   v.table.add(holder);
-  v.table.position.set(W / 2, -(GROUND - LIFT * k), 0);
+  v.table.position.set(W / 2, -(GROUND - m.lift * k), 0);
 }
 
 function frame(now) {
@@ -101,7 +104,7 @@ function sync() {
     if (!v.frame) v.frame = requestAnimationFrame(frame);
   };
   if (v.table.children.length) { ready(); return; }
-  loadModel(FG.hangar.model(type).file).then((scene) => {
+  loadModel(type).then((scene) => {
     if (v.stage !== stage || v.type !== type) return;
     show(type, scene);
     ready();

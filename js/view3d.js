@@ -3,7 +3,7 @@
 // The aircraft are glTF models from models/ (see js/data/models.js); types without one use the placeholder.
 import * as maplibregl from 'maplibre-gl';
 import * as THREE from 'three';
-import { loadModel, facing, patchFacing } from './models3d.js';
+import { loadModel, modelSize, facing, patchFacing } from './models3d.js';
 
 const G = FG.game;
 const D = FG.data;
@@ -126,9 +126,10 @@ function planeModel(type) {
   const fit = look.len / g.userData.len;
   for (const part of g.children) { part.position.multiplyScalar(fit); part.scale.multiplyScalar(fit); }
   g.userData.len = look.len;
-  loadModel(file).then((scene) => {
+  loadModel(type).then((scene) => {
     const model = scene.clone();
-    model.scale.setScalar(look.len);
+    const size = modelSize(type);
+    model.scale.set(size.wide, size.len, size.wide);
     g.clear();
     g.add(model);
   }, () => {});

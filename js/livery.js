@@ -9,6 +9,9 @@ export const LIVERY = { title: 'SWISS', color: 0xe60005, body: 0xf1f2f4 };
 
 // Dark lettering of a model's own livery that would show through: y range, and z range in fuselage widths
 // below the top of the fuselage.
+// Where the title starts on a model whose nose is not of the usual length, as a share of the length.
+const TITLE_FROM = { concorde: 0.17 };
+
 const CLEAN = {
   a380: { y: [-0.3, 0], z: [-0.62, -0.22] },
   b752: { y: [-1, 1], z: [-1, 9] },   // dark stripes and numbers all over the fuselage and fin
@@ -41,7 +44,7 @@ function title() {
 
 // Where the fuselage and the fin of this model are. Positions are read straight from the geometry, as the
 // shader sees them (the models have no node transforms).
-function measure(scene, file) {
+export function measure(scene, file, stretch = 1) {
   const box = CLEAN[file];
   const meshes = [];
   scene.traverse((o) => { if (o.isMesh && o.geometry.attributes.position) meshes.push(o); });
@@ -52,11 +55,12 @@ function measure(scene, file) {
       for (let i = 0; i < pos.count; i++) fn(v.fromBufferAttribute(pos, i));
     }
   };
-  // Forward fuselage, between the cockpit and the wing: half width and top.
-  let hw = 0;
-  let top = -Infinity;
+  // Forward fuselage, between the cockpit and the wing: half width and top. A built model says so itself.
+  const known = scene.userData.fuselage;
+  let hw = known ? known.halfWidth : 0;
+  let top = known ? known.top : -Infinity;
   eachVertex((p) => {
-    if (p.y < 0.27 || p.y > 0.36) return;
+    if (known || p.y < 0.27 || p.y > 0.36) return;
     hw = Math.max(hw, Math.abs(p.x));
     top = Math.max(top, p.z);
   });
@@ -98,13 +102,14 @@ function measure(scene, file) {
   }
   const found = y1 > y0;
   // Title: large, across the window row, from behind the first door to at most a third of the length.
-  const titleY = 0.5 - 1.4 * d;
+  const titleY = 0.5 - (TITLE_FROM[file] || (known && known.title) || 1.4 * d);
   const titleLen = Math.max(0.6 * d, Math.min(1.8 * d, titleY - 0.18));
   const titleH = titleLen / titleAspect;
   return {
     fin: found ? new THREE.Vector3(fin.y, fin.z, fin.x) : new THREE.Vector3(0, 99, 0),
-    cross: found ? new THREE.Vector3((y0 + y1) / 2, crossZ, Math.min(0.22 * height, 0.27 * (y1 - y0))) : new THREE.Vector3(0, 99, 1),
-    titleBox: new THREE.Vector4(titleY, titleLen, top - 0.42 * d - titleH / 2, titleH),
+    cross: found ? new THREE.Vector3((y0 + y1) / 2, crossZ, Math.min(0.22 * height, 0.27 * (y1 - y0) * stretch)) : new THREE.Vector3(0, 99, 1),
+    halfWidth: hw,
+    titleBox: new THREE.Vector4(titleY, titleLen / stretch, top - 0.42 * d - titleH / 2, titleH),
     clean: box ? new THREE.Vector4(box.y[0], box.y[1], top + box.z[0] * d, top + box.z[1] * d) : new THREE.Vector4(),
   };
 }
@@ -118,6 +123,8 @@ uniform sampler2D livTitle;
 uniform vec4 livTitleBox; // nose-side y, length, bottom z, height
 uniform vec3 livFin;      // the fin is behind this y, above this z, within this |x|
 uniform vec3 livCross;    // centre y, centre z, half size
+uniform float livStretch; // the model is drawn this much longer than it is
+uniform float livHalfWidth; // of the fuselage
 uniform vec4 livClean;    // own details are dropped between these y and between these z
 varying vec3 vLivPos;
 varying vec3 vLivNor;`;
@@ -132,14 +139,16 @@ const FRAG_BODY = `
   float upright = 1.0 - smoothstep(0.7, 0.85, abs(normalize(vLivNor).z));
   vec3 paint = livBody;
   if (vLivPos.y < livFin.x && vLivPos.z > livFin.y && abs(vLivPos.x) < livFin.z) {
-    vec2 d = abs(vLivPos.yz - livCross.xy) / livCross.z;
+    vec2 d = abs(vec2((vLivPos.y - livCross.x) * livStretch, vLivPos.z - livCross.y)) / livCross.z;
     float cross = step(max(d.x, d.y), 1.0) * step(min(d.x, d.y), 0.3);
     paint = mix(paint, mix(livColor, vec3(1.0), cross), upright);
   }
   // the title reads from the nose on the left side and towards the nose on the right side
   vec2 t = vec2((vLivPos.x < 0.0 ? livTitleBox.x - vLivPos.y : vLivPos.y - livTitleBox.x + livTitleBox.y) / livTitleBox.y,
     (vLivPos.z - livTitleBox.z) / livTitleBox.w);
-  float ink = texture2D(livTitle, clamp(t, 0.0, 1.0)).a * step(0.0, t.x) * step(t.x, 1.0) * step(0.0, t.y) * step(t.y, 1.0);
+  // (only on the fuselage, not on a propeller or an engine beside it)
+  float ink = texture2D(livTitle, clamp(t, 0.0, 1.0)).a * step(0.0, t.x) * step(t.x, 1.0) * step(0.0, t.y) * step(t.y, 1.0)
+    * step(abs(vLivPos.x), 1.15 * livHalfWidth);
   paint = mix(paint, livColor, ink * upright);
   // lettering of the model's own livery goes
   if (vLivPos.y > livClean.x && vLivPos.y < livClean.y && vLivPos.z > livClean.z && vLivPos.z < livClean.w) detail = 0.0;
@@ -148,9 +157,9 @@ const FRAG_BODY = `
 
 // Paints a loaded model (its materials are changed in place; clones of the model share them).
 // `extra(shader)` can patch the shader further.
-export function paintLivery(scene, file, extra) {
+export function paintLivery(scene, file, extra, stretch = 1) {
   const tex = title();
-  const m = measure(scene, file);
+  const m = measure(scene, file, stretch);
   const uniforms = {
     livBody: { value: new THREE.Color(LIVERY.body) },
     livColor: { value: new THREE.Color(LIVERY.color) },
@@ -159,6 +168,8 @@ export function paintLivery(scene, file, extra) {
     livFin: { value: m.fin },
     livCross: { value: m.cross },
     livClean: { value: m.clean },
+    livStretch: { value: stretch },
+    livHalfWidth: { value: m.halfWidth },
   };
   const seen = new Set();
   scene.traverse((o) => {

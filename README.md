@@ -79,8 +79,8 @@ to climb and down to descend, flare, brake after touchdown and taxi nose-in onto
 plane for its status, click it to select it. Drag with the right mouse button (or Ctrl + drag) to tilt and rotate. 🎥 Follow puts the camera
 behind the selected plane, 🛰 Satellite toggles the satellite imagery (on by default). The aircraft are glTF models from
 `models/` (Flightradar24's GPLv2 models, see `models/README.md`); `js/data/models.js` says which type uses
-which file. Types without a model (small turboprops, Ju 52, DC-3, Concorde) keep the simple placeholder
-built in `placeholderModel()`. The hangar marketplace shows the same models: the selected type as a live 3D
+which file; six more come from FlightGear aircraft. The two types without a file (Saab 340, Saab 2000) get a
+simpler model built from their looks by `js/planebuilder.js`. The hangar marketplace shows the same models: the selected type as a live 3D
 model that you can turn by dragging (double-click to reset), the tiles as pictures.
 
 Developer tools: the 🛠 button (or F2) opens a cheat panel for testing: add or set money, add any
@@ -105,12 +105,15 @@ All content is plain data:
 - `js/data/aircraft.js` – aircraft types (market catalogue) and crew templates
 - `js/data/factories.js` – where each type is built (delivery flights start there)
 - `js/data/looks.js` – side-view shape of each type, drawn by `js/hangar.js`
-- `js/data/models.js` – 3D model of each type (`models/*.glb`) and its hangar picture (`models/hangar/*.webp`,
-  made with `tools/hangar_shots.html`)
+- `js/data/models.js` – 3D model of each type: a file (`models/*.glb`) or one built from its looks
+  (`builtModels`), and the real size of each model (`modelSize`), so that a type flying a relative's model is
+  stretched to its own length. Each type's hangar picture (`models/hangar/*.webp`) and map icon
+  (`models/icons/*.webp`) are made with `tools/hangar_shots.html`
 - `js/data/events.js` – random events, incidents and their newspaper stories
 - `js/config.js` – starting conditions, map bounds, economy balance, game modes, event rates
 
 `js/game.js` is the simulation (no DOM), `js/ui.js` the map and sidebar, `js/view3d.js` the 3D view,
-`js/hangar3d.js` the turnable 3D aircraft in the marketplace. `js/models3d.js` loads the 3D models and
+`js/hangar3d.js` the turnable 3D aircraft in the marketplace. `js/models3d.js` loads the 3D models
+(`js/planebuilder.js` builds the ones without a file) and
 `js/livery.js` paints them: white with a red fin, a white cross and the title, after the livery of SWISS
 (change `LIVERY` there for another title or colour, then make the hangar pictures again).

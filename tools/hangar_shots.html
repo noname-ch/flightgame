@@ -2,12 +2,13 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Hangar pictures of the 3D models</title>
+<title>Pictures and icons of the 3D models</title>
 <style>
   body { margin: 16px; background: #0c1118; color: #e5e7eb; font: 14px/1.5 system-ui, sans-serif; }
   #grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 10px; }
-  figure { margin: 0; background: #1c2532; border-radius: 8px; overflow: hidden; }
+  figure { margin: 0; background: #1c2532; border-radius: 8px; overflow: hidden; position: relative; }
   figure img { display: block; width: 100%; }
+  figure img.icon { position: absolute; right: 6px; top: 6px; width: 56px; background: #334155; border-radius: 6px; }
   figcaption { padding: 4px 10px; display: flex; justify-content: space-between; }
   a { color: #93c5fd; }
 </style>
@@ -20,37 +21,41 @@
   }
 </script>
 <script>window.FG = { data: {} };</script>
+<script src="../js/data/looks.js"></script>
 <script src="../js/data/models.js"></script>
 </head>
 <body>
-<h1>Hangar pictures of the 3D models</h1>
-<p>Renders every model in <code>models/</code> the way the hangar shows it (nose left, seen from the front left).
-  Save each picture as <code>models/hangar/&lt;file&gt;.webp</code>. Needs a local web server.</p>
+<h1>Pictures and icons of the 3D models</h1>
+<p>Renders every aircraft type with its model (<code>js/data/models.js</code>) in the livery: the picture for the hangar tiles (nose left,
+  seen from the front left) and the top view for the map. Save them as <code>models/hangar/&lt;file&gt;.webp</code>
+  and <code>models/icons/&lt;file&gt;.webp</code>. Needs a local web server.</p>
 <p id="status">Loading…</p>
 <div id="grid"></div>
 
 <script type="module">
 import * as THREE from 'three';
-import { loadModel } from '../js/models3d.js';
+import { loadModel, modelSize } from '../js/models3d.js';
 
 const SHOT = FG.data.modelShot;
 const PX = 1200;                 // pixels per aircraft length
+const ICON = 128;                // size of an icon
 const AZ = 18 * Math.PI / 180;   // camera: this far round towards the nose ...
 const EL = 6 * Math.PI / 180;    // ... and this far above the horizon
 
-const W = Math.round(SHOT.w * PX);
-const H = Math.round(SHOT.h * PX);
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
-renderer.setSize(W, H);
 renderer.setClearColor(0x000000, 0);
+const webp = (q) => new Promise((res) => renderer.domElement.toBlob(res, 'image/webp', q));
 
 // Model axes: x = right wing, y = nose, z = up. The camera stands on the left of the aircraft.
 const back = new THREE.Vector3(-Math.cos(AZ) * Math.cos(EL), Math.sin(AZ) * Math.cos(EL), Math.sin(EL));
 const right = new THREE.Vector3(0, 0, 1).cross(back).normalize();
 const up = back.clone().cross(right);
 
-async function shot(file) {
-  const model = await loadModel(file);
+async function shot(type) {
+  // the model is 1 unit long: a stretched type is narrower in proportion
+  const model = (await loadModel(type)).clone();
+  const size = modelSize(type);
+  model.scale.set(size.wide / size.len, 1, size.wide / size.len);
   const scene = new THREE.Scene();
   scene.add(model);
   scene.add(new THREE.HemisphereLight(0xffffff, 0x3a4250, 2.2));
@@ -81,25 +86,43 @@ async function shot(file) {
   const target = right.clone().multiplyScalar(cr).addScaledVector(up, bottom + SHOT.h / 2);
   cam.position.copy(target).addScaledVector(back, 4);
   cam.lookAt(target);
+  renderer.setSize(Math.round(SHOT.w * PX), Math.round(SHOT.h * PX));
   renderer.render(scene, cam);
-  const blob = await new Promise((res) => renderer.domElement.toBlob(res, 'image/webp', 0.9));
-  return { blob, width: r1 - r0, height: u1 - u0 };
+  const blob = await webp(0.9);
+
+  // Top view, nose up, as a plain shape: the map uses it as a mask and colours it itself.
+  const box = new THREE.Box3().setFromObject(model);
+  const mid = box.getCenter(new THREE.Vector3());
+  const side = Math.max(box.max.x - box.min.x, box.max.y - box.min.y) * 1.04;
+  const top = new THREE.OrthographicCamera(-side / 2, side / 2, side / 2, -side / 2, 0.1, 10);
+  top.up.set(0, 1, 0);
+  top.position.set(mid.x, mid.y, box.max.z + 2);
+  top.lookAt(mid.x, mid.y, 0);
+  scene.overrideMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide });
+  renderer.setSize(ICON, ICON);
+  renderer.render(scene, top);
+  const icon = await webp(0.95);
+  scene.overrideMaterial = null;
+  scene.remove(model);
+  return { blob, icon, width: r1 - r0, height: u1 - u0 };
 }
 
 const grid = document.getElementById('grid');
 const status = document.getElementById('status');
-const files = [...new Set(Object.values(FG.data.models))].sort();
+const types = Object.keys(FG.data.models);
 window.shots = {};
-for (const file of files) {
-  status.textContent = `Rendering ${file}…`;
-  const s = window.shots[file] = await shot(file);
+for (const type of types) {
+  const file = FG.data.typeSlug(type);   // name of the picture and the icon
+  status.textContent = `Rendering ${type}…`;
+  const s = window.shots[file] = await shot(type);
   const url = URL.createObjectURL(s.blob);
+  const iconUrl = URL.createObjectURL(s.icon);
   const fits = s.width <= SHOT.w && s.height + SHOT.ground <= SHOT.h;
-  grid.insertAdjacentHTML('beforeend', `<figure><img src="${url}" alt="${file}">
-    <figcaption><a href="${url}" download="${file}.webp">${file}.webp</a>
+  grid.insertAdjacentHTML('beforeend', `<figure><img src="${url}" alt="${file}"><img class="icon" src="${iconUrl}" alt="">
+    <figcaption><span><a href="${url}" download="${file}.webp">picture</a> · <a href="${iconUrl}" download="${file}.webp">icon</a> · ${type}</span>
     <span>${Math.round(s.blob.size / 1024)} kB${fits ? '' : ' · does not fit the frame!'}</span></figcaption></figure>`);
 }
-status.textContent = `${files.length} pictures. Click a name to save it.`;
+status.textContent = `${types.length} aircraft types. Click "picture" or "icon" to save one.`;
 window.shotsDone = true;
 </script>
 </body>

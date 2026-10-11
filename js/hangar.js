@@ -6,7 +6,8 @@
   const H = 300;
   const GROUND = 240;
   const RED = '#d52b1e';
-  const LIFT = 0.016;   // height of a 3D model's lowest point above the floor, in aircraft lengths
+  const LIFT = 0.016;   // height of a gearless 3D model above the floor, in aircraft lengths
+  const liftOf = (file) => ((FG.data.modelsOnGear || []).includes(file) ? 0 : LIFT);
   const cache = {};
 
   // ---------- small helpers ----------
@@ -103,15 +104,15 @@
     return fitScale(look.len, g.yt + finHeight(look, g) + (look.ttail ? 0.1 * g.d : 0));
   }
 
-  function photoSVG(look, file) {
+  function photoSVG(look, file, type) {
     const shot = FG.data.modelShot;
     const L = look.len;
     const s = modelScale(look);
     const w = shot.w * L * s;
     const h = shot.h * L * s;
-    // The models have no landing gear: they hover where the gear would hold them.
-    const y = GROUND + (shot.ground - LIFT) * L * s - h;
-    return { svg: `<image href="models/hangar/${file}.webp" x="${f1((W - w) / 2)}" y="${f1(y)}" width="${f1(w)}" height="${f1(h)}"/>`, s, L };
+    // Models without landing gear hover where the gear would hold them.
+    const y = GROUND + (shot.ground - liftOf(file)) * L * s - h;
+    return { svg: `<image href="models/hangar/${FG.data.typeSlug(type)}.webp" x="${f1((W - w) / 2)}" y="${f1(y)}" width="${f1(w)}" height="${f1(h)}"/>`, s, L };
   }
 
   // ---------- plane drawing (returns SVG in screen units) ----------
@@ -388,7 +389,7 @@
     const look = FG.data.looks[type] || { len: 37, dia: 4, eng: 'uw2' };
     const uid = `hg-${variant}-${type}`.replace(/[^a-zA-Z0-9-]/g, '_');
     const file = FG.data.models && FG.data.models[type];
-    const p = file ? photoSVG(look, file) : planeSVG(look, uid);
+    const p = file ? photoSVG(look, file, type) : planeSVG(look, uid);
     cache[key] = `<svg class="hangar-svg" data-type="${type}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="${FG.data.aircraft[type].name} in the hangar">${scene(uid, p.svg, p.s, p.L)}</svg>`;
     return cache[key];
   }
@@ -397,8 +398,8 @@
   function model(type) {
     const look = FG.data.looks[type];
     const file = FG.data.models && FG.data.models[type];
-    return file && look ? { file, len: look.len, scale: modelScale(look) } : null;
+    return file && look ? { file, len: look.len, scale: modelScale(look), lift: liftOf(file) } : null;
   }
 
-  FG.hangar = { svg, model, W, H, GROUND, LIFT };
+  FG.hangar = { svg, model, W, H, GROUND };
 })();

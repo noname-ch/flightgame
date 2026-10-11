@@ -4,7 +4,7 @@
   FG.data.factories = [
     // Europe (real locations)
     { code: 'TLS', name: 'Airbus Toulouse-Blagnac', country: 'FR', lat: 43.629, lon: 1.364,
-      types: ['A320', 'A320neo', 'A330-200', 'A330-300', 'A330-900', 'A350-900', 'A350-1000', 'A380-800', 'ATR42-600', 'ATR72-600', 'CONCORDE'] },
+      types: ['A320', 'A320neo', 'A330-200', 'A330-300', 'A330-900', 'A340-600', 'A350-900', 'A350-1000', 'A380-800', 'ATR42-600', 'ATR72-600', 'CONCORDE'] },
     { code: 'XFW', name: 'Airbus Hamburg-Finkenwerder', country: 'DE', lat: 53.535, lon: 9.835,
       types: ['A318', 'A319', 'A321', 'A321neo', 'A321XLR'] },
     { code: 'OBF', name: 'Dornier Oberpfaffenhofen', country: 'DE', lat: 48.081, lon: 11.283, types: ['DO228NG', 'DO328'] },
