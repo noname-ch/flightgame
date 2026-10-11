@@ -1,5 +1,7 @@
 # Flightgame
 
+**Play online: https://noname-ch.github.io/flightgame/** (updates automatically with every push to `main`)
+
 A small airline management game in the browser, in a dark theme. The start screen lets you
 continue your saved airline or found a new one: pick its name, the mode, the difficulty, your home
 airport (30 small airports across the world with cheap slots, `startAirports` in `config.js`) and your first
@@ -71,7 +73,10 @@ button (top right) switches the base map (satellite by default, remembered) and 
 
 3D view: the **3D** button (or V) switches the map to a 3D globe with terrain, hill shading and 3D
 buildings (MapLibre). Aircraft are drawn as 3D models at their real altitude, stretched when zoomed out
-so you can see them. Drag with the right mouse button (or Ctrl + drag) to tilt and rotate. 🎥 Follow puts the camera
+so you can see them. Planes really fly: they push back from their gate tail first, taxi
+(speeding up and slowing down), accelerate down the runway, rotate and lift off, bank into turns, pitch up
+to climb and down to descend, flare, brake after touchdown and taxi nose-in onto their stand. Hover a
+plane for its status, click it to select it. Drag with the right mouse button (or Ctrl + drag) to tilt and rotate. 🎥 Follow puts the camera
 behind the selected plane, 🛰 Satellite toggles the satellite imagery (on by default). The aircraft are glTF models from
 `models/` (Flightradar24's GPLv2 models, see `models/README.md`); `js/data/models.js` says which type uses
 which file. Types without a model (small turboprops, Ju 52, DC-3, Concorde) keep the simple placeholder

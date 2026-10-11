@@ -44,12 +44,49 @@ function smoothTime() {
 
 const CRUISE_M = { turboprop: 7000, regional: 10000, narrowbody: 11000, widebody: 11500, classic: 9000 };
 
-// { lat, lon, altM, heading, pitch } of a plane. Uses G.flightState when the game provides it.
+const DEG = Math.PI / 180;
+const wrap180 = (d) => ((((d % 360) + 540) % 360) - 180);
+const AIRBORNE = { climb: 1, cruise: 1, descent: 1, approach: 1 };
+
+// Flight attitude from the track around time t: heading along the actual motion (so corners are
+// flown as curves), bank from the turn rate, pitch from the climb or descent angle, plus the
+// rotation at lift-off and the flare before touchdown. Angles in degrees.
+function attitude(p, st, t) {
+  const dt = 0.12; // game minutes either side
+  const a = G.flightState(p, t - dt);
+  const b = G.flightState(p, t + dt);
+  const moved = G.distanceKm(a, b) * 1000;
+  let heading = st.heading || 0;
+  if (st.phase !== 'pushback' && moved > 3) heading = G.bearing(a, b);
+  const vMs = st.speedKmh / 3.6;
+  const ac = D.aircraft[p.type];
+  const vLift = ac.speedKmh * 0.35; // ground speed at lift-off in the track model
+  let bank = 0;
+  let pitch = 0;
+  if (AIRBORNE[st.phase] || (st.phase === 'takeoff' && st.altFt > 0)) {
+    if (G.distanceKm(a, st) * 1000 > 3 && G.distanceKm(st, b) * 1000 > 3) {
+      const turn = wrap180(G.bearing(st, b) - G.bearing(a, st)) * DEG / (dt * 60); // rad/s
+      bank = Math.max(-30, Math.min(30, Math.atan(vMs * turn / 9.81) / DEG));
+    }
+    const climbM = ((b.altFt || 0) - (a.altFt || 0)) * 0.3048;
+    pitch = Math.atan2(climbM, Math.max(1, moved)) / DEG + 2.5;
+    if (st.phase === 'approach' && st.altFt < 150) pitch += 4 * (1 - st.altFt / 150); // flare
+  } else if (st.phase === 'takeoff') {
+    pitch = 9 * Math.max(0, Math.min(1, (st.speedKmh - vLift * 0.75) / (vLift * 0.25))); // rotation
+  } else if (st.phase === 'landing') {
+    pitch = 4 * Math.max(0, Math.min(1, (st.speedKmh - vLift * 0.5) / (vLift * 0.5))); // nose wheel down
+  }
+  return { heading, bank, pitch };
+}
+
+// { lat, lon, altM, heading, bank, pitch } of a plane. Uses G.flightState when the game provides it.
 function planePose(p, t) {
   if (p.status === 'flying' && G.flightState) {
     const st = G.flightState(p, t);
-    const climb = { takeoff: 1, climb: 1, descent: -1, approach: -0.5 }[st && st.phase] || 0;
-    if (st) return { lat: st.lat, lon: st.lon, altM: (st.altFt || 0) * 0.3048, heading: st.heading || 0, flying: true, climb };
+    if (st) {
+      const att = attitude(p, st, t);
+      return { lat: st.lat, lon: st.lon, altM: (st.altFt || 0) * 0.3048, flying: true, st, ...att };
+    }
   }
   if (p.status === 'flying' && p.flight) {
     const f = p.flight;
@@ -63,7 +100,12 @@ function planePose(p, t) {
     const up = Math.min(1, frac / 0.15, (1 - frac) / 0.2);
     const ease = up * up * (3 - 2 * up);
     const cruise = CRUISE_M[D.aircraft[p.type].category] || 10000;
-    return { lat, lon, altM: cruise * ease, heading, flying: true, climb: frac < 0.15 ? 1 : frac > 0.8 ? -1 : 0 };
+    return { lat, lon, altM: cruise * ease, heading, flying: true, pitch: frac < 0.15 ? 7 : frac > 0.8 ? -3 : 0 };
+  }
+  // Parked at its gate.
+  if (G.gateOf) {
+    const g = G.gateOf(p.location, p.id);
+    return { lat: g.lat, lon: g.lon, altM: 0, heading: g.heading, flying: false, gate: true };
   }
   const ap = G.airportByCode[p.location];
   return { lat: ap.lat, lon: ap.lon, altM: 0, heading: 0, flying: false };
@@ -372,6 +414,7 @@ const planeLayer = {
     v.clip = globe ? pd.clippingPlane : null;
 
     const t = smoothTime();
+    const now = performance.now();
     const zoom = map.getZoom();
     const center = map.getCenter();
     const mpp = EARTH_CIRC * Math.cos(center.lat * Math.PI / 180) / (512 * 2 ** zoom); // metres per pixel
@@ -400,16 +443,28 @@ const planeLayer = {
       const altM = ground + shownAlt(pose.altM, len, exag);
       if (p.id === sel) this.drawTrack(p, len, exag, globe);
       const unit = frameAt(pose.lat, pose.lon, altM, globe);
-      const h = pose.heading * Math.PI / 180;
+      // Ease heading, bank and pitch towards the target, so the plane turns, rolls and pitches
+      // smoothly instead of snapping (frame-rate independent).
+      const k = e.att ? 1 - Math.exp(-Math.min(0.25, (now - e.lastFrame) / 1000) / 0.35) : 1;
+      if (!e.att) e.att = { heading: pose.heading, bank: 0, pitch: 0 };
+      e.att.heading = (e.att.heading + wrap180(pose.heading - e.att.heading) * k + 360) % 360;
+      e.att.bank += ((pose.bank || 0) - e.att.bank) * k;
+      e.att.pitch += ((pose.pitch || 0) - e.att.pitch) * k;
+      e.lastFrame = now;
+      const h = e.att.heading * DEG;
+      const pitch = e.att.pitch * DEG;
+      const bank = e.att.bank * DEG;
       const { fwd, right, up, east, north, pos } = tmp;
       fwd.copy(north).multiplyScalar(Math.cos(h)).addScaledVector(east, Math.sin(h));
       right.copy(east).multiplyScalar(Math.cos(h)).addScaledVector(north, -Math.sin(h));
-      // Nose up while climbing, down while descending.
-      const pitch = (pose.climb || 0) * 0.12;
+      // Pitch about the wing axis, then bank about the nose (right turn = right wing down).
       const nose = fwd.clone().multiplyScalar(Math.cos(pitch)).addScaledVector(up, Math.sin(pitch));
-      const top = up.clone().multiplyScalar(Math.cos(pitch)).addScaledVector(fwd, -Math.sin(pitch));
-      // Parked planes line up beside each other.
-      if (!pose.flying) {
+      const lift = up.clone().multiplyScalar(Math.cos(pitch)).addScaledVector(fwd, -Math.sin(pitch));
+      const wing = right.clone().multiplyScalar(Math.cos(bank)).addScaledVector(lift, -Math.sin(bank));
+      const top = lift.clone().multiplyScalar(Math.cos(bank)).addScaledVector(right, Math.sin(bank));
+      right.copy(wing);
+      // Zoomed out, enlarged parked planes would overlap at their gates: line them up instead.
+      if (!pose.flying && (!pose.gate || exag > 2.5)) {
         const n = G.state.planes.filter((q) => q.status !== 'flying' && q.location === p.location).indexOf(p);
         pos.addScaledVector(east, n * len * exag * 1.1 * unit).addScaledVector(north, len * exag * 0.9 * unit);
       }
@@ -418,8 +473,10 @@ const planeLayer = {
       e.obj.matrixWorldNeedsUpdate = true;
       e.world.copy(pos);
       e.lngLat = [pose.lon, pose.lat];
-      e.heading = pose.heading;
+      e.heading = e.att.heading;
       e.altM = altM;
+      e.pose = pose;
+      e.pxLen = len * exag / mpp; // on-screen length, for clicking
       // Hide planes behind the globe.
       e.obj.visible = !v.clip || pos.x * v.clip[0] + pos.y * v.clip[1] + pos.z * v.clip[2] + v.clip[3] > -0.002;
     }
@@ -429,7 +486,14 @@ const planeLayer = {
     if (this.track && !(sel && v.planes[sel] && G.plane(sel) && G.plane(sel).status === 'flying')) this.track.visible = false;
 
     this.renderer.resetState();
+    // Own depth buffer for the planes: sharing MapLibre's lets the (exaggerated) terrain and the
+    // coarse depth precision cut holes into the models. Planes are then drawn over the terrain.
+    this.renderer.clearDepth();
     this.renderer.render(this.scene, this.camera);
+    // three.js and MapLibre share the WebGL context: put the GL state back and make MapLibre
+    // re-apply its own, or real GPUs draw an empty map (texture uploads, framebuffer bindings).
+    this.renderer.resetState();
+    if (map.painter && map.painter.context && map.painter.context.setDirty) map.painter.context.setDirty();
     map.triggerRepaint();
   },
 };
@@ -468,15 +532,67 @@ function planeScreen(e) {
   return { x: (c.x / c.w + 1) / 2 * w, y: (1 - c.y / c.w) / 2 * h };
 }
 
-function onClick(e) {
+// The plane under a screen point: within its drawn size, but never less than 18 px.
+function planeAt(point) {
   let best = null;
-  let bestD = 22;
+  let bestD = Infinity;
   for (const [id, pe] of Object.entries(v.planes)) {
     const sp = planeScreen(pe);
     if (!sp) continue;
-    const d = Math.hypot(sp.x - e.point.x, sp.y - e.point.y);
-    if (d < bestD) { best = id; bestD = d; }
+    const d = Math.hypot(sp.x - point.x, sp.y - point.y);
+    const reach = Math.max(18, Math.min(80, (pe.pxLen || 0) * 0.6));
+    if (d < reach && d < bestD) { best = id; bestD = d; }
   }
+  return best;
+}
+
+const PHASE_TEXT = {
+  pushback: 'Pushing back', 'taxi-out': 'Taxiing to the runway', takeoff: 'Taking off', climb: 'Climbing',
+  cruise: 'Cruising', descent: 'Descending', approach: 'On final', landing: 'Landing', 'taxi-in': 'Taxiing to the gate',
+};
+
+function hoverText(id) {
+  const p = G.plane(id);
+  const e = v.planes[id];
+  if (!p || !e) return '';
+  const ac = D.aircraft[p.type];
+  let line;
+  const st = e.pose && e.pose.st;
+  if (p.status === 'flying' && st) {
+    const f = p.flight;
+    line = `${PHASE_TEXT[st.phase] || 'Flying'} · ${f.from} → ${f.to}<br>` +
+      `${st.altFt > 0 ? `${Math.round(st.altFt / 100) * 100} ft · ` : ''}${st.speedKmh} km/h`;
+  } else {
+    line = `${p.status === 'turnaround' ? 'Turnaround' : 'At the gate'} · ${p.location}`;
+  }
+  return `<b>${p.id}</b> · ${ac.name}<br>${line}`;
+}
+
+function onMove(e) {
+  v.hoverId = planeAt(e.point);
+  v.map.getCanvas().style.cursor = v.hoverId ? 'pointer' : '';
+  updateHover();
+}
+
+// Info box above the plane under the mouse; follows the plane while it moves.
+function updateHover() {
+  const e = v.hoverId && v.planes[v.hoverId];
+  const sp = e && planeScreen(e);
+  if (!sp) {
+    if (v.hover) { v.hover.remove(); v.hover = null; }
+    return;
+  }
+  if (!v.hover) {
+    v.hover = new maplibregl.Popup({ closeButton: false, closeOnClick: false, offset: 18, className: 'plane-hover' })
+      .addTo(v.map);
+  }
+  const html = hoverText(v.hoverId);
+  if (html !== v.hoverHtml) { v.hover.setHTML(html); v.hoverHtml = html; }
+  v.hover.setLngLat(v.map.unproject([sp.x, sp.y]));
+}
+
+function onClick(e) {
+  const best = planeAt(e.point);
   if (best) { FG.ui.selectPlane(best); return; }
   const hits = v.map.queryRenderedFeatures([[e.point.x - 6, e.point.y - 6], [e.point.x + 6, e.point.y + 6]], { layers: ['fg-airports'] });
   if (hits.length) { FG.ui.selectAirport(hits[0].properties.code); return; }
@@ -559,10 +675,12 @@ function createMap() {
     fitNetwork();
   });
   map.on('click', onClick);
+  map.on('mousemove', onMove);
+  map.on('mouseout', () => { v.hoverId = null; updateHover(); });
   map.on('mouseenter', 'fg-airports', () => { map.getCanvas().style.cursor = 'pointer'; });
   map.on('mouseleave', 'fg-airports', () => { map.getCanvas().style.cursor = ''; });
   map.on('dragstart', () => setFollow(false));
-  map.on('render', () => { if (v.ready && v.on) { refreshData(); followTick(); } });
+  map.on('render', () => { if (v.ready && v.on) { refreshData(); followTick(); if (v.hoverId) updateHover(); } });
   // Keep mouse events away from the Leaflet map underneath.
   for (const t of ['mousedown', 'click', 'dblclick', 'wheel', 'touchstart', 'pointerdown', 'contextmenu']) {
     el.addEventListener(t, (ev) => ev.stopPropagation());

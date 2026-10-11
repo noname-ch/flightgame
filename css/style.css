@@ -751,3 +751,16 @@ button.big { padding: 10px 22px; font-size: 15px; font-weight: 700; border-radiu
   .st-hero h1 { font-size: 26px; }
   .st-actions button { flex: 1; }
 }
+
+/* 3D view: info box over the plane under the mouse */
+#view3d .plane-hover { pointer-events: none; }
+#view3d .plane-hover .maplibregl-popup-content {
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(19, 26, 36, 0.92);
+  border: 1px solid var(--input-border);
+  color: var(--text);
+  font: 12px/1.45 system-ui, sans-serif;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+}
+#view3d .plane-hover .maplibregl-popup-tip { display: none; }
