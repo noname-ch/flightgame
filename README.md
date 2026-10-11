@@ -63,6 +63,12 @@ Map: the selected airport shows its catchment ring and the towns feeding it. Cli
 route to select that aircraft, click empty map to deselect. ⌂ zooms to your network, the layer
 button (top right) switches the base map and toggles towns, routes and place names.
 
+3D view: the **3D** button (or V) switches the map to a 3D globe with terrain, hill shading and 3D
+buildings (MapLibre). Aircraft are drawn as 3D models at their real altitude, stretched when zoomed out
+so you can see them. Drag with the right mouse button (or Ctrl + drag) to tilt and rotate. 🎥 Follow puts the camera
+behind the selected plane, 🛰 Satellite switches to satellite imagery. The aircraft are simple placeholder
+models built in `planeModel()` in `js/view3d.js`; real glTF models can be swapped in there later.
+
 Controls: Space = pause, 1/2/3 = speed. The game autosaves to the browser (localStorage).
 
 ## Extending
@@ -82,4 +88,4 @@ All content is plain data:
 - `js/data/events.js` – random events, incidents and their newspaper stories
 - `js/config.js` – starting conditions, map bounds, economy balance, game modes, event rates
 
-`js/game.js` is the simulation (no DOM), `js/ui.js` the map and sidebar.
+`js/game.js` is the simulation (no DOM), `js/ui.js` the map and sidebar, `js/view3d.js` the 3D view.

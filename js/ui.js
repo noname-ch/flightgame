@@ -1628,6 +1628,16 @@
     renderAll();
     setInterval(loop, TICK_MS);
     setInterval(() => G.save(), 30000);
+    // Hook for the 3D view (js/view3d.js).
+    FG.ui = {
+      get selectedPlane() { return ui.selectedPlane; },
+      get selectedAirport() { return ui.selectedAirport; },
+      get speed() { return ui.paused ? 0 : ui.speed; },
+      selectPlane,
+      selectAirport(code) { ui.selectedAirport = code; G.dirty = true; },
+      clearSelection() { ui.selectedAirport = null; ui.selectedPlane = null; G.dirty = true; },
+    };
+    window.dispatchEvent(new Event('fg-ui-ready'));
     window.addEventListener('beforeunload', () => G.save());
   }
 

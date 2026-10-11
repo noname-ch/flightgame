@@ -612,3 +612,30 @@ i.s-net { background: var(--muted); }
   background: linear-gradient(90deg, #ff9500, #ffcc00, #34c759, #30b0c7, #5856d6);
 }
 .leaflet-tooltip .alt { color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* ---------- 3D view (js/view3d.js) ---------- */
+#view3d {
+  position: absolute;
+  inset: 0;
+  z-index: 1100; /* above the Leaflet map and its controls */
+  background: #0b1220;
+}
+#view3d[hidden] { display: none; }
+#view3d .maplibregl-canvas { outline: none; }
+.view3d-controls {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  display: flex;
+  gap: 6px;
+}
+.view3d-controls button {
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 5px 10px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+  cursor: pointer;
+}
+.view3d-controls button.active { background: var(--accent); border-color: var(--accent); color: #fff; }

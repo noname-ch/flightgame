@@ -6,7 +6,16 @@
   <title>Flightgame</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=UnifrakturMaguntia&family=Old+Standard+TT:ital,wght@0,400;0,700;1,400&family=Playfair+Display:wght@700;900&display=swap">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@6.13.0/dist/maplibre-gl.css">
   <link rel="stylesheet" href="css/style.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "maplibre-gl": "https://cdn.jsdelivr.net/npm/maplibre-gl@6.13.0/dist/maplibre-gl.mjs",
+        "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js"
+      }
+    }
+  </script>
 </head>
 <body>
   <header>
@@ -18,13 +27,14 @@
       <input id="speed" type="range" min="0" max="1000" value="0" title="Game speed (← / →)">
       <span id="speed-label"></span>
     </div>
+    <button id="view3d-toggle" title="3D view (V)">3D</button>
     <div class="spacer"></div>
     <button id="save">Save</button>
     <button id="newgame">New game</button>
   </header>
 
   <main>
-    <div id="map"></div>
+    <div id="map"><div id="view3d" hidden></div></div>
     <aside id="sidebar">
       <div id="details"></div>
       <div id="events"></div>
@@ -63,5 +73,6 @@
   <script src="js/game.js"></script>
   <script src="js/hangar.js"></script>
   <script src="js/ui.js"></script>
+  <script type="module" src="js/view3d.js"></script>
 </body>
 </html>
