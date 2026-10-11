@@ -1,6 +1,6 @@
 // 3D view: MapLibre globe with terrain and 3D buildings, aircraft drawn with three.js.
 // Toggled with the "3D" button (or V). Reads the game state directly; selection goes through FG.ui.
-// The aircraft are glTF models from models/ (see MODEL_FILES); types without one use the placeholder.
+// The aircraft are glTF models from models/ (see js/data/models.js); types without one use the placeholder.
 import * as maplibregl from 'maplibre-gl';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -70,21 +70,9 @@ function planePose(p, t) {
 }
 
 // ---------- aircraft models ----------
-// glTF models in models/ (see models/README.md). Local axes: x = right wing, y = nose, z = up; each file is
-// centred and 1 unit long, and is scaled to the type's real length (FG.data.looks). Types without their own
-// model fly a close relative; types missing here keep the placeholder.
-const MODEL_FILES = {
-  'DO328': 'atr42', 'ATR42-600': 'atr42', 'ATR72-600': 'atr42', 'Q400': 'q400',
-  'ERJ145': 'crj700', 'CRJ200': 'crj700', 'CRJ900': 'crj900', 'F100': 'crj900', 'RJ100': 'bae146',
-  'E175': 'e170', 'E190': 'e190', 'E195': 'e190', 'E190-E2': 'e190', 'E195-E2': 'e190', 'SSJ100': 'e190',
-  'A220-100': 'cs100', 'A220-300': 'cs300',
-  'A318': 'a318', 'A319': 'a319', 'A320': 'a320', 'A320neo': 'a320', 'C919': 'a320',
-  'A321': 'a321', 'A321neo': 'a321', 'A321XLR': 'a321',
-  'B737-700': 'b737', 'B737-800': 'b738', 'B737-8': 'b738', 'B737-9': 'b739', 'B757-200': 'b752', 'MD-82': 'crj900',
-  'B767-300ER': 'b763', 'A330-200': 'a332', 'A330-300': 'a333', 'A330-900': 'a333',
-  'B787-8': 'b788', 'B787-9': 'b789', 'B787-10': 'b789', 'A340-600': 'a346', 'A350-900': 'a359', 'A350-1000': 'a359',
-  'B777-200ER': 'b772', 'B777-300ER': 'b773', 'B777-9': 'b773', 'B747-400': 'b744', 'B747-8': 'b748', 'A380-800': 'a380',
-};
+// glTF models in models/ (see models/README.md); FG.data.models says which type uses which file. Local axes:
+// x = right wing, y = nose, z = up; each file is centred and 1 unit long, and is scaled to the type's real
+// length (FG.data.looks). Types without a model keep the placeholder.
 const modelLoads = {};   // file -> Promise of the loaded scene
 
 function loadModel(file) {
@@ -98,7 +86,7 @@ function loadModel(file) {
 // The aircraft to draw for a type: the placeholder at first, replaced by the glTF model once it has loaded.
 function planeModel(type) {
   const g = placeholderModel(type);
-  const file = MODEL_FILES[type];
+  const file = D.models[type];
   const look = D.looks && D.looks[type];
   if (!file || !look) return g;
   // Placeholder at the type's real length while the model loads.

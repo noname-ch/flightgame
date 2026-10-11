@@ -1,4 +1,5 @@
 // Draws an aircraft (side view, real proportions from FG.data.looks) standing in a hangar.
+// Types with a 3D model (FG.data.models) show a picture of that model instead of the drawing.
 // FG.hangar.svg(type, variant) returns an SVG string; results are cached per type + variant.
 (function () {
   const W = 640;
@@ -86,6 +87,27 @@
     return g;
   }
 
+  const finHeight = (look, g) => (g.concorde ? 1.35 : look.ttail ? 1.2 : g.prop ? 1.65 : 1.5) * g.d;
+
+  // Screen scale (px per metre) that fits the length and the height `top` (m); bigger types come out a bit larger.
+  function fitScale(L, top) {
+    const sizeCue = 0.68 + 0.32 * Math.min(1, L / 72);
+    return Math.min(560 / (L * 1.04), 190 / top) * sizeCue;
+  }
+
+  // ---------- picture of the 3D model (models/hangar/, made by tools/hangar_shots.html) ----------
+  function photoSVG(look, file) {
+    const g = geometry(look);
+    const shot = FG.data.modelShot;
+    const L = look.len;
+    const s = fitScale(L, g.yt + finHeight(look, g) + (look.ttail ? 0.1 * g.d : 0));
+    const w = shot.w * L * s;
+    const h = shot.h * L * s;
+    // The lowest wheel stands a little in front of the floor edge.
+    const y = GROUND + (0.012 + shot.ground) * L * s - h;
+    return { svg: `<image href="models/hangar/${file}.webp" x="${f1((W - w) / 2)}" y="${f1(y)}" width="${f1(w)}" height="${f1(h)}"/>`, s, L };
+  }
+
   // ---------- plane drawing (returns SVG in screen units) ----------
   function planeSVG(look, uid) {
     const g = geometry(look);
@@ -94,7 +116,7 @@
     // fin
     const ttail = !!look.ttail;
     const finBase = g.concorde ? 0.19 * L : g.prop ? 0.21 * L : 0.18 * L;
-    const finH = (g.concorde ? 1.35 : ttail ? 1.2 : g.prop ? 1.65 : 1.5) * d;
+    const finH = finHeight(look, g);
     const sweep = finH * (g.concorde ? 1.25 : g.prop ? 0.6 : 0.85);
     const xf0 = L - finBase - 0.01 * L;
     const topChord = finBase * (ttail ? 0.5 : g.concorde ? 0.12 : 0.38);
@@ -103,8 +125,7 @@
     // overall extent → scale
     const hump = look.hump ? yt + 0.36 * d : yt;
     const top = Math.max(finTop + (ttail ? 0.1 * d : 0), hump);
-    const sizeCue = 0.68 + 0.32 * Math.min(1, L / 72);
-    const s = Math.min(560 / (L * 1.04), 190 / top) * sizeCue;
+    const s = fitScale(L, top);
     const x0 = (W - L * s) / 2 + 0.03 * L * s;
     const X = (x) => f1(x0 + x * s);
     const Y = (y) => f1(GROUND - y * s);
@@ -360,7 +381,8 @@
     if (cache[key]) return cache[key];
     const look = FG.data.looks[type] || { len: 37, dia: 4, eng: 'uw2' };
     const uid = `hg-${variant}-${type}`.replace(/[^a-zA-Z0-9-]/g, '_');
-    const p = planeSVG(look, uid);
+    const file = FG.data.models && FG.data.models[type];
+    const p = file ? photoSVG(look, file) : planeSVG(look, uid);
     cache[key] = `<svg class="hangar-svg" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="${FG.data.aircraft[type].name} in the hangar">${scene(uid, p.svg, p.s, p.L)}</svg>`;
     return cache[key];
   }

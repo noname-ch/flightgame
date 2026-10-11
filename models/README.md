@@ -11,4 +11,7 @@ They were converted from glTF 1.0 to glTF 2.0 for three.js and changed on the wa
 - parts with the same material merged, duplicate vertices removed
 - textures limited to 1024 px and stored as JPEG
 
-`MODEL_FILES` in `js/view3d.js` maps each aircraft type of the game to one of these files.
+`js/data/models.js` maps each aircraft type of the game to one of these files.
+
+`hangar/` holds a picture of each model for the hangar marketplace (`js/hangar.js`). To make them again,
+serve the project folder locally, open `tools/hangar_shots.html` and save each picture into `hangar/`.

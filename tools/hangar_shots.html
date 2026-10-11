@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Hangar pictures of the 3D models</title>
+<style>
+  body { margin: 16px; background: #0c1118; color: #e5e7eb; font: 14px/1.5 system-ui, sans-serif; }
+  #grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 10px; }
+  figure { margin: 0; background: #1c2532; border-radius: 8px; overflow: hidden; }
+  figure img { display: block; width: 100%; }
+  figcaption { padding: 4px 10px; display: flex; justify-content: space-between; }
+  a { color: #93c5fd; }
+</style>
+<script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/"
+    }
+  }
+</script>
+<script>window.FG = { data: {} };</script>
+<script src="../js/data/models.js"></script>
+</head>
+<body>
+<h1>Hangar pictures of the 3D models</h1>
+<p>Renders every model in <code>models/</code> the way the hangar shows it (nose left, seen from the front left).
+  Save each picture as <code>models/hangar/&lt;file&gt;.webp</code>. Needs a local web server.</p>
+<p id="status">Loading…</p>
+<div id="grid"></div>
+
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+const SHOT = FG.data.modelShot;
+const PX = 1200;                 // pixels per aircraft length
+const AZ = 18 * Math.PI / 180;   // camera: this far round towards the nose ...
+const EL = 6 * Math.PI / 180;    // ... and this far above the horizon
+
+const W = Math.round(SHOT.w * PX);
+const H = Math.round(SHOT.h * PX);
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+renderer.setSize(W, H);
+renderer.setClearColor(0x000000, 0);
+
+// Model axes: x = right wing, y = nose, z = up. The camera stands on the left of the aircraft.
+const back = new THREE.Vector3(-Math.cos(AZ) * Math.cos(EL), Math.sin(AZ) * Math.cos(EL), Math.sin(EL));
+const right = new THREE.Vector3(0, 0, 1).cross(back).normalize();
+const up = back.clone().cross(right);
+
+async function shot(file) {
+  const gltf = await new GLTFLoader().loadAsync(`../models/${file}.glb`);
+  const scene = new THREE.Scene();
+  scene.add(gltf.scene);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x3a4250, 2.2));
+  const key = new THREE.DirectionalLight(0xfff4dc, 2.4);
+  key.position.set(-0.6, 0.8, 1.5);
+  const fill = new THREE.DirectionalLight(0xcfe0ff, 0.9);
+  fill.position.set(-1, -0.6, 0.3);
+  scene.add(key, fill);
+
+  // Extent of the model on the picture plane.
+  let r0 = Infinity, r1 = -Infinity, u0 = Infinity, u1 = -Infinity;
+  const p = new THREE.Vector3();
+  gltf.scene.updateMatrixWorld(true);
+  gltf.scene.traverse((o) => {
+    if (!o.isMesh) return;
+    const pos = o.geometry.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      p.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld);
+      const r = p.dot(right), u = p.dot(up);
+      if (r < r0) r0 = r; if (r > r1) r1 = r;
+      if (u < u0) u0 = u; if (u > u1) u1 = u;
+    }
+  });
+  const cr = (r0 + r1) / 2;
+  const bottom = u0 - SHOT.ground;
+  const cam = new THREE.OrthographicCamera(-SHOT.w / 2, SHOT.w / 2, SHOT.h / 2, -SHOT.h / 2, 0.1, 10);
+  cam.up.copy(up);
+  const target = right.clone().multiplyScalar(cr).addScaledVector(up, bottom + SHOT.h / 2);
+  cam.position.copy(target).addScaledVector(back, 4);
+  cam.lookAt(target);
+  renderer.render(scene, cam);
+  const blob = await new Promise((res) => renderer.domElement.toBlob(res, 'image/webp', 0.9));
+  return { blob, width: r1 - r0, height: u1 - u0 };
+}
+
+const grid = document.getElementById('grid');
+const status = document.getElementById('status');
+const files = [...new Set(Object.values(FG.data.models))].sort();
+window.shots = {};
+for (const file of files) {
+  status.textContent = `Rendering ${file}…`;
+  const s = window.shots[file] = await shot(file);
+  const url = URL.createObjectURL(s.blob);
+  const fits = s.width <= SHOT.w && s.height + SHOT.ground <= SHOT.h;
+  grid.insertAdjacentHTML('beforeend', `<figure><img src="${url}" alt="${file}">
+    <figcaption><a href="${url}" download="${file}.webp">${file}.webp</a>
+    <span>${Math.round(s.blob.size / 1024)} kB${fits ? '' : ' · does not fit the frame!'}</span></figcaption></figure>`);
+}
+status.textContent = `${files.length} pictures. Click a name to save it.`;
+window.shotsDone = true;
+</script>
+</body>
+</html>
