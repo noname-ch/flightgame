@@ -125,6 +125,15 @@
     }
   }
 
+  // Expansion preview: the maps draw where construction at the selected airport would go
+  // (G.expansionPreview) while FG.devPreview is set. Not a cheat, so nothing is logged.
+  function togglePreview() {
+    FG.devPreview = !FG.devPreview;
+    if (FG.view3d) FG.view3d.gatesDirty = true;
+    G.dirty = true;
+    render();
+  }
+
   function finishProjects() {
     const s = G.state;
     if (!s.projects.length) { note('No construction under way.'); return; }
@@ -223,6 +232,7 @@
           <button data-dev="airport" data-kind="slot"${ap && !s.slots[ap] ? '' : ' disabled'}>Free slot</button>
           <button data-dev="airport" data-kind="stake"${ap ? '' : ' disabled'}>Own 100%</button>
           <button data-dev="finish"${s.projects.length ? '' : ' disabled'}>Finish all construction (${s.projects.length})</button>
+          <button data-dev="preview" title="Shows on the map where new runways, taxiways, stands and buildings would go at the selected airport">${FG.devPreview ? 'Hide' : 'Show'} expansion preview</button>
         </div>
       </section>
       <section><h4>Events <span class="muted">${G.activeEffects().length} active</span></h4>
@@ -254,6 +264,7 @@
       case 'plane': planeAction(d.kind); break;
       case 'airport': airportAction(d.kind); break;
       case 'finish': finishProjects(); break;
+      case 'preview': togglePreview(); break;
       case 'event': triggerEvent(); break;
       case 'clearEffects': clearEffects(); break;
       case 'skip': skip(Number(d.min), d.label); break;

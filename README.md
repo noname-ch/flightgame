@@ -88,6 +88,21 @@ gets a free stand when it leaves for an airport, taxis nose-in onto it, parks th
 the gate) and is pushed back from it tail first by a tug. `G.apronOf(code)` has the layout, `G.gateOf`
 the stand of a plane.
 
+Airports in 3D: the 3D view also draws the runways (from zoom 10), a taxiway parallel to each runway with
+links to the runway ends, the runway exits and the apron, and the buildings: the terminal in one of five
+layouts per airport, a control tower and hangars that grow with the airport's size, so a terminal expansion
+shows. Planes taxi along these taxiways (`G.taxiwaysOf(code)` has the lines, `ap.buildings` the buildings).
+
+Real layouts: the airports listed in `js/data/layouts.js` have their real aprons, terminals, hangars, towers,
+taxiways and stands (`js/data/layouts/<CODE>.json`, loaded when the airport is first needed, see
+`js/layouts.js`). There planes park on the real stands nearest the main terminal and taxi the shortest way
+along the real taxiways. The data is © OpenStreetMap contributors (ODbL); `tools/build_layouts.html` makes the
+files from Overpass API downloads. Every other airport is laid out by the game as described above.
+
+Expansion preview: in the developer tools (F2), "Show expansion preview" draws in cyan where construction
+at the selected airport would go, in 2D and 3D: each kind of new runway with its taxiway, the runway
+extension, and the apron, stands and buildings of the next terminal size (`G.expansionPreview(code)`).
+
 3D view: the **3D** button (or V) switches the map to a 3D globe with terrain, hill shading and 3D
 buildings (MapLibre). Aircraft are drawn as 3D models at their real altitude, stretched when zoomed out
 so you can see them. Planes really fly: they push back from their gate tail first, taxi

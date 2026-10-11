@@ -247,22 +247,59 @@ function airportFeatures() {
   return { type: 'FeatureCollection', features: feats };
 }
 
-// Aprons, terminals, jet bridges and stand markings (G.apronOf) of the airports in view when zoomed in.
-// Parked planes stand on these stands (G.gateOf) and push back from them.
+// Runways, taxiways, aprons, buildings, jet bridges and stand markings of the airports in view when zoomed
+// in (G.airportRunways, G.taxiwaysOf, G.apronOf). Parked planes stand on these stands (G.gateOf), push back
+// from them and taxi along the taxiways.
 const GATE_MINZOOM = 12;
-function gateFeatures(list) {
+const RUNWAY_MINZOOM = 10;
+// A strip `width` metres wide along the line a -> b ([lat, lon]), `ext` metres longer at both ends.
+function strip(a, b, width, ext = 0) {
+  const kx = 111320 * Math.cos(a[0] * DEG);
+  const dx = (b[1] - a[1]) * kx;
+  const dy = (b[0] - a[0]) * 111320;
+  const len = Math.hypot(dx, dy) || 1;
+  const ux = dx / len, uy = dy / len;
+  const at = (p, along, across) => [p[0] + (uy * along - ux * across) / 111320, p[1] + (ux * along + uy * across) / kx];
+  const w = width / 2;
+  return [at(a, -ext, -w), at(b, ext, -w), at(b, ext, w), at(a, -ext, w)];
+}
+function gateFeatures(list, gates) {
   const feats = [];
   const ring = (pts) => { const r = pts.map(([lat, lon]) => [lon, lat]); r.push(r[0]); return [r]; };
   const line = (pts) => pts.map(([lat, lon]) => [lon, lat]);
+  const poly = (pts, properties) => feats.push({ type: 'Feature', geometry: { type: 'Polygon', coordinates: ring(pts) }, properties });
+  const path = (pts, properties) => feats.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: line(pts) }, properties });
   for (const a of list) {
+    for (const r of G.airportRunways(a.code)) {
+      const ends = [[r[0], r[1]], [r[2], r[3]]];
+      poly(strip(ends[0], ends[1], Math.max(18, r[4] || 30)), { kind: 'runway', paved: r[5] ? 1 : 0 });
+      if (r[5]) path(ends, { kind: 'rwline' });
+    }
+    // Developer tools: where construction at the selected airport would go (G.expansionPreview).
+    if (FG.devPreview && FG.ui && FG.ui.selectedAirport === a.code) {
+      const pv = G.expansionPreview(a.code);
+      for (const { r, label } of pv.runways) {
+        poly(strip([r[0], r[1]], [r[2], r[3]], Math.max(18, r[4] || 30)), { kind: 'preview' });
+        feats.push({ type: 'Feature', geometry: { type: 'Point', coordinates: [(r[1] + r[3]) / 2, (r[0] + r[2]) / 2] }, properties: { kind: 'pvlabel', name: label } });
+      }
+      for (const tw of pv.taxiways) poly(strip(tw[0], tw[1], 18, 9), { kind: 'preview' });
+      for (const r of pv.aprons) poly(r, { kind: 'preview' });
+      for (const b of pv.buildings) poly(b.ring, { kind: 'preview' });
+      for (const st of pv.stands) path(st.lead, { kind: 'pvline' });
+    }
+    if (!gates) continue;
+    const big = G.airportSize(a.code) >= 3;
+    for (const tw of G.taxiwaysOf(a.code)) {
+      poly(strip(tw[0], tw[1], big ? 23 : 15, big ? 11 : 7), { kind: 'taxiway' });
+      path(tw, { kind: 'twline' });
+    }
     const ap = G.apronOf(a.code);
-    feats.push({ type: 'Feature', geometry: { type: 'Polygon', coordinates: ring(ap.apron) }, properties: { kind: 'apron' } });
-    feats.push({ type: 'Feature', geometry: { type: 'Polygon', coordinates: ring(ap.terminal) },
-      properties: { kind: 'terminal', h: 10 + 3 * G.airportSize(a.code) } });
+    for (const r of ap.aprons || [ap.apron]) poly(r, { kind: 'apron' });
+    for (const b of ap.buildings) poly(b.ring, { kind: 'building', part: b.kind, base: b.base, h: b.h });
     for (const st of ap.stands) {
-      feats.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: line(st.lead) }, properties: { kind: 'lead' } });
-      feats.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: line(st.stopBar) }, properties: { kind: 'stop' } });
-      if (st.bridgePoly) feats.push({ type: 'Feature', geometry: { type: 'Polygon', coordinates: ring(st.bridgePoly) }, properties: { kind: 'bridge' } });
+      path(st.lead, { kind: 'lead' });
+      path(st.stopBar, { kind: 'stop' });
+      if (st.bridgePoly) poly(st.bridgePoly, { kind: 'bridge' });
       feats.push({ type: 'Feature', geometry: { type: 'Point', coordinates: [st.lead[0][1], st.lead[0][0]] }, properties: { kind: 'label', name: st.name } });
     }
   }
@@ -271,19 +308,20 @@ function gateFeatures(list) {
 
 function refreshGates() {
   const map = v.map;
-  const infra = Object.entries(G.state.infra).map(([c, i]) => `${c}${i.terminal || 0}${i.runways ? i.runways.length : ''}`).join();
+  const infra = (FG.layouts ? FG.layouts.version : 0) + (FG.devPreview ? `pv${FG.ui && FG.ui.selectedAirport}` : '') + Object.entries(G.state.infra).map(([c, i]) => `${c}${i.terminal || 0}${i.runways ? i.runways.length : ''}`).join();
   if (!v.gatesDirty && infra === v.gatesInfra) return;
   v.gatesDirty = false;
   v.gatesInfra = infra;
   let list = [];
-  if (G.apronOf && map.getZoom() >= GATE_MINZOOM) {
+  const gates = map.getZoom() >= GATE_MINZOOM;
+  if (G.apronOf && map.getZoom() >= RUNWAY_MINZOOM) {
     const b = map.getBounds();
     list = D.airports.filter((a) => !a.factory && b.contains([a.lon, a.lat]));
   }
-  const sig = list.map((a) => `${a.code}:${G.airportSize(a.code)}:${G.airportRunways(a.code).length}`).join(',');
+  const sig = gates + infra + list.map((a) => `${a.code}:${G.airportSize(a.code)}:${G.airportRunways(a.code).length}`).join(',');
   if (sig === v.sig.gates) return;
   v.sig.gates = sig;
-  map.getSource('fg-gates').setData(gateFeatures(list));
+  map.getSource('fg-gates').setData(gateFeatures(list, gates));
 }
 
 // Great-circle polyline.
@@ -379,15 +417,33 @@ function transformStyle(_prev, style) {
   const visible = ['>=', ['zoom'], ['get', 'minz']];
   const kind = (k) => ['==', ['get', 'kind'], k];
   style.layers.push(
+    { id: 'fg-taxiways', type: 'fill', source: 'fg-gates', minzoom: GATE_MINZOOM, filter: kind('taxiway'),
+      paint: { 'fill-color': '#4a515c' } },
+    { id: 'fg-runways', type: 'fill', source: 'fg-gates', minzoom: RUNWAY_MINZOOM, filter: kind('runway'),
+      paint: { 'fill-color': ['case', ['==', ['get', 'paved'], 1], '#2b2f36', '#6f9a55'] } },
     { id: 'fg-apron', type: 'fill', source: 'fg-gates', minzoom: GATE_MINZOOM, filter: kind('apron'),
       paint: { 'fill-color': '#3a4049', 'fill-opacity': 0.92 } },
+    { id: 'fg-taxi-lines', type: 'line', source: 'fg-gates', minzoom: 14, filter: kind('twline'),
+      paint: { 'line-color': '#e3b70f', 'line-width': 1 } },
+    { id: 'fg-runway-lines', type: 'line', source: 'fg-gates', minzoom: 12, filter: kind('rwline'),
+      paint: { 'line-color': '#f3f4f6', 'line-width': ['interpolate', ['linear'], ['zoom'], 12, 0.6, 16, 2], 'line-dasharray': [6, 5] } },
     { id: 'fg-stands', type: 'line', source: 'fg-gates', minzoom: 14, filter: ['in', ['get', 'kind'], ['literal', ['lead', 'stop']]],
       layout: { 'line-cap': 'butt' },
       paint: { 'line-color': '#facc15', 'line-width': ['case', ['==', ['get', 'kind'], 'stop'], 3, 1.2] } },
-    { id: 'fg-terminals', type: 'fill-extrusion', source: 'fg-gates', minzoom: GATE_MINZOOM, filter: kind('terminal'),
-      paint: { 'fill-extrusion-color': '#8a96a8', 'fill-extrusion-height': ['get', 'h'], 'fill-extrusion-opacity': 0.95 } },
+    { id: 'fg-terminals', type: 'fill-extrusion', source: 'fg-gates', minzoom: GATE_MINZOOM, filter: kind('building'),
+      paint: {
+        'fill-extrusion-color': ['match', ['get', 'part'], 'tower', '#aab4c2', 'cab', '#27313f', 'hangar', '#7b8590', 'carpark', '#6b7280', 'hall', '#97a3b4', '#8a96a8'],
+        'fill-extrusion-base': ['get', 'base'], 'fill-extrusion-height': ['get', 'h'], 'fill-extrusion-opacity': 0.95,
+      } },
     { id: 'fg-bridges', type: 'fill-extrusion', source: 'fg-gates', minzoom: 14, filter: kind('bridge'),
       paint: { 'fill-extrusion-color': '#b8c2cf', 'fill-extrusion-base': 3, 'fill-extrusion-height': 6.5 } },
+    { id: 'fg-preview', type: 'fill', source: 'fg-gates', minzoom: RUNWAY_MINZOOM, filter: kind('preview'),
+      paint: { 'fill-color': '#22d3ee', 'fill-opacity': 0.28, 'fill-outline-color': '#67e8f9' } },
+    { id: 'fg-preview-lines', type: 'line', source: 'fg-gates', minzoom: 13, filter: kind('pvline'),
+      paint: { 'line-color': '#22d3ee', 'line-width': 1.5, 'line-dasharray': [2, 2] } },
+    { id: 'fg-preview-labels', type: 'symbol', source: 'fg-gates', minzoom: RUNWAY_MINZOOM, filter: kind('pvlabel'),
+      layout: { 'text-field': ['get', 'name'], 'text-font': ['Noto Sans Bold'], 'text-size': 11, 'text-allow-overlap': true },
+      paint: { 'text-color': '#a5f3fc', 'text-halo-color': '#083344', 'text-halo-width': 1.4 } },
     { id: 'fg-gate-labels', type: 'symbol', source: 'fg-gates', minzoom: 16, filter: kind('label'),
       layout: { 'text-field': ['get', 'name'], 'text-font': ['Noto Sans Bold'], 'text-size': 11, 'text-allow-overlap': true },
       paint: { 'text-color': '#facc15', 'text-halo-color': '#000', 'text-halo-width': 1.2 } },

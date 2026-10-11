@@ -226,20 +226,58 @@
     return pts;
   }
 
-  // Taxi route between the terminal (airport reference point) and a runway point: across to a
-  // taxiway parallel to the runway, then along it. Returns [foot on taxiway, abeam point].
-  function taxiRoute(rwy, stand, alongM) {
-    const lat0 = rwy.thr[0];
-    const kx = 111320 * Math.cos(toRad(lat0));
+  // ---------- taxiways ----------
+  // Every runway has a parallel taxiway on the apron's side, joined to it at both ends and where landing
+  // planes leave it, and to the apron taxi lane at the apron's exits. Planes taxi along these, and the
+  // maps draw them (taxiwaysOf).
+  // A point relative to a runway { thr, hdg }: metres along it from the threshold and across (+ = right).
+  function rwyCoords(rwy, p) {
+    const kx = 111320 * Math.cos(toRad(rwy.thr[0]));
     const ux = Math.sin(toRad(rwy.hdg));
     const uy = Math.cos(toRad(rwy.hdg));
-    const vx = (stand[1] - rwy.thr[1]) * kx;
-    const vy = (stand[0] - rwy.thr[0]) * 111320;
-    const along = Math.min(rwy.len, Math.max(0, vx * ux + vy * uy));
-    const across = vx * uy - vy * ux; // positive = right of the runway
-    const off = (across < 0 ? -1 : 1) * Math.min(180, Math.max(120, Math.abs(across) * 0.6));
-    const pt = (a) => [rwy.thr[0] + (a * uy - off * ux) / 111320, rwy.thr[1] + (a * ux + off * uy) / kx];
-    return [pt(along), pt(alongM)];
+    const vx = (p[1] - rwy.thr[1]) * kx;
+    const vy = (p[0] - rwy.thr[0]) * 111320;
+    return { along: vx * ux + vy * uy, across: vx * uy - vy * ux };
+  }
+  function rwyPoint(rwy, along, across) {
+    const kx = 111320 * Math.cos(toRad(rwy.thr[0]));
+    const ux = Math.sin(toRad(rwy.hdg));
+    const uy = Math.cos(toRad(rwy.hdg));
+    return [rwy.thr[0] + (along * uy - across * ux) / 111320, rwy.thr[1] + (along * ux + across * uy) / kx];
+  }
+  // Signed distance of a runway's parallel taxiway from its centre line.
+  function taxiwayOffset(rwy, ref) {
+    const across = rwyCoords(rwy, ref).across;
+    return (across < 0 ? -1 : 1) * Math.min(180, Math.max(120, Math.abs(across) * 0.6));
+  }
+  // The way between a point on the apron taxi lane and the runway point `alongM` metres from the threshold:
+  // [apron exit, foot of its link on the parallel taxiway, point on the taxiway abeam the runway point].
+  function taxiPath(code, rwy, lanePt, alongM) {
+    const ap = apronOf(code);
+    if (ap.real) return realTaxiPath(code, ap.real, lanePt, rwyPoint(rwy, alongM, 0));
+    const far = (e) => distanceKm({ lat: e[0], lon: e[1] }, { lat: lanePt[0], lon: lanePt[1] });
+    const exit = ap.exits.reduce((b, e) => (far(e) < far(b) ? e : b));
+    const off = taxiwayOffset(rwy, ap.ref);
+    const a = Math.min(rwy.len, Math.max(0, rwyCoords(rwy, exit).along));
+    return [exit, rwyPoint(rwy, a, off), rwyPoint(rwy, alongM, off)];
+  }
+  // All taxiway centre lines of an airport, for drawing: [[lat, lon], [lat, lon]] each.
+  function taxiwaysOf(code) {
+    const ap = apronOf(code);
+    if (ap.real) return ap.real.taxiways.flatMap((l) => l.slice(1).map((p, i) => [l[i], p]));
+    const lines = [ap.lane];
+    for (const r of airportRunways(code)) {
+      const len = runwayLength(r);
+      const rwy = { thr: [r[0], r[1]], hdg: bearing({ lat: r[0], lon: r[1] }, { lat: r[2], lon: r[3] }), len };
+      const off = taxiwayOffset(rwy, ap.ref);
+      lines.push([rwyPoint(rwy, 0, off), rwyPoint(rwy, len, off)]);
+      const leave = Math.min(len * 0.65, 2200); // where a landing plane leaves the runway, from either end
+      for (const a of [0, len, leave, len - leave]) lines.push([rwyPoint(rwy, a, off), rwyPoint(rwy, a, 0)]);
+      for (const e of ap.exits) {
+        lines.push([e, rwyPoint(rwy, Math.min(len, Math.max(0, rwyCoords(rwy, e).along)), off)]);
+      }
+    }
+    return lines;
   }
 
   // ---------- gates ----------
@@ -253,12 +291,19 @@
   const TAXI_LANE = 70;  // m from a stand back to the apron taxi lane (= pushback distance)
   const apronCache = new Map();
 
-  function apronOf(code) {
-    const size = Math.max(0, Math.min(5, airportSize(code)));
+  // `sizeAs`: lay the airport out as if it had this size (for the expansion preview).
+  function apronOf(code, sizeAs) {
+    const size = Math.max(0, Math.min(5, sizeAs == null ? airportSize(code) : sizeAs));
     const rws = airportRunways(code);
-    const key = `${code}|${size}|${rws.length}`;
+    const real = FG.layouts ? FG.layouts.get(code) : null;
+    const key = `${code}|${size}|${rws.length}|${real ? 1 : 0}`;
     let ap = apronCache.get(key);
     if (ap) return ap;
+    if (real) {
+      ap = realApron(code, size, real);
+      apronCache.set(key, ap);
+      return ap;
+    }
     const a = airportByCode[code];
     let hdg = 0;
     let side = 1;
@@ -303,14 +348,209 @@
       stands.push(stand(along, `R${j + 1}`, false));
     }
     const reach = half + sp * Math.ceil(n / 2) + 10;
+    // Buildings by tier (the airport's size) and one of five layouts per airport: the gate concourse, what
+    // stands behind it, the control tower and hangars. Each is { ring, base, h, kind } with heights in metres.
+    const W = 2 * half + 10;
+    const back = front + depth;
+    const roof = 10 + 3 * size;
+    const box = (a0, a1, o0, o1, h, kind, base = 0) => ({ ring: [at(a0, o0), at(a1, o0), at(a1, o1), at(a0, o1)], base, h, kind });
+    const buildings = [box(-W / 2, W / 2, front, back, roof, 'terminal')];
+    const layout = size >= 2 ? Math.floor(hash01(code.charCodeAt(0), code.charCodeAt(1) || 0, code.charCodeAt(2) || 0, 7) * 5) : 0;
+    if (layout === 1) buildings.push(box(-0.3 * W, 0.3 * W, back, back + 0.8 * depth, roof + 6, 'hall'));
+    if (layout === 2) for (const s of [-1, 1]) buildings.push(box(s * W / 2, s * 0.28 * W, back, back + 0.7 * depth, roof + 4, 'hall'));
+    if (layout === 3) buildings.push(box(-0.12 * W, 0.12 * W, back, back + 2.2 * depth, roof + 2, 'hall'));
+    if (layout === 4) {
+      buildings.push(box(-0.45 * W, 0.45 * W, front + 0.35 * depth, back, roof + 5, 'hall', roof));
+      buildings.push(box(0.1 * W, 0.5 * W, back + 15, back + 15 + depth, 8, 'carpark'));
+    }
+    if (size >= 1) { // control tower beside one end of the terminal: taller and wider with every tier
+      const tw = 5 + size;
+      const th = [0, 14, 20, 30, 42, 55][size];
+      const tx = -(W / 2 + 30);
+      buildings.push(box(tx - tw / 2, tx + tw / 2, back + 15, back + 15 + tw, th, 'tower'));
+      buildings.push(box(tx - tw / 2 - 2, tx + tw / 2 + 2, back + 13, back + 17 + tw, th + 5, 'cab', th));
+    }
+    for (let k = 0; k < size - 1; k++) { // hangars beyond the remote stands
+      const x = (k % 2 ? 1 : -1) * (reach + 45 + 75 * Math.floor(k / 2));
+      buildings.push(box(x - 30, x + 30, front + 5, front + 50, 14, 'hangar'));
+    }
+    const lane = (along) => at(along, -TAXI_LANE);
     ap = {
-      code, hdg, side, nose, spacing: sp, gates: contact, stands,
+      code, hdg, side, nose, spacing: sp, gates: contact, stands, buildings,
       terminal: [at(-half - 5, front), at(half + 5, front), at(half + 5, front + depth), at(-half - 5, front + depth)],
       apron: [at(-reach, -TAXI_LANE - 25), at(reach, -TAXI_LANE - 25), at(reach, front), at(-reach, front)],
+      // The apron taxi lane behind the stands, its middle, and where taxiways leave it.
+      lane: [lane(-reach + 15), lane(reach - 15)],
+      ref: lane(0),
+      exits: n > 6 ? [lane(-0.6 * reach), lane(0), lane(0.6 * reach)] : [lane(0)],
     };
     if (apronCache.size > 500) apronCache.clear();
     apronCache.set(key, ap);
     return ap;
+  }
+
+  // ---------- real airport layouts ----------
+  // At airports with a layout from OpenStreetMap (js/layouts.js) the stands, buildings and taxiways are the
+  // real ones: planes use the stands nearest the main terminal, as many as the airport's size gives gates,
+  // and taxi along the real taxiways (shortest way through them).
+  const metres = (p, q) => distanceKm({ lat: p[0], lon: p[1] }, { lat: q[0], lon: q[1] }) * 1000;
+  const middle = (pts) => [pts.reduce((s, p) => s + p[0], 0) / pts.length, pts.reduce((s, p) => s + p[1], 0) / pts.length];
+  function realApron(code, size, lay) {
+    const a = airportByCode[code];
+    const spread = (ring) => { const m = middle(ring); return ring.reduce((s, p) => s + metres(p, m), 0); };
+    const biggest = (rings) => rings.reduce((b, r) => (!b || spread(r) > spread(b) ? r : b), null);
+    const square = (p, half) => [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([i, j]) => { const q = offsetPoint(p[0], p[1], 0, i * half); return offsetPoint(q[0], q[1], 90, j * half); });
+    const mainTerminal = biggest(lay.terminals);
+    const main = mainTerminal ? middle(mainTerminal) : [a.lat, a.lon];
+    const termPts = lay.terminals.flat();
+    const toTerminal = (p) => termPts.reduce((d, q) => Math.min(d, metres(p, q)), Infinity);
+    const stop = 14; // nose stop bar ahead of the stand point
+    const stands = lay.stands.map((s) => [s, metres(s, main)]).sort((x, y) => x[1] - y[1]).slice(0, 2 * GATE_COUNT[size])
+      .map(([[lat, lon, heading, name]], i) => {
+        const ahead = (m, across = 0) => { const p = offsetPoint(lat, lon, heading, m); return offsetPoint(p[0], p[1], heading + 90, across); };
+        const bridge = toTerminal(ahead(stop + 10)) < 45;
+        const st = { lat, lon, heading, name: name || `S${i + 1}`, bridge, lead: [ahead(-TAXI_LANE), ahead(stop)], stopBar: [ahead(stop, -4), ahead(stop, 4)] };
+        if (bridge) st.bridgePoly = [ahead(stop - 7, -6.3), ahead(stop - 7, -2.7), ahead(stop + 22, -2.7), ahead(stop + 22, -6.3)];
+        return st;
+      });
+    const ref = middle(stands.map((st) => st.lead[0]));
+    const tw = 5 + size;
+    const th = [10, 14, 20, 30, 42, 55][size];
+    const buildings = [
+      ...lay.terminals.map((ring) => ({ ring, base: 0, h: 10 + 3 * size, kind: 'terminal' })),
+      ...lay.hangars.map((ring) => ({ ring, base: 0, h: 14, kind: 'hangar' })),
+      ...lay.towers.flatMap((p) => [{ ring: square(p, tw / 2), base: 0, h: th, kind: 'tower' }, { ring: square(p, tw / 2 + 2), base: th, h: th + 5, kind: 'cab' }]),
+    ];
+    return {
+      code, real: lay, hdg: 0, side: 1, nose: stands[0].heading, spacing: 60, gates: stands.filter((st) => st.bridge), stands, buildings,
+      terminal: mainTerminal || square(main, 20), apron: biggest(lay.aprons) || square(ref, 60), aprons: lay.aprons,
+      lane: [ref, ref], ref, exits: [ref],
+    };
+  }
+
+  // The taxiways of a layout as a graph: points, and for each point its neighbours with the distance.
+  const taxiGraphs = new Map();
+  function taxiGraph(code, lay) {
+    let g = taxiGraphs.get(code);
+    if (g) return g;
+    g = { pts: [], adj: [] };
+    const index = new Map();
+    const node = (p) => {
+      const k = `${p[0]},${p[1]}`;
+      if (!index.has(k)) { index.set(k, g.pts.length); g.pts.push(p); g.adj.push([]); }
+      return index.get(k);
+    };
+    for (const line of lay.taxiways) {
+      for (let i = 1; i < line.length; i++) {
+        const u = node(line[i - 1]);
+        const v = node(line[i]);
+        const d = metres(line[i - 1], line[i]);
+        g.adj[u].push([v, d]);
+        g.adj[v].push([u, d]);
+      }
+    }
+    // Which points belong to the biggest connected piece of the taxiways.
+    const piece = new Int32Array(g.pts.length).fill(-1);
+    const sizes = [];
+    for (let i = 0; i < g.pts.length; i++) {
+      if (piece[i] >= 0) continue;
+      const stack = [i];
+      piece[i] = sizes.length;
+      let n = 0;
+      while (stack.length) {
+        const u = stack.pop();
+        n++;
+        for (const [w] of g.adj[u]) if (piece[w] < 0) { piece[w] = sizes.length; stack.push(w); }
+      }
+      sizes.push(n);
+    }
+    const biggest = sizes.indexOf(Math.max(...sizes));
+    g.main = Array.from(piece, (c) => c === biggest);
+    taxiGraphs.set(code, g);
+    return g;
+  }
+  // Shortest way along the real taxiways from near `from` to near `to`: the points on the way, or [] if
+  // the taxiways do not connect them.
+  function realTaxiPath(code, lay, from, to) {
+    const g = taxiGraph(code, lay);
+    // (only among the points of the biggest connected piece: stubs that join nothing lead nowhere)
+    const nearest = (p) => g.pts.reduce((b, q, i) => { const d = g.main[i] ? metres(p, q) : Infinity; return d < b[1] ? [i, d] : b; }, [-1, Infinity])[0];
+    const s = nearest(from);
+    const t = nearest(to);
+    if (s < 0 || t < 0) return [];
+    const best = new Float64Array(g.pts.length).fill(Infinity);
+    const prev = new Int32Array(g.pts.length).fill(-1);
+    const heap = [[0, s]]; // binary heap of [distance, point]
+    best[s] = 0;
+    while (heap.length) {
+      const [d, u] = heap[0];
+      const last = heap.pop();
+      if (heap.length) {
+        heap[0] = last;
+        for (let i = 0; ;) {
+          let m = i;
+          const l = 2 * i + 1, r = l + 1;
+          if (l < heap.length && heap[l][0] < heap[m][0]) m = l;
+          if (r < heap.length && heap[r][0] < heap[m][0]) m = r;
+          if (m === i) break;
+          [heap[i], heap[m]] = [heap[m], heap[i]];
+          i = m;
+        }
+      }
+      if (u === t) break;
+      if (d > best[u]) continue;
+      for (const [w, len] of g.adj[u]) {
+        const nd = d + len;
+        if (nd >= best[w]) continue;
+        best[w] = nd;
+        prev[w] = u;
+        heap.push([nd, w]);
+        for (let i = heap.length - 1; i > 0;) {
+          const up = (i - 1) >> 1;
+          if (heap[up][0] <= heap[i][0]) break;
+          [heap[i], heap[up]] = [heap[up], heap[i]];
+          i = up;
+        }
+      }
+    }
+    if (best[t] === Infinity) return [];
+    const path = [];
+    for (let u = t; u >= 0; u = prev[u]) path.push(g.pts[u]);
+    return path.reverse();
+  }
+
+  // ---------- expansion preview (developer tools) ----------
+  // What the possible construction at an airport would add: each kind of runway where it would be built
+  // (with its taxiway), and the apron, stands and buildings of the next terminal size.
+  function expansionPreview(code) {
+    const out = { runways: [], taxiways: [], stands: [], buildings: [], aprons: [] };
+    const ap = apronOf(code);
+    const seen = new Set();
+    for (const o of Game.projectOptions(code)) {
+      const kind = o.kind + (o.orient || '');
+      if ((o.kind !== 'runway' && o.kind !== 'extend') || seen.has(kind)) continue; // one length of each kind
+      seen.add(kind);
+      const geo = Game.plannedRunway({ code, kind: o.kind, len: o.len, orient: o.orient });
+      if (!geo) continue;
+      const r = geo.runway;
+      out.runways.push({ r, label: o.label });
+      if (ap.real) continue; // its taxiway would have to join the real ones
+      const len = runwayLength(r);
+      const rwy = { thr: [r[0], r[1]], hdg: bearing({ lat: r[0], lon: r[1] }, { lat: r[2], lon: r[3] }), len };
+      const off = taxiwayOffset(rwy, ap.ref);
+      out.taxiways.push([rwyPoint(rwy, 0, off), rwyPoint(rwy, len, off)]);
+      for (const a of [0, len]) out.taxiways.push([rwyPoint(rwy, a, off), rwyPoint(rwy, a, 0)]);
+      for (const e of ap.exits) out.taxiways.push([e, rwyPoint(rwy, Math.min(len, Math.max(0, rwyCoords(rwy, e).along)), off)]);
+    }
+    const size = airportSize(code);
+    if (size < 5 && !airportByCode[code].factory) {
+      const next = apronOf(code, size + 1);
+      const have = new Set(ap.stands.map((s) => `${s.lat.toFixed(5)},${s.lon.toFixed(5)}`));
+      out.stands = next.stands.filter((s) => !have.has(`${s.lat.toFixed(5)},${s.lon.toFixed(5)}`));
+      out.buildings = next.buildings;
+      out.aprons = next.aprons || [next.apron];
+    }
+    return out;
   }
 
   // Which stand a plane uses at an airport: the one it holds (parked, or reserved by its flight),
@@ -365,15 +605,17 @@
     const standB = [gB.lat, gB.lon];
     const pushA = offsetPoint(gA.lat, gA.lon, gA.heading + 180, TAXI_LANE);
     const leadB = offsetPoint(gB.lat, gB.lon, gB.heading + 180, TAXI_LANE);
-    const [footA, abeamThr] = taxiRoute(dep, pushA, 0);
+    // Taxi out along the taxiways to the threshold, and in from where the plane leaves the runway.
+    const outPath = taxiPath(f.from, dep, pushA, 0);
     const stopM = Math.min(arr.len * 0.65, 2200);
-    const [footB, abeamStop] = taxiRoute(arr, leadB, stopM);
-    const pts = [standA, pushA, footA, abeamThr, dep.thr, lift, dep.end, climbOut, ...outTurn];
+    const inPath = taxiPath(f.to, arr, leadB, stopM).reverse();
+    const pts = [standA, pushA, ...outPath, dep.thr, lift, dep.end, climbOut, ...outTurn];
+    const iThr = 2 + outPath.length;
     const cruise = distanceKm(P(turnEnd), P(turnStart));
     const n = Math.max(1, Math.ceil(cruise / 25));
     for (let i = 1; i < n; i++) pts.push(interpolate(P(turnEnd), P(turnStart), i / n));
-    pts.push(...inTurn, faf, arr.thr, touch, stop, abeamStop, footB, leadB, standB);
-    const idx = { push: 1, thr: 4, lift: 5, touch: pts.length - 6, stop: pts.length - 5, lead: pts.length - 2 };
+    pts.push(...inTurn, faf, arr.thr, touch, stop, ...inPath, leadB, standB);
+    const idx = { push: 1, thr: iThr, lift: iThr + 1, touch: pts.length - 4 - inPath.length, stop: pts.length - 3 - inPath.length, lead: pts.length - 2 };
 
     // Cumulative distance (km).
     const cum = [0];
@@ -471,7 +713,7 @@
   function flightTrack(p) {
     const f = p.flight;
     if (!f) return null;
-    const key = `${p.id}|${f.dep}|${f.from}|${f.to}`;
+    const key = `${p.id}|${f.dep}|${f.from}|${f.to}|${FG.layouts ? FG.layouts.version : 0}`; // a layout that arrives changes the taxi ways
     let t = trackCache.get(key);
     if (!t) {
       if (trackCache.size > 300) trackCache.clear();
@@ -573,7 +815,7 @@
     ticketPrice, routeKey, blockMinutes, landingFee, slotUpfront, slotWeekly,
     priceNew, fitsAirport, fitsReason, crewFor, factoryOf,
     airportSize, airportRunways, runwayLength, longestRunway, runwayNeed, attraction,
-    flightTrack, flightState, legTrack, cruiseFt, windFrom, gateOf, apronOf,
+    flightTrack, flightState, legTrack, cruiseFt, windFrom, gateOf, apronOf, taxiwaysOf, expansionPreview,
     fmtMoney, fmtTime, fmtClock, fmtDuration,
 
     // opts: { mode, difficulty, airport, aircraft, company } from the start screen; all optional.

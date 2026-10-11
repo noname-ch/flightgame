@@ -405,14 +405,32 @@
     }
     const view = ui.map.getBounds().pad(0.3);
     const list = D.airports.filter((a) => !a.factory && view.contains([a.lat, a.lon]));
-    const sig = `${z}|${list.map((a) => `${a.code}:${G.airportSize(a.code)}:${G.airportRunways(a.code).length}`).join(',')}`;
+    const sig = `${z}|${FG.layouts ? FG.layouts.version : 0}|${FG.devPreview ? ui.selectedAirport : ''}|${list.map((a) => `${a.code}:${G.airportSize(a.code)}:${G.airportRunways(a.code).length}`).join(',')}`;
     if (sig === ui.gateSig) return; // redrawn only when the view or an airport changes
     ui.gateSig = sig;
     ui.gateLayer.clearLayers();
     const quiet = { pane: 'gates', interactive: false };
     for (const a of list) {
       const ap = G.apronOf(a.code);
-      L.polygon(ap.apron, { ...quiet, stroke: false, fillColor: '#3a4049', fillOpacity: 0.92 }).addTo(ui.gateLayer);
+      // taxiways, aprons and buildings (the real ones where the airport has a layout from OpenStreetMap)
+      for (const tw of ap.real ? ap.real.taxiways : G.taxiwaysOf(a.code)) {
+        L.polyline(tw, { ...quiet, color: '#4a515c', weight: z >= 16 ? 9 : 4, opacity: 1 }).addTo(ui.gateLayer);
+      }
+      for (const r of ap.aprons || [ap.apron]) L.polygon(r, { ...quiet, stroke: false, fillColor: '#3a4049', fillOpacity: 0.92 }).addTo(ui.gateLayer);
+      for (const b of ap.buildings) {
+        if (b.kind === 'cab') continue;
+        L.polygon(b.ring, { ...quiet, color: '#e2e8f0', weight: 1, fillColor: b.kind === 'tower' ? '#cbd5e1' : b.kind === 'terminal' ? '#64748b' : '#57606c', fillOpacity: 1 }).addTo(ui.gateLayer);
+      }
+      // developer tools: where construction at the selected airport would go
+      if (FG.devPreview && ui.selectedAirport === a.code) {
+        const pv = G.expansionPreview(a.code);
+        const plan = { ...quiet, color: '#22d3ee', weight: 2, dashArray: '6 5', fillColor: '#22d3ee', fillOpacity: 0.2 };
+        for (const { r } of pv.runways) L.polyline([[r[0], r[1]], [r[2], r[3]]], { ...plan, weight: 7, opacity: 0.75 }).addTo(ui.gateLayer);
+        for (const tw of pv.taxiways) L.polyline(tw, { ...plan, weight: 3 }).addTo(ui.gateLayer);
+        for (const r of pv.aprons) L.polygon(r, plan).addTo(ui.gateLayer);
+        for (const b of pv.buildings) L.polygon(b.ring, plan).addTo(ui.gateLayer);
+        for (const st of pv.stands) L.polyline(st.lead, { ...plan, weight: 1.5 }).addTo(ui.gateLayer);
+      }
       L.polygon(ap.terminal, { pane: 'gates', color: '#e2e8f0', weight: 1, fillColor: '#64748b', fillOpacity: 1, bubblingMouseEvents: false })
         .bindTooltip(`${a.code} terminal · ${ap.gates.length} gates with jet bridges · ${ap.stands.length - ap.gates.length} remote stands`, { sticky: true })
         .addTo(ui.gateLayer);

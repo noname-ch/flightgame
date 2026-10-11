@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Airport layouts from OpenStreetMap</title>
+<style>body { margin: 16px; background: #0c1118; color: #e5e7eb; font: 13px/1.5 ui-monospace, monospace; white-space: pre-wrap; }</style>
+</head>
+<body>Airport layouts from OpenStreetMap
+<span id="log"></span>
+<script type="module">
+// Turns the raw Overpass downloads in osm-raw/<CODE>.json (see models/README.md -> js/data/layouts) into the
+// compact layouts the game uses, js/data/layouts/<CODE>.json, and the list of them, js/data/layouts.js.
+// Data © OpenStreetMap contributors, ODbL. Needs a local web server that accepts the files by POST.
+const log = (s) => { document.getElementById('log').textContent += s + '\n'; };
+const r5 = (n) => Math.round(n * 1e5) / 1e5;
+const M = 111320;
+const dist = (a, b) => Math.hypot((a[0] - b[0]) * M, (a[1] - b[1]) * M * Math.cos(a[0] * Math.PI / 180));
+const bearing = (a, b) => (Math.atan2((b[1] - a[1]) * Math.cos(a[0] * Math.PI / 180), b[0] - a[0]) * 180 / Math.PI + 360) % 360;
+const move = (p, hdg, m) => [p[0] + m * Math.cos(hdg * Math.PI / 180) / M, p[1] + m * Math.sin(hdg * Math.PI / 180) / (M * Math.cos(p[0] * Math.PI / 180))];
+const key = (p) => `${p[0]},${p[1]}`;
+
+// Douglas-Peucker on [lat, lon] points, tolerance in metres; `keep(p)` forces a point to stay.
+function simplify(pts, tol, keep = () => false) {
+  if (pts.length < 3) return pts;
+  const out = [pts[0]];
+  const run = (i, j) => {
+    let far = -1, fd = tol;
+    const a = pts[i], b = pts[j];
+    const kx = M * Math.cos(a[0] * Math.PI / 180);
+    const bx = (b[1] - a[1]) * kx, by = (b[0] - a[0]) * M;
+    const len = Math.hypot(bx, by) || 1;
+    for (let k = i + 1; k < j; k++) {
+      const px = (pts[k][1] - a[1]) * kx, py = (pts[k][0] - a[0]) * M;
+      const d = keep(pts[k]) ? Infinity : Math.abs(px * by - py * bx) / len;
+      if (d > fd) { fd = d; far = k; }
+    }
+    if (far < 0) return;
+    run(i, far); out.push(pts[far]); run(far, j);
+  };
+  run(0, pts.length - 1);
+  out.push(pts[pts.length - 1]);
+  return out;
+}
+
+function convert(data) {
+  const ways = data.elements.filter((e) => e.type === 'way' && e.geometry);
+  const nodes = data.elements.filter((e) => e.type === 'node');
+  const geom = (w) => w.geometry.map((g) => [r5(g.lat), r5(g.lon)]);
+  // A closed ring is simplified in two halves, from its first point to the point farthest from it and back.
+  const ringOf = (w) => {
+    const g = geom(w);
+    if (g.length < 4 || key(g[0]) !== key(g[g.length - 1])) return simplify(g, 1.5);
+    let far = 1;
+    for (let i = 2; i < g.length - 1; i++) if (dist(g[0], g[i]) > dist(g[0], g[far])) far = i;
+    return [...simplify(g.slice(0, far + 1), 1.5), ...simplify(g.slice(far), 1.5).slice(1, -1)];
+  };
+  const of = (kind) => ways.filter((w) => w.tags && w.tags.aeroway === kind);
+  const out = { aprons: of('apron').map(ringOf), terminals: of('terminal').map(ringOf), hangars: of('hangar').map(ringOf), towers: [], taxiways: [], stands: [] };
+  for (const rel of data.elements.filter((e) => e.type === 'relation')) {
+    for (const m of rel.members || []) if (m.role === 'outer' && m.geometry) out.terminals.push(ringOf({ geometry: m.geometry }));
+  }
+  for (const k of ['aprons', 'terminals', 'hangars']) out[k] = out[k].filter((r) => r.length >= 3);
+  // taxiways: keep the points where two of them meet, so they stay connected
+  const lines = [...of('taxiway'), ...of('taxilane')].map(geom);
+  const seen = new Map();
+  for (const l of lines) for (const p of l) seen.set(key(p), (seen.get(key(p)) || 0) + 1);
+  out.taxiways = lines.map((l) => simplify(l, 1.5, (p) => seen.get(key(p)) > 1)).filter((l) => l.length > 1);
+  // control towers
+  const isTower = (t) => t && (t.aeroway === 'tower' || (t.man_made === 'tower' && /control/.test(t['tower:type'] || '')));
+  for (const n of nodes) if (isTower(n.tags)) out.towers.push([r5(n.lat), r5(n.lon)]);
+  for (const w of ways) if (isTower(w.tags)) { const g = geom(w); out.towers.push([r5(g.reduce((s, p) => s + p[0], 0) / g.length), r5(g.reduce((s, p) => s + p[1], 0) / g.length)]); }
+  // stands: where an aircraft parks (its middle) and which way its nose points
+  const termPts = out.terminals.flat();
+  const taxiPts = out.taxiways.flat();
+  const nearest = (p, list) => list.reduce((b, q) => { const d = dist(p, q); return d < b.d ? { d, q } : b; }, { d: Infinity, q: null });
+  const add = (pos, hdg, name) => {
+    if (out.stands.some((s) => dist(s, pos) < 25)) return;
+    out.stands.push([r5(pos[0]), r5(pos[1]), Math.round(hdg), name || '']);
+  };
+  for (const w of of('parking_position')) {
+    const g = geom(w);
+    let nose = g[g.length - 1], tail = g[0];
+    const t0 = nearest(tail, termPts).d, t1 = nearest(nose, termPts).d;
+    const x0 = nearest(tail, taxiPts).d, x1 = nearest(nose, taxiPts).d;
+    if (Math.min(t0, t1) < 200 ? t0 < t1 : x0 > x1) [nose, tail] = [tail, nose];
+    const hdg = bearing(g.length > 2 ? (nose === g[0] ? g[1] : g[g.length - 2]) : tail, nose);
+    add(move(nose, hdg + 180, Math.min(18, dist(nose, tail) / 2)), hdg, w.tags.ref);
+  }
+  for (const n of nodes) {
+    if (!n.tags || n.tags.aeroway !== 'parking_position') continue;
+    const p = [n.lat, n.lon];
+    const t = nearest(p, termPts), x = nearest(p, taxiPts);
+    if (!t.q && !x.q) continue;
+    add(p, t.d < 120 ? bearing(p, t.q) : bearing(x.q, p), n.tags.ref);
+  }
+  return out;
+}
+
+const codes = (await (await fetch('../osm-raw/list.txt')).text()).trim().split('\n').map((l) => l.split(' ')[0]);
+const index = [];
+let bytes = 0;
+for (const code of codes) {
+  const res = await fetch(`../osm-raw/${code}.json`);
+  if (!res.ok) continue;
+  let layout;
+  try { layout = convert(await res.json()); } catch (e) { log(`${code}: ${e}`); continue; }
+  const text = JSON.stringify(layout);
+  const usable = layout.stands.length >= 3 && layout.taxiways.length >= 5;
+  log(`${code}: ${layout.terminals.length} terminals, ${layout.aprons.length} aprons, ${layout.taxiways.length} taxiways, ${layout.stands.length} stands, ${layout.towers.length} towers, ${Math.round(text.length / 1024)} kB${usable ? '' : '  (not used: too little mapped)'}`);
+  if (!usable) continue;
+  const saved = await fetch(`/js/data/layouts/${code}.json`, { method: 'POST', body: text });
+  if (saved.ok) { index.push(code); bytes += text.length; } else log(`${code}: not saved (${saved.status})`);
+}
+const js = `// Airports with a real layout in js/data/layouts/<CODE>.json: aprons, terminals, hangars, towers, taxiways\n// and stands from OpenStreetMap (© OpenStreetMap contributors, ODbL), made by tools/build_layouts.html.\nFG.data.layouts = ${JSON.stringify(index)};\n`;
+const saved = await fetch('/js/data/layouts.js', { method: 'POST', body: js });
+log(`\n${index.length} layouts, ${Math.round(bytes / 1024)} kB, list ${saved.ok ? 'saved' : 'NOT saved'}.`);
+window.done = true;
+</script>
+</body>
+</html>
