@@ -468,7 +468,7 @@ function transformStyle(_prev, style) {
   const kind = (k) => ['==', ['get', 'kind'], k];
   style.layers.push(
     { id: 'fg-plate', type: 'fill', source: 'fg-gates', minzoom: RUNWAY_MINZOOM, filter: kind('plate'),
-      paint: { 'fill-color': '#6b8f4e', 'fill-opacity': ['interpolate', ['linear'], ['zoom'], RUNWAY_MINZOOM, 0, RUNWAY_MINZOOM + 1, 1] } },
+      paint: { 'fill-color': '#3f5f2c', 'fill-opacity': ['interpolate', ['linear'], ['zoom'], RUNWAY_MINZOOM, 0, RUNWAY_MINZOOM + 1, 1] } },
     { id: 'fg-taxiways', type: 'line', source: 'fg-gates', minzoom: GATE_MINZOOM, filter: kind('taxiway'),
       layout: { 'line-join': 'round', 'line-cap': 'round' },
       paint: { 'line-color': '#4a515c', 'line-width': ['interpolate', ['exponential', 2], ['zoom'], 10, ['get', 'w10'], 22, ['get', 'w22']] } },
