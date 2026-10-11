@@ -168,13 +168,17 @@ FG.data.worldEvents = [
   {
     id: 'rivalBankrupt', weight: 1,
     make(ctx) {
-      const rival = ctx.pick(['Air Edelweissbrot', 'FlyCheapo', 'Alpenwind Airways', 'SkyBudget', 'Eurojumbo']);
+      // One of the game's rival airlines (js/data/rivals.js) goes under: its routes disappear for good.
+      const gone = ctx.bustRival ? ctx.bustRival() : null;
+      const rival = gone ? gone.name : ctx.pick(['Air Edelweissbrot', 'FlyCheapo', 'Alpenwind Airways', 'SkyBudget', 'Eurojumbo']);
+      const what = gone ? { flag: 'Flag carrier', low: 'Low-cost carrier', regional: 'Regional airline' }[gone.kind] : 'Low-cost carrier';
       ctx.effect({ label: `${rival} collapsed – more passengers for you`, hours: 10 * 24, where: { all: true }, demandMult: 1.25 });
       return {
         kind: 'good', picture: 'chart',
         headline: `${rival.toUpperCase()} GOES BUST`,
         sub: 'Thousands of passengers stranded – rivals step in',
-        body: `Low-cost carrier ${rival} ceased operations overnight after failing to find new investors. ` +
+        body: `${what} ${rival} ceased operations overnight after failing to find new investors` +
+          `${gone ? ` – its ${gone.routes.length} routes are gone` : ''}. ` +
           `${ctx.state.company} and other airlines expect about 25% more bookings over the next ten days.`,
       };
     },

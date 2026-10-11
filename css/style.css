@@ -50,7 +50,8 @@ header button {
 header button.active { background: var(--accent); border-color: var(--accent); }
 .speed { display: flex; gap: 6px; align-items: center; }
 .speed input[type=range] { width: 140px; accent-color: var(--accent); }
-#speed-label { min-width: 64px; font-variant-numeric: tabular-nums; opacity: 0.9; }
+#speed-label { min-width: 64px; font-variant-numeric: tabular-nums; opacity: 0.9; cursor: pointer; }
+#speed-label:hover { opacity: 1; text-decoration: underline dotted; }
 
 main { flex: 1; display: flex; min-height: 0; position: relative; }
 #map { flex: 1; min-width: 0; }
@@ -250,7 +251,7 @@ tr.click:hover { background: var(--panel-2); }
 
 /* Only the aircraft shape itself catches the mouse, not its square box. */
 .plane-icon.leaflet-interactive { pointer-events: none; }
-.plane-icon .plane { width: 100%; height: 100%; }
+.plane-icon .plane { width: 28px; height: 28px; }
 .plane-icon svg {
   display: block;
   width: 100%;
@@ -266,28 +267,44 @@ tr.click:hover { background: var(--panel-2); }
 .plane-icon path { pointer-events: auto; cursor: pointer; }
 .plane-icon .plane.grounded svg { fill: var(--m-gray); }
 .plane-icon .plane.selected svg { stroke: #ffcc00; stroke-width: 2.6; }
-/* An aircraft type's own shape (ui.js planeGlyph): the <i> is masked with its top view and coloured here,
-   the <b> is the round click target. */
-.plane-shape {
-  position: relative; display: block; width: 100%; height: 100%; pointer-events: none;
-  filter: drop-shadow(1px 0 0 var(--edge, #fff)) drop-shadow(-1px 0 0 var(--edge, #fff))
-    drop-shadow(0 1px 0 var(--edge, #fff)) drop-shadow(0 -1px 0 var(--edge, #fff))
-    var(--shadow, drop-shadow(0 1px 2px rgba(0, 0, 0, 0.35)));
-}
-.plane-shape i {
-  position: absolute; inset: 0; background: var(--m-red);
+/* An aircraft type's own shape in a line of text (ui.js planeGlyph): the <i> is masked with its top view
+   (models/icons/) and takes the text colour. */
+.type-icon { display: inline-block; width: 1.3em; height: 1.3em; vertical-align: -0.28em; transform: rotate(45deg); }
+.type-icon .plane-shape { position: relative; display: block; width: 100%; height: 100%; }
+.type-icon .plane-shape i {
+  position: absolute; inset: 0; background: currentColor;
   -webkit-mask-position: center; -webkit-mask-size: contain; -webkit-mask-repeat: no-repeat;
   mask-position: center; mask-size: contain; mask-repeat: no-repeat;
 }
-.plane-shape b { position: absolute; inset: 22%; border-radius: 50%; pointer-events: auto; cursor: pointer; }
-.plane-icon .plane.grounded .plane-shape i { background: var(--m-gray); }
-.plane-icon .plane.selected .plane-shape { --edge: #ffcc00; }
-/* the same shape in a line of text */
-.type-icon { display: inline-block; width: 1.3em; height: 1.3em; vertical-align: -0.28em; transform: rotate(45deg); }
-.type-icon .plane-shape { filter: none; }
-.type-icon .plane-shape i { background: currentColor; }
-.type-icon .plane-shape b { display: none; }
 .type-icon svg { display: block; width: 100%; height: 100%; fill: currentColor; }
+/* 3D model seen from above (js/icons3d.js): the livery stays, parked planes are a little dimmer. */
+.plane-icon img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  pointer-events: auto;
+  cursor: pointer;
+  user-select: none;
+  filter: var(--shadow, drop-shadow(0 1px 2px rgba(0, 0, 0, 0.35)));
+}
+.plane-icon .plane.grounded img { filter: saturate(0.6) brightness(0.92) var(--shadow, drop-shadow(0 1px 2px rgba(0, 0, 0, 0.35))); }
+.plane-icon .plane.selected img {
+  filter: drop-shadow(0 0 1.5px #ffcc00) drop-shadow(0 0 1.5px #ffcc00) var(--shadow, drop-shadow(0 1px 2px rgba(0, 0, 0, 0.35)));
+}
+/* Pushback: a tug at the nose, pushing the plane tail first. */
+.plane-icon .plane { position: relative; }
+.plane-icon .plane.pushback::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: -4px;
+  width: 5px;
+  height: 7px;
+  margin-left: -2.5px;
+  background: #facc15;
+  border: 1px solid #111;
+  border-radius: 1.5px;
+}
 
 #map .map-legend {
   padding: 6px 10px;
@@ -596,7 +613,14 @@ i.s-net { background: var(--muted); }
   from { opacity: 0; scale: 0.3; rotate: -25deg; }
 }
 
-/* ---------- runways, construction, airport shares ---------- */
+/* ---------- runways, gates, construction, airport shares ---------- */
+.gate-label {
+  color: #facc15;
+  font: 700 9px/12px system-ui, sans-serif;
+  text-align: center;
+  text-shadow: 0 0 2px #000, 0 0 2px #000;
+  pointer-events: none;
+}
 .rw-num {
   color: #fff;
   font: 700 10px/14px system-ui, sans-serif;
@@ -786,3 +810,18 @@ button.big { padding: 10px 22px; font-size: 15px; font-weight: 700; border-radiu
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
 }
 #view3d .plane-hover .maplibregl-popup-tip { display: none; }
+
+/* ---------- rival airlines ---------- */
+.rv-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 3px;
+  vertical-align: -1px;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.55);
+}
+.rv-dot.big { width: 11px; height: 11px; margin-right: 6px; }
+.rv-badge { font-size: 11px; white-space: nowrap; margin-left: 4px; color: var(--muted, #9aa3ae); }
+.panel.rival { cursor: pointer; }
+.panel.rival.selected { border-color: var(--accent); }

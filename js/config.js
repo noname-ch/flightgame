@@ -86,6 +86,25 @@ FG.config = {
 
   bankruptcyLimit: -500000,
 
+  // AI competitor airlines (js/data/rivals.js). On a route several airlines fly, passengers split
+  // by attractiveness = seats offered per day ^ capacityExp × fare factor ^ -ticket.elasticity.
+  rivals: {
+    near: 5,                  // rivals with hubs closest to the player's home
+    far: 5,                   // and this many from elsewhere in the world
+    capacityExp: 0.8,
+    routes: { flag: 12, low: 14, regional: 8 },     // routes each one starts with
+    fare: { flag: 1.1, low: 0.75, regional: 1.05 }, // their ticket price factor
+    rangeKm: { flag: 9000, low: 3500, regional: 1500 },
+    fleet: { flag: 'A320', low: 'A320neo', regional: 'E190' }, // aircraft on their routes
+    longHaul: { km: 4000, type: 'A330-300' },       // flag carriers fly widebodies beyond this
+    shortProp: { km: 500, type: 'ATR72-600' },      // regionals fly turboprops below this
+    maxPerDay: 8,             // flights per day and direction on one route
+    targetLoad: 0.8,          // they size their frequency for this load factor
+    growth: 0.6,              // chance per week that a rival opens a new route
+    attack: 0.35,             // ... and that the new route is one the player already flies
+    fareWar: { share: 0.3, cut: 0.05, minFactor: 0.65 }, // undercut when the player takes this share
+  },
+
   // Game modes, picked when starting a new game. makerCrashMult multiplies the crash
   // chance for planes of that maker (11 = +1000%).
   modes: {

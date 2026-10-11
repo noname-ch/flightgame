@@ -11,7 +11,8 @@ leased aircraft (ATR 72, Dash 8-400, E190, A220-300, A320neo or 737-800). The de
 ## Run
 
 Open `index.html` in a browser (needs internet for the map tiles and Leaflet).
-Or serve it locally: `python3 -m http.server` and open http://localhost:8000.
+Or run it locally: `./play.sh` starts a small server and opens http://localhost:8000 in the browser.
+Double-clicking `index.html` (a `file://` page) is not enough: browsers block the 3D view's modules there.
 
 ## How to play
 
@@ -70,6 +71,22 @@ daily demand shared by all your flights on it that day.
 Map: the selected airport shows its catchment ring and the towns feeding it. Click a plane or a
 route to select that aircraft, click empty map to deselect. ⌂ zooms to your network, the layer
 button (top right) switches the base map (satellite by default, remembered) and toggles towns, routes and place names.
+
+Rival airlines: about ten AI competitors (fictional, `js/data/rivals.js`) – flag carriers, low-cost and regional
+airlines, half of them based near your home airport, the rest elsewhere in the world – fly their own route networks
+(thin coloured lines and dots on the map, layer "Rival airlines"). On a route you share, passengers split by the seats
+each airline offers per day and its ticket price (`C.rivals`): add flights or cut your fare to win them. Every Monday
+they react: more flights on full routes, fewer on empty ones, lower fares where you take their passengers, and new
+routes – sometimes one of yours (low-cost carriers even open a base for it). The **Rivals** tab shows your contested
+routes with your share and every rival's network; route tables show competitors as coloured dots and your share.
+A rival can also go bust (newspaper), and its routes are gone.
+
+Gates: every airport has an apron beside its longest runway with a terminal, gates with jet bridges
+(A1, A2, …) and remote stands without bridges (R1, …): from 2 gates at small airfields to 32 at hubs, and
+terminal expansions add more. Zoom in on an airport to see them (2D from zoom 14, 3D from zoom 12). A plane
+gets a free stand when it leaves for an airport, taxis nose-in onto it, parks there (the fleet card shows
+the gate) and is pushed back from it tail first by a tug. `G.apronOf(code)` has the layout, `G.gateOf`
+the stand of a plane.
 
 3D view: the **3D** button (or V) switches the map to a 3D globe with terrain, hill shading and 3D
 buildings (MapLibre). Aircraft are drawn as 3D models at their real altitude, stretched when zoomed out

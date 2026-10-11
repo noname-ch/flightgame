@@ -32,6 +32,7 @@
     speed: 1, // multiple of real time
     paused: false,
     pendingMinutes: 0, // fractional game minutes carried between ticks
+    lastTick: 0, // performance.now() of the last game tick
     selectedAirport: null,
     selectedPlane: null,
     drafts: {}, // planeId -> stops being edited
@@ -118,18 +119,14 @@
   // Top-down aircraft pointing north (Material Icons "flight").
   const PLANE_SVG = '<svg viewBox="0 0 24 24"><path d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/></svg>';
 
-  // The aircraft type seen from above, pointing north: its own shape (models/icons/, made by
-  // tools/hangar_shots.html from the 3D model) or the generic one. The shape is a mask, CSS colours it.
+  // The aircraft type seen from above, pointing north, for a line of text: its own shape (models/icons/,
+  // made by tools/hangar_shots.html from the 3D model) or the generic one. The shape is a mask that takes
+  // the text colour. (The map markers are pictures of the 3D model, see js/icons3d.js.)
   function planeGlyph(type) {
     const file = D.models && D.models[type];
     if (!file) return PLANE_SVG;
     const url = `url(models/icons/${D.typeSlug(type)}.webp)`;
-    return `<span class="plane-shape"><i style="-webkit-mask-image:${url};mask-image:${url}"></i><b></b></span>`;
-  }
-  // Bigger aircraft get a bigger icon.
-  function planeIconSize(type) {
-    const look = D.looks && D.looks[type];
-    return Math.round(22 + 14 * Math.min(1, (look ? look.len : 37) / 75));
+    return `<span class="plane-shape"><i style="-webkit-mask-image:${url};mask-image:${url}"></i></span>`;
   }
 
   const TOWN_STYLE = { color: '#fff', weight: 1, fillColor: COLORS.gray, fillOpacity: 0.75 };
@@ -227,6 +224,8 @@
     // Stacking: tiles < towns + catchment < routes < airports < planes.
     map.createPane('towns').style.zIndex = 350;
     map.createPane('runways').style.zIndex = 370;
+    map.createPane('gates').style.zIndex = 375;
+    map.createPane('rivals').style.zIndex = 380;
     map.createPane('routes').style.zIndex = 390;
 
     const base = {
@@ -253,6 +252,12 @@
     ui.routeLayer = L.layerGroup().addTo(map);
 
     ui.runwayLayer = L.layerGroup().addTo(map);
+    ui.gateLayer = L.layerGroup().addTo(map);
+    ui.rivalRenderer = L.canvas({ pane: 'rivals', padding: 0.2 });
+    ui.rivalRoutes = L.layerGroup();
+    ui.rivalPlanes = L.layerGroup();
+    ui.rivalLayer = L.layerGroup([ui.rivalRoutes, ui.rivalPlanes]).addTo(map);
+    ui.rivalDots = [];
     const townRenderer = L.canvas({ pane: 'towns' });
     for (const t of D.towns) {
       const m = L.circleMarker([t.lat, t.lon], Object.assign({ pane: 'towns', renderer: townRenderer }, TOWN_STYLE))
@@ -269,7 +274,7 @@
 
 
     L.control.scale({ imperial: false }).addTo(map);
-    L.control.layers(base, { Towns: ui.townLayer, Routes: ui.routeLayer, 'Place names': names }).addTo(map);
+    L.control.layers(base, { Towns: ui.townLayer, Routes: ui.routeLayer, 'Rival airlines': ui.rivalLayer, 'Place names': names }).addTo(map);
     addControl('topleft', () => {
       const bar = L.DomUtil.create('div', 'leaflet-bar');
       const btn = L.DomUtil.create('a', 'fit-network', bar);
@@ -389,8 +394,46 @@
     }
   }
 
+  // ---------- gates ----------
+  // Aprons: terminal, jet bridges, stand lead-in lines and stop bars (planes park and push back here).
+  const GATE_ZOOM = 14;
+  function drawGates() {
+    const z = ui.map.getZoom();
+    if (z < GATE_ZOOM) {
+      if (ui.gateSig) { ui.gateLayer.clearLayers(); ui.gateSig = ''; }
+      return;
+    }
+    const view = ui.map.getBounds().pad(0.3);
+    const list = D.airports.filter((a) => !a.factory && view.contains([a.lat, a.lon]));
+    const sig = `${z}|${list.map((a) => `${a.code}:${G.airportSize(a.code)}:${G.airportRunways(a.code).length}`).join(',')}`;
+    if (sig === ui.gateSig) return; // redrawn only when the view or an airport changes
+    ui.gateSig = sig;
+    ui.gateLayer.clearLayers();
+    const quiet = { pane: 'gates', interactive: false };
+    for (const a of list) {
+      const ap = G.apronOf(a.code);
+      L.polygon(ap.apron, { ...quiet, stroke: false, fillColor: '#3a4049', fillOpacity: 0.92 }).addTo(ui.gateLayer);
+      L.polygon(ap.terminal, { pane: 'gates', color: '#e2e8f0', weight: 1, fillColor: '#64748b', fillOpacity: 1, bubblingMouseEvents: false })
+        .bindTooltip(`${a.code} terminal · ${ap.gates.length} gates with jet bridges · ${ap.stands.length - ap.gates.length} remote stands`, { sticky: true })
+        .addTo(ui.gateLayer);
+      for (const st of ap.stands) {
+        L.polyline(st.lead, { ...quiet, color: '#facc15', weight: 1.2, opacity: 0.85 }).addTo(ui.gateLayer);
+        L.polyline(st.stopBar, { ...quiet, color: '#facc15', weight: 2.5 }).addTo(ui.gateLayer);
+        if (st.bridgePoly) {
+          L.polygon(st.bridgePoly, { ...quiet, color: '#e2e8f0', weight: 1, fillColor: '#94a3b8', fillOpacity: 1 }).addTo(ui.gateLayer);
+        }
+        if (z >= 16) {
+          L.marker(st.lead[0], {
+            ...quiet, icon: L.divIcon({ className: 'gate-label', html: st.name, iconSize: [26, 12], iconAnchor: [13, 6] }),
+          }).addTo(ui.gateLayer);
+        }
+      }
+    }
+  }
+
   // Real runways (OurAirports) plus whatever the player built, from C.map.runwayZoom on.
   function drawRunways() {
+    drawGates();
     ui.runwayLayer.clearLayers();
     if (ui.map.getZoom() < C.map.runwayZoom) return;
     const view = ui.map.getBounds().pad(0.2);
@@ -555,7 +598,13 @@
   }
 
   // Game time including the fraction of a minute, so planes glide instead of jumping.
-  const nowMinutes = () => G.state.time + (ui.paused ? 0 : ui.pendingMinutes);
+  // Game time with the fraction since the last tick, so planes move smoothly even at real time
+  // (where a whole game minute takes 600 ticks).
+  const nowMinutes = () => {
+    const t = G.state.time + ui.pendingMinutes;
+    if (ui.paused || st.open) return t;
+    return t + Math.min(performance.now() - ui.lastTick, TICK_MS) * ui.speed / 60000;
+  };
 
   // Flying planes follow their track (runway, climb, cruise, approach); parked ones sit at the airport.
   function planePosition(p) {
@@ -563,8 +612,15 @@
       const st = G.flightState(p, nowMinutes());
       return { latlng: [st.lat, st.lon], heading: st.heading, alt: st.altFt, ground: st.altFt <= 0, st };
     }
-    const ap = G.airportByCode[p.location];
-    return { latlng: [ap.lat, ap.lon], heading: 0, alt: 0, ground: true };
+    const g = G.gateOf(p.location, p.id);
+    return { latlng: [g.lat, g.lon], heading: g.heading, alt: 0, ground: true, gate: g.name };
+  }
+
+  // Icon scale that draws a plane on the ground at its real length when zoomed in on an airport.
+  // iconPx: length of the aircraft in the 28 px glyph (23 for the flat shape, less for a 3D picture).
+  function groundScale(p, lat, iconPx = 23) {
+    const len = (D.looks[p.type] && D.looks[p.type].len) || 35;
+    return Math.max(0.3, Math.min(3.5, len / metresPerPixel(lat) / iconPx));
   }
 
   const PHASES = {
@@ -644,11 +700,10 @@
       const pos = planePosition(p);
       let m = ui.planeMarkers[p.id];
       if (!m) {
-        const size = planeIconSize(p.type);
         m = L.marker(pos.latlng, {
-          icon: L.divIcon({ className: 'plane-icon', html: `<div class="plane">${planeGlyph(p.type)}</div>`, iconSize: [size, size], iconAnchor: [size / 2, size / 2] }),
+          icon: L.divIcon({ className: 'plane-icon', html: `<div class="plane">${PLANE_SVG}</div>`, iconSize: [28, 28], iconAnchor: [14, 14] }),
           zIndexOffset: 1000,
-        }).bindTooltip(planeTip(p), { direction: 'top', offset: [0, -size / 2] }).addTo(ui.map);
+        }).bindTooltip(planeTip(p), { direction: 'top', offset: [0, -14] }).addTo(ui.map);
         m.on('click', () => selectPlane(p.id));
         ui.planeMarkers[p.id] = m;
       }
@@ -657,14 +712,25 @@
       const el = m.getElement();
       if (el) {
         const glyph = el.querySelector('.plane');
+        // The type's 3D model seen from above (js/icons3d.js) replaces the flat shape once it is rendered.
+        const icon = FG.planeIcons && FG.planeIcons.get(p.type);
+        if (icon && glyph.dataset.icon !== icon.url) {
+          glyph.dataset.icon = icon.url;
+          glyph.innerHTML = `<img src="${icon.url}" alt="" draggable="false">`;
+        }
         const flying = p.status === 'flying';
-        // Parked planes line up above their airport so it stays clickable.
-        const n = flying ? 0 : (parked[p.location] = (parked[p.location] || 0) + 1) - 1;
+        // Zoomed in on an airport, planes on the ground are drawn at their gate at real size;
+        // further out, parked planes line up above their airport so it stays clickable.
+        const close = pos.ground && ui.map.getZoom() >= GATE_ZOOM;
+        const n = flying || close ? 0 : (parked[p.location] = (parked[p.location] || 0) + 1) - 1;
         // Higher planes look a little bigger and cast their shadow further away.
         const h = Math.min(1, pos.alt / 38000);
-        glyph.style.transform = flying
-          ? `rotate(${pos.heading}deg) scale(${pos.ground ? 0.7 : 0.8 + 0.25 * h})`
-          : `translate(${n * 13}px, -15px) scale(0.75)`;
+        glyph.style.transform = close
+          ? `rotate(${pos.heading}deg) scale(${groundScale(p, pos.latlng[0], icon ? 28 * icon.len : 23)})`
+          : flying
+            ? `rotate(${pos.heading}deg) scale(${pos.ground ? 0.7 : 0.8 + 0.25 * h})`
+            : `translate(${n * 13}px, -15px) scale(0.75)`;
+        glyph.classList.toggle('pushback', !!(pos.st && pos.st.phase === 'pushback'));
         const sh = flying && !pos.ground ? 1 + 7 * h : 1;
         glyph.style.setProperty('--shadow', `drop-shadow(${sh * 0.7}px ${sh}px ${1 + sh * 0.4}px rgba(0, 0, 0, ${0.4 - 0.2 * h}))`);
         glyph.classList.toggle('grounded', !flying || pos.ground);
@@ -707,7 +773,7 @@
       const b = stops[(i + 1) % stops.length];
       if (a === b || seen.has(G.routeKey(a, b))) return;
       seen.add(G.routeKey(a, b));
-      h += `<tr><td>${a} ↔ ${b}</td><td>${G.demand(a, b)}</td>${fareCell(a, b)}</tr>`;
+      h += `<tr><td>${a} ↔ ${b}</td><td>${G.paxDemand(a, b, PROBE_SEATS)}${rivalBadge(a, b)}</td>${fareCell(a, b)}</tr>`;
     });
     return h + `</table>`;
   }
@@ -721,7 +787,7 @@
       <h3>${a.code} · ${a.name}</h3>
       <div class="muted">${a.city}, ${a.country} · size ${sizeDots(G.airportSize(code))}${a.minor ? ' · airfield' : ''}</div>
       <div>Catchment: <b>${fmtPop(G.catchment(code))}</b> people · landing fee ${G.fmtMoney(G.landingFee(code))}</div>
-      <div>${runwayText(code)}</div>`;
+      <div>${runwayText(code)}</div>${rivalsAt(code)}`;
     if (a.built && !a.open) h += `<div class="warn">🏗 Under construction – opens ${openDate(code)}.</div>`;
 
     if (owned) {
@@ -750,7 +816,7 @@
       h += `<table class="small"><tr><th>From your slot</th><th>km</th><th>pax/day</th><th>ticket</th></tr>`;
       for (const o of others) {
         const d = G.dist(o, code);
-        h += `<tr><td>${o} → ${code}</td><td>${Math.round(d)}</td><td>${G.demand(o, code)}</td>
+        h += `<tr><td>${o} → ${code}</td><td>${Math.round(d)}</td><td>${G.paxDemand(o, code, PROBE_SEATS)}${rivalBadge(o, code)}</td>
           ${fareCell(o, code)}</tr>`;
       }
       h += `</table>`;
@@ -880,14 +946,15 @@
         (f.kind === 'scheduled' ? ` · ${f.pax} pax` : '') + ` · ${flightText(p)}`;
     }
     if (p.status === 'turnaround' && p.repair) return `🔧 Grounded for repairs at ${p.location} until ${G.fmtTime(p.readyAt)}`;
-    if (p.status === 'turnaround') return `Turnaround at ${p.location} until ${G.fmtClock(p.readyAt)}`;
+    const gate = `gate ${G.gateOf(p.location, p.id).name}`;
+    if (p.status === 'turnaround') return `Turnaround at ${p.location} ${gate} until ${G.fmtClock(p.readyAt)}`;
     const crew = G.crewOf(p);
     const leg = p.pendingFerry || (p.schedule.active && p.schedule.stops.length >= 2);
     const hold = leg && G.holdReason(p, p.pendingFerry || p.schedule.stops[(p.schedule.index + 1) % p.schedule.stops.length]);
-    if (hold) return `At ${p.location} · ⛔ ${hold}`;
-    if (leg && crew && crew.dutyToday >= C.crewMaxDutyMin - 60) return `At ${p.location} · crew resting`;
-    if (leg) return `At ${p.location} · waiting (curfew / crew duty)`;
-    return `Idle at ${p.location}`;
+    if (hold) return `At ${p.location} ${gate} · ⛔ ${hold}`;
+    if (leg && crew && crew.dutyToday >= C.crewMaxDutyMin - 60) return `At ${p.location} ${gate} · crew resting`;
+    if (leg) return `At ${p.location} ${gate} · waiting (curfew / crew duty)`;
+    return `Idle at ${p.location} ${gate}`;
   }
 
   function scheduleEditor(p) {
@@ -1152,6 +1219,119 @@
     renderMarket();
   }
 
+  // ---------- rival airlines ----------
+  const RIVAL_KIND = { flag: 'flag carrier', low: 'low-cost', regional: 'regional' };
+  const rvDot = (r, big) => `<span class="rv-dot${big ? ' big' : ''}" style="background:${r.color}"></span>`;
+  const pct = (x) => `${Math.round(x * 100)}%`;
+  // Routes the player doesn't fly yet are judged as if it flew them once a day with a typical plane.
+  const PROBE_SEATS = 150;
+
+  // Rivals flying a route: their colour dots and the player's share of the passengers.
+  function rivalBadge(a, b) {
+    const comp = G.rivalsOn(a, b);
+    if (!comp.length) return '';
+    const tip = comp.map((c) => `${c.r.name}: ${c.rt.perDay}× a day, fares ${pct(c.rt.fare)}`).join(' · ');
+    return ` <span class="rv-badge" title="${tip}">${comp.map((c) => rvDot(c.r)).join('')}you ${pct(G.marketShare(a, b, PROBE_SEATS))}</span>`;
+  }
+
+  // Rival airlines with a hub or routes at an airport.
+  function rivalsAt(code) {
+    const list = (G.state.rivals || [])
+      .map((r) => ({ r, n: r.routes.filter((rt) => rt.a === code || rt.b === code).length, hub: r.hubs.includes(code) }))
+      .filter((x) => x.n || x.hub);
+    if (!list.length) return '';
+    return `<div class="muted">Rivals here: ${list.map((x) => `${rvDot(x.r)}${x.r.name}${x.hub ? ' (hub)' : ''} · ` +
+      `${x.n} route${x.n === 1 ? '' : 's'}`).join(', ')}</div>`;
+  }
+
+  // Their routes as thin lines in their colour (redrawn when a network changes).
+  function drawRivalRoutes() {
+    const sig = (G.state.rivals || []).map((r) => r.id + r.routes.map((rt) => rt.a + rt.b + rt.perDay + rt.fare).join('')).join('|') +
+      `|${ui.selectedRival || ''}`;
+    if (sig === ui.rivalSig) return;
+    ui.rivalSig = sig;
+    ui.rivalRoutes.clearLayers();
+    for (const r of G.state.rivals || []) {
+      const sel = ui.selectedRival === r.id;
+      const dim = ui.selectedRival && !sel;
+      for (const rt of r.routes) {
+        L.polyline(arc(G.airportByCode[rt.a], G.airportByCode[rt.b]), {
+          pane: 'rivals', renderer: ui.rivalRenderer, color: r.color,
+          weight: sel ? 2.5 : 1.2, opacity: dim ? 0.12 : sel ? 0.95 : 0.4,
+        }).bindTooltip(`<b>${r.name}</b> · ${rt.a}–${rt.b} · ${rt.perDay}× a day · ${D.aircraft[rt.type].name} · fares ${pct(rt.fare)}`,
+          { sticky: true })
+          .on('click', () => { ui.tab = 'rivals'; ui.selectedRival = r.id; G.dirty = true; })
+          .addTo(ui.rivalRoutes);
+      }
+    }
+  }
+
+  // Their planes in the air as dots, every third tick.
+  function updateRivalPlanes() {
+    if (!ui.map.hasLayer(ui.rivalLayer)) return;
+    drawRivalRoutes();
+    ui.rivalTick = (ui.rivalTick || 0) + 1;
+    if (ui.rivalTick % 3) return;
+    const view = ui.map.getBounds().pad(0.1);
+    const flights = G.rivalFlights(nowMinutes())
+      .filter((f) => view.contains([f.lat, f.lon]) && (!ui.selectedRival || f.r.id === ui.selectedRival));
+    const pool = ui.rivalDots;
+    flights.forEach((f, i) => {
+      let m = pool[i];
+      if (!m) {
+        m = L.circleMarker([f.lat, f.lon], { pane: 'rivals', renderer: ui.rivalRenderer, radius: 3.5, weight: 1, color: '#fff', fillOpacity: 1 })
+          .bindTooltip('', { direction: 'top', offset: [0, -4] }).addTo(ui.rivalPlanes);
+        pool.push(m);
+      }
+      m.setLatLng([f.lat, f.lon]);
+      if (m.options.fillColor !== f.r.color) m.setStyle({ fillColor: f.r.color });
+      const tip = `<b>${f.r.name}</b> · ${f.from} → ${f.to} · ${D.aircraft[f.rt.type].name}`;
+      if (m._tipText !== tip) { m._tipText = tip; m.setTooltipContent(tip); }
+    });
+    while (pool.length > flights.length) pool.pop().remove();
+  }
+
+  function rivalsTab() {
+    const rivals = G.state.rivals || [];
+    let h = `<div class="panel"><h3>Rival airlines</h3>
+      <div class="muted">${rivals.length} airlines compete with you. On a route you share, passengers split by the seats each
+      airline offers and its ticket price – add flights or cut your fare to win them. Every Monday they react: more flights
+      on full routes, lower fares where you take their passengers, new routes (sometimes yours).</div>`;
+    const mine = G.playerRoutes().filter((x) => G.rivalsOn(x.a, x.b).length);
+    if (mine.length) {
+      h += `<h4>Your routes with competition</h4><table class="small"><tr><th>Route</th><th>you</th><th>rivals</th><th>your ticket</th></tr>`;
+      for (const x of mine) {
+        const comp = G.rivalsOn(x.a, x.b);
+        h += `<tr><td>${x.a}–${x.b}</td><td>${pct(G.marketShare(x.a, x.b))}</td>
+          <td>${comp.map((c) => `<span title="${c.r.name}">${rvDot(c.r)}${c.rt.perDay}× ${pct(c.rt.fare)}</span>`).join(' ')}</td>
+          ${fareCell(x.a, x.b)}</tr>`;
+      }
+      h += `</table>`;
+    } else {
+      h += `<div class="hint">None of your scheduled routes has competition yet.</div>`;
+    }
+    h += `</div>`;
+    for (const r of rivals) {
+      const sel = ui.selectedRival === r.id;
+      const flights = r.routes.reduce((n, rt) => n + rt.perDay * 2, 0);
+      const shared = r.routes.filter((rt) => G.playerSeats(rt.a, rt.b) + G.playerSeats(rt.b, rt.a) > 0).length;
+      h += `<div class="panel rival${sel ? ' selected' : ''}" data-action="selectRival" data-id="${r.id}">
+        <h3>${rvDot(r, true)}${r.name} <span class="muted">${RIVAL_KIND[r.kind]}</span></h3>
+        <div class="muted">Hub${r.hubs.length > 1 ? 's' : ''} ${r.hubs.join(', ')} · ${r.routes.length} routes · ${flights} flights a day` +
+        `${shared ? ` · <b class="neg">${shared} on your routes</b>` : ''}</div>`;
+      if (sel) {
+        h += `<table class="small"><tr><th>Route</th><th>a day</th><th>aircraft</th><th>fares</th></tr>`;
+        for (const rt of r.routes.slice().sort((x, y) => y.perDay - x.perDay)) {
+          h += `<tr class="click" data-action="selectAirport" data-code="${rt.b}"><td>${rt.a}–${rt.b}${rivalBadge(rt.a, rt.b) && G.playerSeats(rt.a, rt.b) ? ' ⚔' : ''}</td>
+            <td>${rt.perDay}×</td><td>${D.aircraft[rt.type].name}</td><td>${pct(rt.fare)}</td></tr>`;
+        }
+        h += `</table><div class="hint">Click the panel again to show all airlines on the map.</div>`;
+      }
+      h += `</div>`;
+    }
+    return h;
+  }
+
   function slotsTab() {
     const s = G.state;
     let h = `<div class="panel"><h3>Your slots</h3><table class="small"><tr><th>Airport</th><th>catchment</th><th>/week</th></tr>`;
@@ -1166,13 +1346,13 @@
       <tr><th>Airport</th><th>km</th><th>pax/day</th><th>slot</th></tr>`;
     const ranked = D.airports
       .filter((a) => a.code !== G.home() && !a.minor)
-      .map((a) => ({ a, demand: G.demand(G.home(), a.code) }))
+      .map((a) => ({ a, demand: G.paxDemand(G.home(), a.code, PROBE_SEATS) }))
       .sort((x, y) => y.demand - x.demand)
       .slice(0, 15);
     for (const { a, demand } of ranked) {
       h += `<tr class="click" data-action="selectAirport" data-code="${a.code}">
         <td>${G.ownsSlot(a.code) ? '✔ ' : ''}${a.code} · ${a.city}</td><td>${Math.round(G.dist(G.home(), a.code))}</td>
-        <td>${demand}</td><td>${G.fmtMoney(G.slotUpfront(a.code))}</td></tr>`;
+        <td>${demand}${rivalBadge(G.home(), a.code)}</td><td>${G.fmtMoney(G.slotUpfront(a.code))}</td></tr>`;
     }
     return h + `</table></div>`;
   }
@@ -1342,7 +1522,7 @@
   function renderSidebar() {
     $('details').innerHTML = ui.selectedAirport ? airportPanel(ui.selectedAirport) : '';
     renderEvents();
-    const tabs = { fleet: fleetTab, slots: slotsTab, airports: airportsTab, finance: financeTab, log: logTab };
+    const tabs = { fleet: fleetTab, slots: slotsTab, airports: airportsTab, rivals: rivalsTab, finance: financeTab, log: logTab };
     $('tab-content').innerHTML = tabs[ui.tab]();
     document.querySelectorAll('[data-tab]').forEach((b) => b.classList.toggle('active', b.dataset.tab === ui.tab));
     restoreSelects();
@@ -1598,6 +1778,16 @@
       case 'sendPlane': act(G.sendPlane(plane, code)); break;
       case 'sendSelect': act(G.sendPlane(plane, $(`send-${plane}`).value)); break;
       case 'fare': G.changeFare(el.dataset.from, el.dataset.to, Number(el.dataset.dir)); break;
+      case 'selectRival': {
+        const id = el.dataset.id;
+        ui.selectedRival = ui.selectedRival === id ? null : id;
+        const r = G.rival(id);
+        if (ui.selectedRival && r && r.routes.length) {
+          const pts = r.routes.flatMap((rt) => [rt.a, rt.b]).map((c) => [G.airportByCode[c].lat, G.airportByCode[c].lon]);
+          ui.map.fitBounds(pts, { padding: [30, 30], maxZoom: 7 });
+        }
+        break;
+      }
       case 'start': act(G.setScheduleActive(plane, true)); break;
       case 'openMarket': e.preventDefault(); openMarket(); return;
       case 'buyNew': act(G.buyNew(el.dataset.type, code)); break;
@@ -1651,6 +1841,11 @@
     }));
     $('pause').addEventListener('click', () => { ui.paused = !ui.paused; });
     $('speed').addEventListener('input', (e) => { ui.speed = sliderToSpeed(Number(e.target.value)); });
+    // Click the speed label to go back to real time.
+    $('speed-label').addEventListener('click', () => {
+      ui.speed = 1;
+      $('speed').value = speedToSlider(1);
+    });
     $('market').addEventListener('click', onMarketClick);
     $('market').addEventListener('change', (e) => {
       if (e.target.id === 'mk-sort') mk.sort = e.target.value;
@@ -1717,6 +1912,7 @@
   }
 
   function loop() {
+    ui.lastTick = performance.now();
     if (!ui.paused && !st.open) {
       ui.pendingMinutes += (ui.speed * TICK_MS) / 60000;
       const whole = Math.floor(ui.pendingMinutes);
@@ -1726,6 +1922,7 @@
     showNewspaper();
     renderHeader();
     updatePlanes();
+    updateRivalPlanes();
     if (mk.open) {
       if (mk.version !== G.state.market.nextId) renderMarket(); // new weekly offers
       else refreshMarketButtons();
@@ -1750,6 +1947,7 @@
       get selectedPlane() { return ui.selectedPlane; },
       get selectedAirport() { return ui.selectedAirport; },
       get speed() { return ui.paused || st.open ? 0 : ui.speed; },
+      get time() { return nowMinutes(); }, // fractional game minutes
       selectPlane,
       selectAirport(code) { ui.selectedAirport = code; G.dirty = true; },
       clearSelection() { ui.selectedAirport = null; ui.selectedPlane = null; G.dirty = true; },
