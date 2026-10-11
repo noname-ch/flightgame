@@ -79,6 +79,25 @@
   <script src="js/hangar.js"></script>
   <script src="js/ui.js"></script>
   <script src="js/devtools.js"></script>
+  <script>
+    // The 3D view is an ES module with imports from the internet. If it fails to load (offline, a
+    // blocked CDN, or old cached files mixed with new ones), say so instead of leaving a dead button.
+    (function () {
+      let why = '';
+      window.addEventListener('error', (e) => {
+        const src = e.filename || (e.target && e.target.src) || '';
+        if (/view3d|models3d|livery|maplibre|three/.test(src)) why = e.message || `could not load ${src}`;
+      }, true);
+      document.getElementById('view3d-toggle').addEventListener('click', () => setTimeout(() => {
+        if (window.FG && FG.view3d) return;
+        const t = document.getElementById('toast');
+        t.textContent = `3D view not loaded${why ? `: ${why}` : ' yet'}. Reload with Ctrl+Shift+R (needs internet).`;
+        t.className = 'show bad';
+        clearTimeout(t.devTimer);
+        t.devTimer = setTimeout(() => { t.className = ''; }, 6000);
+      }));
+    })();
+  </script>
   <script type="module" src="js/view3d.js"></script>
   <script type="module" src="js/hangar3d.js"></script>
 </body>
