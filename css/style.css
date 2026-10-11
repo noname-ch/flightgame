@@ -46,7 +46,7 @@ header button.active { background: var(--accent); border-color: var(--accent); }
 .speed input[type=range] { width: 140px; accent-color: var(--accent); }
 #speed-label { min-width: 64px; font-variant-numeric: tabular-nums; opacity: 0.9; }
 
-main { flex: 1; display: flex; min-height: 0; }
+main { flex: 1; display: flex; min-height: 0; position: relative; }
 #map { flex: 1; min-width: 0; }
 
 #sidebar {
@@ -318,16 +318,6 @@ tr.click:hover { background: #f1f5f9; }
   #sidebar { width: 100%; border-left: none; border-top: 1px solid var(--border); }
 }
 
-/* Aircraft market */
-.market-controls label { display: flex; gap: 4px; align-items: center; font-size: 12px; }
-.mkt-item { padding: 6px 0; border-bottom: 1px solid var(--border); }
-.mkt-item:last-child { border-bottom: 0; }
-.mkt-item > * + * { margin-top: 3px; }
-.mkt-item.too-big { opacity: 0.6; }
-.mkt-item .spacer { flex: 1; }
-.mkt-head { line-height: 1.3; }
-.tag { display: inline-block; padding: 0 6px; border-radius: 8px; background: #dcfce7; color: var(--pos); font-size: 11px; }
-.small-text { font-size: 12px; }
 button.dispose { color: var(--neg); }
 
 /* finance charts */
@@ -369,3 +359,69 @@ i.s-net { background: var(--muted); }
 }
 #chart-tip div { display: flex; align-items: center; gap: 4px; }
 #chart-tip span { margin-left: auto; padding-left: 12px; font-weight: 600; }
+
+/* Aircraft marketplace (hangar overlay) */
+#market {
+  position: absolute; inset: 0; z-index: 1500;
+  display: flex; flex-direction: column;
+  background: #0b0f15; color: #e5e7eb;
+}
+#market[hidden] { display: none; }
+#market button { color: inherit; }
+.mk-top { display: flex; align-items: center; gap: 16px; padding: 12px 20px 6px; }
+.mk-top h1 { margin: 0; font-size: 20px; letter-spacing: 0.04em; text-transform: uppercase; font-weight: 800; }
+.mk-money { font-variant-numeric: tabular-nums; color: #a7f3d0; font-weight: 600; }
+.mk-top .spacer { flex: 1; }
+.mk-close { background: transparent; border: 1px solid #334155; font-size: 22px; line-height: 1; width: 36px; height: 36px; border-radius: 50%; }
+.mk-close:hover { background: #1e293b; }
+.mk-bar { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; padding: 6px 20px 12px; border-bottom: 1px solid #1e293b; }
+.mk-bar label { display: flex; gap: 6px; align-items: center; font-size: 12px; color: #94a3b8; }
+.mk-bar select { background: #111827; color: #e5e7eb; border: 1px solid #334155; border-radius: 6px; padding: 4px 6px; }
+.chips { display: flex; gap: 4px; flex-wrap: wrap; }
+.chips button { background: #111827; border: 1px solid #263041; border-radius: 999px; padding: 4px 12px; font-size: 13px; }
+#market .chips button.on { background: #e5e7eb; color: #0b0f15; border-color: #e5e7eb; }
+.chips .n { display: inline-block; min-width: 18px; padding: 0 5px; border-radius: 9px; background: var(--accent); color: #fff; font-size: 11px; }
+.mk-body { flex: 1; overflow-y: auto; padding: 16px 20px 24px; }
+.mk-empty { padding: 40px; text-align: center; color: #94a3b8; }
+
+.mk-show { display: flex; gap: 20px; align-items: stretch; margin-bottom: 20px; }
+.mk-stage { flex: 1; min-width: 0; border-radius: 10px; overflow: hidden; border: 1px solid #1e293b; box-shadow: 0 10px 40px rgba(0,0,0,.5); }
+.mk-stage svg, .mk-tile svg { display: block; width: 100%; height: auto; }
+.mk-info { width: 340px; flex-shrink: 0; display: flex; flex-direction: column; gap: 10px; }
+.mk-info h2 { margin: 0; font-size: 26px; line-height: 1.15; }
+.mk-maker { color: #94a3b8; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
+.mk-badges { display: flex; gap: 6px; flex-wrap: wrap; }
+.mk-badges .b { font-size: 11px; padding: 2px 8px; border-radius: 4px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+.b.new { background: #1d4ed8; }
+.b.used { background: #b45309; }
+.b.fleet { background: #15803d; }
+.mk-specs { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; margin: 4px 0; }
+.mk-specs div { border-top: 1px solid #1e293b; padding-top: 4px; }
+.mk-specs dt { font-size: 11px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; }
+.mk-specs dd { margin: 0; font-variant-numeric: tabular-nums; font-weight: 600; }
+.mk-delivery { font-size: 13px; color: #cbd5e1; background: #111827; border-left: 3px solid #16a34a; padding: 8px 10px; border-radius: 4px; }
+.mk-delivery .neg { color: #fca5a5; }
+.mk-buy { display: flex; gap: 8px; margin-top: auto; }
+.mk-buy button.big { flex: 1; padding: 10px 12px; font-size: 15px; font-weight: 700; border-radius: 8px; background: #1e293b; border: 1px solid #334155; }
+.mk-buy button.big.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.mk-buy button small { display: block; font-weight: 400; font-size: 11px; opacity: 0.8; }
+
+.mk-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.mk-tile {
+  text-align: left; padding: 0 0 10px; background: #111827; border: 1px solid #1e293b; border-radius: 8px;
+  overflow: hidden; cursor: pointer; transition: transform .12s, border-color .12s, box-shadow .12s;
+}
+.mk-tile:hover { transform: translateY(-2px); border-color: #475569; box-shadow: 0 6px 20px rgba(0,0,0,.4); filter: none; }
+.mk-tile.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 6px 24px rgba(220,38,38,.25); }
+.mk-tile.toobig { opacity: 0.55; }
+.mk-tile .t-name { padding: 8px 10px 0; font-weight: 700; }
+.mk-tile .t-sub { padding: 0 10px; font-size: 12px; color: #94a3b8; }
+.mk-tile .t-price { padding: 4px 10px 0; font-size: 13px; font-weight: 600; color: #e5e7eb; }
+.mk-tile .neg { color: #fca5a5; }
+
+.factory-icon { font-size: 15px; line-height: 18px; text-align: center; filter: drop-shadow(0 0 2px #fff); }
+
+@media (max-width: 900px) {
+  .mk-show { flex-direction: column; }
+  .mk-info { width: auto; }
+}

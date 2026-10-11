@@ -20,10 +20,13 @@ Or serve it locally: `python3 -m http.server` and open http://localhost:8000.
    from 50% to 200% of the standard fare. Cheaper tickets fill more seats, dearer ones fewer –
    lower the price while seats stay empty, raise it once the plane is full.
 
-6. More aircraft: the **Market** tab has 55 types, from the Ju 52 and Twin Otter to the A380 and
-   Concorde. Buy new, lease (deposit + weekly rate) or buy used (new offers every Monday; older
-   planes are cheaper but cost more to run). Each plane gets its own crew. Big jets need a big
-   enough airport. Sell owned planes or return leased ones from the **Fleet** tab.
+6. More aircraft: the **Market** tab opens the hangar marketplace with 55 types, from the Ju 52 and
+   Twin Otter to the A380 and Concorde, each shown in the hangar. Buy new, lease (deposit + weekly
+   rate) or buy pre-owned (new offers every Monday; older planes are cheaper but cost more to run).
+   New planes fly a delivery flight from their factory (🏭 on the map) to your airport; factories
+   outside Europe (Boeing, Embraer, Bombardier, COMAC, …) sit as stand-ins in a line across Libya.
+   Each plane gets its own crew. Big jets need a big enough airport. Sell owned planes or return
+   leased ones from the **Fleet** tab.
 
 Rules: departures only 06:00–22:00, crew max 12h block time per day, each route has a limited
 daily demand shared by all your flights on it that day.
@@ -41,6 +44,8 @@ All content is plain data:
 - `js/data/airports.js` – add airports (`size` 1–5 sets slot price and fees)
 - `js/data/towns.js` – add towns; they generate demand for airports within 150 km
 - `js/data/aircraft.js` – aircraft types (market catalogue) and crew templates
+- `js/data/factories.js` – where each type is built (delivery flights start there)
+- `js/data/looks.js` – side-view shape of each type, drawn by `js/hangar.js`
 - `js/config.js` – starting conditions, map bounds, economy balance
 
 `js/game.js` is the simulation (no DOM), `js/ui.js` the map and sidebar.

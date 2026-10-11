@@ -191,6 +191,13 @@
       ui.townMarkers.push({ t, m });
     }
 
+    for (const f of D.factories) {
+      L.marker([f.lat, f.lon], {
+        icon: L.divIcon({ className: 'factory-icon', html: '🏭', iconSize: [18, 18], iconAnchor: [9, 9] }),
+      }).bindTooltip(`<b>${f.code}</b> · ${f.name}${f.standIn ? `<br><i>real site: ${f.country} – stand-in here</i>` : ''}`)
+        .addTo(map);
+    }
+
     for (const a of D.airports) {
       const m = L.circleMarker([a.lat, a.lon], {
         color: '#fff', weight: 2, fillOpacity: 1, className: 'ap-dot', bubblingMouseEvents: false,
@@ -323,6 +330,12 @@
           dashArray: draft ? '0.1 9' : null,
         }).bindTooltip(`${p.id}: ${stops.join(' → ')} ↺`, { sticky: true })
           .on('click', () => selectPlane(p.id)).addTo(ui.routeLayer);
+      }
+      if (p.flight && p.flight.kind === 'delivery') {
+        const a = G.airportByCode[p.flight.from];
+        const b = G.airportByCode[p.flight.to];
+        L.polyline(arc(a, b), { pane: 'routes', interactive: false, color: '#16a34a', weight: 2.5, dashArray: '2 7' })
+          .addTo(ui.routeLayer);
       }
       const ferryTo = p.pendingFerry || (p.flight && p.flight.kind === 'ferry' ? p.flight.to : null);
       if (ferryTo) {
@@ -473,7 +486,8 @@
   function planeStatus(p) {
     const f = p.flight;
     if (p.status === 'flying') {
-      return `${f.kind === 'ferry' ? 'Ferrying' : 'Flying'} ${f.from} → ${f.to}, arrives ${G.fmtClock(f.arr)}` +
+      const verb = { ferry: 'Ferrying', delivery: 'Delivery flight' }[f.kind] || 'Flying';
+      return `${verb} ${f.from} → ${f.to}, arrives ${G.fmtClock(f.arr)}` +
         (f.kind === 'scheduled' ? ` · ${f.pax} pax` : '');
     }
     if (p.status === 'turnaround') return `Turnaround at ${p.location} until ${G.fmtClock(p.readyAt)}`;
@@ -563,7 +577,7 @@
         ${p.status === 'flying' || s.planes.length === 1 ? 'disabled' : ''}>${confirm ? 'Really? Click again' : label}</button></div>`;
       h += `</div>`;
     }
-    h += `<div class="hint">Get more aircraft in the <a href="#" data-action="tab" data-tab-to="market">Market</a> tab.</div>`;
+    h += `<div class="hint">Get more aircraft in the <a href="#" data-action="openMarket">Marketplace</a>.</div>`;
     return h;
   }
 
@@ -575,82 +589,174 @@
       : `leased ${G.fmtMoney(D.aircraft[p.type].leasePerWeek)}/week${ageText}`;
   }
 
-  // ---------- market ----------
+  // ---------- market (hangar overlay) ----------
   const fmtM = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(n >= 1e7 ? 0 : 1)}M` : `${Math.round(n / 1000)}k`);
   const sizeDots = (n) => `${'●'.repeat(n)}${'○'.repeat(5 - n)}`;
   const MARKET_SORTS = {
-    price: ['Price', (a, b) => G.priceNew(a) - G.priceNew(b)],
-    seats: ['Seats', (a, b) => D.aircraft[b].seats - D.aircraft[a].seats],
-    range: ['Range', (a, b) => D.aircraft[b].rangeKm - D.aircraft[a].rangeKm],
+    price: ['Price', (a, b) => a.price - b.price],
+    seats: ['Seats', (a, b) => D.aircraft[b.type].seats - D.aircraft[a.type].seats],
+    range: ['Range', (a, b) => D.aircraft[b.type].rangeKm - D.aircraft[a.type].rangeKm],
     costSeat: ['Cost per seat-hour', (a, b) =>
-      D.aircraft[a].costPerBlockHour / D.aircraft[a].seats - D.aircraft[b].costPerBlockHour / D.aircraft[b].seats],
-    name: ['Name', (a, b) => D.aircraft[a].name.localeCompare(D.aircraft[b].name)],
+      D.aircraft[a.type].costPerBlockHour / D.aircraft[a.type].seats - D.aircraft[b.type].costPerBlockHour / D.aircraft[b.type].seats],
+    name: ['Name', (a, b) => D.aircraft[a.type].name.localeCompare(D.aircraft[b.type].name)],
   };
+  const mk = { open: false, cond: 'new', cat: 'all', sort: 'price', at: null, sel: null, version: null };
 
-  function marketTab() {
+  // Offers shown in the marketplace: every type new, or this week's used planes.
+  function mkOffers() {
+    const list = mk.cond === 'new'
+      ? Object.keys(D.aircraft).map((type) => ({ key: `new:${type}`, type, price: G.priceNew(type) }))
+      : G.state.market.listings.map((l) => ({ key: `used:${l.id}`, type: l.type, price: l.price, used: l }));
+    return list.filter((o) => mk.cat === 'all' || D.aircraft[o.type].category === mk.cat).sort(MARKET_SORTS[mk.sort][1]);
+  }
+
+  function mkDeliverTo() {
+    return G.ownsSlot(mk.at) ? mk.at : C.startAirport;
+  }
+
+  function mkDelivery(o, at) {
+    const from = o.used ? (o.used.at !== at ? o.used.at : null) : G.deliveryFrom(o.type, at);
+    if (!from) return `Delivered straight to ${at}.`;
+    const km = Math.round(G.dist(from, at));
+    const t = G.fmtDuration(G.deliveryMinutes(o.type, from, at));
+    if (o.used) return `Ferry flight ${from} → ${at} · ${km.toLocaleString('de-CH')} km · ${t}`;
+    const f = G.factoryOf(o.type);
+    return `Built at ${f.name}${f.standIn ? ` (${f.country}; on the map in Libya)` : ''}.<br>
+      Delivery flight ${from} → ${at} · ${km.toLocaleString('de-CH')} km · ${t}`;
+  }
+
+  function mkShowcase(o, at) {
+    const ac = D.aircraft[o.type];
+    const look = D.looks[o.type] || {};
+    const fits = G.fitsAirport(o.type, at);
+    const inFleet = G.state.planes.filter((p) => p.type === o.type).length;
+    const mult = o.used ? 1 + C.market.agingCostPerYear * o.used.age : 1;
+    let h = `<section class="mk-show">
+      <div class="mk-stage">${FG.hangar.svg(o.type, 'show')}</div>
+      <div class="mk-info">
+        <div class="mk-maker">${ac.maker} · ${D.aircraftCategories[ac.category]}</div>
+        <h2>${ac.name}</h2>
+        <div class="mk-badges">${o.used ? `<span class="b used">Pre-owned · ${o.used.age} years</span>` : '<span class="b new">Factory new</span>'}
+          ${inFleet ? `<span class="b fleet">${inFleet} in your fleet</span>` : ''}</div>
+        <dl class="mk-specs">
+          <div><dt>Seats</dt><dd>${ac.seats}</dd></div>
+          <div><dt>Range</dt><dd>${ac.rangeKm.toLocaleString('de-CH')} km</dd></div>
+          <div><dt>Cruise</dt><dd>${ac.speedKmh} km/h</dd></div>
+          <div><dt>Length</dt><dd>${look.len || '–'} m</dd></div>
+          <div><dt>Operating</dt><dd>${G.fmtMoney(ac.costPerBlockHour * mult)}/h</dd></div>
+          <div><dt>Crew</dt><dd>${G.fmtMoney(G.crewFor(o.type).weeklySalary)}/wk</dd></div>
+          <div><dt>Airport</dt><dd>${sizeDots(ac.minAirport || 1)}</dd></div>
+          <div><dt>Lease rate</dt><dd>${G.fmtMoney(ac.leasePerWeek)}/wk</dd></div>
+        </dl>
+        <div class="mk-delivery">${fits ? mkDelivery(o, at) : `<span class="neg">Too big for ${at} (size ${G.airportByCode[at].size}) – deliver to a larger airport.</span>`}</div>
+        <div class="mk-buy">`;
+    if (o.used) {
+      h += `<button class="primary big" data-mk="buyUsed" data-id="${o.used.id}" data-cost="${o.price}" data-fits="${fits}">Buy ${G.fmtMoney(o.price)}</button>`;
+    } else {
+      h += `<button class="primary big" data-mk="buyNew" data-type="${o.type}" data-cost="${o.price}" data-fits="${fits}">Buy ${G.fmtMoney(o.price)}</button>
+        <button class="big" data-mk="leaseNew" data-type="${o.type}" data-cost="${G.leaseDeposit(o.type)}" data-fits="${fits}">Lease ${G.fmtMoney(ac.leasePerWeek)}/wk
+          <small>${G.fmtMoney(G.leaseDeposit(o.type))} deposit</small></button>`;
+    }
+    return h + `</div></div></section>`;
+  }
+
+  function renderMarket() {
     const s = G.state;
-    const slots = Object.keys(s.slots);
-    const cat = ui.selectValues['mkt-cat'] || 'all';
-    const sort = ui.selectValues['mkt-sort'] || 'price';
-    const at = slots.includes(ui.selectValues['mkt-at']) ? ui.selectValues['mkt-at'] : C.startAirport;
-    const atSize = G.airportByCode[at].size;
+    const at = mkDeliverTo();
+    const offers = mkOffers();
+    if (!offers.some((o) => o.key === mk.sel)) mk.sel = offers.length ? offers[0].key : null;
+    mk.version = s.market.nextId;
 
-    let h = `<div class="panel market-controls"><h3>Aircraft market</h3>
-      <div class="row">
-        <label>Type <select id="mkt-cat"><option value="all">All</option>`;
-    for (const [k, v] of Object.entries(D.aircraftCategories)) h += `<option value="${k}">${v}</option>`;
-    h += `</select></label><label>Sort <select id="mkt-sort">`;
-    for (const [k, [v]] of Object.entries(MARKET_SORTS)) h += `<option value="${k}">${v}</option>`;
-    h += `</select></label></div>
-      <div class="row"><label>Deliver to <select id="mkt-at">`;
-    for (const c of slots) h += `<option value="${c}">${c} · ${G.airportByCode[c].city} (size ${G.airportByCode[c].size})</option>`;
-    h += `</select></label></div>
-      <div class="muted">Buy: pay once, no weekly lease, sell any time. Lease: ${C.market.leaseDepositWeeks} weeks deposit,
-        then the weekly rate. Every plane comes with its own crew. Airport size ${sizeDots(atSize)} at ${at}.</div></div>`;
-
-    // Used planes
-    h += `<div class="panel"><h3>Used aircraft <span class="muted">· new offers every Monday</span></h3>`;
-    const used = s.market.listings.filter((l) => cat === 'all' || D.aircraft[l.type].category === cat);
-    if (!used.length) h += `<div class="muted">No offers in this category this week.</div>`;
-    for (const l of used) {
-      const ac = D.aircraft[l.type];
-      const fits = G.fitsAirport(l.type, at);
-      h += `<div class="mkt-item ${fits ? '' : 'too-big'}">
-        <div class="mkt-head"><b>${ac.name}</b> <span class="muted">${l.age} years · ${ac.seats} seats · ${ac.rangeKm} km</span></div>
-        ${fits ? '' : `<div class="neg small-text">Too big for ${at} – needs airport size ${ac.minAirport}+.</div>`}
-        <div class="row"><span class="muted">+${Math.round(C.market.agingCostPerYear * l.age * 100)}% operating cost</span>
-          <span class="spacer"></span>
-          <button class="primary" data-action="buyUsed" data-id="${l.id}" data-code="${at}"
-            ${!fits || s.money < l.price ? 'disabled' : ''}>Buy ${G.fmtMoney(l.price)}</button></div></div>`;
+    let h = `<div class="mk-top">
+      <h1>Aircraft Marketplace</h1>
+      <div class="mk-money" id="mk-money"></div>
+      <div class="spacer"></div>
+      <button class="mk-close" data-mk="close" title="Close (Esc)">×</button>
+    </div>
+    <div class="mk-bar">
+      <div class="chips">
+        <button class="${mk.cond === 'new' ? 'on' : ''}" data-mk="cond" data-v="new">New</button>
+        <button class="${mk.cond === 'used' ? 'on' : ''}" data-mk="cond" data-v="used">Pre-owned <span class="n">${s.market.listings.length}</span></button>
+      </div>
+      <div class="chips">
+        <button class="${mk.cat === 'all' ? 'on' : ''}" data-mk="cat" data-v="all">All</button>`;
+    for (const [k, v] of Object.entries(D.aircraftCategories)) {
+      h += `<button class="${mk.cat === k ? 'on' : ''}" data-mk="cat" data-v="${k}">${v}</button>`;
     }
-    h += `</div>`;
-
-    // New planes
-    const types = Object.keys(D.aircraft)
-      .filter((t) => cat === 'all' || D.aircraft[t].category === cat)
-      .sort(MARKET_SORTS[sort][1]);
-    h += `<div class="panel"><h3>New aircraft <span class="muted">· ${types.length} types</span></h3>`;
-    for (const t of types) {
-      const ac = D.aircraft[t];
-      const fleet = s.planes.filter((p) => p.type === t).length;
-      const price = G.priceNew(t);
-      const deposit = G.leaseDeposit(t);
-      const fits = G.fitsAirport(t, at);
-      h += `<div class="mkt-item ${fits ? '' : 'too-big'}">
-        <div class="mkt-head"><b>${ac.name}</b> <span class="muted">${ac.maker} · ${D.aircraftCategories[ac.category]}</span>
-          ${fleet ? `<span class="tag">${fleet} in fleet</span>` : ''}</div>
-        <div class="muted">${ac.seats} seats · ${ac.rangeKm.toLocaleString('de-CH')} km · ${ac.speedKmh} km/h ·
-          ${G.fmtMoney(ac.costPerBlockHour)}/h · crew ${G.fmtMoney(G.crewFor(t).weeklySalary)}/wk ·
-          airport ${sizeDots(ac.minAirport || 1)}</div>
-        ${fits ? '' : `<div class="neg small-text">Too big for ${at} – pick a larger delivery airport.</div>`}
-        <div class="row">
-          <button class="primary" data-action="buyNew" data-type="${t}" data-code="${at}"
-            ${!fits || s.money < price ? 'disabled' : ''}>Buy ${fmtM(price)}</button>
-          <button data-action="leaseNew" data-type="${t}" data-code="${at}"
-            ${!fits || s.money < deposit ? 'disabled' : ''}>Lease ${fmtM(ac.leasePerWeek)}/wk</button>
-        </div></div>`;
+    h += `</div>
+      <label>Sort <select id="mk-sort">`;
+    for (const [k, [v]] of Object.entries(MARKET_SORTS)) h += `<option value="${k}" ${mk.sort === k ? 'selected' : ''}>${v}</option>`;
+    h += `</select></label>
+      <label>Deliver to <select id="mk-at">`;
+    for (const c of Object.keys(s.slots)) {
+      const a = G.airportByCode[c];
+      h += `<option value="${c}" ${c === at ? 'selected' : ''}>${c} · ${a.city} (size ${a.size})</option>`;
     }
-    return h + `</div>`;
+    h += `</select></label></div><div class="mk-body">`;
+
+    const sel = offers.find((o) => o.key === mk.sel);
+    if (sel) h += mkShowcase(sel, at);
+    else h += `<div class="mk-empty">No ${mk.cond === 'used' ? 'pre-owned offers' : 'aircraft'} in this category${mk.cond === 'used' ? ' this week – new offers arrive every Monday' : ''}.</div>`;
+
+    h += `<div class="mk-grid">`;
+    for (const o of offers) {
+      const ac = D.aircraft[o.type];
+      const fits = G.fitsAirport(o.type, at);
+      h += `<button class="mk-tile ${o.key === mk.sel ? 'sel' : ''} ${fits ? '' : 'toobig'}" data-mk="select" data-key="${o.key}">
+        ${FG.hangar.svg(o.type, 'tile')}
+        <div class="t-name">${ac.name}</div>
+        <div class="t-sub">${o.used ? `${o.used.age} yrs · ` : ''}${ac.seats} seats · ${ac.rangeKm.toLocaleString('de-CH')} km</div>
+        <div class="t-price">${C.currency} ${fmtM(o.price)}${fits ? '' : ' <span class="neg">· too big</span>'}</div>
+      </button>`;
+    }
+    h += `</div></div>`;
+    $('market').innerHTML = h;
+    refreshMarketButtons();
+  }
+
+  // Cheap per-tick update: money and which buy buttons are affordable.
+  function refreshMarketButtons() {
+    $('mk-money').textContent = G.fmtMoney(G.state.money);
+    document.querySelectorAll('#market [data-cost]').forEach((b) => {
+      b.disabled = b.dataset.fits !== 'true' || G.state.money < Number(b.dataset.cost);
+    });
+  }
+
+  function openMarket() {
+    mk.open = true;
+    $('market').hidden = false;
+    renderMarket();
+  }
+
+  function closeMarket() {
+    mk.open = false;
+    $('market').hidden = true;
+  }
+
+  function onMarketClick(e) {
+    const el = e.target.closest('[data-mk]');
+    if (!el) return;
+    const a = el.dataset.mk;
+    const at = mkDeliverTo();
+    let err = null;
+    let bought = false;
+    if (a === 'close') { closeMarket(); return; }
+    if (a === 'cond') { mk.cond = el.dataset.v; mk.sel = null; }
+    if (a === 'cat') { mk.cat = el.dataset.v; mk.sel = null; }
+    if (a === 'select') {
+      mk.sel = el.dataset.key;
+      $('market').querySelector('.mk-body').scrollTo({ top: 0, behavior: 'smooth' });
+    }
+    if (a === 'buyNew') { err = G.buyNew(el.dataset.type, at); bought = true; }
+    if (a === 'leaseNew') { err = G.leaseNew(el.dataset.type, at); bought = true; }
+    if (a === 'buyUsed') { err = G.buyUsed(el.dataset.id, at); bought = true; }
+    if (err) { toast(err, true); return; }
+    if (bought) {
+      const p = G.state.planes[G.state.planes.length - 1];
+      toast(p.status === 'flying' ? `${p.id} is on its delivery flight ${p.flight.from} → ${p.flight.to}.` : `${p.id} is ready at ${p.location}.`);
+      G.dirty = true;
+    }
+    renderMarket();
   }
 
   function slotsTab() {
@@ -842,7 +948,7 @@
 
   function renderSidebar() {
     $('details').innerHTML = ui.selectedAirport ? airportPanel(ui.selectedAirport) : '';
-    const tabs = { fleet: fleetTab, market: marketTab, slots: slotsTab, finance: financeTab, log: logTab };
+    const tabs = { fleet: fleetTab, slots: slotsTab, finance: financeTab, log: logTab };
     $('tab-content').innerHTML = tabs[ui.tab]();
     document.querySelectorAll('[data-tab]').forEach((b) => b.classList.toggle('active', b.dataset.tab === ui.tab));
     restoreSelects();
@@ -877,7 +983,7 @@
       case 'sendSelect': act(G.sendPlane(plane, $(`send-${plane}`).value)); break;
       case 'fare': G.changeFare(el.dataset.from, el.dataset.to, Number(el.dataset.dir)); break;
       case 'start': act(G.setScheduleActive(plane, true)); break;
-      case 'tab': e.preventDefault(); ui.tab = el.dataset.tabTo; break;
+      case 'openMarket': e.preventDefault(); openMarket(); return;
       case 'buyNew': act(G.buyNew(el.dataset.type, code)); break;
       case 'leaseNew': act(G.leaseNew(el.dataset.type, code)); break;
       case 'buyUsed': act(G.buyUsed(el.dataset.id, code)); break;
@@ -923,11 +1029,18 @@
     $('sidebar').addEventListener('mousemove', chartHover);
     $('sidebar').addEventListener('mouseleave', () => { $('chart-tip').hidden = true; });
     document.querySelectorAll('[data-tab]').forEach((b) => b.addEventListener('click', () => {
+      if (b.dataset.tab === 'market') { openMarket(); return; }
       ui.tab = b.dataset.tab;
       G.dirty = true;
     }));
     $('pause').addEventListener('click', () => { ui.paused = !ui.paused; });
     $('speed').addEventListener('input', (e) => { ui.speed = sliderToSpeed(Number(e.target.value)); });
+    $('market').addEventListener('click', onMarketClick);
+    $('market').addEventListener('change', (e) => {
+      if (e.target.id === 'mk-sort') mk.sort = e.target.value;
+      if (e.target.id === 'mk-at') mk.at = e.target.value;
+      renderMarket();
+    });
     $('save').addEventListener('click', () => {
       const ok = G.save();
       toast(ok ? 'Game saved.' : 'Could not save.', !ok);
@@ -939,7 +1052,6 @@
       if (e.target.tagName !== 'SELECT') return;
       ui.selectValues[e.target.id] = e.target.value;
       ui.selectOpen = false;
-      if (e.target.id.startsWith('mkt-')) G.dirty = true; // market filters re-render the list
     });
     $('sidebar').addEventListener('focusin', (e) => { if (e.target.tagName === 'SELECT') ui.selectOpen = true; });
     $('sidebar').addEventListener('focusout', (e) => { if (e.target.tagName === 'SELECT') ui.selectOpen = false; });
@@ -958,6 +1070,7 @@
       G.save();
     });
     document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && mk.open) { closeMarket(); return; }
       if (e.target.matches('input, select, textarea')) return;
       if (e.key === ' ') { ui.paused = !ui.paused; e.preventDefault(); }
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
@@ -992,6 +1105,10 @@
     }
     renderHeader();
     updatePlanes();
+    if (mk.open) {
+      if (mk.version !== G.state.market.nextId) renderMarket(); // new weekly offers
+      else refreshMarketButtons();
+    }
     if (G.dirty && !sidebarBusy()) {
       G.dirty = false;
       renderAll();
