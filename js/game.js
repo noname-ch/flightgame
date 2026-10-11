@@ -55,14 +55,33 @@
   }
 
   // ---------- economy model ----------
+  // Towns bucketed by whole degrees, so a catchment only looks at nearby cells (30k+ towns).
+  const townGrid = {};
+  for (const t of D.towns) {
+    const k = `${Math.floor(t.lat)},${Math.floor(t.lon)}`;
+    (townGrid[k] = townGrid[k] || []).push(t);
+  }
+  function townsNear(p, km) {
+    const dLat = Math.ceil(km / 111);
+    const dLon = Math.min(180, Math.ceil(km / (111 * Math.max(0.05, Math.cos(toRad(Math.min(89, Math.abs(p.lat) + dLat)))))));
+    const out = [];
+    const la = Math.floor(p.lat);
+    const lo = Math.floor(p.lon);
+    for (let i = la - dLat; i <= la + dLat; i++) {
+      for (let j = lo - dLon; j <= lo + dLon; j++) {
+        const cell = townGrid[`${i},${((j + 180) % 360 + 360) % 360 - 180}`];
+        if (cell) out.push(...cell);
+      }
+    }
+    return out;
+  }
+
   const catchmentCache = {};
   function catchment(code) {
     if (catchmentCache[code] != null) return catchmentCache[code];
     const ap = airportByCode[code];
-    const maxDeg = C.catchmentRadiusKm / 111;
     let sum = 0;
-    for (const t of D.towns) {
-      if (Math.abs(t.lat - ap.lat) > maxDeg) continue; // cheap pre-filter, thousands of towns
+    for (const t of townsNear(ap, C.catchmentRadiusKm)) {
       const d = distanceKm(ap, t);
       if (d < C.catchmentRadiusKm) sum += t.pop * (1 - d / C.catchmentRadiusKm);
     }
@@ -1054,8 +1073,7 @@
       if (near) return `Too close to ${near.name} (${near.code}) – keep ${A.newAirportMinKm} km away.`;
       if (s.money < A.newAirportCost) return `Not enough money (${fmtMoney(A.newAirportCost)} needed).`;
       let town = null;
-      for (const t of D.towns) {
-        if (Math.abs(t.lat - lat) > 2) continue;
+      for (const t of townsNear({ lat, lon }, 200)) {
         if (!town || distanceKm(t, { lat, lon }) < distanceKm(town, { lat, lon })) town = t;
       }
       const L = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';

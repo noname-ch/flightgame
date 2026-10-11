@@ -23,15 +23,17 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CACHE = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, 'tools', 'cache')
 DATA = os.path.join(ROOT, 'js', 'data')
 
-# Keep in sync with FG.config.map.bounds.
-BOUNDS = ((25, -40), (75, 50))
-MIN_SMALL_RUNWAY_M = 500   # small airfields need at least this much runway to be included
+# The whole world. In the Europe box every airfield with MIN_SMALL_RUNWAY_M of runway is included;
+# elsewhere small airports need an IATA code or a paved runway (skips ~11k private grass strips).
+BOUNDS = ((-90, -180), (90, 180))
+EUROPE = ((25, -40), (75, 50))
+MIN_SMALL_RUNWAY_M = 500
 TOWN_MERGE_KM = 12         # cities this close to a hand-made town are already in its metro population
 PAVED = ('ASP', 'CON', 'PEM', 'BIT', 'TAR', 'PAV', 'MAC')
 
 
-def inside(lat, lon):
-    (s, w), (n, e) = BOUNDS
+def inside(lat, lon, box=BOUNDS):
+    (s, w), (n, e) = box
     return s <= lat <= n and w <= lon <= e
 
 
@@ -132,8 +134,10 @@ def main():
         rws.sort(key=lambda g: -km(g[0], g[1], g[2], g[3]))
         longest = max([km(g[0], g[1], g[2], g[3]) * 1000 for g in rws] or [0])
         iata = a['iata_code'].strip()
-        if a['type'] == 'small_airport' and longest < MIN_SMALL_RUNWAY_M and not iata:
-            continue
+        if a['type'] == 'small_airport' and not iata:
+            paved = max([km(g[0], g[1], g[2], g[3]) * 1000 for g in rws if g[5]] or [0])
+            if (longest if inside(lat, lon, EUROPE) else paved) < MIN_SMALL_RUNWAY_M:
+                continue
         candidates.append((a, iata, spread(rws, ap), longest))
 
     # IATA codes first so a small field's ICAO ident never steals a real code.

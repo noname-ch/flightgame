@@ -139,17 +139,32 @@
   const townRadius = (t) => Math.max(2.5, Math.sqrt(t.pop) / 450) * zoomScale();
 
   // With thousands of airports and towns only the ones that matter at this zoom are on the map.
-  // Hand-made airports (airports.js) always show; generated ones appear as you zoom in.
-  const airportMinZoom = (a) => (!a.extra ? 0 : a.minor ? 9 : [9, 8, 7, 7, 6, 5][G.airportSize(a.code)]);
-  const townMinPop = (z) => (z <= 4 ? 400000 : z === 5 ? 150000 : z === 6 ? 60000 : z === 7 ? 30000 : 0);
+  // Hand-made airports (airports.js) always show; generated ones appear as you zoom in, big hubs
+  // earlier outside Europe, where there are no hand-made ones.
+  const inEurope = (a) => a.lat >= 25 && a.lat <= 75 && a.lon >= -40 && a.lon <= 50;
+  function airportMinZoom(a) {
+    if (!a.extra) return 0;
+    if (a.minor) return 9;
+    return (inEurope(a) ? [9, 8, 7, 7, 6, 5] : [9, 8, 7, 6, 4, 2])[G.airportSize(a.code)];
+  }
+  const townMinPop = (z) => (z <= 3 ? 1000000 : z === 4 ? 400000 : z === 5 ? 150000 : z === 6 ? 60000 : z === 7 ? 30000 : 0);
   const importantAirport = (a) => G.ownsSlot(a.code) || G.stake(a.code) > 0 || a.built ||
     ui.selectedAirport === a.code;
 
-  // Great-circle path between two airports as a list of [lat, lon].
+  // Great-circle path between two airports as a list of [lat, lon]. Longitudes are unwrapped
+  // so a Pacific crossing runs past ±180° instead of jumping across the whole map.
   function arc(a, b) {
     const n = Math.max(2, Math.ceil(G.distanceKm(a, b) / 150));
     const pts = [];
-    for (let i = 0; i <= n; i++) pts.push(G.interpolate(a, b, i / n));
+    for (let i = 0; i <= n; i++) {
+      const p = G.interpolate(a, b, i / n);
+      if (pts.length) {
+        const prev = pts[pts.length - 1][1];
+        while (p[1] - prev > 180) p[1] -= 360;
+        while (p[1] - prev < -180) p[1] += 360;
+      }
+      pts.push(p);
+    }
     return pts;
   }
 
@@ -210,7 +225,7 @@
     for (const f of D.factories) {
       L.marker([f.lat, f.lon], {
         icon: L.divIcon({ className: 'factory-icon', html: '🏭', iconSize: [18, 18], iconAnchor: [9, 9] }),
-      }).bindTooltip(`<b>${f.code}</b> · ${f.name}${f.standIn ? `<br><i>real site: ${f.country} – stand-in here</i>` : ''}`)
+      }).bindTooltip(`<b>${f.code}</b> · ${f.name}`)
         .addTo(map);
     }
 
@@ -890,7 +905,7 @@
     const t = G.fmtDuration(G.deliveryMinutes(o.type, from, at));
     if (o.used) return `Ferry flight ${from} → ${at} · ${km.toLocaleString('de-CH')} km · ${t}`;
     const f = G.factoryOf(o.type);
-    return `Built at ${f.name}${f.standIn ? ` (${f.country}; on the map in Libya)` : ''}.<br>
+    return `Built at ${f.name}.<br>
       Delivery flight ${from} → ${at} · ${km.toLocaleString('de-CH')} km · ${t}`;
   }
 

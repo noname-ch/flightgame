@@ -10,6 +10,11 @@
 
 FG.data.newspapers = ['The Daily Contrail', 'Tarmac Tribune', 'The Holding Pattern Herald', 'Alpine Evening Post', 'The Jetstream Journal'];
 
+// Countries not listed in countryNames get their English name from the browser.
+FG.regionName = function (code) {
+  try { return new Intl.DisplayNames(['en'], { type: 'region' }).of(code); } catch (e) { return code; }
+};
+
 FG.data.countryNames = {
   AT: 'Austria', BE: 'Belgium', BG: 'Bulgaria', CH: 'Switzerland', CZ: 'Czechia', DE: 'Germany',
   DK: 'Denmark', ES: 'Spain', FI: 'Finland', FR: 'France', GB: 'Britain', GR: 'Greece',
@@ -42,7 +47,7 @@ FG.data.worldEvents = [
     make(ctx) {
       const a = ctx.slotAirport((x) => x.country !== 'CH') || ctx.slotAirport();
       if (!a) return null;
-      const country = FG.data.countryNames[a.country] || a.country;
+      const country = FG.data.countryNames[a.country] || FG.regionName(a.country);
       ctx.effect({ label: `Air traffic control strike in ${country}`, hours: 24, where: { country: a.country }, noFlights: true });
       return {
         kind: 'bad', picture: 'strike',

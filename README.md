@@ -23,8 +23,7 @@ Or serve it locally: `python3 -m http.server` and open http://localhost:8000.
 6. More aircraft: the **Market** tab opens the hangar marketplace with 55 types, from the Ju 52 and
    Twin Otter to the A380 and Concorde, each shown in the hangar. Buy new, lease (deposit + weekly
    rate) or buy pre-owned (new offers every Monday; older planes are cheaper but cost more to run).
-   New planes fly a delivery flight from their factory (🏭 on the map) to your airport; factories
-   outside Europe (Boeing, Embraer, Bombardier, COMAC, …) sit as stand-ins in a line across Libya.
+   New planes fly a delivery flight from their factory (🏭 on the map) to your airport, e.g. Boeings from Everett or Renton in the US.
    Each plane gets its own crew. Big jets need a big enough airport. Sell owned planes or return
    leased ones from the **Fleet** tab.
 
@@ -34,9 +33,11 @@ Or serve it locally: `python3 -m http.server` and open http://localhost:8000.
    flights, festivals boost demand, and a crash costs you the plane, compensation and weeks of
    bookings.
 
-8. **Airports**: besides the ~50 main airports, about 3,200 more airports and airfields appear
-   as you zoom in (grey = small airfield without an IATA code, fewer passengers), and around
-   8,400 cities feed them. Zoom in all the way (level 17) to see every runway, with runway
+8. **The whole world**: besides the ~50 main European airports, about 16,000 more airports and
+   airfields worldwide (US, Canada, Latin America, Asia, Africa, Oceania) appear as you zoom in
+   (grey = small airfield without an IATA code, fewer passengers), and about 33,000 cities with
+   15k+ people feed them. In Europe every airfield with 500 m of runway is included, elsewhere
+   every airport with an IATA code or a paved runway. Zoom in all the way (level 17) to see every runway, with runway
    numbers from zoom 14. Every aircraft needs a long enough runway, and jets need a paved one.
 9. **Airport shares**: click an airport to buy or sell shares in 5% steps. Shareholders get a
    weekly dividend from its traffic (plus the fees your airline pays there). With **25%** you can

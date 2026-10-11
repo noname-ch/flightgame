@@ -11,14 +11,14 @@ FG.config = {
   startRegistration: 'HB-AEA',
   startCrew: 'standard',
 
-  // Map view. Widen bounds when adding airports outside Europe.
+  // Map view: the whole world, starting over Europe.
   map: {
     center: [49, 10],
     zoom: 5,
-    minZoom: 3,
+    minZoom: 2,
     maxZoom: 17,            // runways are drawn from runwayZoom on
     runwayZoom: 11,
-    bounds: [[25, -40], [75, 50]],
+    bounds: [[-80, -220], [85, 220]],
     labelZoom: 10,          // airport code shown from zoom (labelZoom - size); own slots always
   },
 
