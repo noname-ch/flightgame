@@ -335,11 +335,11 @@
       const s = { lat, lon, heading: nose, name, bridge, along,
         lead: [at(along, -TAXI_LANE), at(along, stop)], stopBar: [at(along - 4, stop), at(along + 4, stop)] };
       // lead-in curves from the taxi lane onto the stand centre line, from both directions
-      const turn = 22;
+      const turn = Math.min(30, sp * 0.42);
       for (const d of [-1, 1]) {
         const arc = [];
-        for (let i = 0; i <= 6; i++) {
-          const a = (i / 6) * Math.PI / 2;
+        for (let i = 0; i <= 12; i++) {
+          const a = (i / 12) * Math.PI / 2;
           arc.push(at(along + d * turn * (1 - Math.sin(a)), -TAXI_LANE + turn * (1 - Math.cos(a))));
         }
         markings.push({ line: arc, kind: 'y' });
@@ -458,6 +458,8 @@
       markings.push({ line: [at(m, -TAXI_LANE + 28), at(m, stop + 3)], kind: 'w' });
     }
     markings.push({ line: [at(-reach + 10, stop + 4), at(reach - 10, stop + 4)], kind: 'w' });
+    // The apron taxi lane the lead-in curves branch off from.
+    markings.push({ line: [at(-reach + 5, -TAXI_LANE), at(reach - 5, -TAXI_LANE)], kind: 'y' });
     markings.push({ line: [at(-half - 5, stop + 10), at(half + 5, stop + 10)], kind: 'w' });
     const lane = (along) => at(along, -TAXI_LANE);
     ap = {
@@ -479,6 +481,16 @@
   // real ones: planes use the stands nearest the main terminal, as many as the airport's size gives gates,
   // and taxi along the real taxiways (shortest way through them).
   const metres = (p, q) => distanceKm({ lat: p[0], lon: p[1] }, { lat: q[0], lon: q[1] }) * 1000;
+  // Metres from p to the segment a-b ([lat, lon] each) and the nearest point on it, on a local flat projection.
+  function segMetres(p, a, b) {
+    const kx = 111320 * Math.cos(toRad(p[0]));
+    const ax = (a[1] - p[1]) * kx, ay = (a[0] - p[0]) * 111320;
+    const bx = (b[1] - p[1]) * kx, by = (b[0] - p[0]) * 111320;
+    const dx = bx - ax, dy = by - ay;
+    const t = Math.max(0, Math.min(1, -(ax * dx + ay * dy) / (dx * dx + dy * dy || 1)));
+    const x = ax + t * dx, y = ay + t * dy;
+    return { d: Math.hypot(x, y), pt: [p[0] + y / 111320, p[1] + x / kx] };
+  }
   const middle = (pts) => [pts.reduce((s, p) => s + p[0], 0) / pts.length, pts.reduce((s, p) => s + p[1], 0) / pts.length];
   function realApron(code, size, lay) {
     const a = airportByCode[code];
@@ -490,11 +502,52 @@
     const termPts = lay.terminals.flat();
     const toTerminal = (p) => termPts.reduce((d, q) => Math.min(d, metres(p, q)), Infinity);
     const stop = 14; // nose stop bar ahead of the stand point
+    // Buildings the nose points at, and the taxiways the plane is pushed back onto.
+    const bldPts = [...lay.terminals, ...lay.hangars].flat();
+    const toBuilding = (p) => bldPts.reduce((d, q) => Math.min(d, metres(p, q)), Infinity);
+    const toTaxiway = (p) => lay.taxiways.reduce((d, line) => {
+      for (let k = 1; k < line.length; k++) d = Math.min(d, segMetres(p, line[k - 1], line[k]).d);
+      return d;
+    }, Infinity);
+    // Nearest point on any taxiway centreline.
+    const footOnTaxiway = (p) => {
+      let best = { d: Infinity, pt: null };
+      for (const line of lay.taxiways) {
+        for (let k = 1; k < line.length; k++) { const r = segMetres(p, line[k - 1], line[k]); if (r.d < best.d) best = r; }
+      }
+      return best;
+    };
+    const angleDiff = (x, y) => Math.abs((((x - y) % 360) + 540) % 360 - 180);
     const stands = lay.stands.map((s) => [s, metres(s, main)]).sort((x, y) => x[1] - y[1]).slice(0, 2 * GATE_COUNT[size])
-      .map(([[lat, lon, heading, name]], i) => {
-        const ahead = (m, across = 0) => { const p = offsetPoint(lat, lon, heading, m); return offsetPoint(p[0], p[1], heading + 90, across); };
+      .map(([[lat, lon, mapped, name]], i) => {
+        const aheadOf = (h) => (m, across = 0) => { const p = offsetPoint(lat, lon, h, m); return offsetPoint(p[0], p[1], h + 90, across); };
+        // The mapped direction is often the wrong way round or missing. A plane is pushed back onto the
+        // nearest taxiway, so its nose points away from it: keep the mapped line (either way round) when it
+        // roughly agrees, else park straight out from the taxiway.
+        let heading = mapped;
+        const foot = footOnTaxiway([lat, lon]);
+        if (foot.pt && foot.d > 3) {
+          const away = bearing({ lat: foot.pt[0], lon: foot.pt[1] }, { lat, lon });
+          const flip = (mapped + 180) % 360;
+          heading = angleDiff(mapped, away) <= angleDiff(flip, away) ? mapped : flip;
+          if (angleDiff(heading, away) > 50) heading = Math.round(away);
+        } else if (bldPts.length) {
+          const f = aheadOf(mapped);
+          if (toBuilding(f(30)) > toBuilding(f(-30))) heading = (mapped + 180) % 360;
+        }
+        const ahead = aheadOf(heading);
+        // Pushed back straight out until the tail is on the nearest taxiway centreline (20-90 m).
+        let push = TAXI_LANE;
+        if (lay.taxiways.length) {
+          let best = Infinity;
+          for (let m = 20; m <= 90; m += 2.5) {
+            const d = toTaxiway(ahead(-m));
+            if (d < best - 0.5) { best = d; push = m; }
+          }
+          if (best > 40) push = TAXI_LANE; // no taxiway behind the stand
+        }
         const bridge = toTerminal(ahead(stop + 10)) < 45;
-        const st = { lat, lon, heading, name: name || `S${i + 1}`, bridge, lead: [ahead(-TAXI_LANE), ahead(stop)], stopBar: [ahead(stop, -4), ahead(stop, 4)] };
+        const st = { lat, lon, heading, push, name: name || `S${i + 1}`, bridge, lead: [ahead(-push), ahead(stop)], stopBar: [ahead(stop, -4), ahead(stop, 4)] };
         if (bridge) st.bridgePoly = [ahead(stop - 7, -6.3), ahead(stop - 7, -2.7), ahead(stop + 22, -2.7), ahead(stop + 22, -6.3)];
         return st;
       });
@@ -682,7 +735,7 @@
   function gateOf(code, planeId) {
     const ap = apronOf(code);
     const st = ap.stands[Math.min(standIndex(code, planeId), ap.stands.length - 1)];
-    return { lat: st.lat, lon: st.lon, heading: st.heading, name: st.name, bridge: st.bridge };
+    return { lat: st.lat, lon: st.lon, heading: st.heading, name: st.name, bridge: st.bridge, push: st.push || TAXI_LANE };
   }
 
   function buildTrack(type, f, planeId) {
@@ -713,8 +766,8 @@
     const gB = gateOf(f.to, planeId);
     const standA = [gA.lat, gA.lon];
     const standB = [gB.lat, gB.lon];
-    const pushA = offsetPoint(gA.lat, gA.lon, gA.heading + 180, TAXI_LANE);
-    const leadB = offsetPoint(gB.lat, gB.lon, gB.heading + 180, TAXI_LANE);
+    const pushA = offsetPoint(gA.lat, gA.lon, gA.heading + 180, gA.push);
+    const leadB = offsetPoint(gB.lat, gB.lon, gB.heading + 180, gB.push);
     // Taxi out along the taxiways to the threshold, and in from where the plane leaves the runway.
     const outPath = taxiPath(f.from, dep, pushA, 0);
     const stopM = Math.min(arr.len * 0.65, 2200);
