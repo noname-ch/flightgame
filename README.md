@@ -66,8 +66,10 @@ button (top right) switches the base map and toggles towns, routes and place nam
 3D view: the **3D** button (or V) switches the map to a 3D globe with terrain, hill shading and 3D
 buildings (MapLibre). Aircraft are drawn as 3D models at their real altitude, stretched when zoomed out
 so you can see them. Drag with the right mouse button (or Ctrl + drag) to tilt and rotate. 🎥 Follow puts the camera
-behind the selected plane, 🛰 Satellite switches to satellite imagery. The aircraft are simple placeholder
-models built in `planeModel()` in `js/view3d.js`; real glTF models can be swapped in there later.
+behind the selected plane, 🛰 Satellite switches to satellite imagery. The aircraft are glTF models from
+`models/` (Flightradar24's GPLv2 models, see `models/README.md`); `MODEL_FILES` in `js/view3d.js` says which
+type uses which file. Types without a model (small turboprops, Ju 52, DC-3, Concorde) keep the simple
+placeholder built in `placeholderModel()`.
 
 Developer tools: the 🛠 button (or F2) opens a cheat panel for testing: add or set money, add any
 aircraft for free (delivered instantly to the chosen or selected airport, slot included), crash /
