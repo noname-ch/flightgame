@@ -414,12 +414,14 @@
         return st;
       });
     const ref = middle(stands.map((st) => st.lead[0]));
+    // Where no tower is mapped, one stands behind the main terminal, away from the stands.
+    const towers = lay.towers.length ? lay.towers : [offsetPoint(main[0], main[1], bearing({ lat: ref[0], lon: ref[1] }, { lat: main[0], lon: main[1] }), 80)];
     const tw = 5 + size;
     const th = [10, 14, 20, 30, 42, 55][size];
     const buildings = [
       ...lay.terminals.map((ring) => ({ ring, base: 0, h: 10 + 3 * size, kind: 'terminal' })),
       ...lay.hangars.map((ring) => ({ ring, base: 0, h: 14, kind: 'hangar' })),
-      ...lay.towers.flatMap((p) => [{ ring: square(p, tw / 2), base: 0, h: th, kind: 'tower' }, { ring: square(p, tw / 2 + 2), base: th, h: th + 5, kind: 'cab' }]),
+      ...towers.flatMap((p) => [{ ring: square(p, tw / 2), base: 0, h: th, kind: 'tower' }, { ring: square(p, tw / 2 + 2), base: th, h: th + 5, kind: 'cab' }]),
     ];
     return {
       code, real: lay, hdg: 0, side: 1, nose: stands[0].heading, spacing: 60, gates: stands.filter((st) => st.bridge), stands, buildings,
@@ -448,6 +450,29 @@
         g.adj[u].push([v, d]);
         g.adj[v].push([u, d]);
       }
+    }
+    // Join loose ends: a line that ends on another line (within 8 m) without sharing a point with it, as
+    // happens where the data was cut into map tiles. The end is linked to both ends of that stretch.
+    const segs = [];
+    for (let u = 0; u < g.adj.length; u++) for (const [w] of g.adj[u]) if (u < w) segs.push([u, w]);
+    const toSegment = (p, a, b) => {
+      const kx = 111320 * Math.cos(toRad(a[0]));
+      const bx = (b[1] - a[1]) * kx, by = (b[0] - a[0]) * 111320, px = (p[1] - a[1]) * kx, py = (p[0] - a[0]) * 111320;
+      const t = Math.max(0, Math.min(1, (px * bx + py * by) / (bx * bx + by * by || 1)));
+      return Math.hypot(px - t * bx, py - t * by);
+    };
+    for (let u = 0; u < g.pts.length; u++) {
+      if (g.adj[u].length !== 1) continue;
+      const p = g.pts[u];
+      let best = null;
+      let near = 8;
+      for (const s of segs) {
+        const a = g.pts[s[0]];
+        if (s[0] === u || s[1] === u || Math.abs(a[0] - p[0]) > 0.02 || Math.abs(a[1] - p[1]) > 0.03) continue;
+        const d = toSegment(p, a, g.pts[s[1]]);
+        if (d < near) { near = d; best = s; }
+      }
+      if (best) for (const w of best) { const d = metres(p, g.pts[w]); g.adj[u].push([w, d]); g.adj[w].push([u, d]); }
     }
     // Which points belong to the biggest connected piece of the taxiways.
     const piece = new Int32Array(g.pts.length).fill(-1);

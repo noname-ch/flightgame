@@ -7,7 +7,9 @@
 </head>
 <body>Airport layouts from OpenStreetMap
 <span id="log"></span>
+<div id="map" style="position:absolute;left:-9999px;top:0"></div>
 <script type="module">
+import * as maplibregl from 'https://cdn.jsdelivr.net/npm/maplibre-gl@6.13.0/dist/maplibre-gl.mjs';
 // Turns the raw Overpass downloads in osm-raw/<CODE>.json (see models/README.md -> js/data/layouts) into the
 // compact layouts the game uses, js/data/layouts/<CODE>.json, and the list of them, js/data/layouts.js.
 // Data © OpenStreetMap contributors, ODbL. Needs a local web server that accepts the files by POST.
@@ -96,17 +98,98 @@ function convert(data) {
   return out;
 }
 
-const codes = (await (await fetch('../osm-raw/list.txt')).text()).trim().split('\n').map((l) => l.split(' ')[0]);
+// ---------- second source: the map's vector tiles ----------
+// Where there is no Overpass download, the same OpenStreetMap data is read from the vector tiles the 3D view
+// uses (OpenFreeMap, OpenMapTiles schema): aprons and taxiways (layer aeroway), gates (points with a ref) and
+// buildings. A hidden map is opened over the airport at zoom 14 and its tiles are queried.
+const STYLE = 'https://tiles.openfreemap.org/styles/liberty';
+const snap = (n) => Math.round(n / 3e-5) * 3e-5; // ~3 m: joins lines that were cut at a tile edge
+function segDist(p, a, b) {
+  const kx = M * Math.cos(a[0] * Math.PI / 180);
+  const bx = (b[1] - a[1]) * kx, by = (b[0] - a[0]) * M, px = (p[1] - a[1]) * kx, py = (p[0] - a[0]) * M;
+  const t = Math.max(0, Math.min(1, (px * bx + py * by) / (bx * bx + by * by || 1)));
+  return Math.hypot(px - t * bx, py - t * by);
+}
+const ringDist = (p, ring) => ring.reduce((d, q, i) => Math.min(d, segDist(p, q, ring[(i + 1) % ring.length])), Infinity);
+async function fromTiles(lat, lon, size) {
+  const box = document.getElementById('map');
+  const px = size <= 2 ? 1536 : size === 3 ? 2048 : 2560;
+  box.style.width = box.style.height = `${px}px`;
+  const map = new maplibregl.Map({ container: box, style: STYLE, center: [lon, lat], zoom: 14, interactive: false, pixelRatio: 1, attributionControl: false });
+  await new Promise((res) => { map.once('idle', res); setTimeout(res, 60000); });
+  const aero = map.querySourceFeatures('openmaptiles', { sourceLayer: 'aeroway' });
+  const builds = map.querySourceFeatures('openmaptiles', { sourceLayer: 'building' });
+  map.remove();
+  const ll = (c) => [r5(c[1]), r5(c[0])];
+  const polys = (f) => (f.geometry.type === 'Polygon' ? [f.geometry.coordinates] : f.geometry.type === 'MultiPolygon' ? f.geometry.coordinates : []);
+  const lines = (f) => (f.geometry.type === 'LineString' ? [f.geometry.coordinates] : f.geometry.type === 'MultiLineString' ? f.geometry.coordinates : []);
+  const seen = new Set();
+  const once = (ring) => { const k = `${ring.length}|${ring[0]}|${ring[1]}`; if (seen.has(k)) return false; seen.add(k); return true; };
+  // simplified in two halves, from the first point to the one farthest from it and back
+  const ringOf = (coords) => {
+    const g = coords.map(ll);
+    if (key(g[0]) === key(g[g.length - 1])) g.pop();
+    if (g.length < 4) return g;
+    let far = 1;
+    for (let i = 2; i < g.length; i++) if (dist(g[0], g[i]) > dist(g[0], g[far])) far = i;
+    return [...simplify(g.slice(0, far + 1), 1.5), ...simplify([...g.slice(far), g[0]], 1.5).slice(1, -1)];
+  };
+  const out = { aprons: [], terminals: [], hangars: [], towers: [], taxiways: [], stands: [] };
+  const gates = [];
+  for (const f of aero) {
+    const cls = f.properties.class;
+    if (cls === 'apron') for (const p of polys(f)) { const r = ringOf(p[0]); if (r.length >= 3 && once(r)) out.aprons.push(r); }
+    if (cls === 'taxiway') for (const l of lines(f)) { const g = l.map((c) => [r5(snap(c[1])), r5(snap(c[0]))]).filter((p, i, a) => !i || key(p) !== key(a[i - 1])); if (g.length > 1 && once(g)) out.taxiways.push(g); }
+    if (cls === 'gate' && f.geometry.type === 'Point') gates.push([ll(f.geometry.coordinates), f.properties.ref || '']);
+  }
+  // taxiways: keep the points where they meet when simplifying
+  const count = new Map();
+  for (const l of out.taxiways) for (const p of l) count.set(key(p), (count.get(key(p)) || 0) + 1);
+  out.taxiways = out.taxiways.map((l) => simplify(l, 1.5, (p) => count.get(key(p)) > 1));
+  // buildings at the gates are terminals, other big ones beside an apron are hangars
+  const apronPts = out.aprons.flat();
+  for (const f of builds) {
+    for (const p of polys(f)) {
+      const r = ringOf(p[0]);
+      if (r.length < 3 || !once(r)) continue;
+      const mid = [r.reduce((s, q) => s + q[0], 0) / r.length, r.reduce((s, q) => s + q[1], 0) / r.length];
+      if (gates.some(([g]) => dist(g, mid) < 400 && ringDist(g, r) < 45)) out.terminals.push(r);
+      else if (r.reduce((s, q) => s + dist(q, mid), 0) / r.length > 18 && apronPts.some((q) => dist(q, mid) < 90)) out.hangars.push(r);
+    }
+  }
+  // a gate is at the building: the aircraft stands some 30 m out, towards the nearest taxiway, nose to the gate
+  const taxiPts = out.taxiways.flat();
+  for (const [g, ref] of gates) {
+    const t = taxiPts.reduce((b, q) => { const d = dist(g, q); return d < b.d ? { d, q } : b; }, { d: 160, q: null });
+    if (!t.q || t.d < 25) continue;
+    const hdg = bearing(t.q, g);
+    const pos = move(g, hdg + 180, Math.min(32, t.d - 12));
+    if (!out.stands.some((s) => dist(s, pos) < 25)) out.stands.push([r5(pos[0]), r5(pos[1]), Math.round(hdg), ref]);
+  }
+  return out;
+}
+
+const list = (await (await fetch('../osm-raw/list.txt')).text()).trim().split('\n').map((l) => l.split(' '));
+const only = new URLSearchParams(location.search).get('only'); // ?only=ZRH,GVA to redo a few
 const index = [];
 let bytes = 0;
-for (const code of codes) {
-  const res = await fetch(`../osm-raw/${code}.json`);
-  if (!res.ok) continue;
+for (const [code, lat, lon, size] of list) {
   let layout;
-  try { layout = convert(await res.json()); } catch (e) { log(`${code}: ${e}`); continue; }
+  let source = 'overpass';
+  if (only && !only.split(',').includes(code)) {
+    // keep what is there
+    const have = await fetch(`../js/data/layouts/${code}.json`);
+    if (have.ok) { index.push(code); bytes += (await have.text()).length; }
+    continue;
+  }
+  try {
+    const res = await fetch(`../osm-raw/${code}.json`);
+    if (res.ok) layout = convert(await res.json());
+    else { source = 'tiles'; layout = await fromTiles(+lat, +lon, +size); }
+  } catch (e) { log(`${code}: ${e}`); continue; }
   const text = JSON.stringify(layout);
   const usable = layout.stands.length >= 3 && layout.taxiways.length >= 5;
-  log(`${code}: ${layout.terminals.length} terminals, ${layout.aprons.length} aprons, ${layout.taxiways.length} taxiways, ${layout.stands.length} stands, ${layout.towers.length} towers, ${Math.round(text.length / 1024)} kB${usable ? '' : '  (not used: too little mapped)'}`);
+  log(`${code} (${source}): ${layout.terminals.length} terminals, ${layout.aprons.length} aprons, ${layout.hangars.length} hangars, ${layout.taxiways.length} taxiways, ${layout.stands.length} stands, ${layout.towers.length} towers, ${Math.round(text.length / 1024)} kB${usable ? '' : '  (not used: too little mapped)'}`);
   if (!usable) continue;
   const saved = await fetch(`/js/data/layouts/${code}.json`, { method: 'POST', body: text });
   if (saved.ok) { index.push(code); bytes += text.length; } else log(`${code}: not saved (${saved.status})`);

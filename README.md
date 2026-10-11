@@ -97,7 +97,9 @@ Real layouts: the airports listed in `js/data/layouts.js` have their real aprons
 taxiways and stands (`js/data/layouts/<CODE>.json`, loaded when the airport is first needed, see
 `js/layouts.js`). There planes park on the real stands nearest the main terminal and taxi the shortest way
 along the real taxiways. The data is © OpenStreetMap contributors (ODbL); `tools/build_layouts.html` makes the
-files from Overpass API downloads. Every other airport is laid out by the game as described above.
+files, from Overpass API downloads where there are any and else from the vector tiles of the 3D map
+(OpenFreeMap): there the stands are placed in front of the mapped gates. Every other airport, and one with
+too few mapped gates, is laid out by the game as described above.
 
 Expansion preview: in the developer tools (F2), "Show expansion preview" draws in cyan where construction
 at the selected airport would go, in 2D and 3D: each kind of new runway with its taxiway, the runway
