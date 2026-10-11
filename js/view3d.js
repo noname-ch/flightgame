@@ -3,7 +3,7 @@
 // The aircraft are glTF models from models/ (see js/data/models.js); types without one use the placeholder.
 import * as maplibregl from 'maplibre-gl';
 import * as THREE from 'three';
-import { loadModel } from './models3d.js';
+import { loadModel, facing, patchFacing } from './models3d.js';
 
 const G = FG.game;
 const D = FG.data;
@@ -152,6 +152,7 @@ function placeholderModel(type) {
     const white = new THREE.MeshLambertMaterial({ color: 0xf4f4f6, side: THREE.DoubleSide });
     const tail = new THREE.MeshLambertMaterial({ color: 0xdc2626, side: THREE.DoubleSide });
     const grey = new THREE.MeshLambertMaterial({ color: 0x9aa0a6, side: THREE.DoubleSide });
+    for (const m of [white, tail, grey]) { m.onBeforeCompile = patchFacing; m.customProgramCacheKey = () => 'facing'; }
     const parts = [];
     const add = (geo, mat, fn) => { const m = new THREE.Mesh(geo, mat); fn(m); parts.push(m); };
     const r = sh.fuselage;
@@ -399,9 +400,13 @@ const planeLayer = {
     this.scene.add(new THREE.AmbientLight(0xffffff, 1.6));
     this.sun = new THREE.DirectionalLight(0xffffff, 2.2);
     this.scene.add(this.sun, this.sun.target);
+    // Everything is drawn relative to the view centre (see render): the aircraft and the track live in here.
+    this.world = new THREE.Group();
+    this.scene.add(this.world);
     this.renderer = new THREE.WebGLRenderer({ canvas: map.getCanvas(), context: gl, antialias: true });
     this.renderer.autoClear = false;
     this.matrix = new THREE.Matrix4();
+    this.shift = new THREE.Matrix4();
   },
   render(gl, args) {
     if (!v.on) return;
@@ -425,15 +430,19 @@ const planeLayer = {
     frameAt(center.lat, center.lng, 0, globe);
     this.sun.position.copy(tmp.pos).addScaledVector(tmp.up, 1).addScaledVector(tmp.east, -0.6).addScaledVector(tmp.north, 0.4);
     this.sun.target.position.copy(tmp.pos);
+    // Draw relative to the view centre: world coordinates (mercator 0..1, or a sphere of radius 1) are
+    // too coarse as 32-bit floats, an aircraft's vertices would snap to a grid of about a metre.
+    this.world.position.copy(tmp.pos).negate();
+    this.camera.projectionMatrix.multiply(this.shift.makeTranslation(tmp.pos.x, tmp.pos.y, tmp.pos.z));
 
     const alive = new Set();
     for (const p of G.state.planes) {
       alive.add(p.id);
       let e = v.planes[p.id];
       if (!e || e.type !== p.type) {
-        if (e) this.scene.remove(e.obj);
+        if (e) this.world.remove(e.obj);
         e = v.planes[p.id] = { obj: planeModel(p.type), type: p.type, world: new THREE.Vector3() };
-        this.scene.add(e.obj);
+        this.world.add(e.obj);
       }
       const pose = planePose(p, t);
       const len = e.obj.userData.len;
@@ -481,7 +490,7 @@ const planeLayer = {
       e.obj.visible = !v.clip || pos.x * v.clip[0] + pos.y * v.clip[1] + pos.z * v.clip[2] + v.clip[3] > -0.002;
     }
     for (const id of Object.keys(v.planes)) {
-      if (!alive.has(id)) { this.scene.remove(v.planes[id].obj); delete v.planes[id]; }
+      if (!alive.has(id)) { this.world.remove(v.planes[id].obj); delete v.planes[id]; }
     }
     if (this.track && !(sel && v.planes[sel] && G.plane(sel) && G.plane(sel).status === 'flying')) this.track.visible = false;
 
@@ -489,7 +498,10 @@ const planeLayer = {
     // Own depth buffer for the planes: sharing MapLibre's lets the (exaggerated) terrain and the
     // coarse depth precision cut holes into the models. Planes are then drawn over the terrain.
     this.renderer.clearDepth();
+    // The flat map's projection is mirrored: tell the double-sided materials (see js/models3d.js).
+    facing.value = this.camera.projectionMatrix.determinant() < 0 ? 1 : -1;
     this.renderer.render(this.scene, this.camera);
+    facing.value = 1;
     // three.js and MapLibre share the WebGL context: put the GL state back and make MapLibre
     // re-apply its own, or real GPUs draw an empty map (texture uploads, framebuffer bindings).
     this.renderer.resetState();
@@ -504,7 +516,7 @@ planeLayer.drawTrack = function (p, len, exag, globe) {
   if (!this.track) {
     this.track = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0xff9500 }));
     this.track.frustumCulled = false;
-    this.scene.add(this.track);
+    this.world.add(this.track);
   }
   if (!tr) { this.track.visible = false; return; }
   const key = `${p.id}|${p.flight.dep}|${Math.round(Math.log2(exag) * 4)}|${globe}`;
@@ -518,7 +530,10 @@ planeLayer.drawTrack = function (p, len, exag, globe) {
     pts.push(tmp.pos.clone());
   }
   this.track.geometry.dispose();
-  this.track.geometry = new THREE.BufferGeometry().setFromPoints(pts);
+  // Points relative to the first one: 32-bit positions are too coarse for world coordinates.
+  const base = pts[0].clone();
+  this.track.geometry = new THREE.BufferGeometry().setFromPoints(pts.map((q) => q.sub(base)));
+  this.track.position.copy(base);
 };
 
 // Screen position of a plane (for clicks), or null when hidden.

@@ -147,7 +147,8 @@ const FRAG_BODY = `
 }`;
 
 // Paints a loaded model (its materials are changed in place; clones of the model share them).
-export function paintLivery(scene, file) {
+// `extra(shader)` can patch the shader further.
+export function paintLivery(scene, file, extra) {
   const tex = title();
   const m = measure(scene, file);
   const uniforms = {
@@ -165,6 +166,7 @@ export function paintLivery(scene, file) {
     seen.add(o.material);
     o.material.onBeforeCompile = (shader) => {
       Object.assign(shader.uniforms, uniforms);
+      if (extra) extra(shader);
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>', `#include <common>\n${VERT_HEAD}`)
         .replace('#include <begin_vertex>', `#include <begin_vertex>\n${VERT_BODY}`);
