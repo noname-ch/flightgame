@@ -75,7 +75,8 @@ so you can see them. Drag with the right mouse button (or Ctrl + drag) to tilt a
 behind the selected plane, 🛰 Satellite toggles the satellite imagery (on by default). The aircraft are glTF models from
 `models/` (Flightradar24's GPLv2 models, see `models/README.md`); `js/data/models.js` says which type uses
 which file. Types without a model (small turboprops, Ju 52, DC-3, Concorde) keep the simple placeholder
-built in `placeholderModel()`. The hangar marketplace shows a picture of the same model.
+built in `placeholderModel()`. The hangar marketplace shows the same models: the selected type as a live 3D
+model that you can turn by dragging (double-click to reset), the tiles as pictures.
 
 Developer tools: the 🛠 button (or F2) opens a cheat panel for testing: add or set money, add any
 aircraft for free (delivered instantly to the chosen or selected airport, slot included), crash /
@@ -104,4 +105,7 @@ All content is plain data:
 - `js/data/events.js` – random events, incidents and their newspaper stories
 - `js/config.js` – starting conditions, map bounds, economy balance, game modes, event rates
 
-`js/game.js` is the simulation (no DOM), `js/ui.js` the map and sidebar, `js/view3d.js` the 3D view.
+`js/game.js` is the simulation (no DOM), `js/ui.js` the map and sidebar, `js/view3d.js` the 3D view,
+`js/hangar3d.js` the turnable 3D aircraft in the marketplace. `js/models3d.js` loads the 3D models and
+`js/livery.js` paints them: white with a red fin, a white cross and the title, after the livery of SWISS
+(change `LIVERY` there for another title or colour, then make the hangar pictures again).

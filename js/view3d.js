@@ -3,7 +3,7 @@
 // The aircraft are glTF models from models/ (see js/data/models.js); types without one use the placeholder.
 import * as maplibregl from 'maplibre-gl';
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { loadModel } from './models3d.js';
 
 const G = FG.game;
 const D = FG.data;
@@ -72,16 +72,7 @@ function planePose(p, t) {
 // ---------- aircraft models ----------
 // glTF models in models/ (see models/README.md); FG.data.models says which type uses which file. Local axes:
 // x = right wing, y = nose, z = up; each file is centred and 1 unit long, and is scaled to the type's real
-// length (FG.data.looks). Types without a model keep the placeholder.
-const modelLoads = {};   // file -> Promise of the loaded scene
-
-function loadModel(file) {
-  if (!modelLoads[file]) {
-    modelLoads[file] = new GLTFLoader().loadAsync(`models/${file}.glb`).then((gltf) => gltf.scene);
-    modelLoads[file].catch((e) => console.warn(`3D model ${file} not loaded, keeping the placeholder`, e));
-  }
-  return modelLoads[file];
-}
+// length (FG.data.looks). Types without a model keep the placeholder. js/models3d.js loads and paints them.
 
 // The aircraft to draw for a type: the placeholder at first, replaced by the glTF model once it has loaded.
 function planeModel(type) {

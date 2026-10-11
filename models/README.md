@@ -15,3 +15,6 @@ They were converted from glTF 1.0 to glTF 2.0 for three.js and changed on the wa
 
 `hangar/` holds a picture of each model for the hangar marketplace (`js/hangar.js`). To make them again,
 serve the project folder locally, open `tools/hangar_shots.html` and save each picture into `hangar/`.
+
+In the game the models are not shown with their own textures but painted in the airline livery by
+`js/livery.js`; the hangar pictures show that livery too.

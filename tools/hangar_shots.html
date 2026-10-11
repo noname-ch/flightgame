@@ -31,7 +31,7 @@
 
 <script type="module">
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { loadModel } from '../js/models3d.js';
 
 const SHOT = FG.data.modelShot;
 const PX = 1200;                 // pixels per aircraft length
@@ -50,9 +50,9 @@ const right = new THREE.Vector3(0, 0, 1).cross(back).normalize();
 const up = back.clone().cross(right);
 
 async function shot(file) {
-  const gltf = await new GLTFLoader().loadAsync(`../models/${file}.glb`);
+  const model = await loadModel(file);
   const scene = new THREE.Scene();
-  scene.add(gltf.scene);
+  scene.add(model);
   scene.add(new THREE.HemisphereLight(0xffffff, 0x3a4250, 2.2));
   const key = new THREE.DirectionalLight(0xfff4dc, 2.4);
   key.position.set(-0.6, 0.8, 1.5);
@@ -63,8 +63,8 @@ async function shot(file) {
   // Extent of the model on the picture plane.
   let r0 = Infinity, r1 = -Infinity, u0 = Infinity, u1 = -Infinity;
   const p = new THREE.Vector3();
-  gltf.scene.updateMatrixWorld(true);
-  gltf.scene.traverse((o) => {
+  model.updateMatrixWorld(true);
+  model.traverse((o) => {
     if (!o.isMesh) return;
     const pos = o.geometry.attributes.position;
     for (let i = 0; i < pos.count; i++) {

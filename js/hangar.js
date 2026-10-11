@@ -6,6 +6,7 @@
   const H = 300;
   const GROUND = 240;
   const RED = '#d52b1e';
+  const LIFT = 0.016;   // height of a 3D model's lowest point above the floor, in aircraft lengths
   const cache = {};
 
   // ---------- small helpers ----------
@@ -96,15 +97,20 @@
   }
 
   // ---------- picture of the 3D model (models/hangar/, made by tools/hangar_shots.html) ----------
-  function photoSVG(look, file) {
+  // Screen scale of a type that is shown as its 3D model.
+  function modelScale(look) {
     const g = geometry(look);
+    return fitScale(look.len, g.yt + finHeight(look, g) + (look.ttail ? 0.1 * g.d : 0));
+  }
+
+  function photoSVG(look, file) {
     const shot = FG.data.modelShot;
     const L = look.len;
-    const s = fitScale(L, g.yt + finHeight(look, g) + (look.ttail ? 0.1 * g.d : 0));
+    const s = modelScale(look);
     const w = shot.w * L * s;
     const h = shot.h * L * s;
-    // The lowest wheel stands a little in front of the floor edge.
-    const y = GROUND + (0.012 + shot.ground) * L * s - h;
+    // The models have no landing gear: they hover where the gear would hold them.
+    const y = GROUND + (shot.ground - LIFT) * L * s - h;
     return { svg: `<image href="models/hangar/${file}.webp" x="${f1((W - w) / 2)}" y="${f1(y)}" width="${f1(w)}" height="${f1(h)}"/>`, s, L };
   }
 
@@ -371,8 +377,8 @@
     for (const x of lamps) h += `<circle cx="${x}" cy="44" r="14" fill="url(#${uid}-lamp)"/><rect x="${x - 7}" y="40" width="14" height="4" rx="1" fill="#e5e7eb"/>`;
     // shadow, reflection, plane
     h += `<ellipse cx="320" cy="${GROUND + 2}" rx="${f1(L * s * 0.46)}" ry="5" fill="#000" opacity=".55" filter="url(#${uid}-blur)"/>`;
-    h += `<g id="${uid}-plane">${plane}</g>`;
-    h += `<use href="#${uid}-plane" transform="translate(0 ${2 * GROUND}) scale(1 -1)" mask="url(#${uid}-mask)"/>`;
+    h += `<g id="${uid}-plane" class="hangar-plane">${plane}</g>`;
+    h += `<use class="hangar-plane" href="#${uid}-plane" transform="translate(0 ${2 * GROUND}) scale(1 -1)" mask="url(#${uid}-mask)"/>`;
     return h;
   }
 
@@ -383,9 +389,16 @@
     const uid = `hg-${variant}-${type}`.replace(/[^a-zA-Z0-9-]/g, '_');
     const file = FG.data.models && FG.data.models[type];
     const p = file ? photoSVG(look, file) : planeSVG(look, uid);
-    cache[key] = `<svg class="hangar-svg" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="${FG.data.aircraft[type].name} in the hangar">${scene(uid, p.svg, p.s, p.L)}</svg>`;
+    cache[key] = `<svg class="hangar-svg" data-type="${type}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="${FG.data.aircraft[type].name} in the hangar">${scene(uid, p.svg, p.s, p.L)}</svg>`;
     return cache[key];
   }
 
-  FG.hangar = { svg };
+  // For the live 3D aircraft in the showcase (js/hangar3d.js): the model of a type and its size in the scene.
+  function model(type) {
+    const look = FG.data.looks[type];
+    const file = FG.data.models && FG.data.models[type];
+    return file && look ? { file, len: look.len, scale: modelScale(look) } : null;
+  }
+
+  FG.hangar = { svg, model, W, H, GROUND, LIFT };
 })();
