@@ -157,6 +157,10 @@
   // The simulation itself still only uses the departure and arrival times.
   const TAXI_OUT = 10;   // minutes of the block time spent taxiing to the runway
   const TAXI_IN = 5;
+  const PUSHBACK = 2;    // of TAXI_OUT: pushed back from the gate, tail first
+  const DOCK = 1.5;      // of TAXI_IN: turning onto the stand and pulling up to the gate
+  const GATES = 20;      // stands per apron
+  const GATE_SPACING = 80; // m between stands
   const ROLL_OUT = 0.7;  // takeoff roll, minutes
   const ROLL_IN = 0.9;   // landing roll
   const FINAL_KM = 15;   // final approach fix before the threshold (~2700 ft on a 3° glide)
@@ -240,7 +244,31 @@
     return [pt(along), pt(alongM)];
   }
 
-  function buildTrack(type, f) {
+  // A plane's stand at an airport: a row of gates beside the longest runway, on the side of the
+  // airport reference point (where the terminal usually is), nose pointing away from the runway.
+  // Every plane of the fleet has its own stand number, so parked planes never overlap.
+  function gateOf(code, planeId) {
+    const a = airportByCode[code];
+    const rws = airportRunways(code);
+    let hdg = 0;
+    let side = 1;
+    let base = [a.lat, a.lon];
+    if (rws.length) {
+      const r = rws.reduce((x, y) => (runwayLength(y) > runwayLength(x) ? y : x));
+      hdg = bearing({ lat: r[0], lon: r[1] }, { lat: r[2], lon: r[3] });
+      const kx = 111320 * Math.cos(toRad(r[0]));
+      const across = (a.lon - r[1]) * kx * Math.cos(toRad(hdg)) - (a.lat - r[0]) * 111320 * Math.sin(toRad(hdg));
+      side = across < 0 ? -1 : 1; // positive = right of the runway
+      base = offsetPoint(a.lat, a.lon, hdg + 90 * side, Math.max(0, 250 - Math.abs(across)));
+    }
+    const ids = Game.state ? Game.state.planes.map((p) => p.id).sort() : [];
+    const k = Math.max(0, ids.indexOf(planeId)) % GATES;
+    const along = (k % 2 ? 1 : -1) * Math.ceil(k / 2) * GATE_SPACING;
+    const [lat, lon] = offsetPoint(base[0], base[1], hdg, along);
+    return { lat, lon, heading: (hdg + 90 * side + 360) % 360 };
+  }
+
+  function buildTrack(type, f, planeId) {
     const day = Math.floor(f.dep / DAY);
     const A0 = airportByCode[f.from];
     const B0 = airportByCode[f.to];
@@ -263,17 +291,22 @@
     const inTurn = turnToward(faf, arr.hdg + 180, P(turnEnd), radius).reverse();
     const turnStart = inTurn.length ? inTurn[0] : faf;
 
-    const standA = [A0.lat, A0.lon];
-    const standB = [B0.lat, B0.lon];
-    const [footA, abeamThr] = taxiRoute(dep, standA, 0);
+    // Gates: pushed back out of the stand at the start, nose-in onto the stand at the end.
+    const gA = gateOf(f.from, planeId);
+    const gB = gateOf(f.to, planeId);
+    const standA = [gA.lat, gA.lon];
+    const standB = [gB.lat, gB.lon];
+    const pushA = offsetPoint(gA.lat, gA.lon, gA.heading + 180, 70);
+    const leadB = offsetPoint(gB.lat, gB.lon, gB.heading + 180, 70);
+    const [footA, abeamThr] = taxiRoute(dep, pushA, 0);
     const stopM = Math.min(arr.len * 0.65, 2200);
-    const [footB, abeamStop] = taxiRoute(arr, standB, stopM);
-    const pts = [standA, footA, abeamThr, dep.thr, lift, dep.end, climbOut, ...outTurn];
+    const [footB, abeamStop] = taxiRoute(arr, leadB, stopM);
+    const pts = [standA, pushA, footA, abeamThr, dep.thr, lift, dep.end, climbOut, ...outTurn];
     const cruise = distanceKm(P(turnEnd), P(turnStart));
     const n = Math.max(1, Math.ceil(cruise / 25));
     for (let i = 1; i < n; i++) pts.push(interpolate(P(turnEnd), P(turnStart), i / n));
-    pts.push(...inTurn, faf, arr.thr, touch, stop, abeamStop, footB, standB);
-    const idx = { thr: 3, lift: 4, touch: pts.length - 5, stop: pts.length - 4 };
+    pts.push(...inTurn, faf, arr.thr, touch, stop, abeamStop, footB, leadB, standB);
+    const idx = { push: 1, thr: 4, lift: 5, touch: pts.length - 6, stop: pts.length - 5, lead: pts.length - 2 };
 
     // Cumulative distance (km).
     const cum = [0];
@@ -316,14 +349,16 @@
       raw.push(raw[i - 1] + (airborne / steps) / v);
     }
     const scale = air / raw[steps];
-    const segs = [ // [t0, t1, s0, s1, ease]
-      [0, TAXI_OUT * k, 0, cum[idx.thr], 'lin'],
+    const segs = [ // [t0, t1, s0, s1, ease]; 'both' starts and ends at standstill
+      [0, PUSHBACK * k, 0, cum[idx.push], 'both'],
+      [PUSHBACK * k, TAXI_OUT * k, cum[idx.push], cum[idx.thr], 'both'],
       [TAXI_OUT * k, (TAXI_OUT + ROLL_OUT) * k, cum[idx.thr], sLift, 'in'],
     ];
     const t0 = (TAXI_OUT + ROLL_OUT) * k;
     const t1 = t0 + air;
     segs.push([t1, t1 + ROLL_IN * k, sTouch, cum[idx.stop], 'out']);
-    segs.push([t1 + ROLL_IN * k, total, cum[idx.stop], cum[cum.length - 1], 'lin']);
+    segs.push([t1 + ROLL_IN * k, total - DOCK * k, cum[idx.stop], cum[idx.lead], 'both']);
+    segs.push([total - DOCK * k, total, cum[idx.lead], cum[cum.length - 1], 'both']);
 
     return {
       pts, cum, idx, cruiseAlt, depRunway: dep, arrRunway: arr, total,
@@ -343,6 +378,7 @@
           let u = b > a ? (t - a) / (b - a) : 1;
           if (ease === 'in') u *= u;
           if (ease === 'out') u = 1 - (1 - u) * (1 - u);
+          if (ease === 'both') u = u * u * (3 - 2 * u);
           return s0 + (s1 - s0) * u;
         }
         return t < 0 ? 0 : cum[cum.length - 1];
@@ -358,7 +394,8 @@
         let dLon = b[1] - a[1];
         if (dLon > 180) dLon -= 360;
         if (dLon < -180) dLon += 360;
-        return { lat, lon: a[1] + dLon * fr, heading: bearing(P(a), P(b)) };
+        // Pushback: the plane moves tail first.
+        return { lat, lon: a[1] + dLon * fr, heading: (bearing(P(a), P(b)) + (i === idx.push ? 180 : 0)) % 360 };
       },
     };
   }
@@ -371,7 +408,7 @@
     let t = trackCache.get(key);
     if (!t) {
       if (trackCache.size > 300) trackCache.clear();
-      t = buildTrack(p.type, f);
+      t = buildTrack(p.type, f, p.id);
       trackCache.set(key, t);
     }
     return t;
@@ -397,7 +434,8 @@
     const sLift = tr.cum[tr.idx.lift];
     const sTouch = tr.cum[tr.idx.touch];
     let phase;
-    if (sv < tr.cum[tr.idx.thr]) phase = 'taxi-out';
+    if (sv < tr.cum[tr.idx.push]) phase = 'pushback';
+    else if (sv < tr.cum[tr.idx.thr]) phase = 'taxi-out';
     else if (sv < sLift) phase = 'takeoff';
     else if (sv >= tr.cum[tr.idx.stop]) phase = 'taxi-in';
     else if (sv >= sTouch) phase = 'landing';
@@ -468,7 +506,7 @@
     ticketPrice, routeKey, blockMinutes, landingFee, slotUpfront, slotWeekly,
     priceNew, fitsAirport, fitsReason, crewFor, factoryOf,
     airportSize, airportRunways, runwayLength, longestRunway, runwayNeed, attraction,
-    flightTrack, flightState, legTrack, cruiseFt, windFrom,
+    flightTrack, flightState, legTrack, cruiseFt, windFrom, gateOf,
     fmtMoney, fmtTime, fmtClock, fmtDuration,
 
     // opts: { mode, difficulty, airport, aircraft, company } from the start screen; all optional.
