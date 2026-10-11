@@ -224,6 +224,22 @@
     return pts;
   }
 
+  // Taxi route between the terminal (airport reference point) and a runway point: across to a
+  // taxiway parallel to the runway, then along it. Returns [foot on taxiway, abeam point].
+  function taxiRoute(rwy, stand, alongM) {
+    const lat0 = rwy.thr[0];
+    const kx = 111320 * Math.cos(toRad(lat0));
+    const ux = Math.sin(toRad(rwy.hdg));
+    const uy = Math.cos(toRad(rwy.hdg));
+    const vx = (stand[1] - rwy.thr[1]) * kx;
+    const vy = (stand[0] - rwy.thr[0]) * 111320;
+    const along = Math.min(rwy.len, Math.max(0, vx * ux + vy * uy));
+    const across = vx * uy - vy * ux; // positive = right of the runway
+    const off = (across < 0 ? -1 : 1) * Math.min(180, Math.max(120, Math.abs(across) * 0.6));
+    const pt = (a) => [rwy.thr[0] + (a * uy - off * ux) / 111320, rwy.thr[1] + (a * ux + off * uy) / kx];
+    return [pt(along), pt(alongM)];
+  }
+
   function buildTrack(type, f) {
     const day = Math.floor(f.dep / DAY);
     const A0 = airportByCode[f.from];
@@ -239,7 +255,7 @@
     const climbOut = offsetPoint(dep.end[0], dep.end[1], dep.hdg, ac.speedKmh < 450 ? 2500 : 5000);
     const faf = offsetPoint(arr.thr[0], arr.thr[1], arr.hdg + 180, FINAL_KM * 1000);
     const touch = offsetPoint(arr.thr[0], arr.thr[1], arr.hdg, 400);
-    const stop = offsetPoint(arr.thr[0], arr.thr[1], arr.hdg, Math.min(arr.len * 0.65, 2200));
+    const stop = offsetPoint(arr.thr[0], arr.thr[1], arr.hdg, Math.min(arr.len * 0.65, 2200)); // where it leaves the runway
 
     const outTurn = turnToward(climbOut, dep.hdg, P(faf), radius);
     const turnEnd = outTurn.length ? outTurn[outTurn.length - 1] : climbOut;
@@ -247,12 +263,17 @@
     const inTurn = turnToward(faf, arr.hdg + 180, P(turnEnd), radius).reverse();
     const turnStart = inTurn.length ? inTurn[0] : faf;
 
-    const pts = [[A0.lat, A0.lon], dep.thr, lift, dep.end, climbOut, ...outTurn];
+    const standA = [A0.lat, A0.lon];
+    const standB = [B0.lat, B0.lon];
+    const [footA, abeamThr] = taxiRoute(dep, standA, 0);
+    const stopM = Math.min(arr.len * 0.65, 2200);
+    const [footB, abeamStop] = taxiRoute(arr, standB, stopM);
+    const pts = [standA, footA, abeamThr, dep.thr, lift, dep.end, climbOut, ...outTurn];
     const cruise = distanceKm(P(turnEnd), P(turnStart));
     const n = Math.max(1, Math.ceil(cruise / 25));
     for (let i = 1; i < n; i++) pts.push(interpolate(P(turnEnd), P(turnStart), i / n));
-    pts.push(...inTurn, faf, arr.thr, touch, stop, [B0.lat, B0.lon]);
-    const idx = { thr: 1, lift: 2, touch: pts.length - 3, stop: pts.length - 2 };
+    pts.push(...inTurn, faf, arr.thr, touch, stop, abeamStop, footB, standB);
+    const idx = { thr: 3, lift: 4, touch: pts.length - 5, stop: pts.length - 4 };
 
     // Cumulative distance (km).
     const cum = [0];
@@ -356,6 +377,13 @@
     return t;
   }
 
+  // Today's planned track for a schedule leg (for drawing routes).
+  function legTrack(type, from, to) {
+    const day = Game.state ? Math.floor(Game.state.time / DAY) : 0;
+    const dep = day * DAY + 12 * 60;
+    return flightTrack({ id: `leg:${type}`, type, flight: { from, to, dep, arr: dep + blockMinutes(type, dist(from, to)) } });
+  }
+
   // Where a flying plane is at time t (fractional minutes allowed), how high and how fast.
   function flightState(p, t) {
     const tr = flightTrack(p);
@@ -440,7 +468,7 @@
     ticketPrice, routeKey, blockMinutes, landingFee, slotUpfront, slotWeekly,
     priceNew, fitsAirport, fitsReason, crewFor, factoryOf,
     airportSize, airportRunways, runwayLength, longestRunway, runwayNeed, attraction,
-    flightTrack, flightState, cruiseFt, windFrom,
+    flightTrack, flightState, legTrack, cruiseFt, windFrom,
     fmtMoney, fmtTime, fmtClock, fmtDuration,
 
     newGame(mode = C.defaultMode) {

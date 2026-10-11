@@ -154,6 +154,21 @@
 
   // Great-circle path between two airports as a list of [lat, lon]. Longitudes are unwrapped
   // so a Pacific crossing runs past ±180° instead of jumping across the whole map.
+  // Track points [lat, lon] with longitudes unwrapped at ±180°.
+  function unwrapped(pts) {
+    const out = [];
+    for (const q of pts) {
+      const p = [q[0], q[1]];
+      if (out.length) {
+        const prev = out[out.length - 1][1];
+        while (p[1] - prev > 180) p[1] -= 360;
+        while (p[1] - prev < -180) p[1] += 360;
+      }
+      out.push(p);
+    }
+    return out;
+  }
+
   function arc(a, b) {
     const n = Math.max(2, Math.ceil(G.distanceKm(a, b) / 150));
     const pts = [];
@@ -248,7 +263,7 @@
       return box.firstChild;
     });
 
-    map.on('zoomend', resizeMarkers);
+    map.on('zoomend', () => { resizeMarkers(); drawRoutes(); });
     map.on('moveend', () => { updateVisible(); drawRunways(); });
     map.on('click', (e) => {
       if (ui.buildMode) { buildAt(e.latlng); return; }
@@ -476,8 +491,12 @@
       const selected = ui.selectedPlane === p.id;
       if (stops.length >= 2) {
         const pts = [];
-        stops.forEach((c, i) => pts.push(...arc(ap(c), ap(stops[(i + 1) % stops.length]))));
-        const weight = selected ? 5 : 3;
+        // Each leg as today's real track: runway into the wind, climb, cruise, approach.
+        stops.forEach((c, i) => {
+          const to = stops[(i + 1) % stops.length];
+          pts.push(...(c === to ? [] : unwrapped(G.legTrack(p.type, c, to).pts)));
+        });
+        const weight = (selected ? 5 : 3) * (ui.map.getZoom() >= 13 ? 0.5 : 1); // thin near runways
         const active = p.schedule.active;
         // Solid routes get a darker casing, drafts are a row of dots.
         if (!draft) {
@@ -496,14 +515,14 @@
       }
       if (selected && p.status === 'flying') drawTrack(p);
       if (p.flight && p.flight.kind === 'delivery') {
-        const a = G.airportByCode[p.flight.from];
-        const b = G.airportByCode[p.flight.to];
-        L.polyline(arc(a, b), { pane: 'routes', interactive: false, color: '#16a34a', weight: 2.5, dashArray: '2 7' })
+        L.polyline(unwrapped(G.flightTrack(p).pts), { pane: 'routes', interactive: false, color: '#16a34a', weight: 2.5, dashArray: '2 7' })
           .addTo(ui.routeLayer);
       }
       const ferryTo = p.pendingFerry || (p.flight && p.flight.kind === 'ferry' ? p.flight.to : null);
       if (ferryTo) {
-        L.polyline(arc(ap(p.flight ? p.flight.from : p.location), ap(ferryTo)), {
+        const ferryPts = p.flight && p.flight.kind === 'ferry' ? unwrapped(G.flightTrack(p).pts)
+          : arc(ap(p.flight ? p.flight.from : p.location), ap(ferryTo));
+        L.polyline(ferryPts, {
           pane: 'routes', bubblingMouseEvents: false,
           color: COLORS.purple, weight: selected ? 4 : 2.5, opacity: 1, dashArray: '7 7',
         }).bindTooltip(`${p.id}: ferry to ${ferryTo}`, { sticky: true })
@@ -564,18 +583,13 @@
     let runBand = null;
     const flush = () => {
       if (run.length > 1) {
-        L.polyline(run, { pane: 'routes', interactive: false, color: altColor(runBand * 2000), weight: 3.5, opacity: 0.95 })
+        L.polyline(run, { pane: 'routes', interactive: false, color: altColor(runBand * 2000), weight: ui.map.getZoom() >= 13 ? 2.5 : 3.5, opacity: 0.95 })
           .addTo(ui.routeLayer);
       }
     };
-    let prevLon = null;
-    for (let i = 0; i < tr.pts.length; i++) {
-      const pt = tr.pts[i].slice();
-      if (prevLon != null) { // unwrap at ±180°
-        while (pt[1] - prevLon > 180) pt[1] -= 360;
-        while (pt[1] - prevLon < -180) pt[1] += 360;
-      }
-      prevLon = pt[1];
+    const pts = unwrapped(tr.pts);
+    for (let i = 0; i < pts.length; i++) {
+      const pt = pts[i];
       const b = band(tr.altAt(tr.cum[i]));
       if (runBand !== null && b !== runBand) {
         run.push(pt);
