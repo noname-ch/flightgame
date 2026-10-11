@@ -105,14 +105,14 @@ FG.config = {
       startMoney: 750000, demandMult: 0.85, costMult: 1.15, bankruptcyLimit: -250000 },
   },
   defaultDifficulty: 'normal',
-  // Home airports offered on the start screen, by region.
+  // Home airports offered on the start screen, by region. All small (size 1-2), so slots are cheap.
   startAirports: {
-    Europe: ['BRN', 'ZRH', 'GVA', 'LHR', 'CDG', 'FRA', 'AMS', 'MAD', 'FCO', 'IST'],
-    'North America': ['JFK', 'LAX', 'ATL', 'YYZ', 'MEX'],
-    'South America': ['GRU', 'EZE', 'BOG'],
-    'Middle East & Africa': ['DXB', 'DOH', 'JNB', 'NBO'],
-    Asia: ['HND', 'ICN', 'PEK', 'SIN', 'HKG', 'DEL'],
-    Oceania: ['SYD', 'AKL'],
+    Europe: ['BRN', 'LUG', 'SIR', 'SOU', 'SEN', 'EXT', 'ANR', 'BZO', 'AVN', 'LRH'],
+    'North America': ['HPN', 'ISP', 'YTZ', 'SBA', 'ACK'],
+    'South America': ['EPA', 'JOI', 'KNA'],
+    'Middle East & Africa': ['WIL', 'GCJ', 'MEK', 'MYD'],
+    Asia: ['BDO', 'BPM', 'USN', 'ISG', 'XSP', 'TNJ'],
+    Oceania: ['MEB', 'TRG'],
   },
   // Aircraft offered as the first (leased) plane on the start screen.
   starterAircraft: ['ATR72-600', 'Q400', 'E190', 'A220-300', 'A320neo', 'B737-800'],
