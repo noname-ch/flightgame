@@ -2,7 +2,7 @@
 
 A small airline management game in the browser, in a dark theme. The start screen lets you
 continue your saved airline or found a new one: pick its name, the mode, the difficulty, your home
-airport (any of the hand-made European airports or ~1,100 big airports worldwide) and your first
+airport (30 big airports across the world, `startAirports` in `config.js`) and your first
 leased aircraft (ATR 72, Dash 8-400, E190, A220-300, A320neo or 737-800). The default is
 **Bern-Belp (BRN)** with an **Airbus A220-300**.
 

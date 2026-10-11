@@ -719,10 +719,6 @@ i.s-net { background: var(--muted); }
   border-radius: 8px;
   background: var(--bg);
 }
-#st-search { border-bottom-left-radius: 0 !important; border-bottom-right-radius: 0 !important; }
-#st-airport { border-top: none !important; border-top-left-radius: 0 !important; border-top-right-radius: 0 !important; }
-#st-airport option { padding: 3px 4px; }
-#st-airport option:checked { background: var(--accent); color: #fff; }
 .st-choices { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
 .st-choice, .st-plane {
   display: flex; flex-direction: column; gap: 3px;

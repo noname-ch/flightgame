@@ -1435,24 +1435,14 @@
   // ---------- start screen ----------
   // Shown on every page load and by "New game": continue the saved airline or set up a new one.
   const st = { open: false, hasGame: false, mode: C.defaultMode, difficulty: C.defaultDifficulty,
-    airport: C.startAirport, aircraft: C.startAircraft, search: '', airports: null };
+    airport: C.startAirport, aircraft: C.startAircraft };
 
-  // Home airport choices: the hand-made (European) airports first, then the world's bigger airports.
-  function startAirports() {
-    if (!st.airports) {
-      st.airports = D.airports.filter((a) => !a.built && (!a.extra || (a.size >= 4 && !a.minor)))
-        .sort((x, y) => !!x.extra - !!y.extra || x.country.localeCompare(y.country) || x.city.localeCompare(y.city));
-    }
-    return st.airports;
-  }
-
+  // Home airport choices, grouped by region (C.startAirports).
   function startAirportOptions() {
-    const q = st.search.trim().toLowerCase();
-    const list = startAirports().filter((a) => !q || a.code.toLowerCase() === q ||
-      `${a.code} ${a.name} ${a.city} ${a.country}`.toLowerCase().includes(q));
-    if (!list.some((a) => a.code === st.airport)) list.unshift(G.airportByCode[st.airport]);
-    return list.map((a) => `<option value="${a.code}"${a.code === st.airport ? ' selected' : ''}>` +
-      `${a.code} · ${a.city} – ${a.name} (${a.country})</option>`).join('');
+    return Object.entries(C.startAirports).map(([region, codes]) => `<optgroup label="${region}">${codes
+      .filter((c) => G.airportByCode[c])
+      .map((c) => { const a = G.airportByCode[c]; return `<option value="${c}"${c === st.airport ? ' selected' : ''}>${c} · ${a.city} – ${a.name}</option>`; })
+      .join('')}</optgroup>`).join('');
   }
 
   function startChoices(group, entries, value) {
@@ -1492,9 +1482,8 @@
       <input id="st-name" maxlength="40" value="${(st.name ?? C.companyName).replace(/"/g, '&quot;')}">
       <div class="st-label">Mode</div>${startChoices('mode', C.modes, st.mode)}
       <div class="st-label">Difficulty</div>${startChoices('difficulty', C.difficulties, st.difficulty)}
-      <label class="st-label" for="st-search">Home airport <span class="muted">${ap.name}, ${ap.city} · size ${G.airportSize(ap.code)}</span></label>
-      <input id="st-search" placeholder="Search city, airport or code…" value="${st.search.replace(/"/g, '&quot;')}">
-      <select id="st-airport" size="6">${startAirportOptions()}</select>
+      <label class="st-label" for="st-airport">Home airport <span class="muted">${ap.name}, ${ap.city} · size ${G.airportSize(ap.code)}</span></label>
+      <select id="st-airport">${startAirportOptions()}</select>
       <div class="st-label">First aircraft <span class="muted">leased, with crew</span></div>
       <div class="st-planes">${startPlanes()}</div>
       <div class="st-actions">
@@ -1530,28 +1519,13 @@
   function onStartInput(e) {
     const t = e.target;
     if (t.id === 'st-name') st.name = t.value;
-    if (t.id === 'st-search') {
-      st.search = t.value;
-      const sel = $('st-airport');
-      sel.innerHTML = startAirportOptions();
-      // A unique hit is picked right away.
-      if (sel.options.length && st.search.trim()) {
-        const first = sel.options[0].value === st.airport && sel.options.length > 1 ? sel.options[1].value : sel.options[0].value;
-        if (first !== st.airport) { st.airport = first; refreshStartAirport(); }
-      }
-    }
     if (t.id === 'st-airport') { st.airport = t.value; refreshStartAirport(); }
   }
 
-  // Re-render without losing the search field's focus.
+  // Re-render, keeping the focus on the airport list.
   function refreshStartAirport() {
-    const focus = document.activeElement && document.activeElement.id;
-    const caret = focus === 'st-search' ? $('st-search').selectionStart : null;
     renderStart();
-    if (focus && $(focus)) {
-      $(focus).focus();
-      if (caret != null) $(focus).setSelectionRange(caret, caret);
-    }
+    $('st-airport').focus();
   }
 
   function startNewGame() {

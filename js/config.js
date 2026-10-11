@@ -105,6 +105,15 @@ FG.config = {
       startMoney: 750000, demandMult: 0.85, costMult: 1.15, bankruptcyLimit: -250000 },
   },
   defaultDifficulty: 'normal',
+  // Home airports offered on the start screen, by region.
+  startAirports: {
+    Europe: ['BRN', 'ZRH', 'GVA', 'LHR', 'CDG', 'FRA', 'AMS', 'MAD', 'FCO', 'IST'],
+    'North America': ['JFK', 'LAX', 'ATL', 'YYZ', 'MEX'],
+    'South America': ['GRU', 'EZE', 'BOG'],
+    'Middle East & Africa': ['DXB', 'DOH', 'JNB', 'NBO'],
+    Asia: ['HND', 'ICN', 'PEK', 'SIN', 'HKG', 'DEL'],
+    Oceania: ['SYD', 'AKL'],
+  },
   // Aircraft offered as the first (leased) plane on the start screen.
   starterAircraft: ['ATR72-600', 'Q400', 'E190', 'A220-300', 'A320neo', 'B737-800'],
 
