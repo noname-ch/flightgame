@@ -634,6 +634,7 @@
       };
       this.registerBuilt();
       this.assignStands();
+      this.setupRivals(homeCode);
       this.refreshMarket();
       this.log(`Welcome to ${this.state.company}! You start with a slot at ${home.name}, ` +
         `the ${D.aircraft[type].name} ${C.startRegistration} and a base crew. ` +
@@ -679,6 +680,8 @@
       if (!s.fees) s.fees = {};
       this.registerBuilt();
       this.assignStands();
+      if (!s.rivals) this.setupRivals(s.home);
+      this.indexRivals();
     },
 
     // ---------- gates ----------
@@ -767,6 +770,316 @@
       return Math.round(dailyDemand(a, b) * Math.pow(this.fareFactor(a, b), -C.ticket.elasticity) * this.eventDemandMult(a, b) * this.difficulty().demandMult);
     },
 
+    // ---------- competitors ----------
+    // Rival airlines (state.rivals) fly routes from their hubs. Where they fly the player's route,
+    // passengers split by seats offered and price (C.rivals); every Monday they react (rivalsWeek).
+    setupRivals(homeCode) {
+      const s = this.state;
+      const R = C.rivals;
+      const home = airportByCode[homeCode] || airportByCode[C.startAirport];
+      const usable = D.rivalTemplates.filter((t) => t.hubs.every((h) => airportByCode[h]));
+      const byDist = usable.map((t) => ({ t, d: Math.min(...t.hubs.map((h) => distanceKm(home, airportByCode[h]))) }))
+        .sort((x, y) => x.d - y.d);
+      const chosen = byDist.slice(0, R.near).map((x) => x.t);
+      const rest = byDist.slice(R.near).map((x) => x.t);
+      for (let i = 0; i < R.far && rest.length; i++) { // elsewhere in the world, mostly flag carriers
+        const flags = rest.filter((t) => t.kind === 'flag');
+        const pool = flags.length && Math.random() < 0.8 ? flags : rest;
+        const t = pool[Math.floor(Math.random() * pool.length)];
+        rest.splice(rest.indexOf(t), 1);
+        chosen.push(t);
+      }
+      s.rivals = chosen.map((t, i) => ({
+        id: `r${i + 1}`, name: t.name, kind: t.kind, hubs: t.hubs.slice(),
+        color: D.rivalColors[i % D.rivalColors.length], routes: [], since: s.time,
+      }));
+      for (const r of s.rivals) {
+        for (const plan of this.rivalCandidates(r)) {
+          if (r.routes.length >= R.routes[r.kind]) break;
+          r.routes.push(plan);
+        }
+      }
+      this.indexRivals();
+    },
+
+    // How a rival would fly a–b: aircraft, flights per day for its target load, fare; null if not worth it.
+    rivalPlan(r, a, b) {
+      const R = C.rivals;
+      const d = dist(a, b);
+      let type = R.fleet[r.kind];
+      if (r.kind === 'flag' && d > R.longHaul.km) type = R.longHaul.type;
+      if (r.kind === 'regional' && d < R.shortProp.km) type = R.shortProp.type;
+      const ac = D.aircraft[type];
+      if (!ac || d > ac.rangeKm || !fitsAirport(type, a) || !fitsAirport(type, b)) return null;
+      const fare = R.fare[r.kind];
+      const pax = dailyDemand(a, b) * Math.pow(fare, -C.ticket.elasticity);
+      const perDay = Math.min(R.maxPerDay, Math.floor(pax / (ac.seats * R.targetLoad)));
+      if (perDay < 1) return null;
+      return { a, b, type, seats: ac.seats, perDay, fare, since: this.state.time, weak: 0,
+        value: Math.round(perDay * ac.seats * ticketPrice(d) * fare) };
+    },
+
+    // A rival's best routes from its hubs that it doesn't fly yet, best first.
+    rivalCandidates(r, perHub = 40) {
+      const range = C.rivals.rangeKm[r.kind];
+      const minSize = r.kind === 'regional' ? 1 : 2;
+      const have = new Set(r.routes.map((x) => routeKey(x.a, x.b)));
+      const out = [];
+      for (const h of r.hubs) {
+        const hub = airportByCode[h];
+        const pre = [];
+        for (const a of D.airports) {
+          if (a.code === h || a.minor || a.factory || (a.built && !a.open)) continue;
+          const size = airportSize(a.code);
+          if (size < minSize || have.has(routeKey(h, a.code))) continue;
+          const d = distanceKm(hub, a);
+          if (d < 200 || d > range) continue;
+          pre.push({ code: a.code, score: size * size * distanceFactor(d) }); // cheap pre-ranking
+        }
+        pre.sort((x, y) => y.score - x.score);
+        for (const x of pre.slice(0, perHub)) {
+          const key = routeKey(h, x.code); // hub-to-hub routes come up from both ends
+          if (out.some((o) => routeKey(o.a, o.b) === key)) continue;
+          const plan = this.rivalPlan(r, h, x.code);
+          if (plan) out.push(plan);
+        }
+      }
+      return out.sort((x, y) => y.value - x.value);
+    },
+
+    // routeKey -> [{ r: rival, rt: its route }]
+    indexRivals() {
+      const idx = new Map();
+      for (const r of this.state.rivals || []) {
+        for (const rt of r.routes) {
+          const k = routeKey(rt.a, rt.b);
+          if (!idx.has(k)) idx.set(k, []);
+          idx.get(k).push({ r, rt });
+        }
+      }
+      this.rivalIdx = idx;
+    },
+    rivalsOn(a, b) { return (this.rivalIdx && this.rivalIdx.get(routeKey(a, b))) || []; },
+    rival(id) { return this.state.rivals.find((r) => r.id === id); },
+
+    // Seats per day the player's active schedules offer from a to b (a rough daily plan).
+    playerSeats(a, b) {
+      const s = this.state;
+      const sig = s.planes.map((p) => `${p.id}${p.type}${p.schedule.active ? 1 : 0}${p.schedule.stops.join('')}`).join('|');
+      if (sig !== this.seatSig || !this.seatMap) {
+        this.seatSig = sig;
+        const m = new Map();
+        const span = C.curfew.end - C.curfew.start;
+        for (const p of s.planes) {
+          const st = p.schedule.stops;
+          if (!p.schedule.active || st.length < 2) continue;
+          let loop = 0;
+          let block = 0;
+          for (let i = 0; i < st.length; i++) {
+            const bm = blockMinutes(p.type, dist(st[i], st[(i + 1) % st.length]));
+            loop += bm + C.turnaroundMin;
+            block += bm;
+          }
+          const loops = Math.max(1, Math.min(span / loop, C.crewMaxDutyMin / block));
+          for (let i = 0; i < st.length; i++) {
+            const k = `${st[i]}>${st[(i + 1) % st.length]}`;
+            m.set(k, (m.get(k) || 0) + loops * D.aircraft[p.type].seats);
+          }
+        }
+        this.seatMap = m;
+      }
+      return this.seatMap.get(`${a}>${b}`) || 0;
+    },
+
+    // Routes the player's schedules fly (both directions together), busiest first.
+    playerRoutes() {
+      this.playerSeats('', '');
+      const seen = new Map();
+      for (const [k, seats] of this.seatMap) {
+        const [a, b] = k.split('>');
+        const key = routeKey(a, b);
+        if (!seen.has(key)) seen.set(key, { a, b, seats: 0 });
+        seen.get(key).seats += seats;
+      }
+      return [...seen.values()].map((x) => ({ ...x, pax: this.paxDemand(x.a, x.b) })).sort((x, y) => y.pax - x.pax);
+    },
+
+    // Attractiveness of an offer on a route: seats per day ^ capacityExp × fare ^ -elasticity.
+    pull(seats, fare) { return Math.pow(Math.max(1, seats), C.rivals.capacityExp) * Math.pow(fare, -C.ticket.elasticity); },
+
+    // The player's share of the passengers on a–b against the rivals flying it (1 = no competition).
+    // minSeats: count at least this many seats for the player (a plane about to fly it).
+    marketShare(a, b, minSeats = 0) {
+      const comp = this.rivalsOn(a, b);
+      if (!comp.length) return 1;
+      const mine = this.pull(Math.max(minSeats, this.playerSeats(a, b)), this.fareFactor(a, b));
+      const theirs = comp.reduce((sum, c) => sum + this.pull(c.rt.perDay * c.rt.seats, c.rt.fare), 0);
+      return mine / (mine + theirs);
+    },
+
+    // Passengers a day the player can expect from a to b: demand at its fare × its market share.
+    paxDemand(a, b, minSeats = 0) {
+      return Math.round(this.demand(a, b) * this.marketShare(a, b, minSeats));
+    },
+
+    // How a rival route is doing: its load factor and the player's share there.
+    rivalLoad(rt) {
+      const comp = this.rivalsOn(rt.a, rt.b);
+      let total = comp.reduce((sum, c) => sum + this.pull(c.rt.perDay * c.rt.seats, c.rt.fare), 0);
+      const mySeats = (this.playerSeats(rt.a, rt.b) + this.playerSeats(rt.b, rt.a)) / 2;
+      const mine = mySeats > 0 ? this.pull(mySeats, this.fareFactor(rt.a, rt.b)) : 0;
+      total += mine;
+      const share = this.pull(rt.perDay * rt.seats, rt.fare) / total;
+      const pax = dailyDemand(rt.a, rt.b) * Math.pow(rt.fare, -C.ticket.elasticity) * share * this.eventDemandMult(rt.a, rt.b);
+      return { load: pax / (rt.perDay * rt.seats), share, playerShare: mine / total };
+    },
+
+    // Every Monday: rivals add flights on full routes, cut them on empty ones, fight the player on
+    // shared routes with lower fares, and sometimes open a new route (now and then one of the player's).
+    rivalsWeek() {
+      const R = C.rivals;
+      let story = null;
+      for (const r of this.state.rivals) {
+        for (const rt of r.routes.slice()) {
+          const { load, playerShare } = this.rivalLoad(rt);
+          const route = `${rt.a}–${rt.b}`;
+          const you = playerShare > 0;
+          if (you && playerShare >= R.fareWar.share && rt.fare > R.fareWar.minFactor) {
+            rt.fare = Math.max(R.fareWar.minFactor, Math.round((rt.fare - R.fareWar.cut) * 100) / 100);
+            this.log(`⚔ ${r.name} cuts its fares on ${route} to ${Math.round(rt.fare * 100)}% to win passengers back from you.`, 'bad');
+            if (!story) story = this.rivalStory('fares', r, rt);
+          } else if (!you && rt.fare < R.fare[r.kind]) {
+            rt.fare = Math.min(R.fare[r.kind], Math.round((rt.fare + R.fareWar.cut) * 100) / 100);
+          }
+          if (load > 0.95 && rt.perDay < R.maxPerDay) {
+            rt.perDay++;
+            rt.weak = 0;
+            if (you) this.log(`${r.name} adds a flight on ${route} (now ${rt.perDay}× a day).`, 'bad');
+          } else if (load < 0.45) {
+            rt.weak = (rt.weak || 0) + 1;
+            if (rt.weak >= 2) {
+              rt.weak = 0;
+              rt.perDay--;
+              if (rt.perDay <= 0) {
+                r.routes.splice(r.routes.indexOf(rt), 1);
+                if (you) this.log(`🏳 ${r.name} gives up ${route} – the route is yours.`, 'good');
+              } else if (you) {
+                this.log(`${r.name} drops a flight on ${route} (now ${rt.perDay}× a day).`, 'good');
+              }
+            }
+          } else {
+            rt.weak = 0;
+          }
+        }
+        this.indexRivals();
+        if (Math.random() < R.growth) {
+          const added = this.rivalExpand(r);
+          if (added && added.attack && !story) story = this.rivalStory('enter', r, added.rt);
+          this.indexRivals();
+        }
+      }
+      if (story) this.news(story);
+      this.dirty = true;
+    },
+
+    // A rival opens a route: sometimes one the player flies (from its hub, or for a low-cost
+    // carrier from a new base at the bigger end), otherwise its best one not flown yet.
+    rivalExpand(r) {
+      const R = C.rivals;
+      if (Math.random() < R.attack) {
+        for (const x of this.playerRoutes()) {
+          if (this.rivalsOn(x.a, x.b).some((c) => c.r === r)) continue;
+          let base = r.hubs.includes(x.a) ? x.a : r.hubs.includes(x.b) ? x.b : null;
+          if (!base && r.kind === 'low') {
+            const big = airportSize(x.a) >= airportSize(x.b) ? x.a : x.b;
+            const near = distanceKm(airportByCode[r.hubs[0]], airportByCode[big]) < 3000;
+            if (airportSize(big) >= 3 && near) base = big;
+          }
+          if (!base) continue;
+          const plan = this.rivalPlan(r, base, base === x.a ? x.b : x.a);
+          if (!plan) continue;
+          if (!r.hubs.includes(base)) r.hubs.push(base);
+          r.routes.push(plan);
+          this.log(`⚔ ${r.name} starts flying ${plan.a}–${plan.b} (${plan.perDay}× a day, fares ` +
+            `${Math.round(plan.fare * 100)}%) – one of your routes.`, 'bad');
+          return { rt: plan, attack: true };
+        }
+      }
+      const best = this.rivalCandidates(r, 15)[0];
+      if (!best) return null;
+      r.routes.push(best);
+      return { rt: best, attack: false };
+    },
+
+    rivalStory(kind, r, rt) {
+      const A = airportByCode[rt.a];
+      const B = airportByCode[rt.b];
+      const company = this.state.company;
+      if (kind === 'enter') {
+        return {
+          kind: 'bad', picture: 'chart',
+          headline: `${r.name.toUpperCase()} MUSCLES IN ON ${A.city.toUpperCase()}–${B.city.toUpperCase()}`,
+          sub: `New competition for ${company}`,
+          body: `${r.name} will fly between ${A.city} and ${B.city} ${rt.perDay} times a day, with tickets at ` +
+            `${Math.round(rt.fare * 100)}% of the usual price. Analysts expect ${company} to lose passengers on the route ` +
+            'unless it adds flights or cuts its own fares.',
+        };
+      }
+      return {
+        kind: 'bad', picture: 'chart',
+        headline: `FARE WAR ON ${A.city.toUpperCase()}–${B.city.toUpperCase()}`,
+        sub: `${r.name} slashes ticket prices`,
+        body: `Stung by ${company}'s success between ${A.city} and ${B.city}, ${r.name} has cut its fares to ` +
+          `${Math.round(rt.fare * 100)}% of the usual price. Travellers rejoice; airline shareholders less so.`,
+      };
+    },
+
+    // A rival goes out of business (newspaper event); returns it, or null if none is left.
+    bustRival() {
+      const s = this.state;
+      if (!s.rivals || !s.rivals.length) return null;
+      const small = s.rivals.filter((r) => r.kind !== 'flag');
+      const pool = small.length ? small : s.rivals;
+      const r = pool[Math.floor(Math.random() * pool.length)];
+      s.rivals.splice(s.rivals.indexOf(r), 1);
+      this.indexRivals();
+      this.dirty = true;
+      return r;
+    },
+
+    // Rival planes in the air at time t (fractional minutes): departures spread evenly between the
+    // start and end of the curfew window on every route, both ways, along the great circle.
+    rivalFlights(t) {
+      const out = [];
+      const day = Math.floor(t / DAY);
+      const tod = t - day * DAY;
+      const span = C.curfew.end - C.curfew.start;
+      for (const r of this.state.rivals || []) {
+        for (const rt of r.routes) {
+          const A = airportByCode[rt.a];
+          const B = airportByCode[rt.b];
+          if (!A || !B) continue;
+          const block = blockMinutes(rt.type, distanceKm(A, B));
+          for (let dir = 0; dir < 2; dir++) {
+            const [f, g] = dir ? [B, A] : [A, B];
+            const phase = hash01(r.id.charCodeAt(1), rt.a.charCodeAt(0) * 131 + rt.b.charCodeAt(2), dir);
+            for (let i = 0; i < rt.perDay; i++) {
+              const dep = C.curfew.start + ((i + phase) * span) / rt.perDay;
+              for (const back of [0, DAY]) { // long flights from yesterday may still be airborne
+                const x = (tod + back - dep) / block;
+                if (x < 0 || x >= 1) continue;
+                const [lat, lon] = interpolate(f, g, x);
+                const ahead = interpolate(f, g, Math.min(1, x + 0.01));
+                out.push({ r, rt, from: f.code, to: g.code, frac: x, lat, lon,
+                  heading: bearing({ lat, lon }, { lat: ahead[0], lon: ahead[1] }) });
+              }
+            }
+          }
+        }
+      }
+      return out;
+    },
+
     changeFare(a, b, steps) {
       const T = C.ticket;
       const f = Math.round((this.fareFactor(a, b) + steps * T.step) * 100) / 100;
@@ -803,6 +1116,7 @@
           `crew ${fmtMoney(w.crews)}, slots ${fmtMoney(w.slots)}).`, 'cost');
         this.payDividends();
         this.refreshMarket();
+        this.rivalsWeek();
       }
       this.rollWorldEvent();
       this.finishProjects();
@@ -908,7 +1222,7 @@
       let revenue = 0;
       if (leg.kind === 'scheduled') {
         const key = `${p.location}-${leg.to}`;
-        const left = Math.max(0, this.demand(p.location, leg.to) - (s.carriedToday[key] || 0));
+        const left = Math.max(0, this.paxDemand(p.location, leg.to, ac.seats) - (s.carriedToday[key] || 0));
         const luck = 0.85 + Math.random() * 0.3;
         pax = Math.min(ac.seats, left, Math.round(left * luck));
         s.carriedToday[key] = (s.carriedToday[key] || 0) + pax;
@@ -1001,6 +1315,7 @@
           s.effects.push({ ...rest, where: w, until: s.time + Math.round(hours * 60) });
           this.dirty = true;
         },
+        bustRival: () => this.bustRival(),
         money: (amount, text) => {
           s.money += amount;
           if (amount < 0) s.today.fixed -= amount;
@@ -1519,7 +1834,7 @@
         const from = stops[i];
         const to = stops[(i + 1) % stops.length];
         const d = dist(from, to);
-        const demand = this.demand(from, to);
+        const demand = this.paxDemand(from, to, ac.seats);
         const pax = Math.min(ac.seats, demand);
         const revenue = pax * this.fare(from, to);
         const cost = flightCost(type, d, to, pax, costMult);

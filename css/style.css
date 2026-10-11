@@ -800,3 +800,18 @@ button.big { padding: 10px 22px; font-size: 15px; font-weight: 700; border-radiu
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
 }
 #view3d .plane-hover .maplibregl-popup-tip { display: none; }
+
+/* ---------- rival airlines ---------- */
+.rv-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 3px;
+  vertical-align: -1px;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.55);
+}
+.rv-dot.big { width: 11px; height: 11px; margin-right: 6px; }
+.rv-badge { font-size: 11px; white-space: nowrap; margin-left: 4px; color: var(--muted, #9aa3ae); }
+.panel.rival { cursor: pointer; }
+.panel.rival.selected { border-color: var(--accent); }
