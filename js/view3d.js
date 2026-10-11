@@ -21,7 +21,8 @@ const v = {
   follow: false,
   satellite: false,
   planes: {},          // id -> { obj, world: Vector3, lngLat }
-  sig: { airports: '', routes: '' },
+  sig: { airports: '', routes: '', gates: '' },
+  gatesDirty: true,    // map moved: rebuild the aprons in view
   clock: { time: -1, at: 0 },
 };
 
@@ -244,6 +245,45 @@ function airportFeatures() {
   return { type: 'FeatureCollection', features: feats };
 }
 
+// Aprons, terminals, jet bridges and stand markings (G.apronOf) of the airports in view when zoomed in.
+// Parked planes stand on these stands (G.gateOf) and push back from them.
+const GATE_MINZOOM = 12;
+function gateFeatures(list) {
+  const feats = [];
+  const ring = (pts) => { const r = pts.map(([lat, lon]) => [lon, lat]); r.push(r[0]); return [r]; };
+  const line = (pts) => pts.map(([lat, lon]) => [lon, lat]);
+  for (const a of list) {
+    const ap = G.apronOf(a.code);
+    feats.push({ type: 'Feature', geometry: { type: 'Polygon', coordinates: ring(ap.apron) }, properties: { kind: 'apron' } });
+    feats.push({ type: 'Feature', geometry: { type: 'Polygon', coordinates: ring(ap.terminal) },
+      properties: { kind: 'terminal', h: 10 + 3 * G.airportSize(a.code) } });
+    for (const st of ap.stands) {
+      feats.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: line(st.lead) }, properties: { kind: 'lead' } });
+      feats.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: line(st.stopBar) }, properties: { kind: 'stop' } });
+      if (st.bridgePoly) feats.push({ type: 'Feature', geometry: { type: 'Polygon', coordinates: ring(st.bridgePoly) }, properties: { kind: 'bridge' } });
+      feats.push({ type: 'Feature', geometry: { type: 'Point', coordinates: [st.lead[0][1], st.lead[0][0]] }, properties: { kind: 'label', name: st.name } });
+    }
+  }
+  return { type: 'FeatureCollection', features: feats };
+}
+
+function refreshGates() {
+  const map = v.map;
+  const infra = Object.entries(G.state.infra).map(([c, i]) => `${c}${i.terminal || 0}${i.runways ? i.runways.length : ''}`).join();
+  if (!v.gatesDirty && infra === v.gatesInfra) return;
+  v.gatesDirty = false;
+  v.gatesInfra = infra;
+  let list = [];
+  if (G.apronOf && map.getZoom() >= GATE_MINZOOM) {
+    const b = map.getBounds();
+    list = D.airports.filter((a) => !a.factory && b.contains([a.lon, a.lat]));
+  }
+  const sig = list.map((a) => `${a.code}:${G.airportSize(a.code)}:${G.airportRunways(a.code).length}`).join(',');
+  if (sig === v.sig.gates) return;
+  v.sig.gates = sig;
+  map.getSource('fg-gates').setData(gateFeatures(list));
+}
+
 // Great-circle polyline.
 function arc(a, b, n = 48) {
   const pts = [];
@@ -308,6 +348,7 @@ function refreshData() {
     v.sig.routes = rSig;
     map.getSource('fg-routes').setData(routeFeatures());
   }
+  refreshGates();
 }
 
 // ---------- style ----------
@@ -332,7 +373,23 @@ function transformStyle(_prev, style) {
     { id: 'hills', type: 'hillshade', source: 'hillshade', paint: { 'hillshade-exaggeration': 0.35, 'hillshade-shadow-color': '#47402f' } });
   style.sources['fg-airports'] = { type: 'geojson', data: { type: 'FeatureCollection', features: [] } };
   style.sources['fg-routes'] = { type: 'geojson', data: { type: 'FeatureCollection', features: [] } };
+  style.sources['fg-gates'] = { type: 'geojson', data: { type: 'FeatureCollection', features: [] } };
   const visible = ['>=', ['zoom'], ['get', 'minz']];
+  const kind = (k) => ['==', ['get', 'kind'], k];
+  style.layers.push(
+    { id: 'fg-apron', type: 'fill', source: 'fg-gates', minzoom: GATE_MINZOOM, filter: kind('apron'),
+      paint: { 'fill-color': '#3a4049', 'fill-opacity': 0.92 } },
+    { id: 'fg-stands', type: 'line', source: 'fg-gates', minzoom: 14, filter: ['in', ['get', 'kind'], ['literal', ['lead', 'stop']]],
+      layout: { 'line-cap': 'butt' },
+      paint: { 'line-color': '#facc15', 'line-width': ['case', ['==', ['get', 'kind'], 'stop'], 3, 1.2] } },
+    { id: 'fg-terminals', type: 'fill-extrusion', source: 'fg-gates', minzoom: GATE_MINZOOM, filter: kind('terminal'),
+      paint: { 'fill-extrusion-color': '#8a96a8', 'fill-extrusion-height': ['get', 'h'], 'fill-extrusion-opacity': 0.95 } },
+    { id: 'fg-bridges', type: 'fill-extrusion', source: 'fg-gates', minzoom: 14, filter: kind('bridge'),
+      paint: { 'fill-extrusion-color': '#b8c2cf', 'fill-extrusion-base': 3, 'fill-extrusion-height': 6.5 } },
+    { id: 'fg-gate-labels', type: 'symbol', source: 'fg-gates', minzoom: 16, filter: kind('label'),
+      layout: { 'text-field': ['get', 'name'], 'text-font': ['Noto Sans Bold'], 'text-size': 11, 'text-allow-overlap': true },
+      paint: { 'text-color': '#facc15', 'text-halo-color': '#000', 'text-halo-width': 1.2 } },
+  );
   style.layers.push(
     {
       id: 'fg-routes', type: 'line', source: 'fg-routes',
@@ -703,6 +760,7 @@ function createMap() {
   map.on('mouseenter', 'fg-airports', () => { map.getCanvas().style.cursor = 'pointer'; });
   map.on('mouseleave', 'fg-airports', () => { map.getCanvas().style.cursor = ''; });
   map.on('dragstart', () => setFollow(false));
+  map.on('moveend', () => { v.gatesDirty = true; });
   map.on('render', () => { if (v.ready && v.on) { refreshData(); followTick(); if (v.hoverId) updateHover(); } });
   // Keep mouse events away from the Leaflet map underneath.
   for (const t of ['mousedown', 'click', 'dblclick', 'wheel', 'touchstart', 'pointerdown', 'contextmenu']) {

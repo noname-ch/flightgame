@@ -213,6 +213,7 @@
     // Stacking: tiles < towns + catchment < routes < airports < planes.
     map.createPane('towns').style.zIndex = 350;
     map.createPane('runways').style.zIndex = 370;
+    map.createPane('gates').style.zIndex = 375;
     map.createPane('routes').style.zIndex = 390;
 
     const base = {
@@ -239,6 +240,7 @@
     ui.routeLayer = L.layerGroup().addTo(map);
 
     ui.runwayLayer = L.layerGroup().addTo(map);
+    ui.gateLayer = L.layerGroup().addTo(map);
     const townRenderer = L.canvas({ pane: 'towns' });
     for (const t of D.towns) {
       const m = L.circleMarker([t.lat, t.lon], Object.assign({ pane: 'towns', renderer: townRenderer }, TOWN_STYLE))
@@ -375,8 +377,46 @@
     }
   }
 
+  // ---------- gates ----------
+  // Aprons: terminal, jet bridges, stand lead-in lines and stop bars (planes park and push back here).
+  const GATE_ZOOM = 14;
+  function drawGates() {
+    const z = ui.map.getZoom();
+    if (z < GATE_ZOOM) {
+      if (ui.gateSig) { ui.gateLayer.clearLayers(); ui.gateSig = ''; }
+      return;
+    }
+    const view = ui.map.getBounds().pad(0.3);
+    const list = D.airports.filter((a) => !a.factory && view.contains([a.lat, a.lon]));
+    const sig = `${z}|${list.map((a) => `${a.code}:${G.airportSize(a.code)}:${G.airportRunways(a.code).length}`).join(',')}`;
+    if (sig === ui.gateSig) return; // redrawn only when the view or an airport changes
+    ui.gateSig = sig;
+    ui.gateLayer.clearLayers();
+    const quiet = { pane: 'gates', interactive: false };
+    for (const a of list) {
+      const ap = G.apronOf(a.code);
+      L.polygon(ap.apron, { ...quiet, stroke: false, fillColor: '#3a4049', fillOpacity: 0.92 }).addTo(ui.gateLayer);
+      L.polygon(ap.terminal, { pane: 'gates', color: '#e2e8f0', weight: 1, fillColor: '#64748b', fillOpacity: 1, bubblingMouseEvents: false })
+        .bindTooltip(`${a.code} terminal · ${ap.gates.length} gates with jet bridges · ${ap.stands.length - ap.gates.length} remote stands`, { sticky: true })
+        .addTo(ui.gateLayer);
+      for (const st of ap.stands) {
+        L.polyline(st.lead, { ...quiet, color: '#facc15', weight: 1.2, opacity: 0.85 }).addTo(ui.gateLayer);
+        L.polyline(st.stopBar, { ...quiet, color: '#facc15', weight: 2.5 }).addTo(ui.gateLayer);
+        if (st.bridgePoly) {
+          L.polygon(st.bridgePoly, { ...quiet, color: '#e2e8f0', weight: 1, fillColor: '#94a3b8', fillOpacity: 1 }).addTo(ui.gateLayer);
+        }
+        if (z >= 16) {
+          L.marker(st.lead[0], {
+            ...quiet, icon: L.divIcon({ className: 'gate-label', html: st.name, iconSize: [26, 12], iconAnchor: [13, 6] }),
+          }).addTo(ui.gateLayer);
+        }
+      }
+    }
+  }
+
   // Real runways (OurAirports) plus whatever the player built, from C.map.runwayZoom on.
   function drawRunways() {
+    drawGates();
     ui.runwayLayer.clearLayers();
     if (ui.map.getZoom() < C.map.runwayZoom) return;
     const view = ui.map.getBounds().pad(0.2);
@@ -549,8 +589,14 @@
       const st = G.flightState(p, nowMinutes());
       return { latlng: [st.lat, st.lon], heading: st.heading, alt: st.altFt, ground: st.altFt <= 0, st };
     }
-    const ap = G.airportByCode[p.location];
-    return { latlng: [ap.lat, ap.lon], heading: 0, alt: 0, ground: true };
+    const g = G.gateOf(p.location, p.id);
+    return { latlng: [g.lat, g.lon], heading: g.heading, alt: 0, ground: true, gate: g.name };
+  }
+
+  // Icon scale that draws a plane on the ground at its real length when zoomed in on an airport.
+  function groundScale(p, lat) {
+    const len = (D.looks[p.type] && D.looks[p.type].len) || 35;
+    return Math.max(0.3, Math.min(3.5, len / metresPerPixel(lat) / 23));
   }
 
   const PHASES = {
@@ -643,13 +689,18 @@
       if (el) {
         const glyph = el.querySelector('.plane');
         const flying = p.status === 'flying';
-        // Parked planes line up above their airport so it stays clickable.
-        const n = flying ? 0 : (parked[p.location] = (parked[p.location] || 0) + 1) - 1;
+        // Zoomed in on an airport, planes on the ground are drawn at their gate at real size;
+        // further out, parked planes line up above their airport so it stays clickable.
+        const close = pos.ground && ui.map.getZoom() >= GATE_ZOOM;
+        const n = flying || close ? 0 : (parked[p.location] = (parked[p.location] || 0) + 1) - 1;
         // Higher planes look a little bigger and cast their shadow further away.
         const h = Math.min(1, pos.alt / 38000);
-        glyph.style.transform = flying
-          ? `rotate(${pos.heading}deg) scale(${pos.ground ? 0.7 : 0.8 + 0.25 * h})`
-          : `translate(${n * 13}px, -15px) scale(0.75)`;
+        glyph.style.transform = close
+          ? `rotate(${pos.heading}deg) scale(${groundScale(p, pos.latlng[0])})`
+          : flying
+            ? `rotate(${pos.heading}deg) scale(${pos.ground ? 0.7 : 0.8 + 0.25 * h})`
+            : `translate(${n * 13}px, -15px) scale(0.75)`;
+        glyph.classList.toggle('pushback', !!(pos.st && pos.st.phase === 'pushback'));
         const sh = flying && !pos.ground ? 1 + 7 * h : 1;
         glyph.style.setProperty('--shadow', `drop-shadow(${sh * 0.7}px ${sh}px ${1 + sh * 0.4}px rgba(0, 0, 0, ${0.4 - 0.2 * h}))`);
         glyph.classList.toggle('grounded', !flying || pos.ground);
@@ -865,14 +916,15 @@
         (f.kind === 'scheduled' ? ` · ${f.pax} pax` : '') + ` · ${flightText(p)}`;
     }
     if (p.status === 'turnaround' && p.repair) return `🔧 Grounded for repairs at ${p.location} until ${G.fmtTime(p.readyAt)}`;
-    if (p.status === 'turnaround') return `Turnaround at ${p.location} until ${G.fmtClock(p.readyAt)}`;
+    const gate = `gate ${G.gateOf(p.location, p.id).name}`;
+    if (p.status === 'turnaround') return `Turnaround at ${p.location} ${gate} until ${G.fmtClock(p.readyAt)}`;
     const crew = G.crewOf(p);
     const leg = p.pendingFerry || (p.schedule.active && p.schedule.stops.length >= 2);
     const hold = leg && G.holdReason(p, p.pendingFerry || p.schedule.stops[(p.schedule.index + 1) % p.schedule.stops.length]);
-    if (hold) return `At ${p.location} · ⛔ ${hold}`;
-    if (leg && crew && crew.dutyToday >= C.crewMaxDutyMin - 60) return `At ${p.location} · crew resting`;
-    if (leg) return `At ${p.location} · waiting (curfew / crew duty)`;
-    return `Idle at ${p.location}`;
+    if (hold) return `At ${p.location} ${gate} · ⛔ ${hold}`;
+    if (leg && crew && crew.dutyToday >= C.crewMaxDutyMin - 60) return `At ${p.location} ${gate} · crew resting`;
+    if (leg) return `At ${p.location} ${gate} · waiting (curfew / crew duty)`;
+    return `Idle at ${p.location} ${gate}`;
   }
 
   function scheduleEditor(p) {

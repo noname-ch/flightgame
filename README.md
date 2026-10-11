@@ -72,6 +72,13 @@ Map: the selected airport shows its catchment ring and the towns feeding it. Cli
 route to select that aircraft, click empty map to deselect. ⌂ zooms to your network, the layer
 button (top right) switches the base map (satellite by default, remembered) and toggles towns, routes and place names.
 
+Gates: every airport has an apron beside its longest runway with a terminal, gates with jet bridges
+(A1, A2, …) and remote stands without bridges (R1, …): from 2 gates at small airfields to 32 at hubs, and
+terminal expansions add more. Zoom in on an airport to see them (2D from zoom 14, 3D from zoom 12). A plane
+gets a free stand when it leaves for an airport, taxis nose-in onto it, parks there (the fleet card shows
+the gate) and is pushed back from it tail first by a tug. `G.apronOf(code)` has the layout, `G.gateOf`
+the stand of a plane.
+
 3D view: the **3D** button (or V) switches the map to a 3D globe with terrain, hill shading and 3D
 buildings (MapLibre). Aircraft are drawn as 3D models at their real altitude, stretched when zoomed out
 so you can see them. Planes really fly: they push back from their gate tail first, taxi

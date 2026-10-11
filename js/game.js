@@ -159,8 +159,6 @@
   const TAXI_IN = 5;
   const PUSHBACK = 2;    // of TAXI_OUT: pushed back from the gate, tail first
   const DOCK = 1.5;      // of TAXI_IN: turning onto the stand and pulling up to the gate
-  const GATES = 20;      // stands per apron
-  const GATE_SPACING = 80; // m between stands
   const ROLL_OUT = 0.7;  // takeoff roll, minutes
   const ROLL_IN = 0.9;   // landing roll
   const FINAL_KM = 15;   // final approach fix before the threshold (~2700 ft on a 3° glide)
@@ -244,12 +242,24 @@
     return [pt(along), pt(alongM)];
   }
 
-  // A plane's stand at an airport: a row of gates beside the longest runway, on the side of the
-  // airport reference point (where the terminal usually is), nose pointing away from the runway.
-  // Every plane of the fleet has its own stand number, so parked planes never overlap.
-  function gateOf(code, planeId) {
-    const a = airportByCode[code];
+  // ---------- gates ----------
+  // Every airport has an apron beside its longest runway, on the side of the airport reference
+  // point (where the terminal usually is): a row of contact gates with jet bridges in front of the
+  // terminal, then remote stands without bridges beyond both ends of it. Bigger airports (including
+  // the player's terminal expansions) have more and wider gates. Planes park nose-in, facing the
+  // terminal, and are pushed back tail first onto the apron taxi lane.
+  const GATE_COUNT = [2, 3, 6, 12, 20, 32];      // contact gates by airport size 0..5
+  const GATE_SPACING = [42, 45, 55, 65, 75, 80]; // m between stands by size
+  const TAXI_LANE = 70;  // m from a stand back to the apron taxi lane (= pushback distance)
+  const apronCache = new Map();
+
+  function apronOf(code) {
+    const size = Math.max(0, Math.min(5, airportSize(code)));
     const rws = airportRunways(code);
+    const key = `${code}|${size}|${rws.length}`;
+    let ap = apronCache.get(key);
+    if (ap) return ap;
+    const a = airportByCode[code];
     let hdg = 0;
     let side = 1;
     let base = [a.lat, a.lon];
@@ -261,11 +271,68 @@
       side = across < 0 ? -1 : 1; // positive = right of the runway
       base = offsetPoint(a.lat, a.lon, hdg + 90 * side, Math.max(0, 250 - Math.abs(across)));
     }
-    const ids = Game.state ? Game.state.planes.map((p) => p.id).sort() : [];
-    const k = Math.max(0, ids.indexOf(planeId)) % GATES;
-    const along = (k % 2 ? 1 : -1) * Math.ceil(k / 2) * GATE_SPACING;
-    const [lat, lon] = offsetPoint(base[0], base[1], hdg, along);
-    return { lat, lon, heading: (hdg + 90 * side + 360) % 360 };
+    const n = GATE_COUNT[size];
+    const sp = GATE_SPACING[size];
+    const nose = (hdg + 90 * side + 360) % 360;
+    const stop = Math.round(sp * 0.4); // nose stop bar ahead of the stand point
+    const front = stop + 12;           // terminal front
+    const depth = 25 + 6 * size;
+    // metres along the runway direction / out towards the terminal -> [lat, lon]
+    const at = (along, out) => {
+      const p = offsetPoint(base[0], base[1], hdg, along);
+      return offsetPoint(p[0], p[1], nose, out);
+    };
+    const stand = (along, name, bridge) => {
+      const [lat, lon] = at(along, 0);
+      const s = { lat, lon, heading: nose, name, bridge, along,
+        lead: [at(along, -TAXI_LANE), at(along, stop)], stopBar: [at(along - 4, stop), at(along + 4, stop)] };
+      if (bridge) { // from the terminal to the front left door
+        const x = along + side * 4.5;
+        s.bridgePoly = [at(x - 1.8, front), at(x + 1.8, front), at(x + 1.8, stop - 7), at(x - 1.8, stop - 7)];
+      }
+      return s;
+    };
+    const half = (n * sp) / 2;
+    const contact = [];
+    for (let i = 0; i < n; i++) contact.push(stand((i - (n - 1) / 2) * sp, `A${i + 1}`, true));
+    // Allocation order: from the middle of the terminal outwards, then remote stands at alternating ends.
+    const byCentre = contact.map((s, i) => [Math.abs(s.along), i]).sort((x, y) => x[0] - y[0] || x[1] - y[1]);
+    const stands = byCentre.map(([, i]) => contact[i]);
+    for (let j = 0; j < n; j++) {
+      const along = (j % 2 ? 1 : -1) * (half + sp * (Math.floor(j / 2) + 0.5));
+      stands.push(stand(along, `R${j + 1}`, false));
+    }
+    const reach = half + sp * Math.ceil(n / 2) + 10;
+    ap = {
+      code, hdg, side, nose, spacing: sp, gates: contact, stands,
+      terminal: [at(-half - 5, front), at(half + 5, front), at(half + 5, front + depth), at(-half - 5, front + depth)],
+      apron: [at(-reach, -TAXI_LANE - 25), at(reach, -TAXI_LANE - 25), at(reach, front), at(-reach, front)],
+    };
+    if (apronCache.size > 500) apronCache.clear();
+    apronCache.set(key, ap);
+    return ap;
+  }
+
+  // Which stand a plane uses at an airport: the one it holds (parked, or reserved by its flight),
+  // else (route previews, old saves) one by fleet order.
+  function standIndex(code, planeId) {
+    const s = Game.state;
+    const p = s && s.planes.find((q) => q.id === planeId);
+    if (p) {
+      const f = p.flight;
+      if (f && f.to === code && f.standTo != null) return f.standTo;
+      if (f && f.from === code && f.standFrom != null) return f.standFrom;
+      if (p.stand && p.stand.code === code) return p.stand.k;
+    }
+    const ids = s ? s.planes.map((q) => q.id).sort() : [];
+    return Math.max(0, ids.indexOf(planeId)) % apronOf(code).stands.length;
+  }
+
+  // A plane's stand at an airport: where it parks nose-in (heading = towards the terminal).
+  function gateOf(code, planeId) {
+    const ap = apronOf(code);
+    const st = ap.stands[Math.min(standIndex(code, planeId), ap.stands.length - 1)];
+    return { lat: st.lat, lon: st.lon, heading: st.heading, name: st.name, bridge: st.bridge };
   }
 
   function buildTrack(type, f, planeId) {
@@ -296,8 +363,8 @@
     const gB = gateOf(f.to, planeId);
     const standA = [gA.lat, gA.lon];
     const standB = [gB.lat, gB.lon];
-    const pushA = offsetPoint(gA.lat, gA.lon, gA.heading + 180, 70);
-    const leadB = offsetPoint(gB.lat, gB.lon, gB.heading + 180, 70);
+    const pushA = offsetPoint(gA.lat, gA.lon, gA.heading + 180, TAXI_LANE);
+    const leadB = offsetPoint(gB.lat, gB.lon, gB.heading + 180, TAXI_LANE);
     const [footA, abeamThr] = taxiRoute(dep, pushA, 0);
     const stopM = Math.min(arr.len * 0.65, 2200);
     const [footB, abeamStop] = taxiRoute(arr, leadB, stopM);
@@ -506,7 +573,7 @@
     ticketPrice, routeKey, blockMinutes, landingFee, slotUpfront, slotWeekly,
     priceNew, fitsAirport, fitsReason, crewFor, factoryOf,
     airportSize, airportRunways, runwayLength, longestRunway, runwayNeed, attraction,
-    flightTrack, flightState, legTrack, cruiseFt, windFrom, gateOf,
+    flightTrack, flightState, legTrack, cruiseFt, windFrom, gateOf, apronOf,
     fmtMoney, fmtTime, fmtClock, fmtDuration,
 
     // opts: { mode, difficulty, airport, aircraft, company } from the start screen; all optional.
@@ -566,6 +633,7 @@
         gameOver: false,
       };
       this.registerBuilt();
+      this.assignStands();
       this.refreshMarket();
       this.log(`Welcome to ${this.state.company}! You start with a slot at ${home.name}, ` +
         `the ${D.aircraft[type].name} ${C.startRegistration} and a base crew. ` +
@@ -610,6 +678,39 @@
       if (!s.built) s.built = [];
       if (!s.fees) s.fees = {};
       this.registerBuilt();
+      this.assignStands();
+    },
+
+    // ---------- gates ----------
+    // Lowest free stand at an airport (contact gates from the middle of the terminal outwards, then
+    // remote stands). Planes parked there and planes on their way there hold theirs.
+    freeStand(code, planeId) {
+      const used = new Set();
+      for (const q of this.state.planes) {
+        if (q.id === planeId) continue;
+        if (q.status !== 'flying' && q.location === code && q.stand && q.stand.code === code) used.add(q.stand.k);
+        if (q.status === 'flying' && q.flight && q.flight.to === code && q.flight.standTo != null) used.add(q.flight.standTo);
+      }
+      const n = apronOf(code).stands.length;
+      for (let k = 0; k < n; k++) if (!used.has(k)) return k;
+      return n - 1; // all taken: share the last remote stand
+    },
+
+    // The stand a plane on the ground holds at its airport.
+    standAt(p) {
+      if (!p.stand || p.stand.code !== p.location) p.stand = { code: p.location, k: this.freeStand(p.location, p.id) };
+      return p.stand.k;
+    },
+
+    // Stands for planes on the ground and reserved stands for flights (new games, old saves).
+    assignStands() {
+      for (const p of this.state.planes) {
+        if (p.status === 'flying' && p.flight) {
+          if (p.flight.standTo == null) p.flight.standTo = this.freeStand(p.flight.to, p.id);
+        } else {
+          this.standAt(p);
+        }
+      }
     },
 
     // Airports the player built become normal airports (map, demand, schedules).
@@ -728,6 +829,7 @@
       const f = p.flight;
       const result = f.revenue - f.cost;
       p.location = f.to;
+      p.stand = { code: f.to, k: f.standTo != null ? f.standTo : this.freeStand(f.to, p.id) };
       p.status = 'turnaround';
       p.readyAt = s.time + C.turnaroundMin;
       p.flight = null;
@@ -820,6 +922,7 @@
         from: p.location, to: leg.to, kind: leg.kind,
         dep: t, arr: t + block, distance: Math.round(d),
         pax, revenue, cost: flightCost(p.type, d, leg.to, pax, this.costMult(p) * this.fuelMult() * this.difficulty().costMult),
+        standFrom: this.standAt(p), standTo: this.freeStand(leg.to, p.id),
       };
       this.rollFlightEvents(p);
       p.status = 'flying';
@@ -1130,7 +1233,9 @@
         p.location = from;
         p.status = 'flying';
         p.flight = { from, to: code, kind: 'delivery', dep: s.time, arr: s.time + blockMinutes(type, d),
-          distance: Math.round(d), pax: 0, revenue: 0, cost: 0 };
+          distance: Math.round(d), pax: 0, revenue: 0, cost: 0, standTo: this.freeStand(code, id) };
+      } else {
+        p.stand = { code, k: this.freeStand(code, id) };
       }
       s.planes.push(p);
       this.dirty = true;

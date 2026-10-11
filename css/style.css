@@ -266,6 +266,20 @@ tr.click:hover { background: var(--panel-2); }
 .plane-icon path { pointer-events: auto; cursor: pointer; }
 .plane-icon .plane.grounded svg { fill: var(--m-gray); }
 .plane-icon .plane.selected svg { stroke: #ffcc00; stroke-width: 2.6; }
+/* Pushback: a tug at the nose, pushing the plane tail first. */
+.plane-icon .plane { position: relative; }
+.plane-icon .plane.pushback::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: -4px;
+  width: 5px;
+  height: 7px;
+  margin-left: -2.5px;
+  background: #facc15;
+  border: 1px solid #111;
+  border-radius: 1.5px;
+}
 
 #map .map-legend {
   padding: 6px 10px;
@@ -574,7 +588,14 @@ i.s-net { background: var(--muted); }
   from { opacity: 0; scale: 0.3; rotate: -25deg; }
 }
 
-/* ---------- runways, construction, airport shares ---------- */
+/* ---------- runways, gates, construction, airport shares ---------- */
+.gate-label {
+  color: #facc15;
+  font: 700 9px/12px system-ui, sans-serif;
+  text-align: center;
+  text-shadow: 0 0 2px #000, 0 0 2px #000;
+  pointer-events: none;
+}
 .rw-num {
   color: #fff;
   font: 700 10px/14px system-ui, sans-serif;
