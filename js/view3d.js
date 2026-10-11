@@ -1,8 +1,9 @@
 // 3D view: MapLibre globe with terrain and 3D buildings, aircraft drawn with three.js.
 // Toggled with the "3D" button (or V). Reads the game state directly; selection goes through FG.ui.
-// The aircraft are simple placeholder models built in planeModel(); swap in real glTF models there later.
+// The aircraft are glTF models from models/ (see js/data/models.js); types without one use the placeholder.
 import * as maplibregl from 'maplibre-gl';
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 const G = FG.game;
 const D = FG.data;
@@ -69,6 +70,38 @@ function planePose(p, t) {
 }
 
 // ---------- aircraft models ----------
+// glTF models in models/ (see models/README.md); FG.data.models says which type uses which file. Local axes:
+// x = right wing, y = nose, z = up; each file is centred and 1 unit long, and is scaled to the type's real
+// length (FG.data.looks). Types without a model keep the placeholder.
+const modelLoads = {};   // file -> Promise of the loaded scene
+
+function loadModel(file) {
+  if (!modelLoads[file]) {
+    modelLoads[file] = new GLTFLoader().loadAsync(`models/${file}.glb`).then((gltf) => gltf.scene);
+    modelLoads[file].catch((e) => console.warn(`3D model ${file} not loaded, keeping the placeholder`, e));
+  }
+  return modelLoads[file];
+}
+
+// The aircraft to draw for a type: the placeholder at first, replaced by the glTF model once it has loaded.
+function planeModel(type) {
+  const g = placeholderModel(type);
+  const file = D.models[type];
+  const look = D.looks && D.looks[type];
+  if (!file || !look) return g;
+  // Placeholder at the type's real length while the model loads.
+  const fit = look.len / g.userData.len;
+  for (const part of g.children) { part.position.multiplyScalar(fit); part.scale.multiplyScalar(fit); }
+  g.userData.len = look.len;
+  loadModel(file).then((scene) => {
+    const model = scene.clone();
+    model.scale.setScalar(look.len);
+    g.clear();
+    g.add(model);
+  }, () => {});
+  return g;
+}
+
 // Placeholder low-poly aircraft, about real size in metres. Local axes: x = right wing, y = nose, z = up.
 const MODEL_SHAPES = {
   turboprop: { len: 27, span: 27, fuselage: 1.4, engines: 2, highWing: true, prop: true },
@@ -79,7 +112,7 @@ const MODEL_SHAPES = {
 };
 const modelCache = {};
 
-function planeModel(type) {
+function placeholderModel(type) {
   const cat = D.aircraft[type].category;
   const sh = MODEL_SHAPES[cat] || MODEL_SHAPES.narrowbody;
   if (!modelCache[cat]) {

@@ -72,8 +72,10 @@ button (top right) switches the base map (satellite by default, remembered) and 
 3D view: the **3D** button (or V) switches the map to a 3D globe with terrain, hill shading and 3D
 buildings (MapLibre). Aircraft are drawn as 3D models at their real altitude, stretched when zoomed out
 so you can see them. Drag with the right mouse button (or Ctrl + drag) to tilt and rotate. 🎥 Follow puts the camera
-behind the selected plane, 🛰 Satellite toggles the satellite imagery (on by default). The aircraft are simple placeholder
-models built in `planeModel()` in `js/view3d.js`; real glTF models can be swapped in there later.
+behind the selected plane, 🛰 Satellite toggles the satellite imagery (on by default). The aircraft are glTF models from
+`models/` (Flightradar24's GPLv2 models, see `models/README.md`); `js/data/models.js` says which type uses
+which file. Types without a model (small turboprops, Ju 52, DC-3, Concorde) keep the simple placeholder
+built in `placeholderModel()`. The hangar marketplace shows a picture of the same model.
 
 Developer tools: the 🛠 button (or F2) opens a cheat panel for testing: add or set money, add any
 aircraft for free (delivered instantly to the chosen or selected airport, slot included), crash /
@@ -97,6 +99,8 @@ All content is plain data:
 - `js/data/aircraft.js` – aircraft types (market catalogue) and crew templates
 - `js/data/factories.js` – where each type is built (delivery flights start there)
 - `js/data/looks.js` – side-view shape of each type, drawn by `js/hangar.js`
+- `js/data/models.js` – 3D model of each type (`models/*.glb`) and its hangar picture (`models/hangar/*.webp`,
+  made with `tools/hangar_shots.html`)
 - `js/data/events.js` – random events, incidents and their newspaper stories
 - `js/config.js` – starting conditions, map bounds, economy balance, game modes, event rates
 
