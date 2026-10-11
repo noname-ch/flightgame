@@ -381,7 +381,7 @@ function gateFeatures(list, gates) {
     const width = big ? 23 : 15;
     const tww = metresWidth(width, a.lat);
     const edge = metresWidth(width + (big ? 14 : 7), a.lat); // with its shoulders
-    for (const tw of tws) {
+    for (const tw of G.taxiwaysOf(a.code)) {
       path(tw, { kind: 'taxiway', ...tww, e10: edge.w10, e22: edge.w22 });
       path(tw, { kind: 'twline' });
       for (const f of paved) {
@@ -553,10 +553,11 @@ function transformStyle(_prev, style) {
   style.projection = { type: 'globe' };
   style.sources.terrain = { type: 'raster-dem', url: 'https://tiles.mapterhorn.com/tilejson.json' };
   style.sources.hillshade = { type: 'raster-dem', url: 'https://tiles.mapterhorn.com/tilejson.json' };
+  // Esri's aerial imagery, the same as the 2D map: sharp down to single aircraft (Sentinel-2 stopped at 10 m).
   style.sources.satellite = {
-    type: 'raster', tileSize: 256, maxzoom: 14,
-    tiles: ['https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2020_3857/default/g/{z}/{y}/{x}.jpg'],
-    attribution: 'Sentinel-2 cloudless by EOX',
+    type: 'raster', tileSize: 256, maxzoom: 18,
+    tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
+    attribution: 'Imagery &copy; Esri, Maxar, Earthstar Geographics',
   };
   style.terrain = { source: 'terrain', exaggeration: TERRAIN_EXAG };
   style.sky = {
