@@ -69,6 +69,12 @@ so you can see them. Drag with the right mouse button (or Ctrl + drag) to tilt a
 behind the selected plane, 🛰 Satellite switches to satellite imagery. The aircraft are simple placeholder
 models built in `planeModel()` in `js/view3d.js`; real glTF models can be swapped in there later.
 
+Developer tools: the 🛠 button (or F2) opens a cheat panel for testing: add or set money, add any
+aircraft for free (delivered instantly to the chosen or selected airport, slot included), crash /
+damage / repair / remove the selected plane, free slots and 100% airport ownership, finish all
+construction, trigger or clear any world event, and skip an hour, day or week. Every cheat is noted
+in the log (`js/devtools.js`).
+
 Controls: Space = pause, 1/2/3 = speed. The game autosaves to the browser (localStorage).
 
 ## Extending
