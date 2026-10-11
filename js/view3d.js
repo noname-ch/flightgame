@@ -36,6 +36,7 @@ function savePrefs() {
 // ---------- flight position ----------
 // Game time with a fraction, so planes move smoothly between the 100 ms game ticks.
 function smoothTime() {
+  if (FG.ui && FG.ui.time != null) return FG.ui.time; // exact fractional game time from ui.js
   const s = G.state;
   const now = performance.now();
   if (s.time !== v.clock.time) { v.clock = { time: s.time, at: now }; }
@@ -697,16 +698,28 @@ function fitNetwork() {
 
 function setFollow(on) {
   v.follow = on && !!(FG.ui && FG.ui.selectedPlane);
+  v.followStart = v.follow;
   document.querySelector('#view3d .follow')?.classList.toggle('active', v.follow);
+  // While following, the camera centre floats at the plane's height instead of sitting on the ground.
+  if (v.map && v.map.setCenterClampedToGround) v.map.setCenterClampedToGround(!v.follow);
 }
 
+// Chase camera: behind the selected plane, turning with it. Starts close in; the wheel still zooms.
 function followTick() {
   if (!v.follow) return;
   const e = v.planes[FG.ui.selectedPlane];
   if (!e || !e.lngLat) { setFollow(false); return; }
   const map = v.map;
   const target = map.getBearing() + ((((e.heading - map.getBearing()) % 360) + 540) % 360 - 180) * 0.06;
-  map.jumpTo({ center: e.lngLat, bearing: target, pitch: Math.max(map.getPitch(), 62), zoom: Math.max(map.getZoom(), 6.5) });
+  const opts = { center: e.lngLat, bearing: target, pitch: Math.max(map.getPitch(), 62) };
+  if (v.followStart) {
+    opts.zoom = e.pose && e.pose.altM > 300 ? 12 : 16;
+    v.followStart = false;
+  } else {
+    opts.zoom = Math.max(map.getZoom(), 6.5);
+  }
+  if (map.setCenterClampedToGround) opts.elevation = e.altM;
+  map.jumpTo(opts);
 }
 
 // ---------- setup ----------

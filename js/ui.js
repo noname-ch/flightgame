@@ -32,6 +32,7 @@
     speed: 1, // multiple of real time
     paused: false,
     pendingMinutes: 0, // fractional game minutes carried between ticks
+    lastTick: 0, // performance.now() of the last game tick
     selectedAirport: null,
     selectedPlane: null,
     drafts: {}, // planeId -> stops being edited
@@ -581,7 +582,13 @@
   }
 
   // Game time including the fraction of a minute, so planes glide instead of jumping.
-  const nowMinutes = () => G.state.time + (ui.paused ? 0 : ui.pendingMinutes);
+  // Game time with the fraction since the last tick, so planes move smoothly even at real time
+  // (where a whole game minute takes 600 ticks).
+  const nowMinutes = () => {
+    const t = G.state.time + ui.pendingMinutes;
+    if (ui.paused || st.open) return t;
+    return t + Math.min(performance.now() - ui.lastTick, TICK_MS) * ui.speed / 60000;
+  };
 
   // Flying planes follow their track (runway, climb, cruise, approach); parked ones sit at the airport.
   function planePosition(p) {
@@ -1695,6 +1702,11 @@
     }));
     $('pause').addEventListener('click', () => { ui.paused = !ui.paused; });
     $('speed').addEventListener('input', (e) => { ui.speed = sliderToSpeed(Number(e.target.value)); });
+    // Click the speed label to go back to real time.
+    $('speed-label').addEventListener('click', () => {
+      ui.speed = 1;
+      $('speed').value = speedToSlider(1);
+    });
     $('market').addEventListener('click', onMarketClick);
     $('market').addEventListener('change', (e) => {
       if (e.target.id === 'mk-sort') mk.sort = e.target.value;
@@ -1761,6 +1773,7 @@
   }
 
   function loop() {
+    ui.lastTick = performance.now();
     if (!ui.paused && !st.open) {
       ui.pendingMinutes += (ui.speed * TICK_MS) / 60000;
       const whole = Math.floor(ui.pendingMinutes);
@@ -1794,6 +1807,7 @@
       get selectedPlane() { return ui.selectedPlane; },
       get selectedAirport() { return ui.selectedAirport; },
       get speed() { return ui.paused || st.open ? 0 : ui.speed; },
+      get time() { return nowMinutes(); }, // fractional game minutes
       selectPlane,
       selectAirport(code) { ui.selectedAirport = code; G.dirty = true; },
       clearSelection() { ui.selectedAirport = null; ui.selectedPlane = null; G.dirty = true; },

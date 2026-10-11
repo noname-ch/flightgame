@@ -50,7 +50,8 @@ header button {
 header button.active { background: var(--accent); border-color: var(--accent); }
 .speed { display: flex; gap: 6px; align-items: center; }
 .speed input[type=range] { width: 140px; accent-color: var(--accent); }
-#speed-label { min-width: 64px; font-variant-numeric: tabular-nums; opacity: 0.9; }
+#speed-label { min-width: 64px; font-variant-numeric: tabular-nums; opacity: 0.9; cursor: pointer; }
+#speed-label:hover { opacity: 1; text-decoration: underline dotted; }
 
 main { flex: 1; display: flex; min-height: 0; position: relative; }
 #map { flex: 1; min-width: 0; }
