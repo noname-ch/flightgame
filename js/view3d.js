@@ -495,7 +495,14 @@ const planeLayer = {
     if (this.track && !(sel && v.planes[sel] && G.plane(sel) && G.plane(sel).status === 'flying')) this.track.visible = false;
 
     this.renderer.resetState();
+    // Own depth buffer for the planes: sharing MapLibre's lets the (exaggerated) terrain and the
+    // coarse depth precision cut holes into the models. Planes are then drawn over the terrain.
+    this.renderer.clearDepth();
     this.renderer.render(this.scene, this.camera);
+    // three.js and MapLibre share the WebGL context: put the GL state back and make MapLibre
+    // re-apply its own, or real GPUs draw an empty map (texture uploads, framebuffer bindings).
+    this.renderer.resetState();
+    if (map.painter && map.painter.context && map.painter.context.setDirty) map.painter.context.setDirty();
     map.triggerRepaint();
   },
 };
