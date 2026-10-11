@@ -21,6 +21,8 @@
     planeMarkers: {},
     townMarkers: [], // { t, m }
     townLayer: null,
+    runwayLayer: null,
+    buildMode: false, // next map click picks the site of a new airport
     catchmentLayer: null,
     routeLayer: null,
     selectRing: null,
@@ -65,9 +67,10 @@
   };
   const ESRI = 'https://server.arcgisonline.com/ArcGIS/rest/services';
   const tileUrl = (service) => `${ESRI}/${service}/MapServer/tile/{z}/{y}/{x}`;
+  // Esri's canvas tiles stop at zoom 16; beyond that Leaflet scales them up.
   const TILE_OPTS = {
     attribution: 'Tiles &copy; Esri &mdash; Esri, HERE, Garmin, &copy; OpenStreetMap contributors',
-    maxZoom: 10,
+    maxZoom: C.map.maxZoom, maxNativeZoom: 16,
   };
   const tiles = (service, opts) => L.tileLayer(tileUrl(service), Object.assign({}, TILE_OPTS, opts));
   const NAME_TILES = {
@@ -119,6 +122,7 @@
 
   const LEGEND = `<details class="map-legend leaflet-bar"><summary>Legend</summary>
     <div><i class="dot own"></i>Your slot (★ home base)</div>
+    <div><i class="dot stake"></i>You own shares (no slot)</div>
     <div><i class="dot ap"></i>Airport · bigger = larger hub</div>
     <div><i class="dot town"></i>Town · bigger = more people</div>
     <div><i class="dot catch"></i>Town feeding the selected airport</div>
@@ -126,12 +130,20 @@
     <div><i class="line paused"></i>Schedule paused</div>
     <div><i class="line draft"></i>Schedule being edited</div>
     <div><i class="line ferry"></i>Ferry flight</div>
+    <div><i class="rw"></i>Runway (zoom in) · <i class="rw build"></i>under construction</div>
   </details>`;
 
   // Markers shrink when zoomed out so Europe doesn't turn into one blob.
   const zoomScale = () => Math.min(1.5, Math.max(0.6, 0.6 + (ui.map.getZoom() - 3) * 0.2));
-  const airportRadius = (a) => (4 + a.size) * zoomScale();
+  const airportRadius = (a) => (a.extra ? 2 + G.airportSize(a.code) - (a.minor ? 1 : 0) : 4 + G.airportSize(a.code)) * zoomScale();
   const townRadius = (t) => Math.max(2.5, Math.sqrt(t.pop) / 450) * zoomScale();
+
+  // With thousands of airports and towns only the ones that matter at this zoom are on the map.
+  // Hand-made airports (airports.js) always show; generated ones appear as you zoom in.
+  const airportMinZoom = (a) => (!a.extra ? 0 : a.minor ? 9 : [9, 8, 7, 7, 6, 5][G.airportSize(a.code)]);
+  const townMinPop = (z) => (z <= 4 ? 400000 : z === 5 ? 150000 : z === 6 ? 60000 : z === 7 ? 30000 : 0);
+  const importantAirport = (a) => G.ownsSlot(a.code) || G.stake(a.code) > 0 || a.built ||
+    ui.selectedAirport === a.code;
 
   // Great-circle path between two airports as a list of [lat, lon].
   function arc(a, b) {
@@ -161,19 +173,20 @@
   function initMap() {
     const map = ui.map = L.map('map', {
       minZoom: C.map.minZoom,
-      maxZoom: 10,
+      maxZoom: C.map.maxZoom,
       maxBounds: C.map.bounds,
       maxBoundsViscosity: 0.8,
     }).setView(C.map.center, C.map.zoom);
 
     // Stacking: tiles < towns + catchment < routes < airports < planes.
     map.createPane('towns').style.zIndex = 350;
+    map.createPane('runways').style.zIndex = 370;
     map.createPane('routes').style.zIndex = 390;
 
     const base = {
       Standard: new TintedTiles(tileUrl('Canvas/World_Light_Gray_Base'), TILE_OPTS).addTo(map),
       Dark: tiles('Canvas/World_Dark_Gray_Base'),
-      Satellite: tiles('World_Imagery'),
+      Satellite: tiles('World_Imagery', { maxNativeZoom: 18 }),
     };
     // City names; off by default because they collide with the airport dots.
     const names = tiles(NAME_TILES.Standard, { zIndex: 2 });
@@ -186,9 +199,11 @@
     ui.catchmentLayer = L.layerGroup().addTo(map);
     ui.routeLayer = L.layerGroup().addTo(map);
 
+    ui.runwayLayer = L.layerGroup().addTo(map);
+    const townRenderer = L.canvas({ pane: 'towns' });
     for (const t of D.towns) {
-      const m = L.circleMarker([t.lat, t.lon], Object.assign({ pane: 'towns' }, TOWN_STYLE))
-        .bindTooltip(`${t.name} · ${fmtPop(t.pop)}`).addTo(ui.townLayer);
+      const m = L.circleMarker([t.lat, t.lon], Object.assign({ pane: 'towns', renderer: townRenderer }, TOWN_STYLE))
+        .bindTooltip(`${t.name} · ${fmtPop(t.pop)}`);
       ui.townMarkers.push({ t, m });
     }
 
@@ -199,22 +214,6 @@
         .addTo(map);
     }
 
-    for (const a of D.airports) {
-      const m = L.circleMarker([a.lat, a.lon], {
-        color: '#fff', weight: 2, fillOpacity: 1, className: 'ap-dot', bubblingMouseEvents: false,
-      });
-      m.bindTooltip(`<b>${a.code}</b><span class="city"> · ${a.city}</span>`, {
-        permanent: true, direction: 'right', className: `ap-label${a.code === C.startAirport ? ' home' : ''}`,
-      });
-      m.on('click', () => {
-        ui.selectedAirport = a.code;
-        G.dirty = true;
-      });
-      m.on('mouseover', () => { ui.hoverAirport = a.code; m.setRadius(airportRadius(a) + 2); updateLabel(a); });
-      m.on('mouseout', () => { ui.hoverAirport = null; m.setRadius(airportRadius(a)); updateLabel(a); });
-      m.addTo(map);
-      ui.airportMarkers[a.code] = m;
-    }
 
     L.control.scale({ imperial: false }).addTo(map);
     L.control.layers(base, { Towns: ui.townLayer, Routes: ui.routeLayer, 'Place names': names }).addTo(map);
@@ -234,13 +233,149 @@
     });
 
     map.on('zoomend', resizeMarkers);
-    map.on('click', () => {
+    map.on('moveend', () => { updateVisible(); drawRunways(); });
+    map.on('click', (e) => {
+      if (ui.buildMode) { buildAt(e.latlng); return; }
       if (!ui.selectedAirport && !ui.selectedPlane) return;
       ui.selectedAirport = null;
       ui.selectedPlane = null;
       G.dirty = true;
     });
+    updateVisible();
     resizeMarkers();
+  }
+
+  function createAirportMarker(a) {
+    const m = L.circleMarker([a.lat, a.lon], {
+      color: '#fff', weight: 2, fillOpacity: 1, className: 'ap-dot', bubblingMouseEvents: false,
+    });
+    m.bindTooltip(`<b>${a.code}</b><span class="city"> · ${a.city}</span>`, {
+      permanent: true, direction: 'right', className: `ap-label${a.code === C.startAirport ? ' home' : ''}`,
+    });
+    m.on('click', () => {
+      if (ui.buildMode) return;
+      ui.selectedAirport = a.code;
+      G.dirty = true;
+    });
+    m.on('mouseover', () => { ui.hoverAirport = a.code; m.setRadius(airportRadius(a) + 2); updateLabel(a); });
+    m.on('mouseout', () => { ui.hoverAirport = null; m.setRadius(airportRadius(a)); updateLabel(a); });
+    ui.airportMarkers[a.code] = m;
+    return m;
+  }
+
+  // Add/remove airport and town markers for the current view.
+  function updateVisible() {
+    const map = ui.map;
+    const z = map.getZoom();
+    const view = map.getBounds().pad(0.3);
+    for (const code of Object.keys(ui.airportMarkers)) {
+      if (!G.airportByCode[code]) { // gone after a new game
+        ui.airportMarkers[code].remove();
+        delete ui.airportMarkers[code];
+      }
+    }
+    for (const a of D.airports) {
+      const show = importantAirport(a) || (z >= airportMinZoom(a) && view.contains([a.lat, a.lon]));
+      let m = ui.airportMarkers[a.code];
+      if (show && !m) m = createAirportMarker(a);
+      if (!m) continue;
+      const on = map.hasLayer(m);
+      if (show && !on) {
+        m.addTo(map);
+        styleAirport(a);
+        sizeAirport(a);
+      } else if (!show && on) m.remove();
+    }
+    const minPop = townMinPop(z);
+    for (const { t, m } of ui.townMarkers) {
+      const show = t.pop >= minPop && view.contains([t.lat, t.lon]);
+      const on = ui.townLayer.hasLayer(m);
+      if (show && !on) ui.townLayer.addLayer(m.setRadius(townRadius(t)));
+      else if (!show && on) ui.townLayer.removeLayer(m);
+    }
+  }
+
+  // ---------- runways ----------
+  // Metres per screen pixel at a latitude, so thin runways stay visible.
+  const metresPerPixel = (lat) => (40075016 * Math.cos((lat * Math.PI) / 180)) / 2 ** (ui.map.getZoom() + 8);
+
+  function runwayCorners(r, minPx) {
+    const lat = (r[0] + r[2]) / 2;
+    const half = Math.max(r[4], minPx * metresPerPixel(lat)) / 2;
+    const h = G.bearing({ lat: r[0], lon: r[1] }, { lat: r[2], lon: r[3] });
+    const side = ((h + 90) * Math.PI) / 180;
+    const dLat = (half * Math.cos(side)) / 111320;
+    const dLon = (half * Math.sin(side)) / (111320 * Math.cos((lat * Math.PI) / 180));
+    return [[r[0] + dLat, r[1] + dLon], [r[2] + dLat, r[3] + dLon], [r[2] - dLat, r[3] - dLon], [r[0] - dLat, r[1] - dLon]];
+  }
+
+  // Runway number seen when landing on heading h (e.g. 265° → "27").
+  const designator = (h) => String(Math.round(((h % 360) + 360) % 360 / 10) || 36).padStart(2, '0');
+
+  function drawRunway(code, r, building) {
+    const z = ui.map.getZoom();
+    const pick = () => { ui.selectedAirport = code; G.dirty = true; };
+    const poly = L.polygon(runwayCorners(r, 3), building
+      ? { pane: 'runways', color: COLORS.orange, weight: 2, dashArray: '6 5', fillColor: COLORS.orange, fillOpacity: 0.25, bubblingMouseEvents: false }
+      : { pane: 'runways', color: '#fff', weight: z >= 14 ? 1.5 : 1, fillColor: r[5] ? '#4b5563' : '#7fae5f', fillOpacity: 1, bubblingMouseEvents: false });
+    const len = Math.round(G.runwayLength(r));
+    poly.bindTooltip(`${code} · ${len.toLocaleString('de-CH')} m ${r[5] ? 'paved' : 'grass'}${building ? ' · under construction' : ''}`, { sticky: true })
+      .on('click', pick).addTo(ui.runwayLayer);
+    if (z < 14 || building || G.runwayLength(r) < 800) return;
+    if (r[5]) {
+      L.polyline([[r[0], r[1]], [r[2], r[3]]], { pane: 'runways', interactive: false, color: '#fff', weight: 1, dashArray: '10 10' })
+        .addTo(ui.runwayLayer);
+    }
+    const h = G.bearing({ lat: r[0], lon: r[1] }, { lat: r[2], lon: r[3] });
+    const ends = [[0.06, designator(h)], [0.94, designator(h + 180)]];
+    for (const [f, label] of ends) {
+      L.marker([r[0] + (r[2] - r[0]) * f, r[1] + (r[3] - r[1]) * f], {
+        pane: 'runways', interactive: false,
+        icon: L.divIcon({ className: 'rw-num', html: label, iconSize: [22, 14], iconAnchor: [11, 7] }),
+      }).addTo(ui.runwayLayer);
+    }
+  }
+
+  // Real runways (OurAirports) plus whatever the player built, from C.map.runwayZoom on.
+  function drawRunways() {
+    ui.runwayLayer.clearLayers();
+    if (ui.map.getZoom() < C.map.runwayZoom) return;
+    const view = ui.map.getBounds().pad(0.2);
+    for (const a of D.airports) {
+      if (!view.contains([a.lat, a.lon])) continue;
+      for (const r of G.airportRunways(a.code)) drawRunway(a.code, r, false);
+    }
+    for (const p of G.state.projects) {
+      const a = G.airportByCode[p.code];
+      if (!view.contains([a.lat, a.lon])) continue;
+      const planned = p.kind === 'airport'
+        ? G.plannedRunway({ code: p.code, kind: 'runway', len: C.airports.newAirportRunway })
+        : G.plannedRunway(p);
+      if (planned) drawRunway(p.code, planned.runway, true);
+      if (p.kind === 'terminal' || p.kind === 'airport') {
+        L.marker([a.lat, a.lon], {
+          pane: 'runways', interactive: false,
+          icon: L.divIcon({ className: 'build-icon', html: '🏗', iconSize: [20, 20], iconAnchor: [-6, 22] }),
+        }).addTo(ui.runwayLayer);
+      }
+    }
+  }
+
+  function buildAt(latlng) {
+    ui.buildMode = false;
+    ui.map.getContainer().classList.remove('build-mode');
+    const res = G.buildAirport(latlng.lat, latlng.lng);
+    if (res && res.length !== 3) { toast(res, true); G.dirty = true; return; }
+    ui.selectedAirport = res;
+    toast(`Construction of ${G.airportByCode[res].name} started.`);
+    G.dirty = true;
+  }
+
+  function setBuildMode(on) {
+    ui.buildMode = on;
+    ui.map.getContainer().classList.toggle('build-mode', on);
+    if (on) toast('Click on the map where the new airport should go (Esc to cancel).');
+    G.dirty = true;
   }
 
   function fitNetwork() {
@@ -250,16 +385,25 @@
 
   function resizeMarkers() {
     for (const { t, m } of ui.townMarkers) m.setRadius(townRadius(t));
-    for (const a of D.airports) {
-      const m = ui.airportMarkers[a.code];
-      const r = airportRadius(a);
-      m.setRadius(r);
-      const tip = m.getTooltip();
-      tip.options.offset = L.point(r - 2, 0); // keep the label clear of the dot
-      tip.update();
-      updateLabel(a);
-    }
+    for (const code of Object.keys(ui.airportMarkers)) sizeAirport(G.airportByCode[code]);
     if (ui.selectRing) ui.selectRing.setRadius(airportRadius(G.airportByCode[ui.selectedAirport]) + 5);
+  }
+
+  function sizeAirport(a) {
+    const m = ui.airportMarkers[a.code];
+    const r = airportRadius(a);
+    m.setRadius(r);
+    const tip = m.getTooltip();
+    tip.options.offset = L.point(r - 2, 0); // keep the label clear of the dot
+    tip.update();
+    updateLabel(a);
+  }
+
+  function styleAirport(a) {
+    const color = G.ownsSlot(a.code) ? COLORS.green : G.stake(a.code) > 0 ? COLORS.purple
+      : a.built && !a.open ? COLORS.orange : a.minor ? COLORS.gray : COLORS.blue;
+    ui.airportMarkers[a.code].setStyle({ fillColor: color });
+    updateLabel(a);
   }
 
   // Codes of small airports only appear when zoomed in; own, selected and hovered ones always show.
@@ -272,15 +416,17 @@
     el.classList.toggle('owned', owned);
     el.classList.toggle('selected', selected);
     el.classList.toggle('hover', hover);
-    el.classList.toggle('hidden', !(owned || selected || hover || ui.map.getZoom() >= C.map.labelZoom - a.size));
+    el.classList.toggle('hidden', !(owned || selected || hover ||
+      ui.map.getZoom() >= C.map.labelZoom - G.airportSize(a.code) + (a.minor ? 1 : 0)));
   }
 
   function refreshAirports() {
-    for (const a of D.airports) {
-      ui.airportMarkers[a.code].setStyle({ fillColor: G.ownsSlot(a.code) ? COLORS.green : COLORS.blue });
-      updateLabel(a);
+    updateVisible();
+    for (const code of Object.keys(ui.airportMarkers)) {
+      if (ui.map.hasLayer(ui.airportMarkers[code])) styleAirport(G.airportByCode[code]);
     }
     drawCatchment();
+    drawRunways();
   }
 
   // Ring around the selected airport plus the towns that feed it.
@@ -450,11 +596,14 @@
     let h = `<div class="panel airport">
       <button class="close" data-action="closeAirport" title="Close">×</button>
       <h3>${a.code} · ${a.name}</h3>
-      <div class="muted">${a.city}, ${a.country} · size ${'●'.repeat(a.size)}${'○'.repeat(5 - a.size)}</div>
-      <div>Catchment: <b>${fmtPop(G.catchment(code))}</b> people · landing fee ${G.fmtMoney(G.landingFee(code))}</div>`;
+      <div class="muted">${a.city}, ${a.country} · size ${sizeDots(G.airportSize(code))}${a.minor ? ' · airfield' : ''}</div>
+      <div>Catchment: <b>${fmtPop(G.catchment(code))}</b> people · landing fee ${G.fmtMoney(G.landingFee(code))}</div>
+      <div>${runwayText(code)}</div>`;
+    if (a.built && !a.open) h += `<div class="warn">🏗 Under construction – opens ${openDate(code)}.</div>`;
 
     if (owned) {
-      h += `<div class="ok">✔ You hold a slot here (${G.fmtMoney(G.slotWeekly(code))}/week)</div>`;
+      const fee = G.slotFee(code);
+      h += `<div class="ok">✔ You hold a slot here (${fee ? `${G.fmtMoney(fee)}/week` : 'free – you control the airport'})</div>`;
       if (code !== C.startAirport) h += `<button data-action="releaseSlot" data-code="${code}">Release slot</button>`;
     } else {
       const up = G.slotUpfront(code);
@@ -483,7 +632,121 @@
       }
       h += `</table>`;
     }
-    return h + `</div>`;
+    return h + sharesSection(code) + constructionSection(code) + `</div>`;
+  }
+
+  function runwayText(code) {
+    const rws = G.airportRunways(code).slice().sort((x, y) => G.runwayLength(y) - G.runwayLength(x));
+    if (!rws.length) return '<span class="muted">No runway data</span>';
+    const list = rws.slice(0, 4).map((r) => `${Math.round(G.runwayLength(r)).toLocaleString('de-CH')} m${r[5] ? '' : ' grass'}`);
+    return `Runway${rws.length > 1 ? 's' : ''}: ${list.join(' · ')}${rws.length > 4 ? ` · +${rws.length - 4}` : ''}
+      <a href="#" data-action="zoomRunways" data-code="${code}" class="muted">zoom in</a>`;
+  }
+
+  function openDate(code) {
+    const p = G.state.projects.find((x) => x.code === code);
+    return p ? G.fmtTime(p.done).replace(/ \d\d:\d\d$/, '') : 'soon';
+  }
+
+  // Buy/sell airport shares, with value and dividend estimate.
+  function sharesSection(code) {
+    const a = G.airportByCode[code];
+    if (a.factory) return '';
+    const A = C.airports;
+    const st = G.stake(code);
+    const value = G.airportValue(code);
+    const weekly = G.airportProfit(code);
+    const step = Math.min(A.shareStep, 100 - st);
+    let h = `<h4>Shares</h4>
+      <div>Value ${G.fmtMoney(value)} · profit ≈ ${G.fmtMoney(weekly)}/week · ${fmtPop(G.airportPaxYear(code))} pax/year</div>`;
+    if (st) {
+      h += `<div>You own <b>${st}%</b> (worth ${G.fmtMoney(G.shareSale(code, st))}) · dividend ≈
+        <b class="pos">${G.fmtMoney(weekly * A.payout * st / 100)}</b>/week</div>`;
+    }
+    h += `<div class="row">`;
+    if (step > 0) {
+      const cost = G.sharePrice(code, step);
+      h += `<button class="primary" data-action="buyShares" data-code="${code}" ${G.state.money < cost ? 'disabled' : ''}>
+        Buy ${step}% · ${G.fmtMoney(cost)}</button>`;
+    }
+    if (st) h += `<button data-action="sellShares" data-code="${code}">Sell ${Math.min(A.shareStep, st)}% · ${G.fmtMoney(G.shareSale(code, Math.min(A.shareStep, st)))}</button>`;
+    h += `</div><div class="hint">${A.boardStake}%: order runways and terminals · ${A.majorityStake}%: no weekly slot fee here.</div>`;
+    return h;
+  }
+
+  function constructionSection(code) {
+    const p = G.state.projects.find((x) => x.code === code);
+    let h = `<h4>Construction</h4>`;
+    if (p) {
+      const frac = Math.min(1, (G.state.time - p.start) / (p.done - p.start));
+      return h + `<div>🏗 ${p.label}</div><div class="progress"><i style="width:${Math.round(frac * 100)}%"></i></div>
+        <div class="muted">${Math.round(frac * 100)}% · ready ${G.fmtTime(p.done)}</div>`;
+    }
+    const opts = G.projectOptions(code);
+    if (!opts.length) return '';
+    if (G.stake(code) < C.airports.boardStake) {
+      return h + `<div class="muted">Own ${C.airports.boardStake}% of the airport to build runways and terminals.</div>`;
+    }
+    const share = G.stake(code) < 100 ? ` <span class="muted">(your ${G.stake(code)}% share of the cost)</span>` : '';
+    const runways = opts.filter((o) => o.kind === 'runway');
+    h += `<div class="row"><select id="rw-${code}">`;
+    for (const o of runways) {
+      h += `<option value="${o.len}:${o.orient}">${o.label} · ${G.fmtMoney(o.cost)} · ${o.weeks} wk</option>`;
+    }
+    h += `</select><button data-action="buildRunway" data-code="${code}">Build</button></div>`;
+    for (const o of opts.filter((x) => x.kind !== 'runway')) {
+      h += `<div class="row"><button data-action="project" data-kind="${o.kind}" data-code="${code}"
+        ${o.err || G.state.money < o.cost ? 'disabled' : ''}>${o.label} · ${G.fmtMoney(o.cost)} · ${o.weeks} wk</button>
+        ${o.err ? `<span class="muted">${o.err}</span>` : ''}</div>`;
+    }
+    return h + `<div class="hint">Costs${share}. Longer runways take bigger aircraft, terminals raise the size and draw more passengers.</div>`;
+  }
+
+  // ---------- airports tab: shares, construction, new airports ----------
+  function airportsTab() {
+    const s = G.state;
+    const A = C.airports;
+    const held = Object.keys(s.infra).filter((c) => G.stake(c) > 0);
+    let h = `<div class="panel"><h3>Your airport shares</h3>`;
+    if (held.length) {
+      let total = 0;
+      h += `<table class="small"><tr><th>Airport</th><th>stake</th><th>worth</th><th>div./wk</th></tr>`;
+      for (const c of held) {
+        const st = G.stake(c);
+        const d = G.airportProfit(c) * A.payout * st / 100;
+        total += d;
+        h += `<tr class="click" data-action="selectAirport" data-code="${c}"><td>${c} · ${G.airportByCode[c].city}</td>
+          <td>${st}%</td><td>${G.fmtMoney(G.shareSale(c, st))}</td><td class="pos">${G.fmtMoney(d)}</td></tr>`;
+      }
+      h += `</table><div class="muted">Dividends ≈ ${G.fmtMoney(total)} paid every Monday.</div>`;
+    } else {
+      h += `<div class="muted">None yet. Click an airport on the map to buy shares – they pay a weekly dividend.</div>`;
+    }
+    h += `</div><div class="panel"><h3>Construction</h3>`;
+    if (s.projects.length) {
+      for (const p of s.projects) {
+        const frac = Math.min(1, (s.time - p.start) / (p.done - p.start));
+        h += `<div class="click" data-action="selectAirport" data-code="${p.code}">🏗 <b>${p.code}</b> ${p.label}
+          <div class="progress"><i style="width:${Math.round(frac * 100)}%"></i></div>
+          <div class="muted">ready ${G.fmtTime(p.done)}</div></div>`;
+      }
+    } else h += `<div class="muted">Nothing under construction.</div>`;
+    h += `</div><div class="panel"><h3>Build a new airport</h3>
+      <div>A new airfield with a ${A.newAirportRunway} m runway, 100% yours: ${G.fmtMoney(A.newAirportCost)},
+        opens after ${A.newAirportWeeks} weeks. At least ${A.newAirportMinKm} km from other airports.</div>
+      <button class="primary" data-action="buildMode" ${s.money < A.newAirportCost && !ui.buildMode ? 'disabled' : ''}>
+        ${ui.buildMode ? 'Cancel – pick a site on the map' : 'Pick a site on the map'}</button></div>`;
+
+    h += `<div class="panel"><h3>Airports near your network</h3><div class="muted">Best value for money (dividend per franc).</div>
+      <table class="small"><tr><th>Airport</th><th>5% costs</th><th>div./wk</th></tr>`;
+    const near = D.airports.filter((a) => !a.minor && G.stake(a.code) < 100 &&
+      Object.keys(s.slots).some((c) => G.dist(c, a.code) < 400));
+    near.map((a) => ({ a, cost: G.sharePrice(a.code, 5), d: G.airportProfit(a.code) * A.payout * 0.05 }))
+      .sort((x, y) => y.d / y.cost - x.d / x.cost).slice(0, 10).forEach(({ a, cost, d }) => {
+        h += `<tr class="click" data-action="selectAirport" data-code="${a.code}"><td>${a.code} · ${a.city}</td>
+          <td>${G.fmtMoney(cost)}</td><td>${G.fmtMoney(d)}</td></tr>`;
+      });
+    return h + `</table></div>`;
   }
 
   function planeStatus(p) {
@@ -652,9 +915,10 @@
           <div><dt>Operating</dt><dd>${G.fmtMoney(ac.costPerBlockHour * mult)}/h</dd></div>
           <div><dt>Crew</dt><dd>${G.fmtMoney(G.crewFor(o.type).weeklySalary)}/wk</dd></div>
           <div><dt>Airport</dt><dd>${sizeDots(ac.minAirport || 1)}</dd></div>
+          <div><dt>Runway</dt><dd>${G.runwayNeed(o.type).m.toLocaleString('de-CH')} m${G.runwayNeed(o.type).paved ? '' : ' (grass ok)'}</dd></div>
           <div><dt>Lease rate</dt><dd>${G.fmtMoney(ac.leasePerWeek)}/wk</dd></div>
         </dl>
-        <div class="mk-delivery">${fits ? mkDelivery(o, at) : `<span class="neg">Too big for ${at} (size ${G.airportByCode[at].size}) – deliver to a larger airport.</span>`}</div>
+        <div class="mk-delivery">${fits ? mkDelivery(o, at) : `<span class="neg">${G.fitsReason(o.type, at)} Deliver to a larger airport.</span>`}</div>
         <div class="mk-buy">`;
     if (o.used) {
       h += `<button class="primary big" data-mk="buyUsed" data-id="${o.used.id}" data-cost="${o.price}" data-fits="${fits}">Buy ${G.fmtMoney(o.price)}</button>`;
@@ -696,7 +960,7 @@
       <label>Deliver to <select id="mk-at">`;
     for (const c of Object.keys(s.slots)) {
       const a = G.airportByCode[c];
-      h += `<option value="${c}" ${c === at ? 'selected' : ''}>${c} · ${a.city} (size ${a.size})</option>`;
+      h += `<option value="${c}" ${c === at ? 'selected' : ''}>${c} · ${a.city} (size ${G.airportSize(c)}, ${G.longestRunway(c).toLocaleString('de-CH')} m)</option>`;
     }
     h += `</select></label></div><div class="mk-body">`;
 
@@ -771,14 +1035,14 @@
     for (const code of Object.keys(s.slots)) {
       const a = G.airportByCode[code];
       h += `<tr class="click" data-action="selectAirport" data-code="${code}"><td>${code} · ${a.city}</td>
-        <td>${fmtPop(G.catchment(code))}</td><td>${G.fmtMoney(G.slotWeekly(code))}</td></tr>`;
+        <td>${fmtPop(G.catchment(code))}</td><td>${G.fmtMoney(G.slotFee(code))}</td></tr>`;
     }
     h += `</table><div class="hint">Click an airport on the map to see its demand and lease a slot.</div></div>`;
 
     h += `<div class="panel"><h3>Best routes from ${C.startAirport}</h3><table class="small">
       <tr><th>Airport</th><th>km</th><th>pax/day</th><th>slot</th></tr>`;
     const ranked = D.airports
-      .filter((a) => a.code !== C.startAirport)
+      .filter((a) => a.code !== C.startAirport && !a.minor)
       .map((a) => ({ a, demand: G.demand(C.startAirport, a.code) }))
       .sort((x, y) => y.demand - x.demand)
       .slice(0, 15);
@@ -955,7 +1219,7 @@
   function renderSidebar() {
     $('details').innerHTML = ui.selectedAirport ? airportPanel(ui.selectedAirport) : '';
     renderEvents();
-    const tabs = { fleet: fleetTab, slots: slotsTab, finance: financeTab, log: logTab };
+    const tabs = { fleet: fleetTab, slots: slotsTab, airports: airportsTab, finance: financeTab, log: logTab };
     $('tab-content').innerHTML = tabs[ui.tab]();
     document.querySelectorAll('[data-tab]').forEach((b) => b.classList.toggle('active', b.dataset.tab === ui.tab));
     restoreSelects();
@@ -1077,6 +1341,7 @@
     ui.drafts = {};
     ui.selectedAirport = null;
     ui.selectedPlane = null;
+    ui.shownAirport = undefined;
     Object.values(ui.planeMarkers).forEach((m) => m.remove());
     ui.planeMarkers = {};
     $('newspaper').hidden = true;
@@ -1102,6 +1367,21 @@
       }
       case 'leaseSlot': act(G.leaseSlot(code)); break;
       case 'releaseSlot': act(G.releaseSlot(code)); break;
+      case 'buyShares': act(G.buyShares(code)); break;
+      case 'sellShares': act(G.sellShares(code)); break;
+      case 'project': act(G.startProject(code, el.dataset.kind)); break;
+      case 'buildRunway': {
+        const [len, orient] = $(`rw-${code}`).value.split(':');
+        act(G.startProject(code, 'runway', len, orient));
+        break;
+      }
+      case 'buildMode': setBuildMode(!ui.buildMode); break;
+      case 'zoomRunways': {
+        e.preventDefault();
+        const a = G.airportByCode[code];
+        ui.map.setView([a.lat, a.lon], 14);
+        break;
+      }
       case 'sendPlane': act(G.sendPlane(plane, code)); break;
       case 'sendSelect': act(G.sendPlane(plane, $(`send-${plane}`).value)); break;
       case 'fare': G.changeFare(el.dataset.from, el.dataset.to, Number(el.dataset.dir)); break;
@@ -1188,6 +1468,7 @@
     });
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && mk.open) { closeMarket(); return; }
+      if (e.key === 'Escape' && ui.buildMode) { setBuildMode(false); return; }
       if (!$('newspaper').hidden && (e.key === 'Enter' || e.key === 'Escape' || e.key === ' ')) {
         closeNewspaper();
         e.preventDefault();

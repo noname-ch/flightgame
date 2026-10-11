@@ -59,8 +59,10 @@
   function catchment(code) {
     if (catchmentCache[code] != null) return catchmentCache[code];
     const ap = airportByCode[code];
+    const maxDeg = C.catchmentRadiusKm / 111;
     let sum = 0;
     for (const t of D.towns) {
+      if (Math.abs(t.lat - ap.lat) > maxDeg) continue; // cheap pre-filter, thousands of towns
       const d = distanceKm(ap, t);
       if (d < C.catchmentRadiusKm) sum += t.pop * (1 - d / C.catchmentRadiusKm);
     }
@@ -77,15 +79,53 @@
 
   function dailyDemand(from, to) {
     const d = dist(from, to);
-    return Math.round(C.demandFactor * Math.sqrt(catchment(from) * catchment(to)) * distanceFactor(d));
+    return Math.round(C.demandFactor * Math.sqrt(catchment(from) * catchment(to)) * distanceFactor(d) *
+      attraction(from) * attraction(to));
+  }
+
+  // ---------- airport infrastructure ----------
+  // The player's changes (state.infra[code]) sit on top of the static data.
+  const A = C.airports;
+  const infra = (code) => (Game.state && Game.state.infra[code]) || {};
+  const airportSize = (code) => Math.min(5, airportByCode[code].size + (infra(code).terminal || 0));
+  // Small airfields without an IATA code get fewer passengers until they grow a terminal.
+  // Every terminal expansion the player builds draws more passengers.
+  const attraction = (code) => (airportByCode[code].minor && airportSize(code) < 2 ? A.minorFactor : 1) *
+    (1 + A.terminalDemand * (infra(code).terminal || 0));
+  const airportRunways = (code) => infra(code).runways || D.runways[code] || [];
+  // Point m metres from lat/lon along a bearing (flat earth is fine at airport scale).
+  function offsetPoint(lat, lon, bearingDeg, m) {
+    const b = toRad(bearingDeg);
+    return [lat + (m * Math.cos(b)) / 111320, lon + (m * Math.sin(b)) / (111320 * Math.cos(toRad(lat)))];
+  }
+  const runwayLength = (r) => distanceKm({ lat: r[0], lon: r[1] }, { lat: r[2], lon: r[3] }) * 1000;
+  // Airports without runway data get a typical length for their size.
+  const RUNWAY_BY_SIZE = [0, 900, 1800, 2500, 3200, 3800];
+  function longestRunway(code, pavedOnly) {
+    const rws = airportRunways(code);
+    if (!rws.length) return RUNWAY_BY_SIZE[airportSize(code)];
+    return Math.round(Math.max(0, ...rws.filter((r) => !pavedOnly || r[5]).map(runwayLength)));
+  }
+  // Runway an aircraft type needs (m) and whether it needs a paved one.
+  function runwayNeed(type) {
+    const ac = D.aircraft[type];
+    if (ac.runwayM) return { m: ac.runwayM, paved: ac.category !== 'turboprop' && ac.category !== 'classic' };
+    const min = ac.minAirport || 1;
+    const m = {
+      turboprop: ac.seats <= 19 ? 500 : ac.seats <= 50 ? 1000 : 1200,
+      regional: 1400,
+      narrowbody: 1600 + (min - 1) * 200,
+      widebody: 2100 + (min - 1) * 200,
+    }[ac.category] || 1500;
+    return { m, paved: ac.category !== 'turboprop' };
   }
 
   const ticketPrice = (d) => Math.round(C.ticket.base + C.ticket.perKm * d); // standard fare
   const routeKey = (a, b) => (a < b ? `${a}-${b}` : `${b}-${a}`); // same for both directions
   const blockMinutes = (type, d) => Math.round((d / D.aircraft[type].speedKmh) * 60 + C.taxiMin);
-  const landingFee = (code) => C.landingFee.base + C.landingFee.perSize * airportByCode[code].size;
-  const slotUpfront = (code) => C.slot.upfront[airportByCode[code].size];
-  const slotWeekly = (code) => C.slot.weekly[airportByCode[code].size];
+  const landingFee = (code) => C.landingFee.base + C.landingFee.perSize * airportSize(code);
+  const slotUpfront = (code) => C.slot.upfront[airportSize(code)];
+  const slotWeekly = (code) => C.slot.weekly[airportSize(code)];
 
   function flightCost(type, d, to, pax, costMult = 1) {
     const block = blockMinutes(type, d);
@@ -98,7 +138,20 @@
   const usedPrice = (type, age) => Math.round(priceNew(type) * Math.pow(1 - M.depreciationPerYear, age) / 1000) * 1000;
   const agingMult = (age) => 1 + M.agingCostPerYear * age;
   // Can this type operate at this airport (runway / gates)?
-  const fitsAirport = (type, code) => airportByCode[code].size >= (D.aircraft[type].minAirport || 1);
+  function fitsAirport(type, code) {
+    return fitsReason(type, code) === null;
+  }
+  // Why a type can't use an airport, or null.
+  function fitsReason(type, code) {
+    const ac = D.aircraft[type];
+    if (airportByCode[code].factory) return null;
+    if (airportByCode[code].built && !airportByCode[code].open) return `${code} is still under construction.`;
+    if (airportSize(code) < (ac.minAirport || 1)) return `${code} is too small for the ${ac.name} (size ${airportSize(code)}, needs ${ac.minAirport}).`;
+    const need = runwayNeed(type);
+    const have = longestRunway(code, need.paved);
+    if (have < need.m) return `The ${ac.name} needs ${need.m} m of ${need.paved ? 'paved ' : ''}runway, ${code} has ${have} m.`;
+    return null;
+  }
 
   function crewFor(type) {
     const seats = D.aircraft[type].seats;
@@ -111,7 +164,7 @@
     const types = Object.keys(D.aircraft).filter((t) => D.aircraft[t].category !== 'classic' || Math.random() < 0.3);
     const type = types[Math.floor(Math.random() * types.length)];
     const age = M.usedAge[0] + Math.floor(Math.random() * (M.usedAge[1] - M.usedAge[0] + 1));
-    const homes = D.airports.filter((a) => fitsAirport(type, a.code));
+    const homes = D.airports.filter((a) => !a.minor && fitsAirport(type, a.code));
     const at = homes[Math.floor(Math.random() * homes.length)].code; // seller's base
     return { id: `U${n}`, type, age, price: usedPrice(type, age), at };
   }
@@ -136,7 +189,8 @@
 
     airportByCode, distanceKm, dist, bearing, interpolate, catchment, dailyDemand,
     ticketPrice, routeKey, blockMinutes, landingFee, slotUpfront, slotWeekly,
-    priceNew, fitsAirport, crewFor, factoryOf,
+    priceNew, fitsAirport, fitsReason, crewFor, factoryOf,
+    airportSize, airportRunways, runwayLength, longestRunway, runwayNeed, attraction,
     fmtMoney, fmtTime, fmtClock, fmtDuration,
 
     newGame(mode = C.defaultMode) {
@@ -181,8 +235,13 @@
         market: { listings: [], nextId: 1 },
         effects: [], // active events: { label, until, where, demandMult, costMult, noFlights }
         news: [], // newspaper stories waiting to be shown
+        infra: {},    // code -> { stake %, terminal levels added, runways (replaces the data), invested }
+        projects: [], // construction under way
+        built: [],    // airports the player built
+        fees: {},     // code -> landing and passenger fees paid there this week (for dividends)
         gameOver: false,
       };
+      this.registerBuilt();
       this.refreshMarket();
       this.log(`Welcome to ${this.state.company}! You start with a slot at ${home.name}, ` +
         `the ${D.aircraft[C.startAircraft].name} ${C.startRegistration} and a base crew. ` +
@@ -220,6 +279,26 @@
       if (!s.mode) s.mode = C.defaultMode;
       if (!s.effects) s.effects = [];
       if (!s.news) s.news = [];
+      if (!s.infra) s.infra = {};
+      if (!s.projects) s.projects = [];
+      if (!s.built) s.built = [];
+      if (!s.fees) s.fees = {};
+      this.registerBuilt();
+    },
+
+    // Airports the player built become normal airports (map, demand, schedules).
+    registerBuilt() {
+      for (let i = D.airports.length - 1; i >= 0; i--) {
+        if (D.airports[i].built) {
+          delete airportByCode[D.airports[i].code];
+          D.airports.splice(i, 1);
+        }
+      }
+      for (const a of this.state.built) {
+        D.airports.push(a);
+        airportByCode[a.code] = a;
+        delete catchmentCache[a.code];
+      }
     },
 
     save() {
@@ -241,13 +320,15 @@
     plane(id) { return this.state.planes.find((p) => p.id === id); },
     crewOf(p) { return this.state.crews.find((c) => c.id === p.crewId); },
     ownsSlot(code) { return !!this.state.slots[code]; },
+    // Weekly slot fee; nothing at airports you control.
+    slotFee(code) { return this.stake(code) >= A.majorityStake ? 0 : slotWeekly(code); },
 
     weeklyCosts() {
       const s = this.state;
       const planes = s.planes.reduce((sum, p) =>
         sum + (p.ownership === 'owned' ? 0 : D.aircraft[p.type].leasePerWeek), 0);
       const crews = s.crews.reduce((sum, c) => sum + c.weeklySalary, 0);
-      const slots = Object.keys(s.slots).reduce((sum, code) => sum + slotWeekly(code), 0);
+      const slots = Object.keys(s.slots).reduce((sum, code) => sum + this.slotFee(code), 0);
       return { planes, crews, slots, total: planes + crews + slots };
     },
 
@@ -293,9 +374,11 @@
         s.today.fixed += w.total;
         this.log(`Weekly costs paid: ${fmtMoney(w.total)} (aircraft ${fmtMoney(w.planes)}, ` +
           `crew ${fmtMoney(w.crews)}, slots ${fmtMoney(w.slots)}).`, 'cost');
+        this.payDividends();
         this.refreshMarket();
       }
       this.rollWorldEvent();
+      this.finishProjects();
       if (s.money < C.bankruptcyLimit) {
         s.gameOver = true;
         this.log('Bankrupt! Your airline has run out of money. Start a new game.', 'bad');
@@ -323,6 +406,9 @@
       p.readyAt = s.time + C.turnaroundMin;
       p.flight = null;
       s.money += result;
+      if (f.kind === 'scheduled' || f.kind === 'ferry') {
+        s.fees[f.to] = (s.fees[f.to] || 0) + landingFee(f.to) + f.pax * C.paxFee;
+      }
       s.today.revenue += f.revenue;
       s.today.cost += f.cost;
       p.stats.profit += result;
@@ -373,8 +459,9 @@
         this.stopPlane(p, `${p.id} has no slot at ${leg.to} – stopped.`);
         return;
       }
-      if (!fitsAirport(p.type, leg.to)) {
-        this.stopPlane(p, `${leg.to} is too small for ${p.id} – stopped.`);
+      const unfit = fitsReason(p.type, leg.to);
+      if (unfit) {
+        this.stopPlane(p, `${p.id} stopped: ${unfit}`);
         return;
       }
       const ac = D.aircraft[p.type];
@@ -614,7 +701,7 @@
       const p = this.plane(planeId);
       if (!this.ownsSlot(code)) return `You need a slot at ${code} first.`;
       if (p.location === code && p.status !== 'flying') return `${p.id} is already at ${code}.`;
-      if (!fitsAirport(p.type, code)) return `${code} is too small for the ${D.aircraft[p.type].name}.`;
+      if (!fitsAirport(p.type, code)) return fitsReason(p.type, code);
       if (dist(p.location, code) > D.aircraft[p.type].rangeKm) return 'Out of range.';
       p.schedule.active = false;
       p.pendingFerry = code;
@@ -631,7 +718,7 @@
         const b = stops[(i + 1) % stops.length];
         if (!this.ownsSlot(a)) return `No slot at ${a}.`;
         if (a === b) return `${a} follows itself – remove the duplicate.`;
-        if (!fitsAirport(p.type, a)) return `${a} is too small for the ${ac.name}.`;
+        if (!fitsAirport(p.type, a)) return fitsReason(p.type, a);
         if (dist(a, b) > ac.rangeKm) return `${a}→${b} is out of range.`;
       }
       const here = stops.indexOf(p.location);
@@ -678,7 +765,7 @@
     // Shared checks for a delivery; returns an error string or null.
     checkDelivery(type, code, cost) {
       if (!this.ownsSlot(code)) return `You need a slot at ${code} for the delivery.`;
-      if (!fitsAirport(type, code)) return `${code} is too small for the ${D.aircraft[type].name}.`;
+      if (!fitsAirport(type, code)) return fitsReason(type, code);
       if (this.state.money < cost) return `Not enough money (${fmtMoney(cost)} needed).`;
       return null;
     },
@@ -781,6 +868,213 @@
       s.planes = s.planes.filter((x) => x !== p);
       s.crews = s.crews.filter((c) => c.id !== p.crewId);
       return null;
+    },
+
+    // ---------- airports: shares, dividends, construction ----------
+    stake(code) { return infra(code).stake || 0; },
+    infraOf(code) {
+      const s = this.state;
+      if (!s.infra[code]) s.infra[code] = {};
+      return s.infra[code];
+    },
+    airportPaxYear(code) {
+      return Math.round(catchment(code) * A.paxPerHead[airportSize(code)] * attraction(code));
+    },
+    // Weekly operating profit: base traffic plus what your airline paid there this week.
+    airportProfit(code) {
+      return Math.round(this.airportPaxYear(code) / 52 * A.profitPerPax + (this.state.fees[code] || 0));
+    },
+    airportValue(code) {
+      const base = this.airportPaxYear(code) / 52 * A.profitPerPax;
+      return Math.round((base * 52 * A.peRatio + (infra(code).invested || 0) * A.investedValue) / 1000) * 1000;
+    },
+    sharePrice(code, pct) { return Math.round(this.airportValue(code) * pct / 100 * A.buyPremium); },
+    shareSale(code, pct) { return Math.round(this.airportValue(code) * pct / 100 * A.sellDiscount); },
+
+    buyShares(code, pct = A.shareStep) {
+      const s = this.state;
+      const a = airportByCode[code];
+      if (a.factory) return 'Factories are not for sale.';
+      pct = Math.min(pct, 100 - this.stake(code));
+      if (pct <= 0) return `You already own all of ${a.name}.`;
+      const cost = this.sharePrice(code, pct);
+      if (s.money < cost) return `Not enough money (${fmtMoney(cost)} needed).`;
+      s.money -= cost;
+      const inf = this.infraOf(code);
+      inf.stake = (inf.stake || 0) + pct;
+      this.log(`Bought ${pct}% of ${a.name} for ${fmtMoney(cost)} – you now own ${inf.stake}%.`, 'cost');
+      this.dirty = true;
+      return null;
+    },
+
+    sellShares(code, pct = A.shareStep) {
+      const s = this.state;
+      const a = airportByCode[code];
+      pct = Math.min(pct, this.stake(code));
+      if (pct <= 0) return 'You own no shares there.';
+      if (a.built && this.stake(code) - pct < A.majorityStake) return 'You must keep the majority of an airport you built.';
+      const value = this.shareSale(code, pct);
+      s.money += value;
+      const inf = this.infraOf(code);
+      inf.stake -= pct;
+      this.log(`Sold ${pct}% of ${a.name} for ${fmtMoney(value)} – you now own ${inf.stake}%.`, 'good');
+      this.dirty = true;
+      return null;
+    },
+
+    // Mondays: shareholders get their part of last week's profit.
+    payDividends() {
+      const s = this.state;
+      let total = 0;
+      const parts = [];
+      for (const code of Object.keys(s.infra)) {
+        const st = this.stake(code);
+        if (!st) continue;
+        const d = Math.round(this.airportProfit(code) * A.payout * st / 100);
+        total += d;
+        parts.push(`${code} ${fmtMoney(d)}`);
+      }
+      s.fees = {};
+      if (!total) return;
+      s.money += total;
+      s.today.revenue += total;
+      this.log(`Airport dividends: ${fmtMoney(total)} (${parts.join(', ')}).`, 'good');
+    },
+
+    // What can be built at an airport right now, with cost (your share) and an error if not possible.
+    projectOptions(code) {
+      const a = airportByCode[code];
+      const st = this.stake(code);
+      const share = st / 100;
+      const busy = this.state.projects.some((p) => p.code === code);
+      const base = busy ? 'Construction already under way here.'
+        : st < A.boardStake ? `You need ${A.boardStake}% of the shares to order construction.` : null;
+      const opts = [];
+      const longest = longestRunway(code, true);
+      const hasRunways = airportRunways(code).length > 0;
+      for (const len of A.runwayLengths) {
+        for (const orient of hasRunways ? ['parallel', 'cross'] : ['new']) {
+          const full = A.runwayCost.base + A.runwayCost.perM * len;
+          opts.push({
+            kind: 'runway', len, orient, full, cost: Math.round(full * share),
+            weeks: Math.round(A.runwayWeeks.base + A.runwayWeeks.perKm * len / 1000),
+            label: `${orient === 'cross' ? 'Crosswind' : orient === 'parallel' ? 'Parallel' : 'New'} runway ${len} m`,
+            err: base,
+          });
+        }
+      }
+      if (hasRunways) {
+        opts.push({
+          kind: 'extend', full: A.extendCost, cost: Math.round(A.extendCost * share), weeks: A.extendWeeks,
+          label: `Extend main runway +${A.extendBy} m (to ${longestRunway(code) + A.extendBy} m)`,
+          err: base || (longestRunway(code) + A.extendBy > A.maxRunwayM ? 'The main runway is as long as it gets.' : null),
+        });
+      }
+      const next = airportSize(code) + 1;
+      if (next <= 5 && !a.factory) {
+        const full = A.terminalCost[next];
+        opts.push({
+          kind: 'terminal', full, cost: Math.round(full * share), weeks: A.terminalWeeks[next],
+          label: `Terminal & gates → size ${next}`,
+          err: base || (longest < A.terminalRunway[next] ? `Needs a ${A.terminalRunway[next]} m paved runway first.` : null),
+        });
+      }
+      return opts;
+    },
+
+    startProject(code, kind, len, orient) {
+      const s = this.state;
+      const o = this.projectOptions(code).find((x) => x.kind === kind &&
+        (kind !== 'runway' || (x.len === Number(len) && x.orient === orient)));
+      if (!o) return 'That project is not available.';
+      if (o.err) return o.err;
+      if (s.money < o.cost) return `Not enough money (${fmtMoney(o.cost)} needed).`;
+      s.money -= o.cost;
+      s.projects.push({ code, kind, len: o.len, orient: o.orient, label: o.label, cost: o.cost, full: o.full,
+        start: s.time, done: s.time + o.weeks * 7 * DAY });
+      this.log(`Construction started at ${airportByCode[code].name}: ${o.label} – your share ${fmtMoney(o.cost)}, ` +
+        `ready in ${o.weeks} weeks.`, 'cost');
+      this.dirty = true;
+      return null;
+    },
+
+    // Geometry of a runway that a project will add (also drawn while it is being built).
+    plannedRunway(p) {
+      const a = airportByCode[p.code];
+      const rws = airportRunways(p.code);
+      if (p.kind === 'extend') {
+        const r = rws.reduce((m, x) => (runwayLength(x) > runwayLength(m) ? x : m), rws[0]);
+        const h = bearing({ lat: r[0], lon: r[1] }, { lat: r[2], lon: r[3] });
+        const e1 = offsetPoint(r[0], r[1], h + 180, A.extendBy / 2);
+        const e2 = offsetPoint(r[2], r[3], h, A.extendBy / 2);
+        return { replace: r, runway: [e1[0], e1[1], e2[0], e2[1], r[4], 1] };
+      }
+      if (p.kind !== 'runway') return null;
+      let center = [a.lat, a.lon];
+      let h = 70; // prevailing westerlies
+      const main = rws.length ? rws.reduce((m, x) => (runwayLength(x) > runwayLength(m) ? x : m), rws[0]) : null;
+      if (main) {
+        h = bearing({ lat: main[0], lon: main[1] }, { lat: main[2], lon: main[3] });
+        center = [(main[0] + main[2]) / 2, (main[1] + main[3]) / 2];
+        if (p.orient === 'cross') h += 90;
+        else {
+          const k = rws.length;
+          center = offsetPoint(center[0], center[1], h + 90, 400 * Math.ceil(k / 2) * (k % 2 ? 1 : -1));
+        }
+      }
+      const e1 = offsetPoint(center[0], center[1], h + 180, p.len / 2);
+      const e2 = offsetPoint(center[0], center[1], h, p.len / 2);
+      return { runway: [e1[0], e1[1], e2[0], e2[1], p.len >= 2500 ? 45 : 30, 1] };
+    },
+
+    finishProjects() {
+      const s = this.state;
+      for (const p of s.projects.filter((x) => s.time >= x.done)) {
+        const inf = this.infraOf(p.code);
+        const geo = this.plannedRunway(p);
+        if (geo) {
+          const rws = airportRunways(p.code).filter((r) => r !== geo.replace);
+          inf.runways = [geo.runway, ...rws].map((r) => r.map((v, i) => (i < 4 ? Math.round(v * 1e5) / 1e5 : v)));
+        }
+        if (p.kind === 'terminal') inf.terminal = (inf.terminal || 0) + 1;
+        if (p.kind === 'airport') inf.runways = [this.plannedRunway({ code: p.code, kind: 'runway', len: A.newAirportRunway }).runway];
+        if (p.kind === 'airport') airportByCode[p.code].open = true;
+        inf.invested = (inf.invested || 0) + p.full;
+        delete catchmentCache[p.code];
+        this.log(`${airportByCode[p.code].name}: ${p.label} completed.`, 'good');
+      }
+      s.projects = s.projects.filter((x) => s.time < x.done);
+      this.dirty = true;
+    },
+
+    // Build a brand-new airfield; it opens after construction and is 100% yours.
+    buildAirport(lat, lon) {
+      const s = this.state;
+      const near = D.airports.find((a) => !a.factory && distanceKm(a, { lat, lon }) < A.newAirportMinKm);
+      if (near) return `Too close to ${near.name} (${near.code}) – keep ${A.newAirportMinKm} km away.`;
+      if (s.money < A.newAirportCost) return `Not enough money (${fmtMoney(A.newAirportCost)} needed).`;
+      let town = null;
+      for (const t of D.towns) {
+        if (Math.abs(t.lat - lat) > 2) continue;
+        if (!town || distanceKm(t, { lat, lon }) < distanceKm(town, { lat, lon })) town = t;
+      }
+      const L = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+      let code;
+      do code = 'X' + L[Math.floor(Math.random() * 26)] + L[Math.floor(Math.random() * 26)];
+      while (airportByCode[code]);
+      const name = `${town ? town.name : s.company} ${s.company.split(' ')[0]} Field`;
+      const a = { code, name, city: town ? town.name : name, country: town ? town.country : '',
+        lat: Math.round(lat * 1e4) / 1e4, lon: Math.round(lon * 1e4) / 1e4, size: 1, built: true, open: false };
+      s.money -= A.newAirportCost;
+      s.built.push(a);
+      this.registerBuilt();
+      this.infraOf(code).stake = 100;
+      s.projects.push({ code, kind: 'airport', label: 'New airfield with a 1200 m runway', cost: A.newAirportCost,
+        full: A.newAirportCost, start: s.time, done: s.time + A.newAirportWeeks * 7 * DAY });
+      this.log(`Construction of ${name} (${code}) started for ${fmtMoney(A.newAirportCost)} – opens in ` +
+        `${A.newAirportWeeks} weeks.`, 'cost');
+      this.dirty = true;
+      return code;
     },
 
     // Rough forecast for a schedule loop (first flight of the day, no randomness).

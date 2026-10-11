@@ -16,13 +16,15 @@ FG.config = {
     center: [49, 10],
     zoom: 5,
     minZoom: 3,
+    maxZoom: 17,            // runways are drawn from runwayZoom on
+    runwayZoom: 11,
     bounds: [[25, -40], [75, 50]],
     labelZoom: 10,          // airport code shown from zoom (labelZoom - size); own slots always
   },
 
   // Demand model
   catchmentRadiusKm: 150,   // towns within this radius feed an airport
-  demandFactor: 0.00004,    // daily pax per direction = factor * sqrt(catchA * catchB) * distanceFactor
+  demandFactor: 0.000028,   // daily pax per direction = factor * sqrt(catchA * catchB) * distanceFactor
   ticket: {
     base: 60, perKm: 0.11,    // standard fare = base + perKm * distance
     elasticity: 1.5,          // demand = standard demand * priceFactor ^ -elasticity
@@ -56,6 +58,30 @@ FG.config = {
     registrationPrefix: 'HB-',
     pilotSalary: 4000,        // per week
     cabinSalary: 1500,
+  },
+
+  // Airports as investments: shares, dividends and construction projects
+  airports: {
+    paxPerHead: [0, 0.3, 1, 2, 3, 4], // passengers per year per catchment inhabitant, by size
+    minorFactor: 0.3,         // airfields without an IATA code (size 1) draw fewer passengers
+    profitPerPax: 4,          // airport operating profit per passenger
+    peRatio: 2,               // value = yearly profit * this + share of what was invested (low, so dividends matter)
+    investedValue: 0.7,
+    payout: 0.8,              // share of weekly profit paid out as dividend
+    shareStep: 5,             // percent bought or sold per click
+    buyPremium: 1.05,
+    sellDiscount: 0.95,
+    boardStake: 25,           // stake needed to order construction
+    majorityStake: 50,        // from here you pay no weekly slot fee at the airport
+    // Construction. Costs in CHF, durations in weeks.
+    runwayLengths: [1200, 1800, 2500, 3200, 4000],
+    runwayCost: { base: 2000000, perM: 4000 }, runwayWeeks: { base: 4, perKm: 2 },
+    extendBy: 500, extendCost: 3000000, extendWeeks: 6, maxRunwayM: 4500,
+    terminalCost: [0, 0, 10000000, 30000000, 80000000, 200000000], // by new size
+    terminalWeeks: [0, 0, 8, 12, 20, 30],
+    terminalRunway: [0, 0, 1200, 1800, 2500, 3000], // longest paved runway needed for that size
+    terminalDemand: 0.25,     // each terminal expansion adds this much passenger demand
+    newAirportCost: 15000000, newAirportWeeks: 12, newAirportRunway: 1200, newAirportMinKm: 8,
   },
 
   bankruptcyLimit: -500000,
