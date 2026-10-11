@@ -229,9 +229,9 @@
   }
 
   // ---------- taxiways ----------
-  // Every runway has a parallel taxiway on the apron's side, joined to it at both ends and where landing
-  // planes leave it, and to the apron taxi lane at the apron's exits. Planes taxi along these, and the
-  // maps draw them (taxiwaysOf).
+  // Every runway has a parallel taxiway on the apron's side, joined to it at both ends and (long runways by
+  // fast exits at 30°) where landing planes leave it, and to the apron taxi lane at the apron's exits. Planes
+  // taxi along these, and the maps draw them (taxiwaysOf).
   // A point relative to a runway { thr, hdg }: metres along it from the threshold and across (+ = right).
   function rwyCoords(rwy, p) {
     const kx = 111320 * Math.cos(toRad(rwy.thr[0]));
@@ -247,6 +247,9 @@
     const uy = Math.cos(toRad(rwy.hdg));
     return [rwy.thr[0] + (along * uy - across * ux) / 111320, rwy.thr[1] + (along * ux + across * uy) / kx];
   }
+  // How far along a runway its fast exit runs before it meets the parallel taxiway `off` metres away: runways
+  // from 1800 m have exits at 30° to them where landing planes leave, shorter ones are left at a right angle.
+  const exitRun = (len, off) => (len >= 1800 ? Math.abs(off) / Math.tan(toRad(30)) : 0);
   // Signed distance of a runway's parallel taxiway from its centre line.
   function taxiwayOffset(rwy, ref) {
     const across = rwyCoords(rwy, ref).across;
@@ -263,7 +266,9 @@
     const exit = inside[inside.length - 1];
     const off = taxiwayOffset(rwy, ap.ref);
     const a = Math.min(rwy.len, Math.max(0, rwyCoords(rwy, exit).along));
-    return [...inside, rwyPoint(rwy, a, off), rwyPoint(rwy, alongM, off)];
+    // (a landing plane leaves a long runway by its fast exit, which meets the taxiway further on)
+    const run = alongM > 0 ? exitRun(rwy.len, off) : 0;
+    return [...inside, rwyPoint(rwy, a, off), rwyPoint(rwy, Math.min(rwy.len, alongM + run), off)];
   }
   // All taxiway centre lines of an airport, for drawing: [[lat, lon], [lat, lon]] each.
   function taxiwaysOf(code) {
@@ -276,7 +281,9 @@
       const off = taxiwayOffset(rwy, ap.ref);
       lines.push([rwyPoint(rwy, 0, off), rwyPoint(rwy, len, off)]);
       const leave = Math.min(len * 0.65, 2200); // where a landing plane leaves the runway, from either end
-      for (const a of [0, len, leave, len - leave]) lines.push([rwyPoint(rwy, a, off), rwyPoint(rwy, a, 0)]);
+      const run = exitRun(len, off);
+      for (const a of [0, len]) lines.push([rwyPoint(rwy, a, off), rwyPoint(rwy, a, 0)]);
+      lines.push([rwyPoint(rwy, leave, 0), rwyPoint(rwy, Math.min(len, leave + run), off)], [rwyPoint(rwy, len - leave, 0), rwyPoint(rwy, Math.max(0, len - leave - run), off)]);
       for (const e of ap.exits) {
         lines.push([e, rwyPoint(rwy, Math.min(len, Math.max(0, rwyCoords(rwy, e).along)), off)]);
       }
@@ -875,8 +882,10 @@
       const off = taxiwayOffset(rwy, ref);
       const leave = Math.min(len * 0.65, 2200);
       const feet = links.map((e) => Math.min(len, Math.max(0, rwyCoords(rwy, e).along)));
-      taxiways.push([...new Set([0, len, leave, len - leave, ...feet])].sort((x, y) => x - y).map((x) => rwyPoint(rwy, x, off)));
-      for (const x of [0, len, leave, len - leave]) taxiways.push([rwyPoint(rwy, x, off), rwyPoint(rwy, x, 0)]);
+      const outs = [Math.min(len, leave + exitRun(len, off)), Math.max(0, len - leave - exitRun(len, off))]; // where the exits meet it
+      taxiways.push([...new Set([0, len, ...outs, ...feet])].sort((x, y) => x - y).map((x) => rwyPoint(rwy, x, off)));
+      for (const x of [0, len]) taxiways.push([rwyPoint(rwy, x, off), rwyPoint(rwy, x, 0)]);
+      taxiways.push([rwyPoint(rwy, leave, 0), rwyPoint(rwy, outs[0], off)], [rwyPoint(rwy, len - leave, 0), rwyPoint(rwy, outs[1], off)]);
       links.forEach((e, i) => taxiways.push([e, rwyPoint(rwy, feet[i], off)]));
     }
     const ap = realApron(code, size, {

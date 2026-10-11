@@ -111,6 +111,10 @@ Airports in 3D: the 3D view also draws the runways (from zoom 10), a taxiway par
 links to the runway ends, the runway exits and the apron, and the buildings: the terminal in one of five
 layouts per airport, a control tower and hangars that grow with the airport's size, so a terminal expansion
 shows. Planes taxi along these taxiways (`G.taxiwaysOf(code)` has the lines, `ap.buildings` the buildings).
+Paved runways carry their paint from zoom 14: side stripes, centre line, threshold stripes, the two numbers,
+aiming points and touchdown zone bars (fewer on short and narrow runways). Taxiways have shoulders, a yellow
+centre line and holding bars before each runway; runways from 1800 m have fast exits at 30° where landing
+planes leave them.
 
 Real layouts: the airports listed in `js/data/layouts.js` have their real aprons, terminals, hangars, towers,
 taxiways and stands (`js/data/layouts/<CODE>.json`, loaded when the airport is first needed, see

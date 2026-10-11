@@ -299,6 +299,76 @@ function basePlate(pts, margin = 120) {
   return hull(ring);
 }
 
+// A paved runway r = [lat, lon, lat, lon, width] in metres: its length and width, a point `along` it from its
+// first end and `across` to the right, and the other way round.
+function runwayFrame(r) {
+  const kx = 111320 * Math.cos(r[0] * DEG);
+  const dx = (r[3] - r[1]) * kx;
+  const dy = (r[2] - r[0]) * 111320;
+  const len = Math.hypot(dx, dy) || 1;
+  const ux = dx / len, uy = dy / len;
+  return {
+    len, width: Math.max(18, r[4] || 30), hdg: (Math.atan2(dx, dy) / DEG + 360) % 360,
+    at: (along, across) => [r[0] + (uy * along - ux * across) / 111320, r[1] + (ux * along + uy * across) / kx],
+    of: (p) => { const x = (p[1] - r[1]) * kx, y = (p[0] - r[0]) * 111320; return [x * ux + y * uy, x * uy - y * ux]; },
+  };
+}
+
+// The white paint of a paved runway, as rectangles: side stripes, the dashed centre line and, from both ends,
+// the threshold stripes, the aiming point and the touchdown zone bars (fewer on short and narrow runways).
+// And its two numbers, each read from its own end.
+function runwayPaint(f) {
+  const { len, width: W } = f;
+  const polys = [];
+  const rect = (a0, a1, c, w) => polys.push([f.at(a0, c - w / 2), f.at(a1, c - w / 2), f.at(a1, c + w / 2), f.at(a0, c + w / 2)]);
+  for (const s of [-1, 1]) rect(0, len, s * (W / 2 - 1), 1);
+  for (let x = 80; x + 30 <= len - 80; x += 50) rect(x, x + 30, 0, 1.2);
+  const n = W >= 45 ? 12 : W >= 30 ? 8 : W >= 23 ? 6 : 4; // threshold stripes
+  const sw = (W / 2 - 0.9) / n;
+  const aim = len >= 2400 ? 400 : 300;
+  const inner = W * 0.2; // the aiming point and the touchdown bars begin this far from the centre line
+  for (const end of [0, 1]) {
+    const X = (x) => (end ? len - x : x);
+    for (let i = 0; i < n / 2; i++) for (const s of [-1, 1]) rect(X(6), X(36), s * sw * (1.5 + 2 * i), sw);
+    if (len >= 1200) {
+      const aw = W >= 45 ? 9 : W * 0.18;
+      for (const s of [-1, 1]) rect(X(aim), X(aim + (len >= 2400 ? 60 : 45)), s * (inner + aw / 2), aw);
+    }
+    if (len < 1800 || W < 30) continue;
+    for (const [x, bars] of [[150, 3], [300, 3], [450, 2], [600, 2], [750, 1], [900, 1]]) {
+      if (Math.abs(x - aim) < 80) continue;
+      for (let i = 0; i < bars; i++) for (const s of [-1, 1]) rect(X(x), X(x + 22.5), s * (inner + 0.9 + i * 3.3), 1.8);
+    }
+  }
+  const num = (h) => String(Math.round(h / 10) % 36 || 36).padStart(2, '0');
+  return {
+    polys,
+    numbers: len < 400 ? [] : [{ at: f.at(50, 0), text: num(f.hdg), rot: f.hdg }, { at: f.at(len - 50, 0), text: num(f.hdg + 180), rot: (f.hdg + 180) % 360 }],
+  };
+}
+
+// Holding positions: where the taxiway stretch p -> q comes up to the runway, two yellow bars across it,
+// `width` metres long (as rectangles).
+function holdBars(f, p, q, width) {
+  const hold = f.width >= 45 ? 90 : f.width >= 30 ? 60 : 40; // metres from the runway centre line
+  const c = f.of(p);
+  const d = f.of(q);
+  const bars = [];
+  for (const s of [-1, 1]) {
+    if ((c[1] - s * hold) * (d[1] - s * hold) >= 0) continue; // does not cross the line
+    const t = (s * hold - c[1]) / (d[1] - c[1]);
+    const along = c[0] + t * (d[0] - c[0]);
+    if (along < -30 || along > f.len + 30) continue;
+    const m = [p[0] + t * (q[0] - p[0]), p[1] + t * (q[1] - p[1])];
+    const away = c[1] * s > d[1] * s ? p : q; // the end of the stretch that is further from the runway
+    const kx = 111320 * Math.cos(m[0] * DEG);
+    const dist = Math.hypot((away[1] - m[1]) * kx, (away[0] - m[0]) * 111320) || 1;
+    const step = (k) => [m[0] + ((away[0] - m[0]) * k) / dist, m[1] + ((away[1] - m[1]) * k) / dist];
+    bars.push(strip(step(0), step(0.9), width), strip(step(2.2), step(3.1), width));
+  }
+  return bars;
+}
+
 function gateFeatures(list, gates) {
   const feats = [];
   const ring = (pts) => { const r = pts.map(([lat, lon]) => [lon, lat]); r.push(r[0]); return [r]; };
@@ -307,12 +377,22 @@ function gateFeatures(list, gates) {
   const path = (pts, properties) => feats.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: line(pts) }, properties });
   for (const a of list) {
     const platePts = [[a.lat, a.lon]];
+    const paved = []; // frames of the paved runways
     for (const r of G.airportRunways(a.code)) {
       const ends = [[r[0], r[1]], [r[2], r[3]]];
       const rw = strip(ends[0], ends[1], Math.max(18, r[4] || 30));
       poly(rw, { kind: 'runway', paved: r[5] ? 1 : 0 });
       platePts.push(...strip(ends[0], ends[1], Math.max(18, r[4] || 30) + 120, 60));
-      if (r[5]) path(ends, { kind: 'rwline' });
+      if (!r[5] || !gates) continue;
+      path(ends, { kind: 'rwline' }); // from afar; close up the paint itself
+      const f = runwayFrame(r);
+      paved.push(f);
+      const paint = runwayPaint(f);
+      for (const p of paint.polys) poly(p, { kind: 'rwpaint' });
+      const size = metresWidth(f.width >= 45 ? 15 : f.width / 3, a.lat); // height of the numbers
+      for (const n of paint.numbers) {
+        feats.push({ type: 'Feature', geometry: { type: 'Point', coordinates: [n.at[1], n.at[0]] }, properties: { kind: 'rwnum', name: n.text, rot: n.rot, s13: size.w10 * 8, s19: size.w10 * 512 } });
+      }
     }
     // Developer tools: where construction at the selected airport would go (G.expansionPreview).
     if (FG.devPreview && FG.ui && FG.ui.selectedAirport === a.code) {
@@ -333,11 +413,16 @@ function gateFeatures(list, gates) {
     }
     const big = G.airportSize(a.code) >= 3;
     // Taxiways as wide lines along every bend, with round joints (not one box per line, whose corners stuck out).
-    const tww = metresWidth(big ? 23 : 15, a.lat);
+    const width = big ? 23 : 15;
+    const tww = metresWidth(width, a.lat);
+    const edge = metresWidth(width + (big ? 14 : 7), a.lat); // with its shoulders
     for (const tw of G.taxiwaysOf(a.code)) {
-      path(tw, { kind: 'taxiway', ...tww });
+      path(tw, { kind: 'taxiway', ...tww, e10: edge.w10, e22: edge.w22 });
       path(tw, { kind: 'twline' });
       platePts.push(...tw);
+      for (const f of paved) {
+        for (let i = 1; i < tw.length; i++) for (const bar of holdBars(f, tw[i - 1], tw[i], width * 0.85)) poly(bar, { kind: 'hold' });
+      }
     }
     const ap = G.apronOf(a.code);
     for (const r of ap.aprons || [ap.apron]) { poly(r, { kind: 'apron' }); platePts.push(...r); }
@@ -524,6 +609,9 @@ function transformStyle(_prev, style) {
   style.layers.push(
     { id: 'fg-plate', type: 'fill', source: 'fg-gates', minzoom: RUNWAY_MINZOOM, filter: kind('plate'),
       paint: { 'fill-color': '#3f5f2c', 'fill-opacity': ['interpolate', ['linear'], ['zoom'], RUNWAY_MINZOOM, 0, RUNWAY_MINZOOM + 1, 1] } },
+    { id: 'fg-taxiway-shoulders', type: 'line', source: 'fg-gates', minzoom: 13, filter: kind('taxiway'),
+      layout: { 'line-join': 'round', 'line-cap': 'round' },
+      paint: { 'line-color': '#5f6670', 'line-width': ['interpolate', ['exponential', 2], ['zoom'], 10, ['get', 'e10'], 22, ['get', 'e22']] } },
     { id: 'fg-taxiways', type: 'line', source: 'fg-gates', minzoom: GATE_MINZOOM, filter: kind('taxiway'),
       layout: { 'line-join': 'round', 'line-cap': 'round' },
       paint: { 'line-color': '#4a515c', 'line-width': ['interpolate', ['exponential', 2], ['zoom'], 10, ['get', 'w10'], 22, ['get', 'w22']] } },
@@ -532,9 +620,13 @@ function transformStyle(_prev, style) {
     { id: 'fg-apron', type: 'fill', source: 'fg-gates', minzoom: GATE_MINZOOM, filter: kind('apron'),
       paint: { 'fill-color': '#3a4049', 'fill-opacity': 0.92 } },
     { id: 'fg-taxi-lines', type: 'line', source: 'fg-gates', minzoom: 14, filter: kind('twline'),
-      paint: { 'line-color': '#e3b70f', 'line-width': 1 } },
-    { id: 'fg-runway-lines', type: 'line', source: 'fg-gates', minzoom: 12, filter: kind('rwline'),
+      layout: { 'line-join': 'round', 'line-cap': 'round' },
+      paint: { 'line-color': '#e3b70f', 'line-width': ['interpolate', ['linear'], ['zoom'], 14, 0.8, 17, 1.6, 19, 3] } },
+    { id: 'fg-runway-lines', type: 'line', source: 'fg-gates', minzoom: 12, maxzoom: 14, filter: kind('rwline'),
       paint: { 'line-color': '#f3f4f6', 'line-width': ['interpolate', ['linear'], ['zoom'], 12, 0.6, 16, 2], 'line-dasharray': [6, 5] } },
+    { id: 'fg-runway-paint', type: 'fill', source: 'fg-gates', minzoom: 14, filter: kind('rwpaint'),
+      paint: { 'fill-color': '#eef0f3', 'fill-opacity': ['interpolate', ['linear'], ['zoom'], 14, 0.75, 16, 0.95] } },
+    { id: 'fg-holds', type: 'fill', source: 'fg-gates', minzoom: 15, filter: kind('hold'), paint: { 'fill-color': '#f2c40f' } },
     { id: 'fg-paint', type: 'line', source: 'fg-gates', minzoom: 15, filter: kind('paint'),
       paint: { 'line-color': '#e5e7eb', 'line-width': 1, 'line-opacity': 0.8 } },
     { id: 'fg-stands', type: 'line', source: 'fg-gates', minzoom: 14, filter: ['in', ['get', 'kind'], ['literal', ['lead', 'stop']]],
@@ -554,6 +646,10 @@ function transformStyle(_prev, style) {
     { id: 'fg-preview-labels', type: 'symbol', source: 'fg-gates', minzoom: RUNWAY_MINZOOM, filter: kind('pvlabel'),
       layout: { 'text-field': ['get', 'name'], 'text-font': ['Noto Sans Bold'], 'text-size': 11, 'text-allow-overlap': true },
       paint: { 'text-color': '#a5f3fc', 'text-halo-color': '#083344', 'text-halo-width': 1.4 } },
+    { id: 'fg-runway-numbers', type: 'symbol', source: 'fg-gates', minzoom: 14, filter: kind('rwnum'),
+      layout: { 'text-field': ['get', 'name'], 'text-font': ['Noto Sans Bold'], 'text-rotate': ['get', 'rot'], 'text-rotation-alignment': 'map', 'text-pitch-alignment': 'map',
+        'text-size': ['interpolate', ['exponential', 2], ['zoom'], 13, ['get', 's13'], 19, ['get', 's19']], 'text-allow-overlap': true, 'text-ignore-placement': true },
+      paint: { 'text-color': '#eef0f3' } },
     { id: 'fg-gate-labels', type: 'symbol', source: 'fg-gates', minzoom: 16, filter: kind('label'),
       layout: { 'text-field': ['get', 'name'], 'text-font': ['Noto Sans Bold'], 'text-size': 11, 'text-allow-overlap': true },
       paint: { 'text-color': '#facc15', 'text-halo-color': '#000', 'text-halo-width': 1.2 } },
