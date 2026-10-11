@@ -134,6 +134,66 @@
     render();
   }
 
+  // The terminal concepts apronOf can lay out, and four example airports in the Sahara (Gilf Kebir) that
+  // are alike but for the concept, to compare them side by side.
+  const STYLES = [['', 'Auto'], ['linear', 'Linear'], ['pier', 'Pier'], ['satellite', 'Satellite'], ['copy', 'Copy of a real one']];
+  const EXAMPLES = [
+    { code: 'XLI', style: 'linear', lat: 23.045 },
+    { code: 'XPI', style: 'pier', lat: 23.0 },
+    { code: 'XSA', style: 'satellite', lat: 22.955 },
+    { code: 'XRE', style: 'copy', lat: 22.91 },
+  ];
+  const isExample = (code) => EXAMPLES.some((e) => e.code === code);
+
+  function relayout() { // the airport layouts changed
+    if (FG.layouts) FG.layouts.version++;
+    if (FG.view3d) FG.view3d.gatesDirty = true;
+  }
+
+  function setStyle(style) {
+    const code = selectedAirport();
+    if (!code || !G.airportByCode[code]) { note('Select an airport first.', true); return; }
+    const real = G.apronOf(code).real;
+    if (real && !real.copy) { note(`${code} has its real layout.`, true); return; }
+    if (style) G.infraOf(code).style = style;
+    else delete G.infraOf(code).style;
+    relayout();
+    done(`${code}: ${style || 'automatic'} terminal.`);
+  }
+
+  function exampleAirports() {
+    const s = G.state;
+    if (s.built.some((a) => isExample(a.code))) {
+      if (EXAMPLES.some((e) => JSON.stringify(s.planes).includes(`"${e.code}"`))) {
+        note('Planes fly to the example airports: move them and clear their timetables first.', true);
+        return;
+      }
+      s.built = s.built.filter((a) => !isExample(a.code));
+      for (const e of EXAMPLES) { delete s.infra[e.code]; delete s.slots[e.code]; }
+      G.registerBuilt();
+      if (isExample(dv.at)) dv.at = null;
+      if (FG.ui && isExample(FG.ui.selectedAirport)) FG.ui.clearSelection();
+      relayout();
+      done('removed the example airports in the desert.');
+      return;
+    }
+    if (EXAMPLES.some((e) => G.airportByCode[e.code])) { note('An airport already has one of the example codes.', true); return; }
+    for (const e of EXAMPLES) {
+      const name = `Desert ${e.style[0].toUpperCase()}${e.style.slice(1)} Terminal`;
+      s.built.push({ code: e.code, name, city: 'Gilf Kebir', country: 'EG', lat: e.lat, lon: 26.5, size: 4, built: true, open: true });
+    }
+    G.registerBuilt();
+    for (const e of EXAMPLES) {
+      const inf = G.infraOf(e.code);
+      inf.stake = 100;
+      inf.style = e.style;
+      inf.runways = [G.plannedRunway({ code: e.code, kind: 'runway', len: 3000 }).runway.map((v, i) => (i < 4 ? Math.round(v * 1e5) / 1e5 : v))];
+    }
+    relayout();
+    if (FG.ui && FG.ui.showAirport) FG.ui.showAirport('XPI');
+    done('built four example airports in the Sahara: linear (XLI), pier (XPI), satellite (XSA), copy of a real terminal (XRE).');
+  }
+
   function finishProjects() {
     const s = G.state;
     if (!s.projects.length) { note('No construction under way.'); return; }
@@ -234,6 +294,10 @@
           <button data-dev="finish"${s.projects.length ? '' : ' disabled'}>Finish all construction (${s.projects.length})</button>
           <button data-dev="preview" title="Shows on the map where new runways, taxiways, stands and buildings would go at the selected airport">${FG.devPreview ? 'Hide' : 'Show'} expansion preview</button>
         </div>
+        <div class="dev-row">
+          <select id="dev-style" title="Terminal concept of the selected airport (where the game lays it out)"${ap ? '' : ' disabled'}>${options(STYLES.map(([v, label]) => [v, `Terminal: ${label}`]), (ap && s.infra[ap] && s.infra[ap].style) || '')}</select>
+          <button data-dev="examples" title="Four airports in the Sahara that differ only in the terminal: linear, pier, satellite, copy of a real one">${s.built.some((a) => isExample(a.code)) ? 'Remove' : 'Build'} desert examples</button>
+        </div>
       </section>
       <section><h4>Events <span class="muted">${G.activeEffects().length} active</span></h4>
         <div class="dev-row"><select id="dev-event">${options(D.worldEvents.map((e) => [e.id, e.id]), dv.event)}</select>
@@ -265,6 +329,7 @@
       case 'airport': airportAction(d.kind); break;
       case 'finish': finishProjects(); break;
       case 'preview': togglePreview(); break;
+      case 'examples': exampleAirports(); break;
       case 'event': triggerEvent(); break;
       case 'clearEffects': clearEffects(); break;
       case 'skip': skip(Number(d.min), d.label); break;
@@ -280,6 +345,7 @@
     if (t.id === 'dev-at') dv.at = t.value;
     if (t.id === 'dev-own') dv.ownership = t.value;
     if (t.id === 'dev-event') dv.event = t.value;
+    if (t.id === 'dev-style') setStyle(t.value);
     if (t.id === 'dev-count') dv.count = Math.max(1, Math.min(20, Math.round(Number(t.value)) || 1));
   }
 

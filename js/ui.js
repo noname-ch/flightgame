@@ -436,7 +436,7 @@
       if (ui.gateSig) { ui.gateLayer.clearLayers(); ui.gateSig = ''; }
       return;
     }
-    const view = ui.map.getBounds().pad(0.3);
+    const view = ui.map.getBounds().pad(1); // an apron can lie up to 3 km from the airport's reference point
     const list = D.airports.filter((a) => !a.factory && view.contains([a.lat, a.lon]));
     const sig = `${z}|${FG.layouts ? FG.layouts.version : 0}|${FG.devPreview ? ui.selectedAirport : ''}|${list.map((a) => `${a.code}:${G.airportSize(a.code)}:${G.airportRunways(a.code).length}`).join(',')}`;
     if (sig === ui.gateSig) return; // redrawn only when the view or an airport changes
@@ -2227,6 +2227,13 @@
       get time() { return nowMinutes(); }, // fractional game minutes
       selectPlane,
       selectAirport(code) { ui.selectedAirport = code; G.dirty = true; },
+      showAirport(code) { // select it and bring it into view, close enough for its gates
+        const a = G.airportByCode[code];
+        ui.selectedAirport = code;
+        ui.map.setView([a.lat, a.lon], 13);
+        if (FG.view3d && FG.view3d.map) FG.view3d.map.jumpTo({ center: [a.lon, a.lat], zoom: 12.6 });
+        G.dirty = true;
+      },
       clearSelection() { ui.selectedAirport = null; ui.selectedPlane = null; G.dirty = true; },
       follow,
       get buildMode() { return ui.buildMode; },
