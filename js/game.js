@@ -151,6 +151,236 @@
     return Math.round((block / 60) * D.aircraft[type].costPerBlockHour * costMult + landingFee(to) + pax * C.paxFee);
   }
 
+  // ---------- flight tracks: runways, turns, climb and descent ----------
+  // Only for showing flights: planes take off into the wind, turn onto the great circle, cruise
+  // at a typical flight level for their type and join a straight-in final to the landing runway.
+  // The simulation itself still only uses the departure and arrival times.
+  const TAXI_OUT = 10;   // minutes of the block time spent taxiing to the runway
+  const TAXI_IN = 5;
+  const ROLL_OUT = 0.7;  // takeoff roll, minutes
+  const ROLL_IN = 0.9;   // landing roll
+  const FINAL_KM = 15;   // final approach fix before the threshold (~2700 ft on a 3° glide)
+  const DESCENT_KM_PER_KFT = 5.6; // 3° descent path
+  const CRUISE_FT = { JU52: 6000, 'DC-3': 9000, CONCORDE: 58000, 'DHC6-400': 10000, DO228NG: 12000 };
+
+  function cruiseFt(type) {
+    const ac = D.aircraft[type];
+    return ac.cruiseFt || CRUISE_FT[type] ||
+      { turboprop: ac.seats <= 19 ? 14000 : 25000, regional: 36000, narrowbody: 37000, widebody: 39000 }[ac.category] || 30000;
+  }
+
+  // Small deterministic hash -> [0, 1).
+  function hash01(...xs) {
+    let h = 2166136261;
+    for (const x of xs) h = Math.imul(h ^ (x | 0), 16777619) ^ (h >>> 13);
+    return ((h >>> 0) % 100000) / 100000;
+  }
+
+  // Wind direction (where it blows from) for a region and day: mostly westerly, sometimes east.
+  // Neighbouring airports share it, so they use the same runway direction.
+  function windFrom(lat, lon, day) {
+    const cell = [Math.floor(lat / 4), Math.floor(lon / 4), day];
+    const r = hash01(...cell, 1);
+    const easterly = hash01(...cell, 2) < 0.2;
+    return ((easterly ? 70 : 250) + (r - 0.5) * 120 + 360) % 360;
+  }
+
+  // Runway end to use at an airport: into the wind, long enough for the type if possible.
+  function pickRunway(code, day, needM) {
+    const a = airportByCode[code];
+    const wind = windFrom(a.lat, a.lon, day);
+    const ends = [];
+    for (const r of airportRunways(code)) {
+      const len = runwayLength(r);
+      const h = bearing({ lat: r[0], lon: r[1] }, { lat: r[2], lon: r[3] });
+      ends.push({ thr: [r[0], r[1]], end: [r[2], r[3]], hdg: h, len });
+      ends.push({ thr: [r[2], r[3]], end: [r[0], r[1]], hdg: (h + 180) % 360, len });
+    }
+    if (!ends.length) { // no data: an imaginary 2.5 km runway into the wind
+      const t = offsetPoint(a.lat, a.lon, wind + 180, 1250);
+      const e = offsetPoint(a.lat, a.lon, wind, 1250);
+      return { thr: t, end: e, hdg: wind, len: 2500 };
+    }
+    const long = ends.filter((e) => e.len >= needM);
+    const pool = long.length ? long : ends;
+    const off = (e) => Math.abs(((e.hdg - wind + 540) % 360) - 180);
+    // Within 20° the longer runway wins.
+    return pool.reduce((best, e) => (off(e) < off(best) - 20 || (off(e) < off(best) + 20 && e.len > best.len) ? e : best));
+  }
+
+  // Turn from pos/heading with radius r (m) towards target until pointing at it. Returns arc points.
+  function turnToward(pos, hdg, target, r) {
+    const pts = [];
+    let p = pos;
+    let h = hdg;
+    for (let i = 0; i < 40; i++) {
+      const diff = ((bearing({ lat: p[0], lon: p[1] }, target) - h + 540) % 360) - 180;
+      if (Math.abs(diff) < 4) break;
+      const step = Math.sign(diff) * Math.min(10, Math.abs(diff));
+      p = offsetPoint(p[0], p[1], h + step / 2, 2 * r * Math.sin(toRad(Math.abs(step)) / 2));
+      h += step;
+      pts.push(p);
+    }
+    return pts;
+  }
+
+  function buildTrack(type, f) {
+    const day = Math.floor(f.dep / DAY);
+    const A0 = airportByCode[f.from];
+    const B0 = airportByCode[f.to];
+    const ac = D.aircraft[type];
+    const need = runwayNeed(type).m;
+    const dep = pickRunway(f.from, day, need);
+    const arr = pickRunway(f.to, day, need);
+    const radius = ac.speedKmh < 450 ? 1800 : 3500; // turn radius at climb/approach speed
+    const P = (ll) => ({ lat: ll[0], lon: ll[1] });
+
+    const lift = offsetPoint(dep.thr[0], dep.thr[1], dep.hdg, Math.min(dep.len * 0.6, 2500));
+    const climbOut = offsetPoint(dep.end[0], dep.end[1], dep.hdg, ac.speedKmh < 450 ? 2500 : 5000);
+    const faf = offsetPoint(arr.thr[0], arr.thr[1], arr.hdg + 180, FINAL_KM * 1000);
+    const touch = offsetPoint(arr.thr[0], arr.thr[1], arr.hdg, 400);
+    const stop = offsetPoint(arr.thr[0], arr.thr[1], arr.hdg, Math.min(arr.len * 0.65, 2200));
+
+    const outTurn = turnToward(climbOut, dep.hdg, P(faf), radius);
+    const turnEnd = outTurn.length ? outTurn[outTurn.length - 1] : climbOut;
+    // The arrival turn is built backwards from the final approach fix.
+    const inTurn = turnToward(faf, arr.hdg + 180, P(turnEnd), radius).reverse();
+    const turnStart = inTurn.length ? inTurn[0] : faf;
+
+    const pts = [[A0.lat, A0.lon], dep.thr, lift, dep.end, climbOut, ...outTurn];
+    const cruise = distanceKm(P(turnEnd), P(turnStart));
+    const n = Math.max(1, Math.ceil(cruise / 25));
+    for (let i = 1; i < n; i++) pts.push(interpolate(P(turnEnd), P(turnStart), i / n));
+    pts.push(...inTurn, faf, arr.thr, touch, stop, [B0.lat, B0.lon]);
+    const idx = { thr: 1, lift: 2, touch: pts.length - 3, stop: pts.length - 2 };
+
+    // Cumulative distance (km).
+    const cum = [0];
+    for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + distanceKm(P(pts[i - 1]), P(pts[i])));
+    const sLift = cum[idx.lift];
+    const sTouch = cum[idx.touch];
+    const airborne = sTouch - sLift;
+
+    // Cruise level: type typical, lower on short hops; odd thousands eastbound, even westbound.
+    const climbRate = ac.category === 'turboprop' || ac.category === 'classic' ? 4.5 : 5.5; // km per 1000 ft
+    let cruiseAlt = cruiseFt(type);
+    const fit = airborne / ((climbRate + DESCENT_KM_PER_KFT) * cruiseAlt / 1000);
+    if (fit < 1) cruiseAlt *= fit;
+    let fl = Math.floor(cruiseAlt / 1000);
+    if (fl >= 5) {
+      const east = bearing(A0, B0) < 180;
+      if (fl % 2 !== (east ? 1 : 0)) fl -= 1;
+    }
+    cruiseAlt = Math.max(1000, fl * 1000);
+    const climbKm = climbRate * cruiseAlt / 1000;
+
+    const altAt = (sv) => {
+      const x = sv - sLift;
+      const y = sTouch - sv;
+      if (x <= 0 || y <= 0) return 0;
+      const climb = cruiseAlt * (1 - Math.pow(1 - Math.min(1, x / climbKm), 1.7));
+      return Math.max(0, Math.min(cruiseAlt, climb, (y / DESCENT_KM_PER_KFT) * 1000));
+    };
+
+    // Time table: taxi, roll, airborne (slow low, fast high), roll, taxi; scaled to the block time.
+    const total = f.arr - f.dep;
+    const ground = Math.min(total * 0.5, TAXI_OUT + TAXI_IN + ROLL_OUT + ROLL_IN);
+    const k = ground / (TAXI_OUT + TAXI_IN + ROLL_OUT + ROLL_IN);
+    const air = total - ground;
+    const steps = 200;
+    const raw = [0];
+    for (let i = 1; i <= steps; i++) {
+      const sm = sLift + airborne * (i - 0.5) / steps;
+      const v = ac.speedKmh * (0.35 + 0.65 * Math.pow(Math.min(1, altAt(sm) / Math.max(cruiseAlt, 10000)), 0.6));
+      raw.push(raw[i - 1] + (airborne / steps) / v);
+    }
+    const scale = air / raw[steps];
+    const segs = [ // [t0, t1, s0, s1, ease]
+      [0, TAXI_OUT * k, 0, cum[idx.thr], 'lin'],
+      [TAXI_OUT * k, (TAXI_OUT + ROLL_OUT) * k, cum[idx.thr], sLift, 'in'],
+    ];
+    const t0 = (TAXI_OUT + ROLL_OUT) * k;
+    const t1 = t0 + air;
+    segs.push([t1, t1 + ROLL_IN * k, sTouch, cum[idx.stop], 'out']);
+    segs.push([t1 + ROLL_IN * k, total, cum[idx.stop], cum[cum.length - 1], 'lin']);
+
+    return {
+      pts, cum, idx, cruiseAlt, depRunway: dep, arrRunway: arr, total,
+      altAt,
+      // Distance along the track (km) at minutes since departure.
+      sAt(t) {
+        if (t >= t0 && t <= t1) {
+          const u = (t - t0) / scale; // unscaled time
+          let lo = 0;
+          let hi = steps;
+          while (hi - lo > 1) { const m = (lo + hi) >> 1; if (raw[m] <= u) lo = m; else hi = m; }
+          const fr = (u - raw[lo]) / (raw[hi] - raw[lo] || 1);
+          return sLift + airborne * (lo + Math.min(1, Math.max(0, fr))) / steps;
+        }
+        for (const [a, b, s0, s1, ease] of segs) {
+          if (t < a || t > b) continue;
+          let u = b > a ? (t - a) / (b - a) : 1;
+          if (ease === 'in') u *= u;
+          if (ease === 'out') u = 1 - (1 - u) * (1 - u);
+          return s0 + (s1 - s0) * u;
+        }
+        return t < 0 ? 0 : cum[cum.length - 1];
+      },
+      // Position and heading at distance sv.
+      at(sv) {
+        let i = 1;
+        while (i < cum.length - 1 && cum[i] < sv) i++;
+        const a = pts[i - 1];
+        const b = pts[i];
+        const fr = cum[i] > cum[i - 1] ? Math.min(1, Math.max(0, (sv - cum[i - 1]) / (cum[i] - cum[i - 1]))) : 1;
+        const lat = a[0] + (b[0] - a[0]) * fr;
+        let dLon = b[1] - a[1];
+        if (dLon > 180) dLon -= 360;
+        if (dLon < -180) dLon += 360;
+        return { lat, lon: a[1] + dLon * fr, heading: bearing(P(a), P(b)) };
+      },
+    };
+  }
+
+  const trackCache = new Map();
+  function flightTrack(p) {
+    const f = p.flight;
+    if (!f) return null;
+    const key = `${p.id}|${f.dep}|${f.from}|${f.to}`;
+    let t = trackCache.get(key);
+    if (!t) {
+      if (trackCache.size > 300) trackCache.clear();
+      t = buildTrack(p.type, f);
+      trackCache.set(key, t);
+    }
+    return t;
+  }
+
+  // Where a flying plane is at time t (fractional minutes allowed), how high and how fast.
+  function flightState(p, t) {
+    const tr = flightTrack(p);
+    if (!tr) return null;
+    const f = p.flight;
+    const m = Math.min(tr.total, Math.max(0, t - f.dep));
+    const sv = tr.sAt(m);
+    const pos = tr.at(sv);
+    const alt = Math.round(tr.altAt(sv));
+    const speed = Math.round(Math.max(0, tr.sAt(Math.min(tr.total, m + 0.25)) - tr.sAt(Math.max(0, m - 0.25))) * 120);
+    const sLift = tr.cum[tr.idx.lift];
+    const sTouch = tr.cum[tr.idx.touch];
+    let phase;
+    if (sv < tr.cum[tr.idx.thr]) phase = 'taxi-out';
+    else if (sv < sLift) phase = 'takeoff';
+    else if (sv >= tr.cum[tr.idx.stop]) phase = 'taxi-in';
+    else if (sv >= sTouch) phase = 'landing';
+    else if (sTouch - sv < FINAL_KM + 1) phase = 'approach';
+    else if (alt >= tr.cruiseAlt - 50) phase = 'cruise';
+    else phase = sv - sLift < (sTouch - sLift) / 2 ? 'climb' : 'descent';
+    return { lat: pos.lat, lon: pos.lon, heading: pos.heading, altFt: alt, speedKmh: speed, phase,
+      cruiseFt: tr.cruiseAlt, depRunway: designatorOf(tr.depRunway.hdg), arrRunway: designatorOf(tr.arrRunway.hdg) };
+  }
+  const designatorOf = (h) => String(Math.round((((h % 360) + 360) % 360) / 10) || 36).padStart(2, '0');
+
   // ---------- aircraft market ----------
   const M = C.market;
   const priceNew = (type) => D.aircraft[type].price || D.aircraft[type].leasePerWeek * M.priceWeeks;
@@ -210,6 +440,7 @@
     ticketPrice, routeKey, blockMinutes, landingFee, slotUpfront, slotWeekly,
     priceNew, fitsAirport, fitsReason, crewFor, factoryOf,
     airportSize, airportRunways, runwayLength, longestRunway, runwayNeed, attraction,
+    flightTrack, flightState, cruiseFt, windFrom,
     fmtMoney, fmtTime, fmtClock, fmtDuration,
 
     newGame(mode = C.defaultMode) {

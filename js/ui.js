@@ -130,6 +130,7 @@
     <div><i class="line paused"></i>Schedule paused</div>
     <div><i class="line draft"></i>Schedule being edited</div>
     <div><i class="line ferry"></i>Ferry flight</div>
+    <div><i class="alt-scale"></i>Selected flight's track: ground → FL400</div>
     <div><i class="rw"></i>Runway (zoom in) · <i class="rw build"></i>under construction</div>
   </details>`;
 
@@ -493,6 +494,7 @@
         }).bindTooltip(`${p.id}: ${stops.join(' → ')} ↺`, { sticky: true })
           .on('click', () => selectPlane(p.id)).addTo(ui.routeLayer);
       }
+      if (selected && p.status === 'flying') drawTrack(p);
       if (p.flight && p.flight.kind === 'delivery') {
         const a = G.airportByCode[p.flight.from];
         const b = G.airportByCode[p.flight.to];
@@ -510,20 +512,80 @@
     }
   }
 
+  // Game time including the fraction of a minute, so planes glide instead of jumping.
+  const nowMinutes = () => G.state.time + (ui.paused ? 0 : ui.pendingMinutes);
+
+  // Flying planes follow their track (runway, climb, cruise, approach); parked ones sit at the airport.
   function planePosition(p) {
     if (p.status === 'flying') {
-      const f = p.flight;
-      const a = G.airportByCode[f.from];
-      const b = G.airportByCode[f.to];
-      const frac = Math.min(1, Math.max(0, (G.state.time - f.dep) / (f.arr - f.dep)));
-      const at = G.interpolate(a, b, Math.min(frac, 0.99)); // no heading at the destination itself
-      return { latlng: G.interpolate(a, b, frac), heading: G.bearing({ lat: at[0], lon: at[1] }, b) };
+      const st = G.flightState(p, nowMinutes());
+      return { latlng: [st.lat, st.lon], heading: st.heading, alt: st.altFt, ground: st.altFt <= 0, st };
     }
     const ap = G.airportByCode[p.location];
-    return { latlng: [ap.lat, ap.lon], heading: 0 };
+    return { latlng: [ap.lat, ap.lon], heading: 0, alt: 0, ground: true };
+  }
+
+  const PHASES = {
+    'taxi-out': 'taxiing to runway', takeoff: 'taking off', climb: 'climbing', cruise: 'cruising',
+    descent: 'descending', approach: 'on final', landing: 'landing', 'taxi-in': 'taxiing to the gate',
+  };
+  const fmtAlt = (ft) => (ft >= 10000 ? `FL${Math.round(ft / 100)}` : `${Math.round(ft / 100) * 100} ft`);
+
+  // "FL370 · 830 km/h · cruising" for a flying plane.
+  function flightText(p) {
+    const st = G.flightState(p, nowMinutes());
+    if (!st) return '';
+    if (st.phase === 'taxi-out') return `taxiing to runway ${st.depRunway}`;
+    if (st.phase === 'taxi-in' || st.phase === 'landing') return `${PHASES[st.phase]} · runway ${st.arrRunway}`;
+    if (st.phase === 'takeoff') return `taking off from runway ${st.depRunway} · ${st.speedKmh} km/h`;
+    const where = st.phase === 'approach' ? ` runway ${st.arrRunway}` : '';
+    return `${fmtAlt(st.altFt)} · ${st.speedKmh} km/h · ${PHASES[st.phase]}${where}`;
   }
 
   const planeTip = (p) => `<b>${p.id}</b> · ${planeStatus(p)}`;
+
+  // Altitude colour for tracks: orange near the ground, green mid-level, teal/violet at cruise.
+  const ALT_STOPS = [[0, [255, 149, 0]], [10000, [255, 204, 0]], [22000, [52, 199, 89]], [34000, [48, 176, 199]], [42000, [88, 86, 214]], [60000, [175, 82, 222]]];
+  function altColor(ft) {
+    let i = 1;
+    while (i < ALT_STOPS.length - 1 && ft > ALT_STOPS[i][0]) i++;
+    const [a0, c0] = ALT_STOPS[i - 1];
+    const [a1, c1] = ALT_STOPS[i];
+    const f = Math.min(1, Math.max(0, (ft - a0) / (a1 - a0)));
+    return `rgb(${c0.map((c, k) => Math.round(c + (c1[k] - c) * f)).join(',')})`;
+  }
+
+  // Full track of the selected plane's current flight, coloured by altitude.
+  function drawTrack(p) {
+    const tr = G.flightTrack(p);
+    if (!tr) return;
+    const band = (ft) => Math.round(ft / 2000);
+    let run = [];
+    let runBand = null;
+    const flush = () => {
+      if (run.length > 1) {
+        L.polyline(run, { pane: 'routes', interactive: false, color: altColor(runBand * 2000), weight: 3.5, opacity: 0.95 })
+          .addTo(ui.routeLayer);
+      }
+    };
+    let prevLon = null;
+    for (let i = 0; i < tr.pts.length; i++) {
+      const pt = tr.pts[i].slice();
+      if (prevLon != null) { // unwrap at ±180°
+        while (pt[1] - prevLon > 180) pt[1] -= 360;
+        while (pt[1] - prevLon < -180) pt[1] += 360;
+      }
+      prevLon = pt[1];
+      const b = band(tr.altAt(tr.cum[i]));
+      if (runBand !== null && b !== runBand) {
+        run.push(pt);
+        flush();
+        run = [run[run.length - 1]];
+      } else run.push(pt);
+      runBand = b;
+    }
+    flush();
+  }
 
   function refreshPlanes() {
     for (const p of G.state.planes) {
@@ -552,14 +614,21 @@
         ui.planeMarkers[p.id] = m;
       }
       m.setLatLng(pos.latlng);
+      if (p.status === 'flying' && m.isTooltipOpen()) m.setTooltipContent(planeTip(p));
       const el = m.getElement();
       if (el) {
         const glyph = el.querySelector('.plane');
         const flying = p.status === 'flying';
         // Parked planes line up above their airport so it stays clickable.
         const n = flying ? 0 : (parked[p.location] = (parked[p.location] || 0) + 1) - 1;
-        glyph.style.transform = flying ? `rotate(${pos.heading}deg)` : `translate(${n * 13}px, -15px) scale(0.75)`;
-        glyph.classList.toggle('grounded', !flying);
+        // Higher planes look a little bigger and cast their shadow further away.
+        const h = Math.min(1, pos.alt / 38000);
+        glyph.style.transform = flying
+          ? `rotate(${pos.heading}deg) scale(${pos.ground ? 0.7 : 0.8 + 0.25 * h})`
+          : `translate(${n * 13}px, -15px) scale(0.75)`;
+        const sh = flying && !pos.ground ? 1 + 7 * h : 1;
+        glyph.style.setProperty('--shadow', `drop-shadow(${sh * 0.7}px ${sh}px ${1 + sh * 0.4}px rgba(0, 0, 0, ${0.4 - 0.2 * h}))`);
+        glyph.classList.toggle('grounded', !flying || pos.ground);
         glyph.classList.toggle('selected', ui.selectedPlane === p.id);
       }
     }
@@ -769,7 +838,7 @@
     if (p.status === 'flying') {
       const verb = { ferry: 'Ferrying', delivery: 'Delivery flight' }[f.kind] || 'Flying';
       return `${verb} ${f.from} → ${f.to}, arrives ${G.fmtClock(f.arr)}` +
-        (f.kind === 'scheduled' ? ` · ${f.pax} pax` : '');
+        (f.kind === 'scheduled' ? ` · ${f.pax} pax` : '') + ` · ${flightText(p)}`;
     }
     if (p.status === 'turnaround' && p.repair) return `🔧 Grounded for repairs at ${p.location} until ${G.fmtTime(p.readyAt)}`;
     if (p.status === 'turnaround') return `Turnaround at ${p.location} until ${G.fmtClock(p.readyAt)}`;

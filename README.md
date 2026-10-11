@@ -46,6 +46,13 @@ Or serve it locally: `python3 -m http.server` and open http://localhost:8000.
    With **50%** your slot there is free. The **Airports** tab lists your stakes and building sites,
    and **builds new airports**: pick a site on the map, it opens after 12 weeks and is 100% yours.
 
+10. **Realistic flights**: planes taxi to the runway, take off into the day's wind (neighbouring
+    airports share it, mostly westerly), climb out, turn onto the great circle and cruise at a
+    typical level for their type (FL360–390 for jets, ~FL250 for turboprops, FL580 for Concorde;
+    lower on short hops, odd levels eastbound and even westbound). They then descend on a 3°
+    path and fly a 15 km straight-in final to the landing runway. Select a plane to see its
+    track coloured by altitude; its tooltip and card show flight level, speed and phase.
+
 Modes (chosen under **New game**): **Arcade** uses normal accident rates for every maker;
 **Realistic** gives Boeing aircraft a 1000% higher crash and door-panel rate.
 
