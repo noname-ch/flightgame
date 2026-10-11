@@ -54,9 +54,14 @@
   // ---------- Schedule ----------
   function scheduleTab() {
     const s = G.state;
-    let h = `<div class="panel"><h3>Day plan</h3>
-      <div class="muted">Every plane's day: flights in blue, time on the ground in grey (it holds one of your slots there).
-      Shaded = night curfew (no departures ${clock(C.curfew.end)}–${clock(C.curfew.start)}). Click a plane to plan its day.</div>
+    let h = `<div class="panel"><h3>Timetables</h3>
+      <ol class="howto">
+        <li><b>Click a plane</b> to plan its day.</li>
+        <li><b>Pick its airports</b>. You need a slot at each one, and the route loops back to the start.</li>
+        <li><b>Fill the day</b>, move flights with − / +, then <b>Save & fly</b>.</li>
+      </ol>
+      <div class="muted">Blue = flying · grey = on the ground (in one of your slots) · striped = night, no departures
+      ${clock(C.curfew.end)}–${clock(C.curfew.start)}.</div>
       <div class="timeline">${axis()}`;
     for (const p of s.planes) {
       const sch = p.schedule;
@@ -64,9 +69,8 @@
       const legs = editing && pl.draft ? pl.draft.legs : sch.legs || [];
       let bar;
       if (legs.length) bar = dayBlocks(p, legs, editing);
-      else if (sch.stops.length >= 2) bar = `<span class="tl-text">flies when ready: ${sch.stops.join(' → ')} ↺</span>`;
-      else bar = `<span class="tl-text">no schedule · at ${p.location}</span>`;
-      const state = !sch.legs && !editing ? '' : sch.active ? '<em class="pos">●</em>' : '<em class="muted">⏸</em>';
+      else bar = `<span class="tl-text">no timetable · parked at ${p.status === 'flying' && p.flight ? p.flight.to : p.location} · click to plan</span>`;
+      const state = !sch.legs && !editing ? '' : p.waitSlot ? '<em class="neg" title="Waiting for a free slot">⏳</em>' : sch.active ? '<em class="pos" title="Flying its timetable">●</em>' : '<em class="muted" title="Paused">⏸</em>';
       h += `<div class="tl-row${editing ? ' editing' : ''}" data-pl="edit" data-plane="${p.id}">
         <div class="tl-label"><span class="type-icon">${ctx.planeGlyph(p.type)}</span>${p.id} ${state}<small>${p.type}</small></div>
         <div class="tl-bar">${nightAndNow()}${bar}</div></div>`;
@@ -80,7 +84,8 @@
   function startDraft(p) {
     const sch = p.schedule;
     const legs = sch.legs ? sch.legs.map((l) => ({ ...l })) : [];
-    const stops = sch.legs ? loopOf(sch.legs) : sch.stops.length >= 2 ? sch.stops.slice() : [p.location];
+    const at = p.status === 'flying' && p.flight ? p.flight.to : p.location;
+    const stops = sch.legs ? loopOf(sch.legs) : G.ownsSlot(at) ? [at] : [];
     const first = legs.length ? legs[0].dep : C.curfew.start + 60;
     pl.draft = { stops, first, rounds: 0, legs };
     if (!legs.length && stops.length >= 2) rebuild(p);
@@ -102,16 +107,25 @@
 
   function editor(p) {
     const d = pl.draft;
+    const ac = D.aircraft[p.type];
     const owned = Object.keys(G.state.slots);
+    const last = d.stops[d.stops.length - 1];
     const errors = d.legs.length ? G.checkTimetable(p.id, d.legs) : [];
-    let h = `<div class="panel plan"><h3>${p.id} <span class="muted">${D.aircraft[p.type].name} · at ${p.location}</span></h3>
-      <div class="label">1 · Route <span class="muted">(loops back to the first stop)</span></div>
+    // Airports you can add: every one with your slot; ones the plane can't reach or land at are shown greyed.
+    const options = owned.filter((c) => c !== last).map((c) => {
+      const why = !G.fitsAirport(p.type, c) ? 'runway too short' : last && G.dist(last, c) > ac.rangeKm ? 'out of range' : '';
+      return `<option value="${c}"${why ? ' disabled' : ''}>${c} · ${G.airportByCode[c].city}${last ? ` · ${Math.round(G.dist(last, c))} km` : ''}${why ? ` (${why})` : ''}</option>`;
+    }).join('');
+    const where = p.status === 'flying' && p.flight ? `flying to ${p.flight.to}` : `at ${p.location}`;
+    let h = `<div class="panel plan"><h3>${p.id} <span class="muted">${ac.name} · ${ac.seats} seats · ${ac.rangeKm} km range · ${where}</span></h3>
+      <div class="label">1 · Where does it fly? <span class="muted">(the last stop flies back to the first)</span></div>
       <div class="chips stops-chips">${d.stops.map((c, i) => `<span class="chip">${c}
         ${i ? `<button class="mini" data-pl="stopUp" data-i="${i}" title="Earlier">↑</button>` : ''}
         <button class="mini" data-pl="stopDel" data-i="${i}" title="Remove">✕</button></span>`).join('<span class="arrow">→</span>')}
-        <select id="pl-add"><option value="">+ stop…</option>${owned.filter((c) => c !== d.stops[d.stops.length - 1])
-          .map((c) => `<option value="${c}">${c} · ${G.airportByCode[c].city}</option>`).join('')}</select></div>
-      <div class="label">2 · Times</div>
+        ${d.stops.length >= 2 ? `<span class="arrow">↺ ${d.stops[0]}</span>` : ''}
+        <select id="pl-add"><option value="">+ add airport…</option>${options}</select></div>
+      ${owned.length < 2 ? '<div class="hint">You only have one slot. Click another airport on the map and lease a slot there first.</div>' : ''}
+      <div class="label">2 · When?</div>
       <div class="row">First departure <input type="time" id="pl-first" step="300" value="${clock(d.first)}">
         Loops <select id="pl-rounds"><option value="0"${d.rounds ? '' : ' selected'}>as many as fit</option>
         ${[1, 2, 3, 4, 5, 6, 8].map((n) => `<option value="${n}"${d.rounds === n ? ' selected' : ''}>${n}×</option>`).join('')}</select>
@@ -130,19 +144,37 @@
       h += `</table><div class="muted">${d.legs.length} flights · ${G.fmtDuration(est.block)} in the air · about
         <b class="${est.profit >= 0 ? 'pos' : 'neg'}">${G.fmtMoney(est.profit)}</b> a day before fixed costs ·
         − / + moves a flight by 15 min and the ones after it.</div>`;
-      h += `<div class="label">3 · Slots on the way</div>${[...new Set(d.legs.map((l) => l.from))].map((c) => slotLanes(c, { planeId: p.id, type: p.type, legs: d.legs }, true)).join('')}`;
+      h += `<div class="label">3 · Slots</div>${slotCheck(p, d.legs)}`;
     } else if (d.stops.length >= 2) {
       h += `<div class="warn">Nothing fits: move the first departure into ${clock(C.curfew.start)}–${clock(C.curfew.end)} or shorten the route.</div>`;
     } else {
-      h += `<div class="hint">Add a second airport where you hold a slot.</div>`;
+      h += `<div class="hint">Add ${d.stops.length ? 'a second airport' : 'two airports'} where you hold a slot.</div>`;
     }
-    if (errors.length) h += `<ul class="errors">${errors.map((e) => `<li>${e}</li>`).join('')}</ul>`;
+    if (errors.length) h += `<div class="label neg">Fix this first</div><ul class="errors">${errors.map((e) => `<li>${e}</li>`).join('')}</ul>`;
+    const can = !errors.length && d.legs.length;
     h += `<div class="row">
-      <button class="primary" data-pl="save" data-start="1" ${errors.length || !d.legs.length ? 'disabled' : ''}>Save & fly</button>
-      <button data-pl="save" ${errors.length || !d.legs.length ? 'disabled' : ''}>Save</button>
-      ${p.schedule.legs ? `<button data-pl="toggle">${p.schedule.active ? 'Pause' : 'Start'}</button>` : ''}
+      <button class="primary" data-pl="save" data-start="1" ${can ? '' : 'disabled'}>Save & fly</button>
+      <button data-pl="save" ${can ? '' : 'disabled'}>Save, don't start yet</button>
+      ${p.schedule.legs ? `<button data-pl="toggle">${p.schedule.active ? '⏸ Pause' : '▶ Start'}</button>
+        <button data-pl="clear" title="The plane stays where it is">Remove timetable</button>` : ''}
       <button data-pl="close">Close</button></div></div>`;
     return h;
+  }
+
+  // Plain-words slot check for a timetable being edited, with the slot rows below it.
+  function slotCheck(p, legs) {
+    let h = '<ul class="slot-check">';
+    for (const c of G.timetableSlots(p.id, legs)) {
+      if (!c.clash.length) {
+        h += `<li class="pos">✔ <b>${c.code}</b> fits in your ${c.have} slot${c.have === 1 ? '' : 's'}.</li>`;
+        continue;
+      }
+      const when = c.clash.map((x) => `${clock(x.from)}–${clock(x.to)}${x.planes.length ? ` (with ${x.planes.join(', ')})` : ''}`).join(', ');
+      h += `<li class="warn-li">⚠ <b>${c.code}</b>: more planes than slots at ${when}. Whichever comes last waits at its gate
+        until a slot is free, which delays it. Move a time, or <button class="mini" data-pl="addSlot" data-code="${c.code}">lease another slot · ${G.fmtMoney(G.slotUpfront(c.code))}</button>.</li>`;
+    }
+    h += '</ul>';
+    return h + [...new Set(legs.map((l) => l.from))].map((c) => slotLanes(c, { planeId: p.id, type: p.type, legs }, true)).join('');
   }
 
   // ---------- Slots ----------
@@ -152,18 +184,33 @@
     const rows = Math.max(u.have, u.need);
     let h = `<div class="slot-lanes${compact ? ' compact' : ''}"><div class="sl-head" data-pl="slotAt" data-code="${code}">
       <b>${code}</b> <span class="muted">${G.airportByCode[code].city} · ${u.have} slot${u.have === 1 ? '' : 's'}</span>
-      ${u.need > u.have ? '<span class="neg">· over capacity</span>' : ''}</div>`;
+      ${u.need > u.have ? `<span class="neg">· at times ${u.need} planes for ${u.have} slot${u.have === 1 ? '' : 's'}</span>` : ''}</div>`;
     if (!compact) h += axis();
     for (let k = 0; k < rows; k++) {
       const over = k >= u.have;
       h += `<div class="tl-row slot${over ? ' over' : ''}"><div class="tl-label">${over ? '<span class="neg">no slot</span>' : `Slot ${k + 1}`}</div>
         <div class="tl-bar">${nightAndNow()}${u.uses.filter((x) => x.lane === k).map((x) => {
           const mine = draft && x.planeId === draft.planeId;
-          const title = x.idle ? `${x.planeId}: parked here all day (no timetable)` : `${x.planeId}: lands ${clock(x.arr)}, leaves ${clock(x.dep)}`;
+          const title = x.idle ? `${x.planeId}: parked here (no running timetable) – it keeps this slot until it leaves` : `${x.planeId}: lands ${clock(x.arr)}, leaves ${clock(x.dep)}`;
           return `<b class="tl-use${x.idle ? ' idle' : ''}${mine ? ' draft' : ''}" style="left:${pct(x.from)};width:${pct(x.to - x.from)}" title="${title}">${x.to - x.from >= 60 ? x.planeId : ''}</b>`;
         }).join('')}</div></div>`;
     }
     return h + `</div>`;
+  }
+
+  // Which of your planes fill the slots at an airport at this moment.
+  function slotsNow(code) {
+    const occ = G.slotOccupants(code);
+    const n = G.slotCount(code);
+    const taken = occ.filter((o) => o.how !== 'leaving').length;
+    const label = { parked: 'parked here', turnaround: 'turnaround', leaving: 'about to leave', inbound: 'on its way here' };
+    const waiting = G.state.planes.filter((q) => q.waitSlot === code).map((q) => q.id);
+    let h = `<div class="slots-now"><b class="${taken > n ? 'neg' : 'pos'}">${taken} plane${taken === 1 ? '' : 's'} for ${n} slot${n === 1 ? '' : 's'}</b>
+      ${taken < n ? `<span class="muted">· ${n - taken} free</span>` : taken > n ? '<span class="neg">· one has to wait or leave first</span>' : '<span class="muted">· full</span>'}`;
+    h += occ.length ? `<ul>${occ.map((o) => `<li class="click" data-pl="edit" data-plane="${o.p.id}"><b>${o.p.id}</b> <span class="muted">${o.p.type} · ${label[o.how]}</span></li>`).join('')}</ul>`
+      : '<div class="muted">No plane here: every slot is free.</div>';
+    if (waiting.length) h += `<div class="neg">⏳ Waiting elsewhere for a slot here: ${waiting.join(', ')}</div>`;
+    return h + '</div>';
   }
 
   // Arrivals and departures at an airport today, from the timetables.
@@ -192,9 +239,11 @@
     if (!pl.slotAt || !s.slots[pl.slotAt]) pl.slotAt = codes.includes(ctx.ui.selectedAirport) ? ctx.ui.selectedAirport : codes[0];
     let h = `<div class="panel"><h3>Your slots</h3><div class="chips">${codes.map((c) => {
       const u = G.slotUsage(c);
-      return `<button class="${c === pl.slotAt ? 'on' : ''}${u.need > u.have ? ' bad' : ''}" data-pl="slotAt" data-code="${c}">${c} <span class="n">${u.need}/${u.have}</span></button>`;
-    }).join('')}</div><div class="muted">Each slot takes one plane on the ground at a time. A plane holds it from landing until it
-      leaves; then the slot is free for another plane.</div></div>`;
+      return `<button class="${c === pl.slotAt ? 'on' : ''}${u.need > u.have ? ' bad' : ''}" data-pl="slotAt" data-code="${c}"
+        title="${c}: at the busiest time ${u.need} plane${u.need === 1 ? '' : 's'} for ${u.have} slot${u.have === 1 ? '' : 's'}">${c} <span class="n">${u.need}/${u.have}</span></button>`;
+    }).join('')}</div><div class="muted">A slot is a parking place for <b>one plane at a time</b>. A plane uses it from landing
+      until it takes off. After that the slot is free and any other plane can use it. If all slots are taken when a plane wants
+      to fly there, it waits at its gate until one frees up.</div></div>`;
     const code = pl.slotAt;
     if (code) {
       const a = G.airportByCode[code];
@@ -206,7 +255,8 @@
           Lease another slot · ${G.fmtMoney(G.slotUpfront(code))}</button>
           ${n > 1 || code !== G.home() ? `<button data-pl="dropSlot" data-code="${code}">Give one back</button>` : ''}
           <button data-pl="showAirport" data-code="${code}">Show on map</button></div>
-        ${slotLanes(code)}
+        <h4>Right now</h4>${slotsNow(code)}
+        <h4>Today's plan</h4>${slotLanes(code)}
         <h4>Today's arrivals and departures</h4>${board(code)}</div>`;
     }
     return h + ctx.bestRoutes();
@@ -304,6 +354,7 @@
         break;
       }
       case 'toggle': err = G.setScheduleActive(p.id, !p.schedule.active); break;
+      case 'clear': err = G.clearTimetable(p.id); startDraft(p); break;
       case 'slotAt':
         if (el.classList.contains('tl-ground') && !isDouble(`g${code}`)) {
           const row = el.closest('.tl-row[data-pl="edit"]'); // a single click opens the plane's day
@@ -328,7 +379,10 @@
     const p = pl.edit && G.plane(pl.edit);
     if (!p || !pl.draft) return false;
     const d = pl.draft;
-    if (el.id === 'pl-add' && el.value) { d.stops.push(el.value); rebuild(p); }
+    if (el.id === 'pl-add' && el.value) {
+      d.stops.push(el.value);
+      rebuild(p);
+    }
     else if (el.id === 'pl-first') { d.first = parseClock(el.value); rebuild(p); }
     else if (el.id === 'pl-rounds') { d.rounds = Number(el.value); rebuild(p); }
     else if (el.classList.contains('pl-dep')) { const i = Number(el.dataset.i); shift(i, parseClock(el.value) - d.legs[i].dep); }
@@ -340,6 +394,20 @@
   FG.planner = {
     init(c) { ctx = c; },
     scheduleTab, slotsTab, airportsTab, action, change,
+    editing() { return pl.edit && pl.draft ? pl.edit : null; },
+    // Stops of the timetable being edited for this plane (drawn on the map as a dotted route), or null.
+    draftStops(id) { return pl.edit === id && pl.draft && pl.draft.stops.length >= 2 ? pl.draft.stops : null; },
+    // Clicked an airport on the map while planning: add it as the next stop.
+    addStop(code) {
+      const p = pl.edit && G.plane(pl.edit);
+      if (!p || !pl.draft) return 'Open a plane in Schedule first.';
+      if (!G.ownsSlot(code)) return `Lease a slot at ${code} first.`;
+      if (pl.draft.stops[pl.draft.stops.length - 1] === code) return `${code} is already the last stop.`;
+      pl.draft.stops.push(code);
+      rebuild(p);
+      G.dirty = true;
+      return null;
+    },
     openPlane(id) { const p = G.plane(id); if (p) { pl.edit = id; startDraft(p); } },
     reset() { pl.edit = null; pl.draft = null; pl.slotAt = null; pl.open = {}; },
   };

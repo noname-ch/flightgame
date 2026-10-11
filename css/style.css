@@ -978,3 +978,15 @@ button.big { padding: 10px 22px; font-size: 15px; font-weight: 700; border-radiu
 .rv-badge { font-size: 11px; white-space: nowrap; margin-left: 4px; color: var(--muted, #9aa3ae); }
 .panel.rival { cursor: pointer; }
 .panel.rival.selected { border-color: var(--accent); }
+
+/* Planner: how-to steps, slot check and live slot state */
+ol.howto { margin: 4px 0 6px; padding-left: 20px; font-size: 12px; line-height: 1.5; }
+ul.slot-check { margin: 4px 0 6px; padding-left: 0; list-style: none; font-size: 12px; line-height: 1.45; }
+ul.slot-check li { margin: 2px 0; }
+ul.slot-check .warn-li { color: #fbbf24; }
+ul.slot-check .warn-li button { margin-left: 2px; }
+.slots-now { font-size: 12px; margin: 4px 0 8px; }
+.slots-now ul { margin: 4px 0; padding-left: 0; list-style: none; }
+.slots-now li { padding: 2px 6px; border-radius: 6px; }
+.slots-now li:hover { background: var(--panel-2); }
+.label.neg { color: var(--neg); }

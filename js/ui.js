@@ -37,7 +37,6 @@
     lastTick: 0, // performance.now() of the last game tick
     selectedAirport: null,
     selectedPlane: null,
-    drafts: {}, // planeId -> stops being edited
     newsPaused: false, // game paused because a newspaper is open
     wasPaused: false, // pause state before the newspaper opened
     confirmDispose: null, // planeId waiting for a second click on Sell/Return
@@ -618,7 +617,7 @@
     // Selected plane last so its route ends up on top.
     const planes = G.state.planes.slice().sort((p, q) => (p.id === ui.selectedPlane) - (q.id === ui.selectedPlane));
     for (const p of planes) {
-      const draft = ui.drafts[p.id];
+      const draft = FG.planner.draftStops(p.id);
       const stops = draft || p.schedule.stops;
       const selected = ui.selectedPlane === p.id;
       if (stops.length >= 2) {
@@ -876,10 +875,9 @@
         if ((p.location !== code || p.status === 'flying') && G.fitsAirport(p.type, code)) {
           h += ` <button data-action="sendPlane" data-plane="${p.id}" data-code="${code}">Send ${p.id} here</button>`;
         }
-        if (ui.drafts[p.id]) {
-          h += ` <button data-action="draftAdd" data-plane="${p.id}" data-code="${code}">Add to ${p.id} schedule</button>`;
-        }
       }
+      const ed = FG.planner.editing();
+      if (ed) h += ` <button class="primary" data-action="planAdd" data-code="${code}">Add ${code} to ${ed}'s timetable</button>`;
     }
 
     const others = Object.keys(s.slots).filter((c) => c !== code);
@@ -1021,41 +1019,18 @@
     if (p.status === 'turnaround') return `Turnaround at ${p.location} ${gate} until ${G.fmtClock(p.readyAt)}`;
     const crew = G.crewOf(p);
     const leg = p.pendingFerry || (p.schedule.active && p.schedule.stops.length >= 2);
-    const hold = leg && G.holdReason(p, p.pendingFerry || p.schedule.stops[(p.schedule.index + 1) % p.schedule.stops.length]);
+    const sch = p.schedule;
+    const nextTo = p.pendingFerry || (sch.legs ? sch.legs[sch.index % sch.legs.length].to : sch.stops[(sch.index + 1) % sch.stops.length]);
+    const hold = leg && G.holdReason(p, nextTo);
     if (hold) return `At ${p.location} ${gate} · ⛔ ${hold}`;
+    if (p.waitSlot) return `At ${p.location} ${gate} · ⏳ waiting for a free slot at ${p.waitSlot}`;
     if (leg && crew && crew.dutyToday >= C.crewMaxDutyMin - 60) return `At ${p.location} ${gate} · crew resting`;
-    if (leg) return `At ${p.location} ${gate} · waiting (curfew / crew duty)`;
-    return `Idle at ${p.location} ${gate}`;
-  }
-
-  function scheduleEditor(p) {
-    const stops = ui.drafts[p.id];
-    const owned = Object.keys(G.state.slots);
-    let h = `<div class="editor"><div class="label">Edit schedule (loops back to the first stop)</div><ol class="stops">`;
-    stops.forEach((c, i) => {
-      h += `<li>${c} <span class="muted">${G.airportByCode[c].city}</span>
-        <button class="mini" data-action="draftUp" data-plane="${p.id}" data-i="${i}" ${i === 0 ? 'disabled' : ''}>↑</button>
-        <button class="mini" data-action="draftRemove" data-plane="${p.id}" data-i="${i}">✕</button></li>`;
-    });
-    h += `</ol><div class="row"><select id="add-${p.id}">`;
-    for (const c of owned) h += `<option value="${c}">${c} · ${G.airportByCode[c].city}</option>`;
-    h += `</select><button data-action="draftAddSelect" data-plane="${p.id}">Add stop</button></div>`;
-    if (owned.length < 2) h += `<div class="hint">Lease a slot at another airport (click it on the map) to build a route.</div>`;
-
-    const est = G.estimateSchedule(p.type, stops, G.costMult(p));
-    if (est.legs.length) {
-      h += `<table class="small"><tr><th>Leg</th><th>km</th><th>time</th><th>pax</th><th>result</th></tr>`;
-      for (const l of est.legs) {
-        const r = l.revenue - l.cost;
-        h += `<tr><td>${l.from}→${l.to}</td><td>${l.d}</td><td>${G.fmtDuration(l.block)}</td>
-          <td>${l.pax}/${l.demand}</td><td class="${r >= 0 ? 'pos' : 'neg'}">${G.fmtMoney(r)}</td></tr>`;
-      }
-      h += `</table><div class="muted">One loop ≈ ${G.fmtDuration(est.loopMin)} incl. turnarounds ·
-        est. ${G.fmtMoney(est.profit)} per loop (first flight of the day; later flights on the same route share the daily demand)</div>`;
+    if (leg && sch.legs && !p.pendingFerry) {
+      const l = sch.legs[sch.index % sch.legs.length];
+      if (l.from === p.location) return `At ${p.location} ${gate} · next ${G.fmtClock(l.dep)} to ${l.to}`;
     }
-    h += `<div class="row"><button class="primary" data-action="draftSave" data-plane="${p.id}">Save schedule</button>
-      <button data-action="draftCancel" data-plane="${p.id}">Cancel</button></div></div>`;
-    return h;
+    if (leg) return `At ${p.location} ${gate} · waiting (curfew / crew duty)`;
+    return `Parked at ${p.location} ${gate}${sch.legs ? ' · timetable paused' : ' · no timetable'}`;
   }
 
   function fleetTab() {
@@ -1076,8 +1051,7 @@
           duty today ${G.fmtDuration(crew.dutyToday)} / ${G.fmtDuration(C.crewMaxDutyMin)}</div>`;
       }
       h += `<div class="muted">Totals: ${p.stats.flights} flights · ${p.stats.pax} pax · ${G.fmtMoney(p.stats.profit)}</div>
-        <div class="row"><button data-action="follow" data-plane="${p.id}">🎥 Follow</button>
-          <button data-action="planDay" data-plane="${p.id}">🗓 Timetable</button></div>`;
+        <div class="row"><button data-action="follow" data-plane="${p.id}">🎥 Follow</button></div>`;
 
       h += `<div class="row"><select id="send-${p.id}">`;
       for (const c of owned) h += `<option value="${c}">${c} · ${G.airportByCode[c].city}</option>`;
@@ -1085,32 +1059,14 @@
 
       if (sch.legs) {
         h += `<div class="label">Timetable ${sch.active ? '<span class="pos">● running</span>' : '<span class="muted">⏸ paused</span>'}</div>
-          <div class="route">${sch.legs.map((l, i) => `<span class="${i === sch.index % sch.legs.length && p.status !== 'flying' ? 'here' : ''}">${G.fmtClock(l.dep)} ${l.from}→${l.to}</span>`).join(' ')}</div>
-          <div class="row">${sch.active ? `<button data-action="pause" data-plane="${p.id}">Pause</button>`
-            : `<button class="primary" data-action="start" data-plane="${p.id}">Start timetable</button>`}
-            <button data-action="planDay" data-plane="${p.id}">Edit in Schedule</button></div>`;
+          <div class="route">${sch.legs.map((l, i) => `<span class="${i === sch.index % sch.legs.length && p.status !== 'flying' ? 'here' : ''}">${G.fmtClock(l.dep)} ${l.from}→${l.to}</span>`).join(' ')}</div>`;
+        h += fareTable(sch.stops);
+        h += `<div class="row">${sch.active ? `<button data-action="pause" data-plane="${p.id}">⏸ Pause</button>`
+            : `<button class="primary" data-action="start" data-plane="${p.id}">▶ Start timetable</button>`}
+            <button data-action="planDay" data-plane="${p.id}">🗓 Edit timetable</button></div>`;
       } else {
-      h += `<div class="label">Schedule ${sch.stops.length >= 2 ? (sch.active ? '<span class="pos">● running</span>' : '<span class="muted">⏸ paused</span>') : ''}</div>`;
-      if (sch.stops.length >= 2) {
-        h += `<div class="route">${sch.stops.map((c, i) =>
-          `<span class="${i === sch.index && p.status !== 'flying' ? 'here' : ''}">${c}</span>`).join(' → ')} ↺</div>`;
-      } else {
-        h += `<div class="muted">No schedule yet.</div>`;
-      }
-      const flown = ui.drafts[p.id] || sch.stops;
-      if (flown.length >= 2) h += fareTable(flown);
-
-      if (ui.drafts[p.id]) {
-        h += scheduleEditor(p);
-      } else {
-        h += `<div class="row"><button data-action="editSchedule" data-plane="${p.id}">Edit schedule</button>`;
-        if (sch.stops.length >= 2) {
-          h += sch.active
-            ? `<button data-action="pause" data-plane="${p.id}">Pause</button>`
-            : `<button class="primary" data-action="start" data-plane="${p.id}">Start schedule</button>`;
-        }
-        h += `</div>`;
-      }
+        h += `<div class="label">Timetable</div><div class="muted">None yet: the plane stays parked.</div>
+          <div class="row"><button class="primary" data-action="planDay" data-plane="${p.id}">🗓 Plan its day</button></div>`;
       }
       const confirm = ui.confirmDispose === p.id;
       const label = p.ownership === 'owned' ? `Sell for ${G.fmtMoney(G.saleValue(p))}` : `Return lease (fee ${G.fmtMoney(G.returnFee(p))})`;
@@ -1762,7 +1718,6 @@
 
   // After loading a save or starting over: forget what the UI showed of the old game.
   function resetView() {
-    ui.drafts = {};
     ui.selectedAirport = null;
     ui.selectedPlane = null;
     ui.shownAirport = undefined;
@@ -2017,7 +1972,6 @@
     if (!el) return;
     const { action, plane, code } = el.dataset;
     const i = Number(el.dataset.i);
-    const draft = ui.drafts[plane];
 
     switch (action) {
       case 'closeAirport': ui.selectedAirport = null; break;
@@ -2060,6 +2014,7 @@
       case 'start': act(G.setScheduleActive(plane, true)); break;
       case 'follow': follow(plane); break;
       case 'planDay': FG.planner.openPlane(plane); ui.tab = 'schedule'; break;
+      case 'planAdd': { const e2 = FG.planner.addStop(code); if (e2) { toast(e2, true); return; } ui.tab = 'schedule'; break; }
       case 'openMarket': e.preventDefault(); openMarket(); return;
       case 'buyNew': act(G.buyNew(el.dataset.type, code)); break;
       case 'leaseNew': act(G.leaseNew(el.dataset.type, code)); break;
@@ -2074,28 +2029,10 @@
         ui.confirmDispose = null;
         const err = G.disposePlane(plane);
         if (err) { toast(err, true); return; }
-        delete ui.drafts[plane];
         if (ui.selectedPlane === plane) ui.selectedPlane = null;
         break;
       }
       case 'pause': act(G.setScheduleActive(plane, false)); break;
-      case 'editSchedule': {
-        const p = G.plane(plane);
-        ui.drafts[plane] = p.schedule.stops.length ? p.schedule.stops.slice() : [p.location];
-        break;
-      }
-      case 'draftAdd': draft.push(code); break;
-      case 'draftAddSelect': draft.push($(`add-${plane}`).value); break;
-      case 'draftRemove': draft.splice(i, 1); break;
-      case 'draftUp': [draft[i - 1], draft[i]] = [draft[i], draft[i - 1]]; break;
-      case 'draftCancel': delete ui.drafts[plane]; break;
-      case 'draftSave': {
-        const err = G.setSchedule(plane, draft);
-        if (err) { toast(err, true); return; }
-        delete ui.drafts[plane];
-        toast('Schedule saved – press "Start schedule" to fly it.');
-        break;
-      }
       default: return;
     }
     G.dirty = true;
