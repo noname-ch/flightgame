@@ -594,9 +594,10 @@
   }
 
   // Icon scale that draws a plane on the ground at its real length when zoomed in on an airport.
-  function groundScale(p, lat) {
+  // iconPx: length of the aircraft in the 28 px glyph (23 for the flat shape, less for a 3D picture).
+  function groundScale(p, lat, iconPx = 23) {
     const len = (D.looks[p.type] && D.looks[p.type].len) || 35;
-    return Math.max(0.3, Math.min(3.5, len / metresPerPixel(lat) / 23));
+    return Math.max(0.3, Math.min(3.5, len / metresPerPixel(lat) / iconPx));
   }
 
   const PHASES = {
@@ -688,6 +689,12 @@
       const el = m.getElement();
       if (el) {
         const glyph = el.querySelector('.plane');
+        // The type's 3D model seen from above (js/icons3d.js) replaces the flat shape once it is rendered.
+        const icon = FG.planeIcons && FG.planeIcons.get(p.type);
+        if (icon && glyph.dataset.icon !== icon.url) {
+          glyph.dataset.icon = icon.url;
+          glyph.innerHTML = `<img src="${icon.url}" alt="" draggable="false">`;
+        }
         const flying = p.status === 'flying';
         // Zoomed in on an airport, planes on the ground are drawn at their gate at real size;
         // further out, parked planes line up above their airport so it stays clickable.
@@ -696,7 +703,7 @@
         // Higher planes look a little bigger and cast their shadow further away.
         const h = Math.min(1, pos.alt / 38000);
         glyph.style.transform = close
-          ? `rotate(${pos.heading}deg) scale(${groundScale(p, pos.latlng[0])})`
+          ? `rotate(${pos.heading}deg) scale(${groundScale(p, pos.latlng[0], icon ? 28 * icon.len : 23)})`
           : flying
             ? `rotate(${pos.heading}deg) scale(${pos.ground ? 0.7 : 0.8 + 0.25 * h})`
             : `translate(${n * 13}px, -15px) scale(0.75)`;
