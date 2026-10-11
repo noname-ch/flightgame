@@ -782,7 +782,7 @@ i.s-net { background: var(--muted); }
   pointer-events: none;
 }
 .build-icon { font-size: 18px; line-height: 20px; pointer-events: none; }
-#map.build-mode, #map.build-mode .leaflet-interactive { cursor: crosshair; }
+#map.build-mode, #map.build-mode .leaflet-interactive, #view3d.build-mode canvas { cursor: crosshair !important; }
 .progress { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
 .progress i { display: block; height: 100%; background: var(--m-orange, #ff9500); }
 .warn { color: var(--warn); }

@@ -515,6 +515,7 @@
   function buildAt(latlng) {
     ui.buildMode = false;
     ui.map.getContainer().classList.remove('build-mode');
+    $('view3d').classList.remove('build-mode');
     const res = G.buildAirport(latlng.lat, latlng.lng);
     if (res && res.length !== 3) { toast(res, true); G.dirty = true; return; }
     ui.selectedAirport = res;
@@ -525,6 +526,7 @@
   function setBuildMode(on) {
     ui.buildMode = on;
     ui.map.getContainer().classList.toggle('build-mode', on);
+    $('view3d').classList.toggle('build-mode', on);
     if (on) toast('Click on the map where the new airport should go (Esc to cancel).');
     G.dirty = true;
   }
@@ -2227,6 +2229,8 @@
       selectAirport(code) { ui.selectedAirport = code; G.dirty = true; },
       clearSelection() { ui.selectedAirport = null; ui.selectedPlane = null; G.dirty = true; },
       follow,
+      get buildMode() { return ui.buildMode; },
+      buildAt(lat, lon) { buildAt({ lat, lng: lon }); },
     };
     window.dispatchEvent(new Event('fg-ui-ready'));
     window.addEventListener('beforeunload', () => G.save());

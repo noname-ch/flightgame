@@ -733,6 +733,8 @@ function updateHover() {
 }
 
 function onClick(e) {
+  // "Build a new airport": the click picks the site, as on the 2D map.
+  if (FG.ui.buildMode) { FG.ui.buildAt(e.lngLat.lat, e.lngLat.lng); return; }
   const best = planeAt(e.point);
   if (best) { FG.ui.selectPlane(best); return; }
   const hits = v.map.queryRenderedFeatures([[e.point.x - 6, e.point.y - 6], [e.point.x + 6, e.point.y + 6]], { layers: ['fg-airports'] });
