@@ -37,14 +37,14 @@
   function addMoney(amount) {
     const s = G.state;
     s.money += amount;
-    if (s.money >= C().bankruptcyLimit) s.gameOver = false;
+    if (s.money >= G.bankruptcyLimit()) s.gameOver = false;
     done(`${amount < 0 ? 'removed' : 'added'} ${G.fmtMoney(Math.abs(amount))}.`);
   }
 
   function setMoney(amount) {
     if (!Number.isFinite(amount)) { note('Enter a number.', true); return; }
     G.state.money = Math.round(amount);
-    if (G.state.money >= C().bankruptcyLimit) G.state.gameOver = false;
+    if (G.state.money >= G.bankruptcyLimit()) G.state.gameOver = false;
     done(`money set to ${G.fmtMoney(G.state.money)}.`);
   }
 
@@ -179,7 +179,7 @@
     if (!D.aircraft[dv.type]) dv.type = types[0][0];
     const slotCodes = Object.keys(s.slots).sort();
     const sel = FG.ui && FG.ui.selectedAirport;
-    if (!G.airportByCode[dv.at]) dv.at = sel || slotCodes[0] || C().startAirport;
+    if (!G.airportByCode[dv.at]) dv.at = sel || slotCodes[0] || G.home();
     const atList = [...new Set([dv.at, sel, ...slotCodes].filter(Boolean))]
       .map((c) => [c, `${c} – ${G.airportByCode[c].name}${s.slots[c] ? '' : ' (no slot yet)'}`]);
     if (!dv.event) dv.event = D.worldEvents[0].id;

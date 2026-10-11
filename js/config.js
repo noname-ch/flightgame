@@ -94,6 +94,20 @@ FG.config = {
   },
   defaultMode: 'arcade',
 
+  // Difficulty, picked on the start screen. demandMult scales passenger demand, costMult the
+  // operating cost of every flight; bankruptcy hits below bankruptcyLimit.
+  difficulties: {
+    easy: { name: 'Easy', desc: 'CHF 5M to start, more passengers, cheaper flights.',
+      startMoney: 5000000, demandMult: 1.25, costMult: 0.85, bankruptcyLimit: -2000000 },
+    normal: { name: 'Normal', desc: 'CHF 1.5M to start, the standard game.',
+      startMoney: 1500000, demandMult: 1, costMult: 1, bankruptcyLimit: -500000 },
+    hard: { name: 'Hard', desc: 'CHF 750k, fewer passengers, dearer flights.',
+      startMoney: 750000, demandMult: 0.85, costMult: 1.15, bankruptcyLimit: -250000 },
+  },
+  defaultDifficulty: 'normal',
+  // Aircraft offered as the first (leased) plane on the start screen.
+  starterAircraft: ['ATR72-600', 'Q400', 'E190', 'A220-300', 'A320neo', 'B737-800'],
+
   // Random events (catalogue in js/data/events.js). Real accident rates (~1 per 5M flights)
   // would never show up in a game, so they are scaled up here.
   events: {

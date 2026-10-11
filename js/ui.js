@@ -73,6 +73,7 @@
     maxZoom: C.map.maxZoom, maxNativeZoom: 16,
   };
   const tiles = (service, opts) => L.tileLayer(tileUrl(service), Object.assign({}, TILE_OPTS, opts));
+  const BASEMAP_KEY = 'flightgame.basemap';
   const NAME_TILES = {
     Standard: 'Canvas/World_Light_Gray_Reference',
     Dark: 'Canvas/World_Dark_Gray_Reference',
@@ -215,15 +216,22 @@
     map.createPane('routes').style.zIndex = 390;
 
     const base = {
-      Standard: new TintedTiles(tileUrl('Canvas/World_Light_Gray_Base'), TILE_OPTS).addTo(map),
+      Standard: new TintedTiles(tileUrl('Canvas/World_Light_Gray_Base'), TILE_OPTS),
       Dark: tiles('Canvas/World_Dark_Gray_Base'),
       Satellite: tiles('World_Imagery', { maxNativeZoom: 18 }),
     };
+    // Satellite unless the player picked another base map before.
+    let baseName = 'Satellite';
+    try { baseName = localStorage.getItem(BASEMAP_KEY) || baseName; } catch (e) { /* private mode */ }
+    if (!base[baseName]) baseName = 'Satellite';
+    base[baseName].addTo(map);
+    map.getContainer().classList.toggle('map-dark', baseName !== 'Standard');
     // City names; off by default because they collide with the airport dots.
-    const names = tiles(NAME_TILES.Standard, { zIndex: 2 });
+    const names = tiles(NAME_TILES[baseName], { zIndex: 2 });
     map.on('baselayerchange', (e) => {
       names.setUrl(tileUrl(NAME_TILES[e.name]));
       map.getContainer().classList.toggle('map-dark', e.name !== 'Standard');
+      try { localStorage.setItem(BASEMAP_KEY, e.name); } catch (err) { /* private mode */ }
     });
 
     ui.townLayer = L.layerGroup().addTo(map);
@@ -281,7 +289,7 @@
       color: '#fff', weight: 2, fillOpacity: 1, className: 'ap-dot', bubblingMouseEvents: false,
     });
     m.bindTooltip(`<b>${a.code}</b><span class="city"> · ${a.city}</span>`, {
-      permanent: true, direction: 'right', className: `ap-label${a.code === C.startAirport ? ' home' : ''}`,
+      permanent: true, direction: 'right', className: 'ap-label',
     });
     m.on('click', () => {
       if (ui.buildMode) return;
@@ -445,6 +453,7 @@
     const selected = ui.selectedAirport === a.code;
     const hover = ui.hoverAirport === a.code;
     el.classList.toggle('owned', owned);
+    el.classList.toggle('home', a.code === G.home());
     el.classList.toggle('selected', selected);
     el.classList.toggle('hover', hover);
     el.classList.toggle('hidden', !(owned || selected || hover ||
@@ -653,7 +662,7 @@
     const s = G.state;
     $('company').textContent = s.company;
     const badge = $('mode-badge');
-    badge.textContent = G.mode().name;
+    badge.textContent = `${G.mode().name} · ${G.difficulty().name}`;
     badge.className = s.mode;
     const money = $('money');
     money.textContent = G.fmtMoney(s.money);
@@ -702,7 +711,7 @@
     if (owned) {
       const fee = G.slotFee(code);
       h += `<div class="ok">✔ You hold a slot here (${fee ? `${G.fmtMoney(fee)}/week` : 'free – you control the airport'})</div>`;
-      if (code !== C.startAirport) h += `<button data-action="releaseSlot" data-code="${code}">Release slot</button>`;
+      if (code !== G.home()) h += `<button data-action="releaseSlot" data-code="${code}">Release slot</button>`;
     } else {
       const up = G.slotUpfront(code);
       h += `<div>Slot lease: <b>${G.fmtMoney(up)}</b> upfront + ${G.fmtMoney(G.slotWeekly(code))}/week</div>
@@ -978,7 +987,7 @@
   }
 
   function mkDeliverTo() {
-    return G.ownsSlot(mk.at) ? mk.at : C.startAirport;
+    return G.ownsSlot(mk.at) ? mk.at : G.home();
   }
 
   function mkDelivery(o, at) {
@@ -1137,16 +1146,16 @@
     }
     h += `</table><div class="hint">Click an airport on the map to see its demand and lease a slot.</div></div>`;
 
-    h += `<div class="panel"><h3>Best routes from ${C.startAirport}</h3><table class="small">
+    h += `<div class="panel"><h3>Best routes from ${G.home()}</h3><table class="small">
       <tr><th>Airport</th><th>km</th><th>pax/day</th><th>slot</th></tr>`;
     const ranked = D.airports
-      .filter((a) => a.code !== C.startAirport && !a.minor)
-      .map((a) => ({ a, demand: G.demand(C.startAirport, a.code) }))
+      .filter((a) => a.code !== G.home() && !a.minor)
+      .map((a) => ({ a, demand: G.demand(G.home(), a.code) }))
       .sort((x, y) => y.demand - x.demand)
       .slice(0, 15);
     for (const { a, demand } of ranked) {
       h += `<tr class="click" data-action="selectAirport" data-code="${a.code}">
-        <td>${G.ownsSlot(a.code) ? '✔ ' : ''}${a.code} · ${a.city}</td><td>${Math.round(G.dist(C.startAirport, a.code))}</td>
+        <td>${G.ownsSlot(a.code) ? '✔ ' : ''}${a.code} · ${a.city}</td><td>${Math.round(G.dist(G.home(), a.code))}</td>
         <td>${demand}</td><td>${G.fmtMoney(G.slotUpfront(a.code))}</td></tr>`;
     }
     return h + `</table></div>`;
@@ -1277,7 +1286,7 @@
     const day = Math.floor(s.time / 1440);
     const nextCharge = (Math.floor(day / 7) + 1) * 7;
     let h = `<div class="panel"><h3>Balance: ${G.fmtMoney(s.money)}</h3>
-      <div class="muted">Bankrupt below ${G.fmtMoney(C.bankruptcyLimit)}</div>
+      <div class="muted">Bankrupt below ${G.fmtMoney(G.bankruptcyLimit())}</div>
       <h4>Weekly fixed costs (next charge Day ${nextCharge + 1} 00:00)</h4>
       <table class="small">
         <tr><td>Aircraft leases</td><td>${G.fmtMoney(w.planes)}</td></tr>
@@ -1292,7 +1301,7 @@
     const rows = financeRows();
     h += `<div class="panel"><h3>Cash balance (CHF)</h3>
       ${chart('cash', rows, [{ key: 'cash', label: 'Cash', cls: 's-cash' }], 'line',
-        [{ v: C.bankruptcyLimit, label: 'Bankruptcy' }])}
+        [{ v: G.bankruptcyLimit(), label: 'Bankruptcy' }])}
       <h4>Revenue vs costs per day</h4>
       ${chart('flow', rows, [{ key: 'revenue', label: 'Revenue', cls: 's-rev' }, { key: 'costs', label: 'Costs', cls: 's-cost' }], 'line')}
       <h4>Daily result</h4>
@@ -1423,19 +1432,132 @@
     ui.paused = ui.wasPaused;
   }
 
-  function openNewGameDialog() {
-    const el = $('newgame-dialog');
-    el.innerHTML = `<div class="dialog"><h2>New game</h2><p class="muted">Your current airline will be lost. Pick a mode:</p>
-      <div class="modes">${Object.entries(C.modes).map(([id, m]) =>
-        `<button class="mode" data-mode="${id}"><b>${m.name}</b><span>${m.desc}</span></button>`).join('')}</div>
-      <div class="row"><button data-mode="">Cancel</button></div></div>`;
-    el.hidden = false;
+  // ---------- start screen ----------
+  // Shown on every page load and by "New game": continue the saved airline or set up a new one.
+  const st = { open: false, hasGame: false, mode: C.defaultMode, difficulty: C.defaultDifficulty,
+    airport: C.startAirport, aircraft: C.startAircraft, search: '', airports: null };
+
+  // Home airport choices: the hand-made (European) airports first, then the world's bigger airports.
+  function startAirports() {
+    if (!st.airports) {
+      st.airports = D.airports.filter((a) => !a.built && (!a.extra || (a.size >= 4 && !a.minor)))
+        .sort((x, y) => !!x.extra - !!y.extra || x.country.localeCompare(y.country) || x.city.localeCompare(y.city));
+    }
+    return st.airports;
   }
 
-  function startNewGame(mode) {
-    $('newgame-dialog').hidden = true;
-    if (!mode) return;
-    G.newGame(mode);
+  function startAirportOptions() {
+    const q = st.search.trim().toLowerCase();
+    const list = startAirports().filter((a) => !q || a.code.toLowerCase() === q ||
+      `${a.code} ${a.name} ${a.city} ${a.country}`.toLowerCase().includes(q));
+    if (!list.some((a) => a.code === st.airport)) list.unshift(G.airportByCode[st.airport]);
+    return list.map((a) => `<option value="${a.code}"${a.code === st.airport ? ' selected' : ''}>` +
+      `${a.code} · ${a.city} – ${a.name} (${a.country})</option>`).join('');
+  }
+
+  function startChoices(group, entries, value) {
+    return `<div class="st-choices">${Object.entries(entries).map(([id, m]) =>
+      `<button class="st-choice${id === value ? ' on' : ''}${group === 'mode' && id === 'realistic' ? ' danger' : ''}" data-st="${group}" data-id="${id}">
+        <b>${m.name}</b><span>${m.desc}</span></button>`).join('')}</div>`;
+  }
+
+  function startPlanes() {
+    return C.starterAircraft.filter((t) => D.aircraft[t]).map((t) => {
+      const ac = D.aircraft[t];
+      const why = G.fitsReason(t, st.airport);
+      return `<button class="st-plane${t === st.aircraft ? ' on' : ''}" data-st="aircraft" data-id="${t}"${why ? ` disabled title="${why}"` : ''}>
+        <div class="st-art">${FG.hangar.svg(t, 'tile')}</div>
+        <b>${ac.name}</b>
+        <span>${ac.seats} seats · ${ac.rangeKm.toLocaleString('de-CH')} km · ${G.fmtMoney(ac.leasePerWeek)}/wk</span>
+        ${why ? '<span class="neg">Runway too short here</span>' : ''}</button>`;
+    }).join('');
+  }
+
+  function renderStart() {
+    const s = G.state;
+    // Keep the chosen plane valid for the chosen airport.
+    if (G.fitsReason(st.aircraft, st.airport)) {
+      st.aircraft = C.starterAircraft.find((t) => D.aircraft[t] && !G.fitsReason(t, st.airport)) || st.aircraft;
+    }
+    const ap = G.airportByCode[st.airport];
+    const el = $('start-screen');
+    el.innerHTML = `<div class="st-card">
+      <div class="st-hero"><div class="st-logo">✈</div><div><h1>Flightgame</h1>
+        <p>Build an airline from a single plane.</p></div></div>
+      ${st.hasGame ? `<div class="st-continue">
+        <div><b>${s.company}</b><span>${G.mode().name} · ${G.difficulty().name} · ${G.fmtTime(s.time)} · ${G.fmtMoney(s.money)} · ${s.planes.length} plane${s.planes.length === 1 ? '' : 's'}</span></div>
+        <button class="primary big" data-st="continue">Continue ▶</button></div>` : ''}
+      <h2>${st.hasGame ? 'Or start a new airline' : 'New airline'}</h2>
+      <label class="st-label" for="st-name">Airline name</label>
+      <input id="st-name" maxlength="40" value="${(st.name ?? C.companyName).replace(/"/g, '&quot;')}">
+      <div class="st-label">Mode</div>${startChoices('mode', C.modes, st.mode)}
+      <div class="st-label">Difficulty</div>${startChoices('difficulty', C.difficulties, st.difficulty)}
+      <label class="st-label" for="st-search">Home airport <span class="muted">${ap.name}, ${ap.city} · size ${G.airportSize(ap.code)}</span></label>
+      <input id="st-search" placeholder="Search city, airport or code…" value="${st.search.replace(/"/g, '&quot;')}">
+      <select id="st-airport" size="6">${startAirportOptions()}</select>
+      <div class="st-label">First aircraft <span class="muted">leased, with crew</span></div>
+      <div class="st-planes">${startPlanes()}</div>
+      <div class="st-actions">
+        ${st.hasGame ? '<button data-st="cancel">Back to my airline</button>' : ''}
+        <button class="primary big" data-st="start">${st.hasGame ? 'Start new airline' : 'Start airline'} ✈</button>
+      </div>
+      ${st.hasGame ? '<p class="muted st-warn">Starting a new airline replaces your saved game.</p>' : ''}
+    </div>`;
+  }
+
+  function openStart(hasGame) {
+    st.open = true;
+    st.hasGame = hasGame;
+    $('start-screen').hidden = false;
+    renderStart();
+  }
+
+  function closeStart() {
+    st.open = false;
+    $('start-screen').hidden = true;
+  }
+
+  function onStartClick(e) {
+    const b = e.target.closest('[data-st]');
+    if (!b || b.disabled) return;
+    const { st: what, id } = b.dataset;
+    if (what === 'continue' || what === 'cancel') { closeStart(); return; }
+    if (what === 'start') { startNewGame(); return; }
+    st[what] = id; // mode, difficulty or aircraft
+    renderStart();
+  }
+
+  function onStartInput(e) {
+    const t = e.target;
+    if (t.id === 'st-name') st.name = t.value;
+    if (t.id === 'st-search') {
+      st.search = t.value;
+      const sel = $('st-airport');
+      sel.innerHTML = startAirportOptions();
+      // A unique hit is picked right away.
+      if (sel.options.length && st.search.trim()) {
+        const first = sel.options[0].value === st.airport && sel.options.length > 1 ? sel.options[1].value : sel.options[0].value;
+        if (first !== st.airport) { st.airport = first; refreshStartAirport(); }
+      }
+    }
+    if (t.id === 'st-airport') { st.airport = t.value; refreshStartAirport(); }
+  }
+
+  // Re-render without losing the search field's focus.
+  function refreshStartAirport() {
+    const focus = document.activeElement && document.activeElement.id;
+    const caret = focus === 'st-search' ? $('st-search').selectionStart : null;
+    renderStart();
+    if (focus && $(focus)) {
+      $(focus).focus();
+      if (caret != null) $(focus).setSelectionRange(caret, caret);
+    }
+  }
+
+  function startNewGame() {
+    G.newGame({ mode: st.mode, difficulty: st.difficulty, airport: st.airport, aircraft: st.aircraft,
+      company: st.name ?? C.companyName });
+    closeStart();
     ui.drafts = {};
     ui.selectedAirport = null;
     ui.selectedPlane = null;
@@ -1444,6 +1566,9 @@
     ui.planeMarkers = {};
     $('newspaper').hidden = true;
     if (ui.newsPaused) { ui.newsPaused = false; ui.paused = ui.wasPaused; }
+    const home = G.airportByCode[G.home()];
+    ui.map.setView([home.lat, home.lon], 6);
+    for (const code of Object.keys(ui.airportMarkers)) updateLabel(G.airportByCode[code]); // new home ★
     G.save();
   }
 
@@ -1556,11 +1681,10 @@
     });
     $('sidebar').addEventListener('focusin', (e) => { if (e.target.tagName === 'SELECT') ui.selectOpen = true; });
     $('sidebar').addEventListener('focusout', (e) => { if (e.target.tagName === 'SELECT') ui.selectOpen = false; });
-    $('newgame').addEventListener('click', openNewGameDialog);
-    $('newgame-dialog').addEventListener('click', (e) => {
-      const b = e.target.closest('[data-mode]');
-      if (b) startNewGame(b.dataset.mode);
-    });
+    $('newgame').addEventListener('click', () => openStart(true));
+    $('start-screen').addEventListener('click', onStartClick);
+    $('start-screen').addEventListener('input', onStartInput);
+    $('start-screen').addEventListener('change', onStartInput);
     $('newspaper').addEventListener('click', (e) => {
       if (e.target.closest('[data-action="newsNext"]')) closeNewspaper();
     });
@@ -1572,8 +1696,9 @@
         e.preventDefault();
         return;
       }
-      if (!$('newgame-dialog').hidden) {
-        if (e.key === 'Escape') startNewGame('');
+      if (st.open) {
+        if (e.key === 'Escape' && st.hasGame) closeStart();
+        if (e.key === 'Enter' && e.target.id === 'st-name') startNewGame();
         return;
       }
       if (e.target.matches('input, select, textarea')) return;
@@ -1602,7 +1727,7 @@
   }
 
   function loop() {
-    if (!ui.paused) {
+    if (!ui.paused && !st.open) {
       ui.pendingMinutes += (ui.speed * TICK_MS) / 60000;
       const whole = Math.floor(ui.pendingMinutes);
       ui.pendingMinutes -= whole;
@@ -1622,17 +1747,19 @@
   }
 
   function init() {
-    if (!G.load()) G.newGame();
+    const saved = G.load();
+    if (!saved) G.newGame(); // placeholder game behind the start screen
     initMap();
     bindControls();
     renderAll();
+    openStart(saved && !G.state.gameOver);
     setInterval(loop, TICK_MS);
     setInterval(() => G.save(), 30000);
     // Hook for the 3D view (js/view3d.js).
     FG.ui = {
       get selectedPlane() { return ui.selectedPlane; },
       get selectedAirport() { return ui.selectedAirport; },
-      get speed() { return ui.paused ? 0 : ui.speed; },
+      get speed() { return ui.paused || st.open ? 0 : ui.speed; },
       selectPlane,
       selectAirport(code) { ui.selectedAirport = code; G.dirty = true; },
       clearSelection() { ui.selectedAirport = null; ui.selectedPlane = null; G.dirty = true; },

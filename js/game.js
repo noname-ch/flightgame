@@ -471,20 +471,28 @@
     flightTrack, flightState, legTrack, cruiseFt, windFrom,
     fmtMoney, fmtTime, fmtClock, fmtDuration,
 
-    newGame(mode = C.defaultMode) {
-      const home = airportByCode[C.startAirport];
-      const crewT = D.crewTemplates[C.startCrew];
+    // opts: { mode, difficulty, airport, aircraft, company } from the start screen; all optional.
+    newGame(opts = {}) {
+      if (typeof opts === 'string') opts = { mode: opts };
+      const mode = C.modes[opts.mode] ? opts.mode : C.defaultMode;
+      const difficulty = C.difficulties[opts.difficulty] ? opts.difficulty : C.defaultDifficulty;
+      const homeCode = airportByCode[opts.airport] ? opts.airport : C.startAirport;
+      const type = D.aircraft[opts.aircraft] ? opts.aircraft : C.startAircraft;
+      const home = airportByCode[homeCode];
+      const crewT = crewFor(type);
       this.state = {
         version: 1,
-        mode: C.modes[mode] ? mode : C.defaultMode,
-        company: C.companyName,
+        mode,
+        difficulty,
+        home: homeCode,
+        company: (opts.company || '').trim().slice(0, 40) || C.companyName,
         time: C.curfew.start,
-        money: C.startMoney,
-        slots: { [C.startAirport]: { since: 0 } },
+        money: C.difficulties[difficulty].startMoney,
+        slots: { [homeCode]: { since: 0 } },
         planes: [{
           id: C.startRegistration,
-          type: C.startAircraft,
-          location: C.startAirport,
+          type,
+          location: homeCode,
           status: 'idle', // idle | flying | turnaround
           ownership: 'leased', // leased | owned
           age: 0, // years when acquired
@@ -499,7 +507,7 @@
         crews: [{
           id: 'crew-1',
           name: `Base Crew ${home.city}`,
-          base: C.startAirport,
+          base: homeCode,
           pilots: crewT.pilots,
           cabin: crewT.cabin,
           weeklySalary: crewT.weeklySalary,
@@ -522,8 +530,8 @@
       this.registerBuilt();
       this.refreshMarket();
       this.log(`Welcome to ${this.state.company}! You start with a slot at ${home.name}, ` +
-        `the ${D.aircraft[C.startAircraft].name} ${C.startRegistration} and a base crew. ` +
-        `Mode: ${C.modes[this.state.mode].name} – ${C.modes[this.state.mode].desc}`);
+        `the ${D.aircraft[type].name} ${C.startRegistration} and a base crew. ` +
+        `Mode: ${C.modes[mode].name} – ${C.modes[mode].desc} Difficulty: ${C.difficulties[difficulty].name}.`);
       this.dirty = true;
     },
 
@@ -555,6 +563,8 @@
       }
       if (!s.fares) s.fares = {};
       if (!s.mode) s.mode = C.defaultMode;
+      if (!s.difficulty) s.difficulty = C.defaultDifficulty;
+      if (!s.home) s.home = C.startAirport;
       if (!s.effects) s.effects = [];
       if (!s.news) s.news = [];
       if (!s.infra) s.infra = {};
@@ -615,7 +625,7 @@
     fareFactor(a, b) { return this.state.fares[routeKey(a, b)] || 1; },
     fare(a, b) { return Math.round(ticketPrice(dist(a, b)) * this.fareFactor(a, b)); },
     demand(a, b) {
-      return Math.round(dailyDemand(a, b) * Math.pow(this.fareFactor(a, b), -C.ticket.elasticity) * this.eventDemandMult(a, b));
+      return Math.round(dailyDemand(a, b) * Math.pow(this.fareFactor(a, b), -C.ticket.elasticity) * this.eventDemandMult(a, b) * this.difficulty().demandMult);
     },
 
     changeFare(a, b, steps) {
@@ -657,7 +667,7 @@
       }
       this.rollWorldEvent();
       this.finishProjects();
-      if (s.money < C.bankruptcyLimit) {
+      if (s.money < this.bankruptcyLimit()) {
         s.gameOver = true;
         this.log('Bankrupt! Your airline has run out of money. Start a new game.', 'bad');
       }
@@ -771,7 +781,7 @@
       p.flight = {
         from: p.location, to: leg.to, kind: leg.kind,
         dep: t, arr: t + block, distance: Math.round(d),
-        pax, revenue, cost: flightCost(p.type, d, leg.to, pax, this.costMult(p) * this.fuelMult()),
+        pax, revenue, cost: flightCost(p.type, d, leg.to, pax, this.costMult(p) * this.fuelMult() * this.difficulty().costMult),
       };
       this.rollFlightEvents(p);
       p.status = 'flying';
@@ -787,6 +797,9 @@
 
     // ---------- random events ----------
     mode() { return C.modes[this.state.mode] || C.modes[C.defaultMode]; },
+    difficulty() { return C.difficulties[this.state.difficulty] || C.difficulties[C.defaultDifficulty]; },
+    bankruptcyLimit() { return this.difficulty().bankruptcyLimit; },
+    home() { return this.state.home || C.startAirport; },
     makerMult(type) { return this.mode().makerCrashMult[D.aircraft[type].maker] || 1; },
     crashChance(type) { return C.events.crashPerFlight * this.makerMult(type); },
 
@@ -963,7 +976,7 @@
 
     releaseSlot(code) {
       const s = this.state;
-      if (code === C.startAirport) return 'You cannot give up your home base.';
+      if (code === this.home()) return 'You cannot give up your home base.';
       if (!s.slots[code]) return 'You have no slot there.';
       const used = s.planes.some((p) =>
         p.location === code || p.pendingFerry === code ||
