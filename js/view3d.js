@@ -381,7 +381,7 @@ function gateFeatures(list, gates) {
     const width = big ? 23 : 15;
     const tww = metresWidth(width, a.lat);
     const edge = metresWidth(width + (big ? 14 : 7), a.lat); // with its shoulders
-    for (const tw of G.taxiwaysOf(a.code)) {
+    for (const tw of tws) {
       path(tw, { kind: 'taxiway', ...tww, e10: edge.w10, e22: edge.w22 });
       path(tw, { kind: 'twline' });
       for (const f of paved) {
@@ -465,9 +465,15 @@ function refreshGates() {
   let list = [];
   const gates = map.getZoom() >= GATE_MINZOOM;
   if (G.apronOf && map.getZoom() >= RUNWAY_MINZOOM) {
+    // Bounds padded by ~8 km: zoomed in on a far corner of a big airport, its centre point is off screen,
+    // but its runways and gates must stay.
     const b = map.getBounds();
-    // (also those just outside: an apron can lie up to 3 km from the airport's reference point)
-    list = D.airports.filter((a) => !a.factory && a.lat > b.getSouth() - 0.03 && a.lat < b.getNorth() + 0.03 && a.lon > b.getWest() - 0.05 && a.lon < b.getEast() + 0.05);
+    const pad = 0.075;
+    const s = b.getSouth() - pad, n = b.getNorth() + pad;
+    const kLon = pad / Math.max(0.2, Math.cos(Math.max(Math.abs(s), Math.abs(n)) * DEG));
+    const w = b.getWest() - kLon, e = b.getEast() + kLon;
+    list = D.airports.filter((a) => !a.factory && a.lat >= s && a.lat <= n
+      && (w <= e ? a.lon >= w && a.lon <= e : a.lon >= w || a.lon <= e));
   }
   const sig = gates + infra + list.map((a) => `${a.code}:${G.airportSize(a.code)}:${G.airportRunways(a.code).length}`).join(',');
   if (sig === v.sig.gates) return;
