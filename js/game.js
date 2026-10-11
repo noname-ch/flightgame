@@ -1121,7 +1121,7 @@
     const airborne = sTouch - sLift;
 
     // Cruise level: type typical, lower on short hops; odd thousands eastbound, even westbound.
-    const climbRate = ac.category === 'turboprop' || ac.category === 'classic' ? 4.5 : 5.5; // km per 1000 ft
+    const climbRate = ac.category === 'turboprop' || ac.category === 'classic' ? 4.5 : 4; // km per 1000 ft
     let cruiseAlt = cruiseFt(type);
     const fit = airborne / ((climbRate + DESCENT_KM_PER_KFT) * cruiseAlt / 1000);
     if (fit < 1) cruiseAlt *= fit;
@@ -1146,12 +1146,27 @@
     const ground = Math.min(total * 0.5, TAXI_OUT + TAXI_IN + ROLL_OUT + ROLL_IN);
     const k = ground / (TAXI_OUT + TAXI_IN + ROLL_OUT + ROLL_IN);
     const air = total - ground;
+    // Speed: lift-off at about the approach speed, 250 kt (463 km/h) below 10,000 ft, cruise speed above.
+    // Coming in, the plane slows down to its approach speed by the final approach fix and holds it on the
+    // glide path, touching down a little slower.
+    const vCruise = ac.speedKmh;
+    const vApp = Math.min(vCruise * 0.6, ac.speedKmh < 450 ? 210 : ac.speedKmh < 700 ? 230 : 260);
+    const v250 = Math.min(vCruise, 463);
+    const speedAt = (sm) => {
+      const alt = altAt(sm);
+      let v = alt < 10000
+        ? vApp * 1.05 + (v250 - vApp * 1.05) * Math.sqrt(alt / 10000)
+        : v250 + (vCruise - v250) * Math.min(1, (alt - 10000) / 20000); // full cruise speed from FL300
+      const toTouch = sTouch - sm;
+      if (toTouch < FINAL_KM) v = vApp * (0.93 + 0.07 * toTouch / FINAL_KM); // on final
+      else if (toTouch < FINAL_KM + 25) v = Math.min(v, vApp + (v250 - vApp) * (toTouch - FINAL_KM) / 25); // slowing down
+      return Math.max(vApp * 0.9, v);
+    };
     const steps = 200;
     const raw = [0];
     for (let i = 1; i <= steps; i++) {
       const sm = sLift + airborne * (i - 0.5) / steps;
-      const v = ac.speedKmh * (0.35 + 0.65 * Math.pow(Math.min(1, altAt(sm) / Math.max(cruiseAlt, 10000)), 0.6));
-      raw.push(raw[i - 1] + (airborne / steps) / v);
+      raw.push(raw[i - 1] + (airborne / steps) / speedAt(sm));
     }
     const scale = air / raw[steps];
     const segs = [ // [t0, t1, s0, s1, ease]; 'both' starts and ends at standstill
@@ -1247,7 +1262,9 @@
     else if (sTouch - sv < FINAL_KM + 1) phase = 'approach';
     else if (alt >= tr.cruiseAlt - 50) phase = 'cruise';
     else phase = sv - sLift < (sTouch - sLift) / 2 ? 'climb' : 'descent';
-    return { lat: pos.lat, lon: pos.lon, heading: pos.heading, altFt: alt, speedKmh: speed, phase,
+    // airFrac: how far between lift-off (0) and touchdown (1) the plane is, for blending the two field elevations.
+    const airFrac = Math.min(1, Math.max(0, (sv - sLift) / Math.max(0.001, sTouch - sLift)));
+    return { lat: pos.lat, lon: pos.lon, heading: pos.heading, altFt: alt, speedKmh: speed, phase, airFrac,
       cruiseFt: tr.cruiseAlt, depRunway: designatorOf(tr.depRunway.hdg), arrRunway: designatorOf(tr.arrRunway.hdg) };
   }
   const designatorOf = (h) => String(Math.round((((h % 360) + 360) % 360) / 10) || 36).padStart(2, '0');

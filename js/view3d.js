@@ -591,7 +591,7 @@ function transformStyle(_prev, style) {
     tiles: ['https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2020_3857/default/g/{z}/{y}/{x}.jpg'],
     attribution: 'Sentinel-2 cloudless by EOX',
   };
-  style.terrain = { source: 'terrain', exaggeration: 1.5 };
+  style.terrain = { source: 'terrain', exaggeration: TERRAIN_EXAG };
   style.sky = {
     'sky-color': '#7fb4ec', 'horizon-color': '#dbe9f7', 'fog-color': '#e6eef7',
     'sky-horizon-blend': 0.6, 'horizon-fog-blend': 0.6, 'fog-ground-blend': 0.85,
@@ -684,6 +684,17 @@ function transformStyle(_prev, style) {
 }
 
 // ---------- three.js layer ----------
+const TERRAIN_EXAG = 1.5; // hills are drawn this much taller; flight heights are stretched the same
+
+// Shown ground height (already exaggerated) at an airport, remembered once the terrain there has loaded.
+function fieldElevation(map, code) {
+  v.elev = v.elev || {};
+  if (v.elev[code] != null) return v.elev[code];
+  const a = G.airportByCode[code];
+  const e = a ? map.queryTerrainElevation([a.lon, a.lat]) : null;
+  if (e != null && e !== 0) v.elev[code] = e;
+  return e || 0;
+}
 // Shown height: the real height, but stretched when zoomed out so planes stay clearly above the ground.
 function shownAlt(altM, len, exag) {
   return Math.max(altM, (altM / 11000) * len * exag * 1.2) + len * exag * 0.12;
@@ -778,8 +789,16 @@ const planeLayer = {
       const len = e.obj.userData.len;
       const exag = Math.max(1, px * mpp / len) * (p.id === sel ? 1.35 : 1);
       // Shown height: real cruise height, but always clearly above the ground when zoomed out.
-      const ground = pose.altM < 300 ? (map.queryTerrainElevation([pose.lon, pose.lat]) || 0) : 0;
-      const altM = ground + shownAlt(pose.altM, len, exag);
+      // Heights in the game are above the airports: from the departure field's ground to the arrival
+      // field's, stretched like the hills, and never below the terrain under the plane.
+      const under = map.queryTerrainElevation([pose.lon, pose.lat]) || 0;
+      let base = under;
+      if (pose.st && pose.altM > 0) {
+        const f = pose.st.airFrac;
+        base = fieldElevation(map, p.flight.from) * (1 - f) + fieldElevation(map, p.flight.to) * f;
+      }
+      const rise = shownAlt(pose.altM * TERRAIN_EXAG, len, exag);
+      const altM = Math.max(base + rise, under + Math.min(rise, 150 * TERRAIN_EXAG) + (pose.altM > 0 ? len * exag * 0.12 : 0));
       if (p.id === sel) this.drawTrack(p, len, exag, globe);
       const unit = frameAt(pose.lat, pose.lon, altM, globe);
       // Ease heading, bank and pitch towards the target, so the plane turns, rolls and pitches
@@ -848,14 +867,25 @@ planeLayer.drawTrack = function (p, len, exag, globe) {
     this.world.add(this.track);
   }
   if (!tr) { this.track.visible = false; return; }
-  const key = `${p.id}|${p.flight.dep}|${Math.round(Math.log2(exag) * 4)}|${globe}`;
+  const map = v.map;
+  const e0 = fieldElevation(map, p.flight.from);
+  const e1 = fieldElevation(map, p.flight.to);
+  const key = `${p.id}|${p.flight.dep}|${Math.round(Math.log2(exag) * 4)}|${globe}|${Math.round(e0)}|${Math.round(e1)}`;
   this.track.visible = true;
   if (this.track.userData.key === key) return;
   this.track.userData.key = key;
+  // Same heights as the plane: between the two field elevations, stretched like the hills, above the terrain.
+  const sLift = tr.cum[tr.idx.lift];
+  const sTouch = tr.cum[tr.idx.touch];
   const pts = [];
   for (let i = 0; i < tr.pts.length; i++) {
     const [lat, lon] = tr.pts[i];
-    frameAt(lat, lon, shownAlt(tr.altAt(tr.cum[i]) * 0.3048, len, exag), globe);
+    const altM = tr.altAt(tr.cum[i]) * 0.3048;
+    const under = map.queryTerrainElevation([lon, lat]) || 0;
+    const f = Math.min(1, Math.max(0, (tr.cum[i] - sLift) / Math.max(0.001, sTouch - sLift)));
+    const rise = shownAlt(altM * TERRAIN_EXAG, len, exag);
+    const base = altM > 0 ? e0 * (1 - f) + e1 * f : under;
+    frameAt(lat, lon, Math.max(base + rise, under + Math.min(rise, 150 * TERRAIN_EXAG)), globe);
     pts.push(tmp.pos.clone());
   }
   this.track.geometry.dispose();
