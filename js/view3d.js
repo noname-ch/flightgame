@@ -390,6 +390,12 @@ function frameAt(lat, lon, altM, globe) {
   return mc.meterInMercatorCoordinateUnits();
 }
 
+// three.js and MapLibre share the WebGL context: reset it and make MapLibre re-apply its own state.
+function restoreGl(renderer, map) {
+  renderer.resetState();
+  if (map.painter && map.painter.context && map.painter.context.setDirty) map.painter.context.setDirty();
+}
+
 const planeLayer = {
   id: 'fg-planes',
   type: 'custom',
@@ -407,6 +413,9 @@ const planeLayer = {
     this.renderer.autoClear = false;
     this.matrix = new THREE.Matrix4();
     this.shift = new THREE.Matrix4();
+    // Creating the renderer changes the shared GL state too: hand it back to MapLibre clean, or the
+    // first terrain tiles are drawn blank and stay cached that way (an empty map until a restyle).
+    restoreGl(this.renderer, map);
   },
   render(gl, args) {
     if (!v.on) return;
@@ -504,8 +513,7 @@ const planeLayer = {
     facing.value = 1;
     // three.js and MapLibre share the WebGL context: put the GL state back and make MapLibre
     // re-apply its own, or real GPUs draw an empty map (texture uploads, framebuffer bindings).
-    this.renderer.resetState();
-    if (map.painter && map.painter.context && map.painter.context.setDirty) map.painter.context.setDirty();
+    restoreGl(this.renderer, map);
     map.triggerRepaint();
   },
 };
