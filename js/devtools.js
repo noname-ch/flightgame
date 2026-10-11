@@ -1,5 +1,5 @@
 // Developer tools: a cheat panel for testing (money, planes, slots, events, time).
-// Open it with the 🛠 button in the header or F2. Uses only FG.game and FG.ui.
+// Open it with Developer tools in the ⋯ menu or F2. Uses only FG.game and FG.ui.
 (function () {
   const G = FG.game;
   const D = FG.data;

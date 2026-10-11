@@ -870,4 +870,7 @@ function init() {
 if (FG.ui) init();
 else window.addEventListener('fg-ui-ready', init, { once: true });
 
+// Used by the plane strip in ui.js: double-click a plane to follow it.
+v.setFollow = (on) => setFollow(on);
+v.setOn = (on) => setOn(on);
 FG.view3d = v; // for debugging

@@ -28,7 +28,9 @@
     selectRing: null,
     shownAirport: null, // airport the catchment overlay is currently drawn for
     hoverAirport: null,
-    tab: 'fleet',
+    tab: null, // open sidebar section, null = closed
+    follow: null, // plane the 2D map follows
+    hoverCard: null, // plane under the mouse in the bottom strip
     speed: 1, // multiple of real time
     paused: false,
     pendingMinutes: 0, // fractional game minutes carried between ticks
@@ -213,6 +215,31 @@
     G.dirty = true;
   }
 
+  // 2D follow: the map stays centred on the plane until you drag it.
+  function setFollow2d(id) {
+    if (ui.follow === id) return;
+    ui.follow = id;
+    const badge = $('follow-badge');
+    if (badge) badge.remove();
+    if (!id) return;
+    const p = G.plane(id);
+    const pos = planePosition(p);
+    ui.map.setView(pos.latlng, Math.max(ui.map.getZoom(), pos.ground ? 14 : 8));
+    const el = document.createElement('div');
+    el.id = 'follow-badge';
+    el.innerHTML = `🎥 Following <b>${id}</b> <button class="mini" title="Stop following">✕</button>`;
+    el.querySelector('button').onclick = () => setFollow2d(null);
+    $('map').appendChild(el);
+  }
+
+  // Follow a plane in whichever view is open.
+  function follow(id) {
+    ui.selectedPlane = id;
+    G.dirty = true;
+    if (FG.view3d && FG.view3d.on && FG.view3d.setFollow) { FG.view3d.setFollow(true); return; }
+    setFollow2d(id);
+  }
+
   function initMap() {
     const map = ui.map = L.map('map', {
       minZoom: C.map.minZoom,
@@ -274,7 +301,11 @@
 
 
     L.control.scale({ imperial: false }).addTo(map);
-    L.control.layers(base, { Towns: ui.townLayer, Routes: ui.routeLayer, 'Rival airlines': ui.rivalLayer, 'Place names': names }).addTo(map);
+    // Base map and layers are switched in Settings (menu ⋯).
+    ui.base = base;
+    ui.baseName = baseName;
+    ui.overlays = { Towns: ui.townLayer, Routes: ui.routeLayer, 'Rival airlines': ui.rivalLayer, 'Place names': names };
+    ui.names = names;
     addControl('topleft', () => {
       const bar = L.DomUtil.create('div', 'leaflet-bar');
       const btn = L.DomUtil.create('a', 'fit-network', bar);
@@ -287,11 +318,13 @@
     addControl('bottomleft', () => {
       const box = L.DomUtil.create('div');
       box.innerHTML = LEGEND;
+      ui.legend = box.firstChild;
       return box.firstChild;
     });
 
     map.on('zoomend', () => { resizeMarkers(); drawRoutes(); });
     map.on('moveend', () => { updateVisible(); drawRunways(); });
+    map.on('dragstart', () => setFollow2d(null));
     map.on('click', (e) => {
       if (ui.buildMode) { buildAt(e.latlng); return; }
       if (!ui.selectedAirport && !ui.selectedPlane) return;
@@ -729,6 +762,7 @@
         ui.planeMarkers[p.id] = m;
       }
       m.setLatLng(pos.latlng);
+      if (ui.follow === p.id) ui.map.panTo(pos.latlng, { animate: false });
       if (p.status === 'flying' && m.isTooltipOpen()) m.setTooltipContent(planeTip(p));
       const el = m.getElement();
       if (el) {
@@ -770,10 +804,14 @@
     const money = $('money');
     money.textContent = G.fmtMoney(s.money);
     money.classList.toggle('negative', s.money < 0);
-    $('clock').textContent = G.fmtTime(s.time);
+    const day = Math.floor(s.time / 1440);
+    $('clock-time').textContent = G.fmtClock(s.time);
+    $('clock-day').textContent = G.fmtTime(s.time).replace(/ \d\d:\d\d$/, '');
     $('pause').classList.toggle('active', ui.paused);
-    $('speed-label').textContent = ui.speed === 1 ? 'Real time' : fmtSpeed(ui.speed);
+    $('speed-btn').classList.toggle('paused', ui.paused);
+    $('speed-label').textContent = ui.paused ? 'Paused' : ui.speed === 1 ? 'Real time' : fmtSpeed(ui.speed);
     $('gameover').hidden = !s.gameOver;
+    if (day !== ui.shownDay) { ui.shownDay = day; G.dirty = true; } // the day plan's "now" line
   }
 
   // ---------- sidebar ----------
@@ -1012,7 +1050,8 @@
     const s = G.state;
     const owned = Object.keys(s.slots);
     let h = '';
-    for (const p of s.planes) {
+    const list = s.planes.slice().sort((p, q) => (q.id === ui.selectedPlane) - (p.id === ui.selectedPlane));
+    for (const p of list) {
       const ac = D.aircraft[p.type];
       const crew = G.crewOf(p);
       const sch = p.schedule;
@@ -1024,12 +1063,21 @@
         h += `<div>👥 ${crew.name}: ${crew.pilots} pilots, ${crew.cabin} cabin crew ·
           duty today ${G.fmtDuration(crew.dutyToday)} / ${G.fmtDuration(C.crewMaxDutyMin)}</div>`;
       }
-      h += `<div class="muted">Totals: ${p.stats.flights} flights · ${p.stats.pax} pax · ${G.fmtMoney(p.stats.profit)}</div>`;
+      h += `<div class="muted">Totals: ${p.stats.flights} flights · ${p.stats.pax} pax · ${G.fmtMoney(p.stats.profit)}</div>
+        <div class="row"><button data-action="follow" data-plane="${p.id}">🎥 Follow</button>
+          <button data-action="planDay" data-plane="${p.id}">🗓 Timetable</button></div>`;
 
       h += `<div class="row"><select id="send-${p.id}">`;
       for (const c of owned) h += `<option value="${c}">${c} · ${G.airportByCode[c].city}</option>`;
       h += `</select><button data-action="sendSelect" data-plane="${p.id}">Ferry there</button></div>`;
 
+      if (sch.legs) {
+        h += `<div class="label">Timetable ${sch.active ? '<span class="pos">● running</span>' : '<span class="muted">⏸ paused</span>'}</div>
+          <div class="route">${sch.legs.map((l, i) => `<span class="${i === sch.index % sch.legs.length && p.status !== 'flying' ? 'here' : ''}">${G.fmtClock(l.dep)} ${l.from}→${l.to}</span>`).join(' ')}</div>
+          <div class="row">${sch.active ? `<button data-action="pause" data-plane="${p.id}">Pause</button>`
+            : `<button class="primary" data-action="start" data-plane="${p.id}">Start timetable</button>`}
+            <button data-action="planDay" data-plane="${p.id}">Edit in Schedule</button></div>`;
+      } else {
       h += `<div class="label">Schedule ${sch.stops.length >= 2 ? (sch.active ? '<span class="pos">● running</span>' : '<span class="muted">⏸ paused</span>') : ''}</div>`;
       if (sch.stops.length >= 2) {
         h += `<div class="route">${sch.stops.map((c, i) =>
@@ -1050,6 +1098,7 @@
             : `<button class="primary" data-action="start" data-plane="${p.id}">Start schedule</button>`;
         }
         h += `</div>`;
+      }
       }
       const confirm = ui.confirmDispose === p.id;
       const label = p.ownership === 'owned' ? `Sell for ${G.fmtMoney(G.saleValue(p))}` : `Return lease (fee ${G.fmtMoney(G.returnFee(p))})`;
@@ -1353,17 +1402,9 @@
     return h;
   }
 
-  function slotsTab() {
-    const s = G.state;
-    let h = `<div class="panel"><h3>Your slots</h3><table class="small"><tr><th>Airport</th><th>catchment</th><th>/week</th></tr>`;
-    for (const code of Object.keys(s.slots)) {
-      const a = G.airportByCode[code];
-      h += `<tr class="click" data-action="selectAirport" data-code="${code}"><td>${code} · ${a.city}</td>
-        <td>${fmtPop(G.catchment(code))}</td><td>${G.fmtMoney(G.slotFee(code))}</td></tr>`;
-    }
-    h += `</table><div class="hint">Click an airport on the map to see its demand and lease a slot.</div></div>`;
-
-    h += `<div class="panel"><h3>Best routes from ${G.home()}</h3><table class="small">
+  // Where to go next: shown under the Slots section (js/planner.js).
+  function bestRoutes() {
+    let h = `<div class="panel"><h3>Best routes from ${G.home()}</h3><div class="hint">Click an airport on the map to see its demand and lease a slot.</div><table class="small">
       <tr><th>Airport</th><th>km</th><th>pax/day</th><th>slot</th></tr>`;
     const ranked = D.airports
       .filter((a) => a.code !== G.home() && !a.minor)
@@ -1540,16 +1581,219 @@
       `<div class="entry ${e.kind}"><span class="muted">${G.fmtTime(e.t)}</span> ${e.msg}</div>`).join('')}</div>`;
   }
 
+  const TAB_TITLES = { fleet: 'Fleet', airports: 'Airports', slots: 'Slots', schedule: 'Schedule', finance: 'Finance', rivals: 'Rivals', log: 'Log' };
+
   function renderSidebar() {
+    const open = !!(ui.tab || ui.selectedAirport);
+    $('sidebar').hidden = !open;
+    document.querySelectorAll('[data-tab]').forEach((b) => b.classList.toggle('active', b.dataset.tab === ui.tab));
+    if (!open) return;
+    const P = FG.planner;
+    $('side-title').textContent = ui.tab ? TAB_TITLES[ui.tab] : 'Airport';
     $('details').innerHTML = ui.selectedAirport ? airportPanel(ui.selectedAirport) : '';
     renderEvents();
-    const tabs = { fleet: fleetTab, slots: slotsTab, airports: airportsTab, rivals: rivalsTab, finance: financeTab, log: logTab };
-    $('tab-content').innerHTML = tabs[ui.tab]();
-    document.querySelectorAll('[data-tab]').forEach((b) => b.classList.toggle('active', b.dataset.tab === ui.tab));
+    const tabs = { fleet: fleetTab, slots: P.slotsTab, airports: P.airportsTab, schedule: P.scheduleTab, rivals: rivalsTab, finance: financeTab, log: logTab };
+    const scroll = $('sidebar').scrollTop;
+    $('tab-content').innerHTML = ui.tab ? tabs[ui.tab]() : '';
+    $('sidebar').scrollTop = scroll;
     restoreSelects();
   }
 
+  function setTab(tab) {
+    if (tab === 'market') { openMarket(); return; }
+    ui.tab = tab;
+    G.dirty = true;
+  }
+
+  // ---------- bottom strip: one card per plane ----------
+  const STATUS_DOT = { flying: 'fly', turnaround: 'turn', idle: 'idle' };
+  function renderStrip() {
+    const planes = G.state.planes;
+    const sig = planes.map((p) => `${p.id}:${p.type}:${p.status}`).join('|') + `|${ui.selectedPlane}|${ui.follow}`;
+    if (sig === ui.stripSig) return;
+    ui.stripSig = sig;
+    $('strip-list').innerHTML = planes.map((p) => `<div class="pcard${p.id === ui.selectedPlane ? ' sel' : ''}${p.id === ui.follow ? ' follow' : ''}" data-plane="${p.id}">
+        <img src="models/hangar/${D.typeSlug(p.type)}.webp" alt="" draggable="false" onerror="this.style.visibility='hidden'">
+        <i class="st ${STATUS_DOT[p.status] || 'idle'}${p.repair ? ' repair' : ''}"></i>
+        <div class="pc-type">${p.type}</div></div>`).join('') +
+      `<button class="pcard add" data-action-strip="market" title="Marketplace">＋<div class="pc-type">Buy</div></button>`;
+  }
+
+  // Hover box: where it comes from, where it goes, time left and fuel.
+  function stripTipHtml(p) {
+    const t = nowMinutes();
+    const f = p.flight;
+    const fuel = Math.round(G.fuelLevel(p, t) * 100);
+    const ac = D.aircraft[p.type];
+    let h = `<div class="tt-head"><b>${p.id}</b> <span class="muted">${ac.name}</span></div>`;
+    if (p.status === 'flying' && f) {
+      const left = Math.max(0, f.arr - t);
+      h += `<div class="tt-route"><span>${f.from}<small>${G.airportByCode[f.from].city}</small></span><span class="arrow">✈</span>
+          <span>${f.to}<small>${G.airportByCode[f.to].city}</small></span></div>
+        <div class="tt-prog"><i style="width:${Math.min(100, ((t - f.dep) / Math.max(1, f.arr - f.dep)) * 100)}%"></i></div>
+        <div>⏱ <b>${G.fmtDuration(left)}</b> left · lands ${G.fmtClock(Math.round(f.arr))}</div>
+        <div class="muted">${flightText(p)}${f.kind === 'scheduled' ? ` · ${f.pax} pax` : ` · ${f.kind}`}</div>`;
+    } else {
+      const sch = p.schedule;
+      let next = '';
+      if (sch.active && sch.legs) {
+        const l = sch.legs[sch.index % sch.legs.length];
+        next = `next ${l.from}→${l.to} at ${G.fmtClock(l.dep)}`;
+      } else if (sch.active && sch.stops.length >= 2) next = `next to ${sch.stops[(sch.index + 1) % sch.stops.length]}`;
+      h += `<div class="tt-route"><span>${p.location}<small>${G.airportByCode[p.location].city}</small></span></div>
+        <div>${planeStatus(p)}</div>${next ? `<div class="muted">${next}</div>` : ''}`;
+    }
+    h += `<div class="tt-fuel">⛽ <span class="bar"><i class="${fuel < 25 ? 'low' : ''}" style="width:${fuel}%"></i></span> ${fuel}%</div>
+      <div class="hint">Click: select · double-click: follow</div>`;
+    return h;
+  }
+
+  function updateStripTip() {
+    const tip = $('strip-tip');
+    const p = ui.hoverCard && G.plane(ui.hoverCard);
+    if (!p) { tip.hidden = true; return; }
+    tip.innerHTML = stripTipHtml(p);
+    tip.hidden = false;
+    const card = document.querySelector(`.pcard[data-plane="${CSS.escape(p.id)}"]`);
+    if (!card) { tip.hidden = true; return; }
+    const r = card.getBoundingClientRect();
+    tip.style.left = `${Math.max(8, Math.min(window.innerWidth - tip.offsetWidth - 8, r.left + r.width / 2 - tip.offsetWidth / 2))}px`;
+    tip.style.top = `${r.top - tip.offsetHeight - 8}px`;
+  }
+
+  function bindStrip() {
+    const list = $('strip-list');
+    let last = { id: null, t: 0 };
+    list.addEventListener('click', (e) => {
+      if (e.target.closest('[data-action-strip="market"]')) { openMarket(); return; }
+      const card = e.target.closest('.pcard[data-plane]');
+      if (!card) return;
+      const id = card.dataset.plane;
+      const now = performance.now();
+      if (last.id === id && now - last.t < 400) { follow(id); last = { id: null, t: 0 }; return; }
+      last = { id, t: now };
+      selectPlane(id);
+      if (!(FG.view3d && FG.view3d.on)) {
+        const pos = planePosition(G.plane(id));
+        if (ui.follow && ui.follow !== id) setFollow2d(null);
+        ui.map.panTo(pos.latlng);
+      }
+    });
+    list.addEventListener('mouseover', (e) => {
+      const card = e.target.closest('.pcard[data-plane]');
+      ui.hoverCard = card ? card.dataset.plane : null;
+      updateStripTip();
+    });
+    list.addEventListener('mouseleave', () => { ui.hoverCard = null; updateStripTip(); });
+    // The mouse wheel scrolls the strip sideways.
+    list.addEventListener('wheel', (e) => {
+      if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) { list.scrollLeft += e.deltaY; e.preventDefault(); }
+    }, { passive: false });
+  }
+
+  // ---------- menu, speed and settings ----------
+  const SETTINGS_KEY = 'flightgame.settings';
+  const set = { legend: true, autosave: true, overlays: { Towns: true, Routes: true, 'Rival airlines': true, 'Place names': false } };
+  function loadSettings() {
+    try { Object.assign(set, JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}')); } catch (e) { /* private mode */ }
+  }
+  function saveSettings() {
+    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(set)); } catch (e) { /* private mode */ }
+  }
+  function applySettings() {
+    for (const [name, layer] of Object.entries(ui.overlays)) {
+      const on = set.overlays[name] !== false && (name !== 'Place names' || set.overlays[name]);
+      if (on && !ui.map.hasLayer(layer)) layer.addTo(ui.map);
+      if (!on && ui.map.hasLayer(layer)) ui.map.removeLayer(layer);
+    }
+    if (ui.legend) ui.legend.style.display = set.legend ? '' : 'none';
+  }
+  function setBasemap(name) {
+    if (!ui.base[name] || name === ui.baseName) return;
+    ui.map.removeLayer(ui.base[ui.baseName]);
+    ui.base[name].addTo(ui.map);
+    ui.baseName = name;
+    ui.map.fire('baselayerchange', { name, layer: ui.base[name] });
+  }
+
+  function renderSettings() {
+    const el = $('settings');
+    el.innerHTML = `<div class="set-card"><div class="side-head"><h2>Settings</h2><button class="close" data-set="close">×</button></div>
+      <h4>Map style</h4><div class="chips">${Object.keys(ui.base).map((n) =>
+        `<button class="${n === ui.baseName ? 'on' : ''}" data-set="base" data-v="${n}">${{ Standard: '🗺', Dark: '🌑', Satellite: '🛰' }[n]} ${n}</button>`).join('')}</div>
+      <h4>On the map</h4>${Object.keys(ui.overlays).map((n) =>
+        `<label class="check"><input type="checkbox" data-set="overlay" data-v="${n}" ${ui.map.hasLayer(ui.overlays[n]) ? 'checked' : ''}> ${n}</label>`).join('')}
+      <label class="check"><input type="checkbox" data-set="legend" ${set.legend ? 'checked' : ''}> Legend</label>
+      <h4>Game</h4>
+      <label class="check"><input type="checkbox" data-set="autosave" ${set.autosave ? 'checked' : ''}> Save automatically every 30 s</label>
+      <h4>3D view</h4><div class="row"><button data-set="3d">${FG.view3d && FG.view3d.on ? 'Back to 2D' : 'Open 3D view'} <span class="muted">V</span></button></div>
+      <h4>Keys</h4><div class="muted">Space pause · ← → speed · V 3D · F2 developer tools · Esc menu</div></div>`;
+  }
+  function onSettings(e) {
+    const t = e.target.closest('[data-set]');
+    if (!t) { if (e.target === $('settings')) $('settings').hidden = true; return; }
+    const k = t.dataset.set;
+    if (k === 'close') { $('settings').hidden = true; return; }
+    if (k === 'base') setBasemap(t.dataset.v);
+    if (k === 'overlay') { set.overlays[t.dataset.v] = t.checked; applySettings(); }
+    if (k === 'legend') { set.legend = t.checked; applySettings(); }
+    if (k === 'autosave') set.autosave = t.checked;
+    if (k === '3d') { $('view3d-toggle').click(); }
+    saveSettings();
+    renderSettings();
+  }
+
+  function closePops() {
+    $('menu').hidden = true;
+    $('speed-pop').hidden = true;
+  }
+
+  // After loading a save or starting over: forget what the UI showed of the old game.
+  function resetView() {
+    ui.drafts = {};
+    ui.selectedAirport = null;
+    ui.selectedPlane = null;
+    ui.shownAirport = undefined;
+    ui.stripSig = null;
+    setFollow2d(null);
+    FG.planner.reset();
+    Object.values(ui.planeMarkers).forEach((m) => m.remove());
+    ui.planeMarkers = {};
+    $('newspaper').hidden = true;
+    if (ui.newsPaused) { ui.newsPaused = false; ui.paused = ui.wasPaused; }
+    for (const code of Object.keys(ui.airportMarkers)) updateLabel(G.airportByCode[code]);
+    G.dirty = true;
+  }
+
+  const SPEEDS = [1, 10, 60, 300, 1200, 3600, MAX_SPEED];
+  function bindTopbar() {
+    $('menu-btn').addEventListener('click', (e) => { e.stopPropagation(); const open = $('menu').hidden; closePops(); $('menu').hidden = !open; });
+    $('speed-btn').addEventListener('click', (e) => { e.stopPropagation(); const open = $('speed-pop').hidden; closePops(); $('speed-pop').hidden = !open; });
+    $('speed-pop').querySelector('.speed-presets').innerHTML = SPEEDS.map((x) =>
+      `<button data-speed="${x}">${x === 1 ? 'Real' : fmtSpeed(x)}</button>`).join('');
+    $('speed-pop').addEventListener('click', (e) => {
+      e.stopPropagation();
+      const b = e.target.closest('[data-speed]');
+      if (!b) return;
+      ui.speed = Number(b.dataset.speed);
+      ui.paused = false;
+      $('speed').value = speedToSlider(ui.speed);
+    });
+    $('menu').addEventListener('click', (e) => { if (e.target.closest('button')) closePops(); });
+    document.addEventListener('click', (e) => { if (!e.target.closest('.pop')) closePops(); });
+    $('load').addEventListener('click', () => {
+      if (!G.load()) { toast('No saved game.', true); return; }
+      resetView();
+      toast('Saved game loaded.');
+    });
+    $('exit').addEventListener('click', () => { G.save(); openStart(true); });
+    $('settings-btn').addEventListener('click', () => { renderSettings(); $('settings').hidden = false; });
+    $('settings').addEventListener('click', onSettings);
+    $('side-close').addEventListener('click', () => { ui.tab = null; ui.selectedAirport = null; G.dirty = true; });
+  }
+
   function renderAll() {
+    renderStrip();
     renderSidebar();
     refreshAirports();
     refreshPlanes();
@@ -1749,17 +1993,9 @@
     G.newGame({ mode: st.mode, difficulty: st.difficulty, airport: st.airport, aircraft: st.aircraft,
       company: st.name ?? C.companyName });
     closeStart();
-    ui.drafts = {};
-    ui.selectedAirport = null;
-    ui.selectedPlane = null;
-    ui.shownAirport = undefined;
-    Object.values(ui.planeMarkers).forEach((m) => m.remove());
-    ui.planeMarkers = {};
-    $('newspaper').hidden = true;
-    if (ui.newsPaused) { ui.newsPaused = false; ui.paused = ui.wasPaused; }
+    resetView();
     const home = G.airportByCode[G.home()];
     ui.map.setView([home.lat, home.lon], 6);
-    for (const code of Object.keys(ui.airportMarkers)) updateLabel(G.airportByCode[code]); // new home ★
     G.save();
   }
 
@@ -1810,6 +2046,8 @@
         break;
       }
       case 'start': act(G.setScheduleActive(plane, true)); break;
+      case 'follow': follow(plane); break;
+      case 'planDay': FG.planner.openPlane(plane); ui.tab = 'schedule'; break;
       case 'openMarket': e.preventDefault(); openMarket(); return;
       case 'buyNew': act(G.buyNew(el.dataset.type, code)); break;
       case 'leaseNew': act(G.leaseNew(el.dataset.type, code)); break;
@@ -1852,13 +2090,19 @@
   }
 
   function bindControls() {
-    $('sidebar').addEventListener('click', onAction);
+    $('sidebar').addEventListener('click', (e) => {
+      const pl = e.target.closest('[data-pl]');
+      if (pl && pl.tagName !== 'SELECT' && pl.tagName !== 'INPUT') { FG.planner.action(pl); return; }
+      onAction(e);
+    });
+    $('sidebar').addEventListener('change', (e) => { if (FG.planner.change(e.target)) ui.selectOpen = false; });
+    bindStrip();
+    bindTopbar();
     $('sidebar').addEventListener('mousemove', chartHover);
     $('sidebar').addEventListener('mouseleave', () => { $('chart-tip').hidden = true; });
     document.querySelectorAll('[data-tab]').forEach((b) => b.addEventListener('click', () => {
-      if (b.dataset.tab === 'market') { openMarket(); return; }
-      ui.tab = b.dataset.tab;
-      G.dirty = true;
+      // A second click on the open section closes the sidebar.
+      setTab(ui.tab === b.dataset.tab ? null : b.dataset.tab);
     }));
     $('pause').addEventListener('click', () => { ui.paused = !ui.paused; });
     $('speed').addEventListener('input', (e) => { ui.speed = sliderToSpeed(Number(e.target.value)); });
@@ -1885,8 +2129,9 @@
       ui.selectValues[e.target.id] = e.target.value;
       ui.selectOpen = false;
     });
-    $('sidebar').addEventListener('focusin', (e) => { if (e.target.tagName === 'SELECT') ui.selectOpen = true; });
-    $('sidebar').addEventListener('focusout', (e) => { if (e.target.tagName === 'SELECT') ui.selectOpen = false; });
+    // Typing a time or choosing from a list must not be interrupted by a re-render.
+    $('sidebar').addEventListener('focusin', (e) => { if (e.target.matches('select, input')) ui.selectOpen = true; });
+    $('sidebar').addEventListener('focusout', (e) => { if (e.target.matches('select, input')) { ui.selectOpen = false; G.dirty = true; } });
     $('newgame').addEventListener('click', () => openStart(true));
     $('start-screen').addEventListener('click', onStartClick);
     $('start-screen').addEventListener('input', onStartInput);
@@ -1896,6 +2141,8 @@
     });
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && mk.open) { closeMarket(); return; }
+      if (e.key === 'Escape' && !$('settings').hidden) { $('settings').hidden = true; return; }
+      if (e.key === 'Escape' && (!$('menu').hidden || !$('speed-pop').hidden)) { closePops(); return; }
       if (e.key === 'Escape' && ui.buildMode) { setBuildMode(false); return; }
       if (!$('newspaper').hidden && (e.key === 'Enter' || e.key === 'Escape' || e.key === ' ')) {
         closeNewspaper();
@@ -1909,6 +2156,7 @@
       }
       if (e.target.matches('input, select, textarea')) return;
       if (e.key === ' ') { ui.paused = !ui.paused; e.preventDefault(); }
+      if (e.key === 'Escape' && !ui.buildMode && $('newspaper').hidden) { $('menu').hidden = false; }
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
         const step = e.key === 'ArrowRight' ? 50 : -50;
         const v = Math.min(SLIDER_MAX, Math.max(0, speedToSlider(ui.speed) + step));
@@ -1944,6 +2192,7 @@
     renderHeader();
     updatePlanes();
     updateRivalPlanes();
+    if (ui.hoverCard) updateStripTip();
     if (mk.open) {
       if (mk.version !== G.state.market.nextId) renderMarket(); // new weekly offers
       else refreshMarketButtons();
@@ -1957,12 +2206,16 @@
   function init() {
     const saved = G.load();
     if (!saved) G.newGame(); // placeholder game behind the start screen
+    loadSettings();
     initMap();
+    applySettings();
+    FG.planner.init({ ui, toast, planeGlyph, setTab, bestRoutes, legacyAirports: airportsTab,
+      selectAirport(code) { const a = G.airportByCode[code]; ui.selectedAirport = code; ui.map.panTo([a.lat, a.lon]); G.dirty = true; } });
     bindControls();
     renderAll();
     openStart(saved && !G.state.gameOver);
     setInterval(loop, TICK_MS);
-    setInterval(() => G.save(), 30000);
+    setInterval(() => { if (set.autosave) G.save(); }, 30000);
     // Hook for the 3D view (js/view3d.js).
     FG.ui = {
       get selectedPlane() { return ui.selectedPlane; },
@@ -1972,6 +2225,7 @@
       selectPlane,
       selectAirport(code) { ui.selectedAirport = code; G.dirty = true; },
       clearSelection() { ui.selectedAirport = null; ui.selectedPlane = null; G.dirty = true; },
+      follow,
     };
     window.dispatchEvent(new Event('fg-ui-ready'));
     window.addEventListener('beforeunload', () => G.save());

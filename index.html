@@ -20,40 +20,63 @@
   </script>
 </head>
 <body>
-  <header>
-    <div class="brand">✈ <span id="company"></span> <span id="mode-badge"></span></div>
-    <div id="money"></div>
-    <div id="clock"></div>
-    <div class="speed">
-      <button id="pause" title="Pause (Space)">⏸</button>
-      <input id="speed" type="range" min="0" max="1000" value="0" title="Game speed (← / →)">
-      <span id="speed-label" title="Click: back to real time"></span>
+  <header id="topbar">
+    <div class="tb-left">
+      <button id="menu-btn" class="icon-btn" title="Menu (Esc)" aria-haspopup="true">⋯</button>
+      <div class="speed-ctl">
+        <button id="speed-btn" class="icon-btn" title="Game speed (← / →, Space = pause)">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/></svg>
+        </button>
+        <span id="speed-label" title="Click: back to real time"></span>
+        <div id="speed-pop" class="pop" hidden>
+          <div class="row"><button id="pause" title="Pause (Space)">⏸</button>
+            <input id="speed" type="range" min="0" max="1000" value="0" title="Game speed (← / →)"></div>
+          <div class="speed-presets"></div>
+        </div>
+      </div>
+      <button id="view3d-toggle" class="icon-btn" title="3D view (V)">3D</button>
     </div>
-    <button id="view3d-toggle" title="3D view (V)">3D</button>
-    <div class="spacer"></div>
-    <button id="devtools-toggle" title="Developer tools (F2)">🛠</button>
-    <button id="save">Save</button>
-    <button id="newgame">New game</button>
+    <div class="tb-center">
+      <div id="money"></div>
+      <div class="tb-clock"><span id="clock-time"></span><span id="clock-day"></span></div>
+    </div>
+    <div class="tb-right">
+      <div class="brand">✈ <span id="company"></span> <span id="mode-badge"></span></div>
+    </div>
   </header>
+
+  <div id="menu" class="pop menu" hidden>
+    <button id="save">💾 Save</button>
+    <button id="load">📂 Load last save</button>
+    <button id="newgame">✈ New game</button>
+    <button id="settings-btn">⚙ Settings</button>
+    <button id="devtools-toggle">🛠 Developer tools <span class="muted">F2</span></button>
+    <button id="exit">⏏ Exit to title</button>
+  </div>
+  <div id="settings" hidden></div>
 
   <main>
     <div id="map"><div id="view3d" hidden></div></div>
-    <aside id="sidebar">
+    <aside id="sidebar" hidden>
+      <div class="side-head"><h2 id="side-title"></h2><button class="close" id="side-close" title="Close">×</button></div>
       <div id="details"></div>
       <div id="events"></div>
-      <nav class="tabs">
-        <button data-tab="fleet">Fleet</button>
-        <button data-tab="market">Market</button>
-        <button data-tab="slots">Slots</button>
-        <button data-tab="airports">Airports</button>
-        <button data-tab="rivals">Rivals</button>
-        <button data-tab="finance">Finance</button>
-        <button data-tab="log">Log</button>
-      </nav>
       <div id="tab-content"></div>
     </aside>
+    <nav id="rail" class="tabs">
+      <button data-tab="fleet" title="Fleet"><span>🛩</span><small>Fleet</small></button>
+      <button data-tab="airports" title="Airports"><span>🛫</span><small>Airports</small></button>
+      <button data-tab="slots" title="Slots"><span>🅿</span><small>Slots</small></button>
+      <button data-tab="schedule" title="Schedule"><span>🗓</span><small>Schedule</small></button>
+      <button data-tab="market" title="Marketplace"><span>🏪</span><small>Market</small></button>
+      <button data-tab="finance" title="Finance"><span>💰</span><small>Finance</small></button>
+      <button data-tab="rivals" title="Rivals"><span>⚔</span><small>Rivals</small></button>
+      <button data-tab="log" title="Log"><span>📜</span><small>Log</small></button>
+    </nav>
     <div id="market" hidden></div>
   </main>
+  <footer id="strip"><div id="strip-list"></div></footer>
+  <div id="strip-tip" hidden></div>
 
   <div id="devtools" hidden></div>
   <div id="newspaper" hidden></div>
@@ -81,6 +104,7 @@
   <script src="js/data/rivals.js"></script>
   <script src="js/game.js"></script>
   <script src="js/hangar.js"></script>
+  <script src="js/planner.js"></script>
   <script src="js/ui.js"></script>
   <script src="js/devtools.js"></script>
   <script>

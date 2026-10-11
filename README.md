@@ -16,6 +16,20 @@ Double-clicking `index.html` (a `file://` page) is not enough: browsers block th
 
 ## How to play
 
+**Screen**: top left ⋯ opens the menu (save, load, new game, settings with map style and layers,
+developer tools, exit) and the ✈ button next to it sets the game speed. Money, time and day are in
+the middle of the top bar. The icons on the right open the sections (Fleet, Airports, Slots,
+Schedule, Marketplace, Finance, Rivals, Log). Every plane has a card at the bottom: hover it for
+where it comes from and goes to, the time left and its fuel; click to select, double-click to
+follow it (2D or 3D).
+
+**Timetables** (Schedule section): each plane gets a day plan that repeats every day. Pick the route,
+the first departure and how many loops, then move single flights with − / + or type a time. Each
+slot holds one plane on the ground at a time, from landing until departure; the Slots section shows
+every slot of an airport over the day plus its arrivals and departures, and **Lease another slot**
+adds room for more planes. A timetable that needs a slot that is already taken can't be saved.
+Planes without a timetable still fly their loop "when ready" as before.
+
 1. Click an airport on the map to see its catchment, demand from your slots and slot price.
 2. **Lease a slot** there (upfront fee + weekly fee).
 3. In the **Fleet** tab: *Ferry there* to move the plane, or **Edit schedule** to build a loop
