@@ -263,6 +263,42 @@ function strip(a, b, width, ext = 0) {
   const w = width / 2;
   return [at(a, -ext, -w), at(b, ext, -w), at(b, ext, w), at(a, -ext, w)];
 }
+// Line width in pixels for `m` metres on the ground at latitude `lat`, at zoom 10 and zoom 22 (the layer
+// interpolates exponentially between them, so the line keeps its real width at every zoom).
+function metresWidth(m, lat) {
+  const perPx = 78271.517 * Math.cos(lat * DEG); // metres per pixel at zoom 0 (512 px tiles)
+  return { w10: (m * 2 ** 10) / perPx, w22: (m * 2 ** 22) / perPx };
+}
+
+// Convex hull of [lat, lon] points (monotone chain on lon/lat).
+function hull(pts) {
+  const p = pts.slice().sort((a, b) => a[1] - b[1] || a[0] - b[0]);
+  if (p.length < 3) return p;
+  const cross = (o, a, b) => (a[1] - o[1]) * (b[0] - o[0]) - (a[0] - o[0]) * (b[1] - o[1]);
+  const lower = [];
+  for (const q of p) { while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], q) <= 0) lower.pop(); lower.push(q); }
+  const upper = [];
+  for (let i = p.length - 1; i >= 0; i--) { const q = p[i]; while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], q) <= 0) upper.pop(); upper.push(q); }
+  return lower.slice(0, -1).concat(upper.slice(0, -1));
+}
+
+// Grass plate under an airport: everything it has (runways, taxiways, aprons, buildings), with a rounded
+// margin around it, so the blurry satellite picture doesn't show between the runways.
+function basePlate(pts, margin = 120) {
+  const h = hull(pts);
+  if (h.length < 3) return null;
+  const lat = h[0][0];
+  const kx = 111320 * Math.cos(lat * DEG);
+  const ring = [];
+  for (const q of h) {
+    for (let i = 0; i < 16; i++) {
+      const a = (i / 16) * 2 * Math.PI;
+      ring.push([q[0] + (margin * Math.cos(a)) / 111320, q[1] + (margin * Math.sin(a)) / kx]);
+    }
+  }
+  return hull(ring);
+}
+
 function gateFeatures(list, gates) {
   const feats = [];
   const ring = (pts) => { const r = pts.map(([lat, lon]) => [lon, lat]); r.push(r[0]); return [r]; };
@@ -270,9 +306,12 @@ function gateFeatures(list, gates) {
   const poly = (pts, properties) => feats.push({ type: 'Feature', geometry: { type: 'Polygon', coordinates: ring(pts) }, properties });
   const path = (pts, properties) => feats.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: line(pts) }, properties });
   for (const a of list) {
+    const platePts = [[a.lat, a.lon]];
     for (const r of G.airportRunways(a.code)) {
       const ends = [[r[0], r[1]], [r[2], r[3]]];
-      poly(strip(ends[0], ends[1], Math.max(18, r[4] || 30)), { kind: 'runway', paved: r[5] ? 1 : 0 });
+      const rw = strip(ends[0], ends[1], Math.max(18, r[4] || 30));
+      poly(rw, { kind: 'runway', paved: r[5] ? 1 : 0 });
+      platePts.push(...strip(ends[0], ends[1], Math.max(18, r[4] || 30) + 120, 60));
       if (r[5]) path(ends, { kind: 'rwline' });
     }
     // Developer tools: where construction at the selected airport would go (G.expansionPreview).
@@ -287,14 +326,24 @@ function gateFeatures(list, gates) {
       for (const b of pv.buildings) poly(b.ring, { kind: 'preview' });
       for (const st of pv.stands) path(st.lead, { kind: 'pvline' });
     }
-    if (!gates) continue;
+    if (!gates) {
+      const plate = platePts.length > 2 && basePlate(platePts);
+      if (plate) poly(plate, { kind: 'plate' });
+      continue;
+    }
     const big = G.airportSize(a.code) >= 3;
+    // Taxiways as wide lines along every bend, with round joints (not one box per line, whose corners stuck out).
+    const tww = metresWidth(big ? 23 : 15, a.lat);
     for (const tw of G.taxiwaysOf(a.code)) {
-      poly(strip(tw[0], tw[1], big ? 23 : 15, big ? 11 : 7), { kind: 'taxiway' });
+      path(tw, { kind: 'taxiway', ...tww });
       path(tw, { kind: 'twline' });
+      platePts.push(...tw);
     }
     const ap = G.apronOf(a.code);
-    for (const r of ap.aprons || [ap.apron]) poly(r, { kind: 'apron' });
+    for (const r of ap.aprons || [ap.apron]) { poly(r, { kind: 'apron' }); platePts.push(...r); }
+    for (const b of ap.buildings) platePts.push(...b.ring);
+    const plate = basePlate(platePts);
+    if (plate) poly(plate, { kind: 'plate' });
     for (const b of ap.buildings) poly(b.ring, { kind: 'building', part: b.kind, base: b.base, h: b.h });
     for (const m of ap.markings || []) path(m.line, { kind: m.kind === 'w' ? 'paint' : 'lead' });
     for (const st of ap.stands) {
@@ -418,8 +467,11 @@ function transformStyle(_prev, style) {
   const visible = ['>=', ['zoom'], ['get', 'minz']];
   const kind = (k) => ['==', ['get', 'kind'], k];
   style.layers.push(
-    { id: 'fg-taxiways', type: 'fill', source: 'fg-gates', minzoom: GATE_MINZOOM, filter: kind('taxiway'),
-      paint: { 'fill-color': '#4a515c' } },
+    { id: 'fg-plate', type: 'fill', source: 'fg-gates', minzoom: RUNWAY_MINZOOM, filter: kind('plate'),
+      paint: { 'fill-color': '#6b8f4e', 'fill-opacity': ['interpolate', ['linear'], ['zoom'], RUNWAY_MINZOOM, 0, RUNWAY_MINZOOM + 1, 1] } },
+    { id: 'fg-taxiways', type: 'line', source: 'fg-gates', minzoom: GATE_MINZOOM, filter: kind('taxiway'),
+      layout: { 'line-join': 'round', 'line-cap': 'round' },
+      paint: { 'line-color': '#4a515c', 'line-width': ['interpolate', ['exponential', 2], ['zoom'], 10, ['get', 'w10'], 22, ['get', 'w22']] } },
     { id: 'fg-runways', type: 'fill', source: 'fg-gates', minzoom: RUNWAY_MINZOOM, filter: kind('runway'),
       paint: { 'fill-color': ['case', ['==', ['get', 'paved'], 1], '#2b2f36', '#6f9a55'] } },
     { id: 'fg-apron', type: 'fill', source: 'fg-gates', minzoom: GATE_MINZOOM, filter: kind('apron'),
