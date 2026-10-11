@@ -202,7 +202,7 @@ function airportFeatures() {
       properties: {
         code: a.code, size, own: own ? 1 : 0,
         minz: own || a.code === sel ? 0 : AP_MINZOOM[Math.max(1, Math.min(5, size))] + (a.minor ? 1.5 : 0),
-        color: a.code === sel ? COLORS.selected : a.code === FG.config.startAirport && own ? COLORS.home : own ? COLORS.own : COLORS.other,
+        color: a.code === sel ? COLORS.selected : a.code === G.home() && own ? COLORS.home : own ? COLORS.own : COLORS.other,
         label: own || a.code === sel ? `${a.code} · ${a.city}` : a.code,
       },
     });
@@ -546,7 +546,7 @@ function controls() {
 
 function createMap() {
   const el = document.getElementById('view3d');
-  const home = G.airportByCode[FG.config.startAirport];
+  const home = G.airportByCode[G.home()];
   const map = v.map = new maplibregl.Map({
     container: el,
     center: [home.lon, home.lat],
@@ -594,10 +594,11 @@ function setOn(on) {
 
 function init() {
   const prefs = loadPrefs();
-  v.satellite = !!prefs.satellite;
+  v.satellite = prefs.satellite !== false; // satellite imagery unless switched off
   document.getElementById('view3d-toggle').addEventListener('click', () => setOn(!v.on));
   document.addEventListener('keydown', (e) => {
     if (e.target.matches('input, select, textarea') || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (!document.getElementById('start-screen').hidden) return;
     if (e.key === 'v' || e.key === 'V') setOn(!v.on);
   });
   if (prefs.on) setOn(true);

@@ -1,7 +1,10 @@
 # Flightgame
 
-A small airline management game in the browser. You start at **Bern-Belp (BRN)** with one
-**Airbus A220-300**, a base crew and CHF 1.5M.
+A small airline management game in the browser, in a dark theme. The start screen lets you
+continue your saved airline or found a new one: pick its name, the mode, the difficulty, your home
+airport (any of the hand-made European airports or ~1,100 big airports worldwide) and your first
+leased aircraft (ATR 72, Dash 8-400, E190, A220-300, A320neo or 737-800). The default is
+**Bern-Belp (BRN)** with an **Airbus A220-300**.
 
 ## Run
 
@@ -53,20 +56,23 @@ Or serve it locally: `python3 -m http.server` and open http://localhost:8000.
     path and fly a 15 km straight-in final to the landing runway. Select a plane to see its
     track coloured by altitude; its tooltip and card show flight level, speed and phase.
 
-Modes (chosen under **New game**): **Arcade** uses normal accident rates for every maker;
+Modes (chosen on the start screen, also via **New game**): **Arcade** uses normal accident rates for every maker;
 **Realistic** gives Boeing aircraft a 1000% higher crash and door-panel rate.
+Difficulty: **Easy** (CHF 5M, +25% passengers, −15% flight costs, bankrupt below −2M), **Normal**
+(CHF 1.5M, bankrupt below −500k) or **Hard** (CHF 750k, −15% passengers, +15% flight costs,
+bankrupt below −250k). Both are set in `config.js` (`modes`, `difficulties`, `starterAircraft`).
 
 Rules: departures only 06:00–22:00, crew max 12h block time per day, each route has a limited
 daily demand shared by all your flights on it that day.
 
 Map: the selected airport shows its catchment ring and the towns feeding it. Click a plane or a
 route to select that aircraft, click empty map to deselect. ⌂ zooms to your network, the layer
-button (top right) switches the base map and toggles towns, routes and place names.
+button (top right) switches the base map (satellite by default, remembered) and toggles towns, routes and place names.
 
 3D view: the **3D** button (or V) switches the map to a 3D globe with terrain, hill shading and 3D
 buildings (MapLibre). Aircraft are drawn as 3D models at their real altitude, stretched when zoomed out
 so you can see them. Drag with the right mouse button (or Ctrl + drag) to tilt and rotate. 🎥 Follow puts the camera
-behind the selected plane, 🛰 Satellite switches to satellite imagery. The aircraft are glTF models from
+behind the selected plane, 🛰 Satellite toggles the satellite imagery (on by default). The aircraft are glTF models from
 `models/` (Flightradar24's GPLv2 models, see `models/README.md`); `js/data/models.js` says which type uses
 which file. Types without a model (small turboprops, Ju 52, DC-3, Concorde) keep the simple placeholder
 built in `placeholderModel()`. The hangar marketplace shows a picture of the same model.
