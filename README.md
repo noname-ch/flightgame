@@ -28,6 +28,15 @@ Or serve it locally: `python3 -m http.server` and open http://localhost:8000.
    Each plane gets its own crew. Big jets need a big enough airport. Sell owned planes or return
    leased ones from the **Fleet** tab.
 
+7. **Events**: strikes, storms, volcanic ash, fuel price swings, festivals, bird strikes and
+   crashes happen at random. Each one appears as a newspaper cutout (the game pauses until you
+   press Continue) and active events are listed above the tabs. Strikes and bad weather ground
+   flights, festivals boost demand, and a crash costs you the plane, compensation and weeks of
+   bookings.
+
+Modes (chosen under **New game**): **Arcade** uses normal accident rates for every maker;
+**Realistic** gives Boeing aircraft a 1000% higher crash and door-panel rate.
+
 Rules: departures only 06:00–22:00, crew max 12h block time per day, each route has a limited
 daily demand shared by all your flights on it that day.
 
@@ -46,6 +55,7 @@ All content is plain data:
 - `js/data/aircraft.js` – aircraft types (market catalogue) and crew templates
 - `js/data/factories.js` – where each type is built (delivery flights start there)
 - `js/data/looks.js` – side-view shape of each type, drawn by `js/hangar.js`
-- `js/config.js` – starting conditions, map bounds, economy balance
+- `js/data/events.js` – random events, incidents and their newspaper stories
+- `js/config.js` – starting conditions, map bounds, economy balance, game modes, event rates
 
 `js/game.js` is the simulation (no DOM), `js/ui.js` the map and sidebar.

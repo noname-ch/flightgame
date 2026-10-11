@@ -33,7 +33,8 @@
     selectedAirport: null,
     selectedPlane: null,
     drafts: {}, // planeId -> stops being edited
-    confirmNew: false,
+    newsPaused: false, // game paused because a newspaper is open
+    wasPaused: false, // pause state before the newspaper opened
     confirmDispose: null, // planeId waiting for a second click on Sell/Return
     pointerDown: false,
     selectOpen: false,
@@ -407,13 +408,15 @@
   function renderHeader() {
     const s = G.state;
     $('company').textContent = s.company;
+    const badge = $('mode-badge');
+    badge.textContent = G.mode().name;
+    badge.className = s.mode;
     const money = $('money');
     money.textContent = G.fmtMoney(s.money);
     money.classList.toggle('negative', s.money < 0);
     $('clock').textContent = G.fmtTime(s.time);
     $('pause').classList.toggle('active', ui.paused);
     $('speed-label').textContent = ui.speed === 1 ? 'Real time' : fmtSpeed(ui.speed);
-    $('newgame').textContent = ui.confirmNew ? 'Really restart?' : 'New game';
     $('gameover').hidden = !s.gameOver;
   }
 
@@ -490,9 +493,12 @@
       return `${verb} ${f.from} → ${f.to}, arrives ${G.fmtClock(f.arr)}` +
         (f.kind === 'scheduled' ? ` · ${f.pax} pax` : '');
     }
+    if (p.status === 'turnaround' && p.repair) return `🔧 Grounded for repairs at ${p.location} until ${G.fmtTime(p.readyAt)}`;
     if (p.status === 'turnaround') return `Turnaround at ${p.location} until ${G.fmtClock(p.readyAt)}`;
     const crew = G.crewOf(p);
     const leg = p.pendingFerry || (p.schedule.active && p.schedule.stops.length >= 2);
+    const hold = leg && G.holdReason(p, p.pendingFerry || p.schedule.stops[(p.schedule.index + 1) % p.schedule.stops.length]);
+    if (hold) return `At ${p.location} · ⛔ ${hold}`;
     if (leg && crew && crew.dutyToday >= C.crewMaxDutyMin - 60) return `At ${p.location} · crew resting`;
     if (leg) return `At ${p.location} · waiting (curfew / crew duty)`;
     return `Idle at ${p.location}`;
@@ -948,6 +954,7 @@
 
   function renderSidebar() {
     $('details').innerHTML = ui.selectedAirport ? airportPanel(ui.selectedAirport) : '';
+    renderEvents();
     const tabs = { fleet: fleetTab, slots: slotsTab, finance: financeTab, log: logTab };
     $('tab-content').innerHTML = tabs[ui.tab]();
     document.querySelectorAll('[data-tab]').forEach((b) => b.classList.toggle('active', b.dataset.tab === ui.tab));
@@ -959,6 +966,122 @@
     refreshAirports();
     refreshPlanes();
     drawRoutes();
+  }
+
+  // ---------- events & newspaper ----------
+  function renderEvents() {
+    const list = G.activeEffects();
+    $('events').innerHTML = list.length ? `<div class="panel events">${list.map((e) => {
+      const left = e.until - G.state.time;
+      const good = (e.demandMult || 1) > 1 || (e.costMult || 1) < 1;
+      return `<div class="event ${good ? 'good' : 'bad'}">${e.noFlights ? '⛔' : good ? '▲' : '▼'} ${e.label}
+        <span class="muted">· ${left >= 1440 ? `${Math.ceil(left / 1440)}d` : `${Math.ceil(left / 60)}h`} left</span></div>`;
+    }).join('')}</div>` : '';
+  }
+
+  // Grayscale sketches for the newspaper photo (viewBox 0 0 160 110).
+  const PICTURES = {
+    crash: `<rect width="160" height="110" fill="#bbb"/><path d="M0 85 Q40 70 80 82 T160 76 V110 H0Z" fill="#777"/>
+      <circle cx="98" cy="40" r="16" fill="#444"/><circle cx="112" cy="26" r="13" fill="#555"/><circle cx="84" cy="24" r="11" fill="#666"/><circle cx="104" cy="12" r="9" fill="#777"/>
+      <path d="M40 86 L92 72 L96 80 L44 92Z" fill="#222"/><path d="M100 76 L130 70 L140 56 L144 58 L138 76 L104 84Z" fill="#333"/>
+      <path d="M62 78 L70 62 L76 64 L72 80Z" fill="#111"/><path d="M92 74 l4 -6 l3 5 l4 -7 l2 9Z" fill="#999"/>`,
+    incident: `<rect width="160" height="110" fill="#c4c4c4"/><rect y="80" width="160" height="30" fill="#666"/>
+      <path d="M0 95 H160" stroke="#ddd" stroke-dasharray="12 8" stroke-width="2"/>
+      <path d="M20 72 Q20 64 30 64 H120 L140 54 H146 L140 70 Q138 76 128 76 H28 Q20 76 20 72Z" fill="#333"/>
+      <path d="M70 70 L52 88 L62 88 L88 70Z" fill="#222"/><circle cx="58" cy="50" r="8" fill="#888"/><circle cx="68" cy="42" r="10" fill="#999"/><circle cx="80" cy="36" r="8" fill="#aaa"/>
+      <rect x="112" y="80" width="40" height="14" rx="2" fill="#222"/><rect x="104" y="76" width="16" height="10" fill="#444"/>`,
+    strike: `<rect width="160" height="110" fill="#c8c8c8"/><rect y="88" width="160" height="22" fill="#888"/>
+      ${[20, 60, 100, 140].map((x, i) => `<circle cx="${x}" cy="${62 + (i % 2) * 3}" r="7" fill="#333"/>
+      <path d="M${x - 9} ${100} L${x - 8} ${72 + (i % 2) * 3} Q${x} ${68} ${x + 8} ${72 + (i % 2) * 3} L${x + 9} 100Z" fill="#333"/>
+      <rect x="${x + 6}" y="${16 + (i % 2) * 6}" width="2" height="50" fill="#222"/>
+      <rect x="${x - 12}" y="${12 + (i % 2) * 6}" width="38" height="22" fill="#eee" stroke="#222"/>
+      <text x="${x + 7}" y="${27 + (i % 2) * 6}" font-size="9" font-weight="bold" text-anchor="middle" font-family="sans-serif">${['STRIKE', 'NO!', 'FAIR PAY', 'STRIKE'][i]}</text>`).join('')}`,
+    storm: `<rect width="160" height="110" fill="#999"/><path d="M30 46 Q30 26 52 28 Q60 10 84 16 Q104 6 116 24 Q138 24 136 44 Z" fill="#444"/>
+      <path d="M84 46 L72 70 H84 L74 96 L102 62 H88 L98 46Z" fill="#eee"/>
+      ${Array.from({ length: 14 }, (_, i) => `<path d="M${16 + i * 10} 52 l-8 22" stroke="#555" stroke-width="2"/>`).join('')}
+      <rect y="96" width="160" height="14" fill="#555"/>`,
+    volcano: `<rect width="160" height="110" fill="#bbb"/><circle cx="80" cy="30" r="22" fill="#444"/><circle cx="104" cy="22" r="18" fill="#555"/>
+      <circle cx="60" cy="18" r="14" fill="#666"/><circle cx="126" cy="14" r="12" fill="#777"/><circle cx="144" cy="10" r="9" fill="#888"/>
+      <path d="M10 110 L66 52 H94 L150 110Z" fill="#333"/><path d="M66 52 l6 12 l6 -8 l6 10 l4 -10 l6 -4Z" fill="#999"/>`,
+    fuel: `<rect width="160" height="110" fill="#ccc"/><rect x="34" y="24" width="44" height="76" rx="4" fill="#333"/>
+      <rect x="42" y="32" width="28" height="18" fill="#ddd"/><path d="M78 40 h12 q8 0 8 8 v30 q0 6 6 6" stroke="#333" stroke-width="5" fill="none"/>
+      <path d="M118 90 V30 M106 42 L118 26 L130 42" stroke="#111" stroke-width="7" fill="none"/>
+      <text x="56" y="45" font-size="11" text-anchor="middle" font-family="monospace" font-weight="bold">$$$</text>`,
+    chart: `<rect width="160" height="110" fill="#ddd"/>${[30, 50, 70, 90].map((y) => `<path d="M14 ${y} H150" stroke="#aaa"/>`).join('')}
+      <path d="M14 20 V96 H150" stroke="#222" stroke-width="2" fill="none"/>
+      <path d="M18 80 L40 70 L58 76 L80 52 L98 58 L120 34 L146 26" stroke="#111" stroke-width="4" fill="none"/>`,
+    party: `<rect width="160" height="110" fill="#c8c8c8"/><rect y="78" width="160" height="32" fill="#555"/>
+      <path d="M20 78 V40 H140 V78" fill="#888"/><path d="M14 40 L80 14 L146 40Z" fill="#444"/>
+      ${Array.from({ length: 30 }, (_, i) => `<rect x="${(i * 37) % 156}" y="${(i * 23) % 70}" width="4" height="4" fill="#${i % 2 ? '222' : 'eee'}" transform="rotate(${i * 25} ${(i * 37) % 156} ${(i * 23) % 70})"/>`).join('')}
+      ${Array.from({ length: 12 }, (_, i) => `<circle cx="${8 + i * 13}" cy="${86 + (i % 3) * 3}" r="6" fill="#222"/>`).join('')}`,
+    crowd: `<rect width="160" height="110" fill="#bbb"/><rect x="70" y="8" width="2" height="40" fill="#222"/><path d="M72 8 h30 l-6 8 l6 8 h-30Z" fill="#333"/>
+      ${Array.from({ length: 40 }, (_, i) => `<circle cx="${(i % 10) * 17 + (Math.floor(i / 10) % 2) * 8 + 4}" cy="${58 + Math.floor(i / 10) * 13}" r="7" fill="#${['222', '333', '444'][i % 3]}"/>`).join('')}`,
+  };
+
+  // Torn paper edge: a polygon with jagged top and bottom.
+  function tornEdge() {
+    const pts = [];
+    for (let x = 0; x <= 100; x += 4) pts.push(`${x}% ${Math.random() * 1.6}%`);
+    for (let x = 100; x >= 0; x -= 4) pts.push(`${x}% ${100 - Math.random() * 1.6}%`);
+    return `polygon(${pts.join(',')})`;
+  }
+
+  function showNewspaper() {
+    const n = G.state.news[0];
+    const el = $('newspaper');
+    if (!n || !el.hidden || mk.open) return;
+    if (!ui.newsPaused) ui.wasPaused = ui.paused;
+    ui.newsPaused = true;
+    ui.paused = true;
+    const tilt = (Math.random() * 4 - 2).toFixed(1);
+    const more = G.state.news.length - 1;
+    const price = (1.5 + Math.floor(G.state.time / 1440 / 60) * 0.1).toFixed(2);
+    el.innerHTML = `<div class="paper ${n.kind}" style="transform: rotate(${tilt}deg); clip-path: ${tornEdge()}">
+        <div class="masthead">${n.paper}</div>
+        <div class="dateline"><span>${G.fmtTime(n.t).replace(/ \d\d:\d\d$/, '')}</span><span>${n.kind === 'good' ? 'Business' : 'Late edition'}</span><span>${C.currency} ${price}</span></div>
+        <h1>${n.headline}</h1>
+        <div class="sub">${n.sub}</div>
+        <div class="cols">
+          <figure><svg viewBox="0 0 160 110">${PICTURES[n.picture] || PICTURES.chart}</svg>
+            <figcaption>${{ crash: 'The scene of the accident.', incident: 'The aircraft after landing.', strike: 'Picket line at the terminal.',
+              storm: 'Dark skies over the region.', volcano: 'The ash plume seen from the coast.', fuel: 'Prices at the pump.',
+              party: 'Celebrations in the city.', crowd: 'Fans gather ahead of the match.' }[n.picture] || 'Markets react.'}</figcaption></figure>
+          <p>${n.body}</p>
+        </div>
+      </div>
+      <button class="primary" data-action="newsNext">${more ? `Next story (${more} more)` : 'Continue'}</button>`;
+    el.hidden = false;
+  }
+
+  function closeNewspaper() {
+    G.state.news.shift();
+    $('newspaper').hidden = true;
+    if (G.state.news.length) { showNewspaper(); return; }
+    ui.newsPaused = false;
+    ui.paused = ui.wasPaused;
+  }
+
+  function openNewGameDialog() {
+    const el = $('newgame-dialog');
+    el.innerHTML = `<div class="dialog"><h2>New game</h2><p class="muted">Your current airline will be lost. Pick a mode:</p>
+      <div class="modes">${Object.entries(C.modes).map(([id, m]) =>
+        `<button class="mode" data-mode="${id}"><b>${m.name}</b><span>${m.desc}</span></button>`).join('')}</div>
+      <div class="row"><button data-mode="">Cancel</button></div></div>`;
+    el.hidden = false;
+  }
+
+  function startNewGame(mode) {
+    $('newgame-dialog').hidden = true;
+    if (!mode) return;
+    G.newGame(mode);
+    ui.drafts = {};
+    ui.selectedAirport = null;
+    ui.selectedPlane = null;
+    Object.values(ui.planeMarkers).forEach((m) => m.remove());
+    ui.planeMarkers = {};
+    $('newspaper').hidden = true;
+    if (ui.newsPaused) { ui.newsPaused = false; ui.paused = ui.wasPaused; }
+    G.save();
   }
 
   // ---------- input ----------
@@ -1055,22 +1178,25 @@
     });
     $('sidebar').addEventListener('focusin', (e) => { if (e.target.tagName === 'SELECT') ui.selectOpen = true; });
     $('sidebar').addEventListener('focusout', (e) => { if (e.target.tagName === 'SELECT') ui.selectOpen = false; });
-    $('newgame').addEventListener('click', () => {
-      if (!ui.confirmNew) {
-        ui.confirmNew = true;
-        setTimeout(() => { ui.confirmNew = false; }, 3000);
-        return;
-      }
-      ui.confirmNew = false;
-      G.newGame();
-      ui.drafts = {};
-      ui.selectedAirport = null;
-      Object.values(ui.planeMarkers).forEach((m) => m.remove());
-      ui.planeMarkers = {};
-      G.save();
+    $('newgame').addEventListener('click', openNewGameDialog);
+    $('newgame-dialog').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-mode]');
+      if (b) startNewGame(b.dataset.mode);
+    });
+    $('newspaper').addEventListener('click', (e) => {
+      if (e.target.closest('[data-action="newsNext"]')) closeNewspaper();
     });
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && mk.open) { closeMarket(); return; }
+      if (!$('newspaper').hidden && (e.key === 'Enter' || e.key === 'Escape' || e.key === ' ')) {
+        closeNewspaper();
+        e.preventDefault();
+        return;
+      }
+      if (!$('newgame-dialog').hidden) {
+        if (e.key === 'Escape') startNewGame('');
+        return;
+      }
       if (e.target.matches('input, select, textarea')) return;
       if (e.key === ' ') { ui.paused = !ui.paused; e.preventDefault(); }
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
@@ -1103,6 +1229,7 @@
       ui.pendingMinutes -= whole;
       if (whole > 0) G.advance(whole);
     }
+    showNewspaper();
     renderHeader();
     updatePlanes();
     if (mk.open) {

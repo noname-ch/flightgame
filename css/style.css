@@ -425,3 +425,164 @@ i.s-net { background: var(--muted); }
   .mk-show { flex-direction: column; }
   .mk-info { width: auto; }
 }
+
+/* ---------- game mode ---------- */
+#mode-badge {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 2px 7px;
+  border-radius: 999px;
+  vertical-align: middle;
+  background: #334155;
+}
+#mode-badge.realistic { background: var(--accent); }
+
+#newgame-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.55);
+}
+#newgame-dialog[hidden] { display: none; }
+#newgame-dialog .dialog {
+  background: var(--panel);
+  border-radius: 12px;
+  padding: 20px 24px;
+  width: min(460px, calc(100vw - 32px));
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
+}
+#newgame-dialog h2 { margin: 0 0 4px; }
+#newgame-dialog .modes { display: flex; gap: 12px; margin: 14px 0; flex-wrap: wrap; }
+#newgame-dialog .mode {
+  flex: 1 1 180px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: left;
+  padding: 12px 14px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+#newgame-dialog .mode b { font-size: 16px; }
+#newgame-dialog .mode span { color: var(--muted); font-size: 13px; }
+#newgame-dialog .mode:hover { border-color: var(--accent); }
+
+/* ---------- active events ---------- */
+.panel.events { padding: 6px 10px; margin-bottom: 8px; }
+.events .event { font-size: 13px; padding: 2px 0; }
+.events .event.bad { color: var(--neg); }
+.events .event.good { color: var(--pos); }
+
+/* ---------- newspaper ---------- */
+#newspaper {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  padding: 16px;
+  background: rgba(15, 23, 42, 0.6);
+  animation: news-fade 0.3s ease-out;
+}
+#newspaper[hidden] { display: none; }
+#newspaper .paper {
+  width: min(560px, 100%);
+  max-height: calc(100vh - 110px);
+  overflow: hidden;
+  padding: 26px 28px 30px;
+  color: #1b1712;
+  background:
+    radial-gradient(circle at 20% 15%, rgba(255, 255, 255, 0.5), transparent 60%),
+    radial-gradient(circle at 85% 90%, rgba(120, 90, 40, 0.12), transparent 50%),
+    #efe6cf;
+  font-family: "Old Standard TT", Georgia, "Times New Roman", serif;
+  filter: drop-shadow(0 18px 30px rgba(0, 0, 0, 0.45));
+  animation: news-drop 0.55s cubic-bezier(0.2, 1.4, 0.4, 1);
+}
+#newspaper .masthead {
+  font-family: "UnifrakturMaguntia", "Old English Text MT", Georgia, serif;
+  font-size: 40px;
+  line-height: 1.1;
+  text-align: center;
+}
+#newspaper .dateline {
+  display: flex;
+  justify-content: space-between;
+  border-top: 3px double #1b1712;
+  border-bottom: 1px solid #1b1712;
+  margin: 6px 0 12px;
+  padding: 3px 0;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+#newspaper h1 {
+  font-family: "Playfair Display", Georgia, serif;
+  font-weight: 900;
+  font-size: 30px;
+  line-height: 1.05;
+  margin: 0 0 6px;
+  text-align: center;
+}
+#newspaper .sub {
+  font-style: italic;
+  font-size: 16px;
+  text-align: center;
+  padding-bottom: 10px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid #1b1712;
+}
+#newspaper .cols { display: flex; gap: 16px; align-items: flex-start; }
+#newspaper figure { flex: 0 0 44%; margin: 0; }
+#newspaper figure svg {
+  display: block;
+  width: 100%;
+  border: 1px solid #1b1712;
+  filter: grayscale(1) contrast(1.1) sepia(0.25);
+}
+#newspaper figure { position: relative; }
+#newspaper figure::after { /* halftone dots */
+  content: "";
+  position: absolute;
+  left: 0; right: 0; top: 0;
+  aspect-ratio: 160 / 110;
+  background: radial-gradient(rgba(0, 0, 0, 0.22) 30%, transparent 32%) 0 0 / 3px 3px;
+  pointer-events: none;
+}
+#newspaper figcaption { font-size: 11px; font-style: italic; margin-top: 4px; }
+#newspaper .cols p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.45;
+  text-align: justify;
+  hyphens: auto;
+}
+#newspaper .cols p::first-letter {
+  float: left;
+  font-family: "Playfair Display", Georgia, serif;
+  font-size: 44px;
+  line-height: 0.85;
+  padding: 4px 6px 0 0;
+}
+#newspaper > button { font-size: 15px; padding: 8px 22px; }
+
+@media (max-width: 520px) {
+  #newspaper .paper { padding: 20px 16px 24px; }
+  #newspaper .masthead { font-size: 28px; }
+  #newspaper h1 { font-size: 22px; }
+  #newspaper .cols { flex-direction: column; }
+  #newspaper figure { width: 100%; }
+}
+
+@keyframes news-fade { from { opacity: 0; } }
+@keyframes news-drop {
+  from { opacity: 0; scale: 0.3; rotate: -25deg; }
+}

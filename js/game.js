@@ -139,11 +139,12 @@
     priceNew, fitsAirport, crewFor, factoryOf,
     fmtMoney, fmtTime, fmtClock, fmtDuration,
 
-    newGame() {
+    newGame(mode = C.defaultMode) {
       const home = airportByCode[C.startAirport];
       const crewT = D.crewTemplates[C.startCrew];
       this.state = {
         version: 1,
+        mode: C.modes[mode] ? mode : C.defaultMode,
         company: C.companyName,
         time: C.curfew.start,
         money: C.startMoney,
@@ -178,11 +179,14 @@
         history: [],
         log: [],
         market: { listings: [], nextId: 1 },
+        effects: [], // active events: { label, until, where, demandMult, costMult, noFlights }
+        news: [], // newspaper stories waiting to be shown
         gameOver: false,
       };
       this.refreshMarket();
       this.log(`Welcome to ${this.state.company}! You start with a slot at ${home.name}, ` +
-        `the ${D.aircraft[C.startAircraft].name} ${C.startRegistration} and a base crew.`);
+        `the ${D.aircraft[C.startAircraft].name} ${C.startRegistration} and a base crew. ` +
+        `Mode: ${C.modes[this.state.mode].name} – ${C.modes[this.state.mode].desc}`);
       this.dirty = true;
     },
 
@@ -213,6 +217,9 @@
         this.refreshMarket();
       }
       if (!s.fares) s.fares = {};
+      if (!s.mode) s.mode = C.defaultMode;
+      if (!s.effects) s.effects = [];
+      if (!s.news) s.news = [];
     },
 
     save() {
@@ -249,7 +256,7 @@
     fareFactor(a, b) { return this.state.fares[routeKey(a, b)] || 1; },
     fare(a, b) { return Math.round(ticketPrice(dist(a, b)) * this.fareFactor(a, b)); },
     demand(a, b) {
-      return Math.round(dailyDemand(a, b) * Math.pow(this.fareFactor(a, b), -C.ticket.elasticity));
+      return Math.round(dailyDemand(a, b) * Math.pow(this.fareFactor(a, b), -C.ticket.elasticity) * this.eventDemandMult(a, b));
     },
 
     changeFare(a, b, steps) {
@@ -288,6 +295,7 @@
           `crew ${fmtMoney(w.crews)}, slots ${fmtMoney(w.slots)}).`, 'cost');
         this.refreshMarket();
       }
+      this.rollWorldEvent();
       if (s.money < C.bankruptcyLimit) {
         s.gameOver = true;
         this.log('Bankrupt! Your airline has run out of money. Start a new game.', 'bad');
@@ -296,9 +304,11 @@
 
     updatePlane(p) {
       const t = this.state.time;
+      if (p.status === 'flying' && p.flight.crashAt && t >= p.flight.crashAt) { this.crash(p); return; }
       if (p.status === 'flying' && t >= p.flight.arr) this.land(p);
       if (p.status === 'turnaround' && t >= p.readyAt) {
         p.status = 'idle';
+        p.repair = null;
         this.dirty = true;
       }
       if (p.status === 'idle') this.tryDepart(p);
@@ -329,6 +339,7 @@
       } else {
         this.log(`${p.id} ferried ${f.from}→${f.to} (cost ${fmtMoney(f.cost)}).`, 'cost');
       }
+      if (f.incident) this.incident(p, f);
     },
 
     // Decide where an idle plane goes next, if anywhere.
@@ -374,6 +385,7 @@
       }
       const tod = t % DAY;
       if (tod < C.curfew.start || tod > C.curfew.end) return; // night curfew
+      if (this.holdReason(p, leg.to)) return; // strike, weather, repairs
       const block = blockMinutes(p.type, d);
       if (crew.dutyToday + block > C.crewMaxDutyMin) return; // crew rests until tomorrow
 
@@ -394,8 +406,9 @@
       p.flight = {
         from: p.location, to: leg.to, kind: leg.kind,
         dep: t, arr: t + block, distance: Math.round(d),
-        pax, revenue, cost: flightCost(p.type, d, leg.to, pax, this.costMult(p)),
+        pax, revenue, cost: flightCost(p.type, d, leg.to, pax, this.costMult(p) * this.fuelMult()),
       };
+      this.rollFlightEvents(p);
       p.status = 'flying';
       crew.dutyToday += block;
       this.dirty = true;
@@ -405,6 +418,169 @@
       p.schedule.active = false;
       p.pendingFerry = null;
       this.log(msg, 'bad');
+    },
+
+    // ---------- random events ----------
+    mode() { return C.modes[this.state.mode] || C.modes[C.defaultMode]; },
+    makerMult(type) { return this.mode().makerCrashMult[D.aircraft[type].maker] || 1; },
+    crashChance(type) { return C.events.crashPerFlight * this.makerMult(type); },
+
+    activeEffects() {
+      const s = this.state;
+      return s.effects.filter((e) => e.until > s.time);
+    },
+
+    effectHits(e, code) {
+      const w = e.where;
+      const ap = airportByCode[code];
+      return !!(w.all || w.airport === code || (w.country && w.country === ap.country) ||
+        (w.near && distanceKm(ap, w.near) <= w.radiusKm));
+    },
+
+    eventDemandMult(a, b) {
+      let m = 1;
+      for (const e of this.activeEffects()) {
+        if (e.demandMult && (this.effectHits(e, a) || this.effectHits(e, b))) m *= e.demandMult;
+      }
+      return m;
+    },
+
+    fuelMult() {
+      return this.activeEffects().reduce((m, e) => m * (e.costMult || 1), 1);
+    },
+
+    // Why this plane can't leave for `to` right now (strike, weather), or null.
+    holdReason(p, to) {
+      for (const e of this.activeEffects()) {
+        if (e.noFlights && (this.effectHits(e, p.location) || (to && this.effectHits(e, to)))) return e.label;
+      }
+      return null;
+    },
+
+    news(story) {
+      const s = this.state;
+      const papers = D.newspapers;
+      s.news.push({ ...story, t: s.time, paper: papers[Math.floor(Math.random() * papers.length)] });
+      this.log(`📰 ${story.headline[0]}${story.headline.slice(1).toLowerCase()} – ${story.sub}`, story.kind);
+    },
+
+    // Helpers handed to the event catalogue in js/data/events.js.
+    eventContext() {
+      const s = this.state;
+      const pick = (list) => list[Math.floor(Math.random() * list.length)];
+      return {
+        state: s,
+        pick,
+        rand: (a, b) => a + Math.floor(Math.random() * (b - a + 1)),
+        fmtMoney,
+        slotAirport: (filter = () => true) => {
+          const list = Object.keys(s.slots).map((c) => airportByCode[c]).filter(filter);
+          return list.length ? pick(list) : null;
+        },
+        effect: ({ hours, where, ...rest }) => {
+          const w = where.near ? { near: { lat: where.near.lat, lon: where.near.lon }, radiusKm: where.radiusKm } : where;
+          s.effects.push({ ...rest, where: w, until: s.time + Math.round(hours * 60) });
+          this.dirty = true;
+        },
+        money: (amount, text) => {
+          s.money += amount;
+          if (amount < 0) s.today.fixed -= amount;
+          if (text) this.log(text, amount < 0 ? 'cost' : 'good');
+        },
+      };
+    },
+
+    rollWorldEvent() {
+      const s = this.state;
+      s.effects = this.activeEffects();
+      if (Math.random() >= C.events.perDay) return;
+      const list = D.worldEvents;
+      let r = Math.random() * list.reduce((sum, e) => sum + e.weight, 0);
+      const ev = list.find((e) => (r -= e.weight) < 0) || list[0];
+      const story = ev.make(this.eventContext());
+      if (story) this.news(story);
+    },
+
+    // At take-off: will this flight crash, or have an incident?
+    rollFlightEvents(p) {
+      const f = p.flight;
+      const r = Math.random();
+      if (r < this.crashChance(p.type)) {
+        f.crashAt = f.dep + Math.max(1, Math.round((f.arr - f.dep) * (0.1 + Math.random() * 0.8)));
+      } else if (r < this.crashChance(p.type) + C.events.incidentPerFlight) {
+        f.incident = true;
+      }
+    },
+
+    nearestPlace(lat, lon) {
+      let best = null;
+      let bestD = Infinity;
+      for (const t of D.towns) {
+        const d = distanceKm({ lat, lon }, t);
+        if (d < bestD) { best = t; bestD = d; }
+      }
+      return best ? best.name : 'the coast';
+    },
+
+    crash(p) {
+      const s = this.state;
+      const f = p.flight;
+      const ac = D.aircraft[p.type];
+      const E = C.events;
+      const frac = (s.time - f.dep) / (f.arr - f.dep);
+      const [lat, lon] = interpolate(airportByCode[f.from], airportByCode[f.to], frac);
+      const crew = this.crewOf(p);
+      const onBoard = f.pax + (crew ? crew.pilots + crew.cabin : 2);
+      const r = Math.random();
+      const survivors = r < 0.35 ? onBoard : r < 0.7 ? Math.floor(onBoard * Math.random()) : 0;
+
+      const compensation = f.pax * E.crashPaxCompensation + E.crashInvestigation;
+      let hull;
+      let cash;
+      if (p.ownership === 'owned') {
+        const value = this.saleValue(p);
+        const insurance = Math.round(value * E.crashInsuranceShare);
+        hull = value - insurance;
+        cash = insurance - compensation;
+      } else {
+        hull = ac.leasePerWeek * E.crashLeasePenaltyWeeks;
+        cash = -hull - compensation;
+      }
+      s.money += cash;
+      if (cash < 0) s.today.cost += -cash;
+      else s.today.revenue += cash;
+      s.planes = s.planes.filter((x) => x !== p);
+      s.crews = s.crews.filter((c) => c.id !== p.crewId);
+      const rep = E.crashReputation;
+      s.effects.push({ label: `Bookings slump after the ${p.id} crash`, where: { all: true },
+        demandMult: rep.demandMult, until: s.time + rep.days * DAY });
+
+      const place = this.nearestPlace(lat, lon);
+      this.log(`✖ ${p.id} (${ac.name}) crashed near ${place} on ${f.from}→${f.to}. ` +
+        `${survivors}/${onBoard} survived. Cash effect ${fmtMoney(cash)}.`, 'bad');
+      this.news(D.crashStory({
+        id: p.id, company: s.company, type: ac.name, maker: ac.maker, from: f.from, to: f.to,
+        place, pax: onBoard, survivors, cost: fmtMoney(compensation + hull),
+      }));
+      this.dirty = true;
+    },
+
+    incident(p, f) {
+      const s = this.state;
+      const maker = D.aircraft[p.type].maker;
+      const list = D.incidents.filter((i) => !i.maker || i.maker === maker)
+        .map((i) => ({ i, w: i.weight * (i.maker ? this.makerMult(p.type) : 1) }));
+      let r = Math.random() * list.reduce((sum, x) => sum + x.w, 0);
+      const inc = (list.find((x) => (r -= x.w) < 0) || list[0]).i;
+      s.money -= inc.repair;
+      s.today.cost += inc.repair;
+      p.readyAt = Math.max(p.readyAt, s.time + inc.groundedHours * 60);
+      p.repair = inc.id;
+      const ac = D.aircraft[p.type];
+      this.news(inc.story({
+        id: p.id, company: s.company, type: ac.name, from: f.from, to: f.to,
+        airport: airportByCode[f.to].name, repair: fmtMoney(inc.repair),
+      }));
     },
 
     // ---------- player actions (return an error string or null) ----------

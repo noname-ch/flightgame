@@ -59,4 +59,25 @@ FG.config = {
   },
 
   bankruptcyLimit: -500000,
+
+  // Game modes, picked when starting a new game. makerCrashMult multiplies the crash
+  // chance for planes of that maker (11 = +1000%).
+  modes: {
+    arcade: { name: 'Arcade', desc: 'Normal accident rates, like the real world.', makerCrashMult: {} },
+    realistic: { name: 'Realistic', desc: 'Boeing aircraft crash 1000% more often.', makerCrashMult: { Boeing: 11 } },
+  },
+  defaultMode: 'arcade',
+
+  // Random events (catalogue in js/data/events.js). Real accident rates (~1 per 5M flights)
+  // would never show up in a game, so they are scaled up here.
+  events: {
+    crashPerFlight: 1 / 6000,     // hull loss chance per flight
+    incidentPerFlight: 1 / 400,   // minor incident (bird strike, tech fault…) chance per flight
+    perDay: 0.2,                  // chance of a world event (strike, weather, fuel…) each day
+    crashPaxCompensation: 25000,  // per passenger on board, after insurance
+    crashInvestigation: 300000,
+    crashInsuranceShare: 0.6,     // insurance pays this share of an owned plane's value
+    crashLeasePenaltyWeeks: 20,   // owed to the lessor for a leased hull loss
+    crashReputation: { demandMult: 0.7, days: 21 }, // all routes, after a crash
+  },
 };

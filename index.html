@@ -5,11 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Flightgame</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=UnifrakturMaguntia&family=Old+Standard+TT:ital,wght@0,400;0,700;1,400&family=Playfair+Display:wght@700;900&display=swap">
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
   <header>
-    <div class="brand">✈ <span id="company"></span></div>
+    <div class="brand">✈ <span id="company"></span> <span id="mode-badge"></span></div>
     <div id="money"></div>
     <div id="clock"></div>
     <div class="speed">
@@ -26,6 +27,7 @@
     <div id="map"></div>
     <aside id="sidebar">
       <div id="details"></div>
+      <div id="events"></div>
       <nav class="tabs">
         <button data-tab="fleet">Fleet</button>
         <button data-tab="market">Market</button>
@@ -37,6 +39,9 @@
     </aside>
     <div id="market" hidden></div>
   </main>
+
+  <div id="newspaper" hidden></div>
+  <div id="newgame-dialog" hidden></div>
 
   <div id="gameover" hidden>Bankrupt! Press "New game" to try again.</div>
   <div id="toast"></div>
@@ -50,6 +55,7 @@
   <script src="js/data/towns.js"></script>
   <script src="js/data/factories.js"></script>
   <script src="js/data/looks.js"></script>
+  <script src="js/data/events.js"></script>
   <script src="js/game.js"></script>
   <script src="js/hangar.js"></script>
   <script src="js/ui.js"></script>
