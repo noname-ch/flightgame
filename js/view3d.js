@@ -270,35 +270,6 @@ function metresWidth(m, lat) {
   return { w10: (m * 2 ** 10) / perPx, w22: (m * 2 ** 22) / perPx };
 }
 
-// Convex hull of [lat, lon] points (monotone chain on lon/lat).
-function hull(pts) {
-  const p = pts.slice().sort((a, b) => a[1] - b[1] || a[0] - b[0]);
-  if (p.length < 3) return p;
-  const cross = (o, a, b) => (a[1] - o[1]) * (b[0] - o[0]) - (a[0] - o[0]) * (b[1] - o[1]);
-  const lower = [];
-  for (const q of p) { while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], q) <= 0) lower.pop(); lower.push(q); }
-  const upper = [];
-  for (let i = p.length - 1; i >= 0; i--) { const q = p[i]; while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], q) <= 0) upper.pop(); upper.push(q); }
-  return lower.slice(0, -1).concat(upper.slice(0, -1));
-}
-
-// Grass plate under an airport: everything it has (runways, taxiways, aprons, buildings), with a rounded
-// margin around it, so the blurry satellite picture doesn't show between the runways.
-function basePlate(pts, margin = 120) {
-  const h = hull(pts);
-  if (h.length < 3) return null;
-  const lat = h[0][0];
-  const kx = 111320 * Math.cos(lat * DEG);
-  const ring = [];
-  for (const q of h) {
-    for (let i = 0; i < 16; i++) {
-      const a = (i / 16) * 2 * Math.PI;
-      ring.push([q[0] + (margin * Math.cos(a)) / 111320, q[1] + (margin * Math.sin(a)) / kx]);
-    }
-  }
-  return hull(ring);
-}
-
 // A paved runway r = [lat, lon, lat, lon, width] in metres: its length and width, a point `along` it from its
 // first end and `across` to the right, and the other way round.
 function runwayFrame(r) {
@@ -376,13 +347,11 @@ function gateFeatures(list, gates) {
   const poly = (pts, properties) => feats.push({ type: 'Feature', geometry: { type: 'Polygon', coordinates: ring(pts) }, properties });
   const path = (pts, properties) => feats.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: line(pts) }, properties });
   for (const a of list) {
-    const platePts = [[a.lat, a.lon]];
     const paved = []; // frames of the paved runways
     for (const r of G.airportRunways(a.code)) {
       const ends = [[r[0], r[1]], [r[2], r[3]]];
       const rw = strip(ends[0], ends[1], Math.max(18, r[4] || 30));
       poly(rw, { kind: 'runway', paved: r[5] ? 1 : 0 });
-      platePts.push(...strip(ends[0], ends[1], Math.max(18, r[4] || 30) + 120, 60));
       if (!r[5] || !gates) continue;
       path(ends, { kind: 'rwline' }); // from afar; close up the paint itself
       const f = runwayFrame(r);
@@ -406,11 +375,7 @@ function gateFeatures(list, gates) {
       for (const b of pv.buildings) poly(b.ring, { kind: 'preview' });
       for (const st of pv.stands) path(st.lead, { kind: 'pvline' });
     }
-    if (!gates) {
-      const plate = platePts.length > 2 && basePlate(platePts);
-      if (plate) poly(plate, { kind: 'plate' });
-      continue;
-    }
+    if (!gates) continue;
     const big = G.airportSize(a.code) >= 3;
     // Taxiways as wide lines along every bend, with round joints (not one box per line, whose corners stuck out).
     const width = big ? 23 : 15;
@@ -419,16 +384,12 @@ function gateFeatures(list, gates) {
     for (const tw of G.taxiwaysOf(a.code)) {
       path(tw, { kind: 'taxiway', ...tww, e10: edge.w10, e22: edge.w22 });
       path(tw, { kind: 'twline' });
-      platePts.push(...tw);
       for (const f of paved) {
         for (let i = 1; i < tw.length; i++) for (const bar of holdBars(f, tw[i - 1], tw[i], width * 0.85)) poly(bar, { kind: 'hold' });
       }
     }
     const ap = G.apronOf(a.code);
-    for (const r of ap.aprons || [ap.apron]) { poly(r, { kind: 'apron' }); platePts.push(...r); }
-    for (const b of ap.buildings) platePts.push(...b.ring);
-    const plate = basePlate(platePts);
-    if (plate) poly(plate, { kind: 'plate' });
+    for (const r of ap.aprons || [ap.apron]) poly(r, { kind: 'apron' });
     for (const b of ap.buildings) poly(b.ring, { kind: 'building', part: b.kind, base: b.base, h: b.h });
     for (const m of ap.markings || []) path(m.line, { kind: m.kind === 'w' ? 'paint' : 'lead' });
     for (const st of ap.stands) {
@@ -607,8 +568,6 @@ function transformStyle(_prev, style) {
   const visible = ['>=', ['zoom'], ['get', 'minz']];
   const kind = (k) => ['==', ['get', 'kind'], k];
   style.layers.push(
-    { id: 'fg-plate', type: 'fill', source: 'fg-gates', minzoom: RUNWAY_MINZOOM, filter: kind('plate'),
-      paint: { 'fill-color': '#3f5f2c', 'fill-opacity': ['interpolate', ['linear'], ['zoom'], RUNWAY_MINZOOM, 0, RUNWAY_MINZOOM + 1, 1] } },
     { id: 'fg-taxiway-shoulders', type: 'line', source: 'fg-gates', minzoom: 13, filter: kind('taxiway'),
       layout: { 'line-join': 'round', 'line-cap': 'round' },
       paint: { 'line-color': '#5f6670', 'line-width': ['interpolate', ['exponential', 2], ['zoom'], 10, ['get', 'e10'], 22, ['get', 'e22']] } },
@@ -1016,6 +975,127 @@ function followTick() {
   if (map.setCenterClampedToGround) opts.elevation = e.altM;
   map.jumpTo(opts);
 }
+
+// ---------- terrain for new airports ----------
+// FG.terrain.check(lat, lon): can an airport be built there? Resolves to null where the ground is fit for
+// one, else to the reason. Fit is ground level enough for runways (heights from the terrain tiles the 3D view
+// uses) that is neither water, ice nor a built-up area (from the map's vector tiles, read through a hidden
+// map as for the obstacles). What cannot be found out (offline, a slow network) does not stand in the way.
+const DEM = { url: 'https://tiles.mapterhorn.com/{z}/{x}/{y}.webp', z: 11, size: 512 }; // terrarium heights
+const demTiles = new Map(); // "x/y" -> promise of the tile's pixels
+function demTile(x, y) {
+  const key = `${x}/${y}`;
+  if (!demTiles.has(key)) {
+    if (demTiles.size > 40) demTiles.clear();
+    demTiles.set(key, fetch(DEM.url.replace('{z}', DEM.z).replace('{x}', x).replace('{y}', y))
+      .then((r) => { if (!r.ok) throw new Error(`terrain tile ${r.status}`); return r.blob(); })
+      .then((blob) => createImageBitmap(blob, { colorSpaceConversion: 'none', premultiplyAlpha: 'none' }))
+      .then((img) => {
+        const c = document.createElement('canvas');
+        c.width = c.height = DEM.size;
+        const ctx = c.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(img, 0, 0, DEM.size, DEM.size);
+        return ctx.getImageData(0, 0, DEM.size, DEM.size).data;
+      }));
+  }
+  return demTiles.get(key);
+}
+// Heights in metres at [lat, lon] points.
+async function heightsAt(pts) {
+  const n = 2 ** DEM.z;
+  const where = pts.map(([lat, lon]) => {
+    const x = ((lon + 180) / 360) * n;
+    const s = Math.sin(Math.max(-85, Math.min(85, lat)) * DEG);
+    const y = (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * n;
+    return [((Math.floor(x) % n) + n) % n, Math.floor(y), Math.min(DEM.size - 1, Math.floor((x - Math.floor(x)) * DEM.size)), Math.min(DEM.size - 1, Math.floor((y - Math.floor(y)) * DEM.size))];
+  });
+  const tiles = {};
+  await Promise.all([...new Set(where.map((w) => `${w[0]}/${w[1]}`))].map(async (k) => { tiles[k] = await demTile(...k.split('/').map(Number)); }));
+  return where.map(([tx, ty, px, py]) => {
+    const d = tiles[`${tx}/${ty}`];
+    const i = (py * DEM.size + px) * 4;
+    return d[i] * 256 + d[i + 1] + d[i + 2] / 256 - 32768;
+  });
+}
+const around = (lat, lon, east, north) => [lat + north / 111320, lon + east / (111320 * Math.cos(lat * DEG))];
+
+// Too steep? The ground under the first runways (800 m round the site) must be level within 70 m (the rest
+// is earthworks), and the surroundings (2 km) must not be mountains.
+async function slopeReason(lat, lon) {
+  const inner = [];
+  const outer = [];
+  for (let e = -2000; e <= 2000; e += 200) {
+    for (let n = -2000; n <= 2000; n += 200) {
+      const r = Math.hypot(e, n);
+      if (r <= 2000) (r <= 800 ? inner : outer).push(around(lat, lon, e, n));
+    }
+  }
+  const h = await heightsAt([...inner, ...outer]);
+  const spread = (list, lo, hi) => { const s = [...list].sort((a, b) => a - b); return s[Math.floor(hi * (s.length - 1))] - s[Math.floor(lo * (s.length - 1))]; };
+  const near = spread(h.slice(0, inner.length), 0.1, 0.9);
+  if (near > 70) return `Too steep here: the ground differs by ${Math.round(near)} m within 800 m. A runway needs level ground.`;
+  const wide = spread(h, 0.25, 0.75);
+  if (wide > 150) return `Too mountainous here: the ground differs by ${Math.round(wide)} m within 2 km.`;
+  return null;
+}
+
+// Water, ice or a town? Looks at the site and at 16 points up to 1 km round it.
+function coverReason(lat, lon) {
+  return new Promise((resolve) => {
+    const box = document.createElement('div');
+    box.style.cssText = 'position:absolute;left:-9999px;top:0;width:512px;height:512px';
+    document.body.appendChild(box);
+    const side = new maplibregl.Map({ container: box, style: 'https://tiles.openfreemap.org/styles/liberty', center: [lon, lat], zoom: 12,
+      interactive: false, pixelRatio: 1, attributionControl: false });
+    const pts = [[lat, lon]];
+    for (const r of [500, 1000]) for (let i = 0; i < 8; i++) pts.push(around(lat, lon, r * Math.sin(i * Math.PI / 4), r * Math.cos(i * Math.PI / 4)));
+    const inRing = (p, ring) => {
+      let inside = false;
+      for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+        const a = ring[i], b = ring[j];
+        if ((a[1] > p[0]) !== (b[1] > p[0]) && p[1] < ((b[0] - a[0]) * (p[0] - a[1])) / (b[1] - a[1]) + a[0]) inside = !inside;
+      }
+      return inside;
+    };
+    // How many of the points lie in the features of a layer (that `pick` lets through), and is the site one?
+    const covered = (sourceLayer, pick) => {
+      const polys = [];
+      for (const f of side.querySourceFeatures('openmaptiles', { sourceLayer })) {
+        if (!pick(f.properties)) continue;
+        if (f.geometry.type === 'Polygon') polys.push(f.geometry.coordinates);
+        else if (f.geometry.type === 'MultiPolygon') polys.push(...f.geometry.coordinates);
+      }
+      const hit = pts.map((p) => polys.some((poly) => poly.reduce((odd, ring) => odd !== inRing(p, ring), false)));
+      return { site: hit[0], share: hit.filter(Boolean).length / pts.length };
+    };
+    let done = false;
+    const finish = (known) => {
+      if (done) return;
+      done = true;
+      let reason = null;
+      if (known) {
+        const water = covered('water', () => true);
+        const ice = covered('landcover', (p) => p.class === 'ice');
+        const town = covered('landuse', (p) => ['residential', 'commercial', 'industrial', 'retail'].includes(p.class));
+        if (water.site || water.share > 0.3) reason = 'That is water: an airport needs dry ground.';
+        else if (ice.site || ice.share > 0.3) reason = 'That is a glacier: no place for an airport.';
+        else if (town.site || town.share > 0.3) reason = 'That is a built-up area: pick open land outside the town.';
+      }
+      side.remove();
+      box.remove();
+      resolve(reason);
+    };
+    side.once('idle', () => finish(true));
+    side.on('error', () => {}); // (a tile that fails to load: what is there counts)
+    setTimeout(() => finish(false), 12000);
+  });
+}
+
+FG.terrain = {
+  check(lat, lon) {
+    return Promise.all([slopeReason(lat, lon).catch(() => null), coverReason(lat, lon).catch(() => null)]).then(([slope, cover]) => cover || slope);
+  },
+};
 
 // ---------- setup ----------
 function controls() {

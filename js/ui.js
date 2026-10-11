@@ -516,11 +516,20 @@
     ui.buildMode = false;
     ui.map.getContainer().classList.remove('build-mode');
     $('view3d').classList.remove('build-mode');
-    const res = G.buildAirport(latlng.lat, latlng.lng);
-    if (res && res.length !== 3) { toast(res, true); G.dirty = true; return; }
-    ui.selectedAirport = res;
-    toast(`Construction of ${G.airportByCode[res].name} started.`);
-    G.dirty = true;
+    const build = () => {
+      const res = G.buildAirport(latlng.lat, latlng.lng);
+      if (res && res.length !== 3) { toast(res, true); G.dirty = true; return; }
+      ui.selectedAirport = res;
+      toast(`Construction of ${G.airportByCode[res].name} started.`);
+      G.dirty = true;
+    };
+    // Only where the terrain is fit for an airport: level, dry, not built on (FG.terrain in js/view3d.js;
+    // without that module, or if the terrain cannot be looked up, anywhere).
+    if (!FG.terrain) { build(); return; }
+    toast('Checking the terrain there…');
+    FG.terrain.check(latlng.lat, latlng.lng).then((reason) => {
+      if (reason) { toast(reason, true); G.dirty = true; } else build();
+    }, build);
   }
 
   function setBuildMode(on) {

@@ -65,6 +65,8 @@ Planes without a timetable still fly their loop "when ready" as before.
    extension, or a terminal expansion that raises the airport size (bigger planes, more passengers).
    With **50%** your slot there is free. The **Airports** tab lists your stakes and building sites,
    and **builds new airports**: pick a site on the map, it opens after 12 weeks and is 100% yours.
+   Only where the terrain is fit for one: level ground (heights from the terrain tiles of the 3D view), no
+   water, glacier or built-up area (from the map data); `FG.terrain.check(lat, lon)` in `js/view3d.js`.
 
 10. **Realistic flights**: planes taxi to the runway, take off into the day's wind (neighbouring
     airports share it, mostly westerly), climb out, turn onto the great circle and cruise at a
