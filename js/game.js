@@ -403,7 +403,8 @@
     // A terminal the player built is the copy of a real one, once that one's layout is there.
     const tpl = real || !rws.length ? null : copyTemplate(code, size);
     const from = tpl && FG.layouts ? FG.layouts.get(tpl[0]) : null;
-    const key = `${code}|${size}|${rws.length}|${real ? 1 : 0}${FG.obstacles && FG.obstacles[code] ? 2 : 0}${infra(code).style || ''}${from ? tpl : ''}`;
+    // (an airport fix changes its layout and runways: js/fixes.js)
+    const key = `${code}|${size}|${rws.length}|${real ? 1 : 0}${FG.obstacles && FG.obstacles[code] ? 2 : 0}${infra(code).style || ''}${from ? tpl : ''}|${FG.fixes ? FG.fixes.rev(code) : 0}`;
     let ap = apronCache.get(key);
     if (ap) return ap;
     if (real || from) ap = real ? realApron(code, size, real) : copiedApron(code, size, tpl, from, rws);

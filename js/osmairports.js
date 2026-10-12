@@ -60,9 +60,10 @@ function clipRing(ring, ext) {
   return out;
 }
 
-const emptyTile = () => ({ aprons: [], taxiways: [], gates: [], buildings: [], pois: [] });
+const emptyTile = () => ({ aprons: [], taxiways: [], gates: [], buildings: [], pois: [], runways: [] });
 
-// Everything of interest in one tile: { aprons, taxiways, gates, buildings, pois } in [lat, lon].
+// Everything of interest in one tile: { aprons, taxiways, gates, buildings, pois, runways } in [lat, lon]
+// (runways for the airport editor: { line } or { ring }, and `ref`, e.g. '14/32').
 function readTile(buf, x, y) {
   const tile = new VectorTile(new Pbf(buf));
   const out = emptyTile();
@@ -83,6 +84,10 @@ function readTile(buf, x, y) {
         for (const r of outers(f)) { const c = clipRing(r, aero.extent); if (c.length >= 3) out.aprons.push(c.map(ll)); }
       } else if (cls === 'taxiway' && f.type === 2) {
         for (const l of f.loadGeometry()) out.taxiways.push(l.map((p) => ll([p.x, p.y])));
+      } else if (cls === 'runway' && f.type === 2) {
+        for (const l of f.loadGeometry()) out.runways.push({ line: l.map((p) => ll([p.x, p.y])), ref: f.properties.ref || '' });
+      } else if (cls === 'runway' && f.type === 3) {
+        for (const r of outers(f)) { const c = clipRing(r, aero.extent); if (c.length >= 3) out.runways.push({ ring: c.map(ll), ref: f.properties.ref || '' }); }
       } else if (cls === 'gate' && f.type === 1) {
         const p = f.loadGeometry()[0][0];
         if (p.x >= 0 && p.y >= 0 && p.x <= aero.extent && p.y <= aero.extent) out.gates.push([ll([p.x, p.y]), f.properties.ref || '']);
@@ -364,6 +369,38 @@ function obstacles(code, parts, reach) {
   const rings = parts.flatMap((t) => t.buildings).map((b) => b.ring.filter((p, i) => i % 3 === 0));
   return { lines, rings, reach: Math.round(reach) };
 }
+// One tile (kept for the session: the airport editor asks for the same ones again and again).
+const tiles = new Map();
+function tileAt(x, y) {
+  const k = `${x}/${y}`;
+  if (!tiles.has(k)) {
+    tiles.set(k, tileUrl().then((url) => fetch(url.replace('{z}', Z).replace('{x}', x).replace('{y}', y))).then(async (r) => {
+      if (r.status === 204 || r.status === 404) return emptyTile();
+      if (!r.ok) throw new Error(`tile ${x}/${y}: ${r.status}`);
+      return readTile(new Uint8Array(await r.arrayBuffer()), x, y);
+    }).catch((e) => { tiles.delete(k); throw e; }));
+  }
+  return tiles.get(k);
+}
+
+// What is mapped within `m` metres of a point, as pieces cut at the tile edges ([lat, lon]):
+// { runways: [{ line | ring, ref }], taxiways: [line], aprons: [ring], buildings: [{ ring, h }] }.
+async function around(lat, lon, m) {
+  const mLat = m / M;
+  const mLon = m / (M * Math.cos(lat * DEG));
+  const x0 = Math.floor(lon2tx(lon - mLon)), x1 = Math.floor(lon2tx(lon + mLon));
+  const y0 = Math.floor(lat2ty(lat + mLat)), y1 = Math.floor(lat2ty(lat - mLat));
+  const list = [];
+  for (let x = x0; x <= x1 && list.length < 16; x++) for (let y = y0; y <= y1 && list.length < 16; y++) list.push(tileAt(x, y));
+  const parts = await Promise.all(list);
+  return {
+    runways: parts.flatMap((t) => t.runways),
+    taxiways: parts.flatMap((t) => t.taxiways),
+    aprons: parts.flatMap((t) => t.aprons),
+    buildings: parts.flatMap((t) => t.buildings),
+  };
+}
+
 async function read(code, base) {
   const a = G.airportByCode[code];
   if (!a || a.built) return null;
@@ -401,4 +438,4 @@ async function read(code, base) {
 }
 
 FG.layouts.setReader(read);
-FG.osmAirports = { read }; // for the developer tools and tests
+FG.osmAirports = { read, around }; // for the developer tools (js/airportedit.js) and tests

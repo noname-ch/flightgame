@@ -123,6 +123,7 @@ realistic flight tracks in 2D and 3D, AI rival airlines, random events and a dev
 
 Recent milestones, newest first (see `git log` for the rest):
 
+- Airport editor: fix runways, taxiways, aprons, buildings and stands on the satellite map, for every game
 - Slot market by airport and reputation
 - Real layouts at every airport, read off the map's vector tiles
 - One planning system: timetables and shared slots

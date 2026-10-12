@@ -13,7 +13,8 @@ leased aircraft (ATR 72, Dash 8-400, E190, A220-300, A320neo or 737-800). The de
 ## Run
 
 Open `index.html` in a browser (needs internet for the map tiles and Leaflet).
-Or run it locally: `./play.sh` starts a small server and opens http://localhost:8000 in the browser.
+Or run it locally: `./play.sh` starts a small server (`tools/serve.py`) and opens http://localhost:8000 in
+the browser; the airport editor saves its fixes through it.
 Double-clicking `index.html` (a `file://` page) is not enough: browsers block the 3D view's modules there.
 
 ## How to play
@@ -184,6 +185,25 @@ damage / repair / remove the selected plane, free slots and 100% airport ownersh
 construction, trigger or clear any world event, and skip an hour, day or week. Every cheat is noted
 in the log (`js/devtools.js`).
 
+Airport editor: in the developer tools (✏️ "Fix airports on the map", or F3) you fix airports where the
+map data is wrong or missing. Click the satellite picture where something is off; a window opens there:
+on a runway, taxiway, apron, building, stand or tower you can **Redraw** it, **Straighten** it (a taxiway
+becomes one straight line, an apron or building gets square corners), **Move points** (drag them; a click on
+the small dot between two points adds one, a right-click removes one), turn or rename a stand, change a
+runway's width and surface, make a building a terminal or hangar, or **Delete** it. Anywhere you can add a
+runway, taxiway, stand, apron, terminal, hangar, building or tower, and away from other airports a whole new
+airport. Adding and redrawing first look in the map data (OpenStreetMap vector tiles) and show what they
+found in cyan: **Use it**, or **Draw it myself** by clicking its points (snapped to the taxiways and corners
+already there; Shift = no snapping). Changes show at once (green = new or changed, red dashed = removed);
+↶ Undo (Ctrl+Z) takes them back. **Save** puts them into `js/data/fixes.js`, which every player loads:
+- on the website (GitHub Pages): sign in once with "Sign in to GitHub" and a GitHub token of yours (a classic
+  token with the *public_repo* box ticked; it stays on that device). Save then commits the fixes to the repo,
+  and the website has them a few minutes later. GitHub takes the commit only from the repo's contributors;
+  everyone else's fixes stay in their own browser (and "⬇ fixes.js" downloads the file);
+- when the game runs from `./play.sh`, Save writes the file in your checkout: commit and push it. The fixes are applied whenever an airport's
+data loads, so every game has them, new or saved (`js/fixes.js`; each fix finds its element again by its
+shape, and a fix whose element the map data no longer has is marked ⚠).
+
 Controls: Space = pause, 1/2/3 = speed. The game autosaves to the browser (localStorage).
 
 ## Extending
@@ -206,6 +226,7 @@ All content is plain data:
   (`models/icons/*.webp`) are made with `tools/hangar_shots.html`
 - `js/data/events.js` – random events, incidents and their newspaper stories
 - `js/config.js` – starting conditions, map bounds, economy balance, game modes, event rates
+- `js/data/fixes.js` – airport fixes drawn with the airport editor (F3), written by `tools/serve.py`
 
 `js/game.js` is the simulation (no DOM), `js/ui.js` the map and sidebar, `js/view3d.js` the 3D view,
 `js/hangar3d.js` the turnable 3D aircraft in the marketplace. `js/models3d.js` loads the 3D models

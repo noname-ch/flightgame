@@ -328,6 +328,7 @@
     map.on('moveend', viewChanged);
     map.on('dragstart', () => setFollow2d(null));
     map.on('click', (e) => {
+      if (FG.airportEdit && FG.airportEdit.on) return; // the airport editor has the clicks (js/airportedit.js)
       if (ui.buildMode) { buildAt(e.latlng); return; }
       if (!ui.selectedAirport && !ui.selectedPlane) return;
       ui.selectedAirport = null;
@@ -2341,6 +2342,17 @@
       follow,
       get buildMode() { return ui.buildMode; },
       buildAt(lat, lon) { buildAt({ lat, lng: lon }); },
+      get map() { return ui.map; }, // the 2D map (the airport editor draws on it)
+      // Airports, runways and gates drawn again (the airport editor changed some).
+      redrawAirports() {
+        ui.runwaySig = '';
+        ui.gateSig = '';
+        delete ui.areas.airports;
+        delete ui.areas.runways;
+        delete ui.areas.gates;
+        updateVisible();
+        drawRunways();
+      },
     };
     window.dispatchEvent(new Event('fg-ui-ready'));
     window.addEventListener('beforeunload', () => G.save());

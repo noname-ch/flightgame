@@ -299,6 +299,12 @@
           <button data-dev="examples" title="Four airports in the Sahara that differ only in the terminal: linear, pier, satellite, copy of a real one">${s.built.some((a) => isExample(a.code)) ? 'Remove' : 'Build'} desert examples</button>
         </div>
       </section>
+      <section><h4>Airport editor <span class="muted">F3</span></h4>
+        <div class="dev-row">
+          <button data-dev="airportEdit" class="${FG.airportEdit && FG.airportEdit.on ? 'primary' : ''}" title="Click on the map where an airport is wrong: redraw, straighten or add runways, taxiways, aprons, buildings and stands. Saved fixes are in every game.">✏️ ${FG.airportEdit && FG.airportEdit.on ? 'Close' : 'Fix airports on the map'}</button>
+          ${FG.fixes ? `<span class="muted small">${FG.fixes.codes().length} airport${FG.fixes.codes().length === 1 ? '' : 's'} fixed${FG.fixes.unsaved().length ? `, ${FG.fixes.unsaved().length} not saved` : ''}</span>` : ''}
+        </div>
+      </section>
       <section><h4>Events <span class="muted">${G.activeEffects().length} active</span></h4>
         <div class="dev-row"><select id="dev-event">${options(D.worldEvents.map((e) => [e.id, e.id]), dv.event)}</select>
           <button data-dev="event">Trigger</button>
@@ -329,6 +335,7 @@
       case 'airport': airportAction(d.kind); break;
       case 'finish': finishProjects(); break;
       case 'preview': togglePreview(); break;
+      case 'airportEdit': if (FG.airportEdit) { FG.airportEdit.toggle(); render(); } break;
       case 'examples': exampleAirports(); break;
       case 'event': triggerEvent(); break;
       case 'clearEffects': clearEffects(); break;
