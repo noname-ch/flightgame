@@ -26,7 +26,7 @@ Double-clicking `index.html` (a `file://` page) is not enough: browsers block th
 **Smoke test**: `node tools/smoke.mjs` (Node 22+, Chrome or Chromium) loads the game headless, starts an airline,
 flies a timetable for a month of game time, opens every section, the airport editor and the 3D view, and fails
 on any script error.
-It runs on GitHub for every push (Actions tab); run it before you push.
+Run it before you push.
 
 ## How to play
 

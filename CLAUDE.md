@@ -16,10 +16,34 @@ Play online: https://noname-ch.github.io/flightgame/ (GitHub Pages, deployed fro
 
 ## Every push
 
+- Run the smoke test first: `node tools/smoke.mjs`. Push only when it ends with `✓ smoke test passed`.
+  See "The smoke test" below.
 - `index.html` loads every CSS/JS file with `?v=<timestamp>`. Bump all of them (sed the `?v=`) on
   every push, or browsers mix the new page with old cached files.
 - When a ROADMAP.md item gets built, tick it and move it to the `## Done` section.
 - Keep README.md current when gameplay or controls change.
+
+## The smoke test
+
+`node tools/smoke.mjs` (from the repo root) plays the game in headless Chrome for about 2 minutes:
+- **Setup:** it serves the repo on a free port, starts a new airline and flies two planes on a timetable.
+- **Sections and time:** it runs at full speed while opening every section, then plays 30 more game days.
+- **Airport editor:** it adds a stand, then deletes part of a made-up layout and undoes it.
+- **3D and saving:** it opens the 3D view and follows a plane, then saves and reloads.
+- **What fails it:** any script error, `console.error` or missing game file. Map tiles or CDNs that are
+  slow or down only print `⚠` warnings.
+
+- Needs Node 22+ and Chrome or Chromium (`CHROME=/path/to/chrome` if it isn't found). Its ports are
+  random and its Chrome is its own, so it never touches another session's server or browser.
+- `✗ smoke test failed` lists each error with file and line. Fix them before you push. If the error
+  comes from someone else's code, tell them (SendMessage, or the user) instead of pushing around it.
+- A step that fails as `test stopped: …` is usually a test step that no longer fits the game (for
+  example, a renamed button). Update `tools/smoke.mjs` in the same commit as the change that caused it.
+- Adding a feature? Add a step for it in `tools/smoke.mjs`. Page code runs through `evaluate(fn, ...args)`,
+  where `G` is `FG.game`. Use `waitFor(fn, ms, 'what')` to wait, `errors.push(...)` to fail and
+  `step(...)` to log. Keep a run under the 6-minute limit.
+- To test a change by hand, copy the script's server and CDP part to your scratchpad. Don't edit the
+  shared test for one-off experiments.
 
 ## Code map and contracts
 
@@ -61,8 +85,7 @@ Play online: https://noname-ch.github.io/flightgame/ (GitHub Pages, deployed fro
 
 ## Testing
 
-- Run `node tools/smoke.mjs` before every push (about 1.5 min, headless Chrome). It plays a month, opens
-  every section, the airport editor and 3D, and fails on any script error. GitHub Actions runs it too.
+- The smoke test (above) is the minimum before every push.
 - `node --check` misses runtime errors such as undefined variables after a merge. Load the page.
 - Copy the project to your scratchpad and inject a test script. Replace the full `<script src=...>`
   tag, because a loose sed on `t.js` also matches `aircraft.js`. Serve it with `python3 -m http.server`.
