@@ -27,8 +27,14 @@ Screenshots and logs go to `tools/agent/shots/` (not committed).
    - `python3 tools/agent/fixop.py CODE '<op json>' ...` adds fix ops (see the top of `js/fixes.js`), e.g.
      `{"op":"del","kind":"apron","geom":<ring from CODE-raw.json>}`, `{"op":"set","kind":"bridges","geom":false}`,
      `{"op":"set","kind":"runway","from":[...],"geom":[...]}`, `{"op":"add","kind":"stand","geom":[lat,lon,hdg,"name",1,45]}`.
+   - `python3 tools/agent/row.py CODE VIEW x1 y1 x2 y2 SPACING_M PREFIX [START]` adds stands evenly along a line
+     between two pixels of a shot (like the editor's "Stand row"): put the line ~12 m off a pier face, where the
+     noses stop. Then run nosein.mjs to aim them.
+   - `node tools/agent/nosein.mjs CODE` turns every stand within 70 m of a terminal nose-in to its nearest face
+     (mapped stands often have odd headings, which shows as lead-in lines fanning out at angles).
 5. Tidy: `node tools/agent/tidy.mjs CODE` straightens wobbly taxiways (ends kept, so junctions stay joined),
-   makes one clean ~90° bend a "90° turn", and squares aprons and buildings, each only when that moves things
+   makes one clean ~90° bend a "90° turn", one bend of another angle (exits, angled links) a Curve-tool curve
+   with the radius that follows it best, and squares aprons and buildings, each only when that moves things
    a few metres (`--dry` only counts).
 6. Stands in each other's way: `node tools/agent/fixover.mjs CODE` deletes stands closer than 24 m, with crossing
    lead-in lines, or standing in another's lead-in. Deleting one can bring in another (the game uses at most
