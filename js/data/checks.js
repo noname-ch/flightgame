@@ -7,6 +7,8 @@ FG.data.checks = {
 "BRN": {"s":"ok","by":"noname-ch","at":"2026-10-12","note":"No jet bridges (Bern has none): bridges:false in its layout file. Runways, aprons, stands as fixed by hand before."},
 "BZO": {"s":"checked","by":"agent","at":"2026-10-12","note":"No jet bridges (Bolzano has none). Removed the grass parking north of the main apron (mapped as paved apron) and its 2 stands. Military-side aprons in the west kept."},
 "EXT": {"s":"checked","by":"agent","at":"2026-10-12","note":"Removed the grass parking mapped as a big apron, its 3 stands on the grass and a taxiway stub ending in the grass. No jet bridges (Exeter has none)."},
+"HPN": {"s":"checked","by":"agent","at":"2026-10-12","note":"Runway 11/29: east end was ~30 m too far south (moved to the real threshold). Terminal with jet bridges, FBO ramps and stands match."},
+"ISP": {"s":"checked","by":"agent","at":"2026-10-12","note":"Terminal, jet-bridge gates A/B, aprons and the 3 runways match the satellite picture; nothing to fix."},
 "LRH": {"s":"checked","by":"agent","at":"2026-10-12","note":"Removed the light-aircraft grass parking mapped as apron (1 stand). Main apron with 4 nose-in stands, terminal and runway match."},
 "LUG": {"s":"ok","by":"noname-ch","at":"2026-10-12","note":"Terminal was the tennis hall: now the building along the apron. Removed 2 grass paths drawn as paved taxiways. S2 pushed off the apron into the street (shorter pushback), north stand turned to push onto its taxiway."},
 "SEN": {"s":"checked","by":"agent","at":"2026-10-12","note":"No jet bridges (Southend has none). Runways, aprons, terminal, tower and 12 stands match the satellite picture."},
