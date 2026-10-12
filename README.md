@@ -225,6 +225,16 @@ already there; Shift = no snapping). Changes show at once (green = new or change
 data loads, so every game has them, new or saved (`js/fixes.js`; each fix finds its element again by its
 shape, and a fix whose element the map data no longer has is marked ⚠).
 
+Airport checklist: F4 (or ✅ "Check airports" in the developer tools) lists every airport in the order to
+check them: the start airports first, then the world's busiest airports by flights (`js/data/busiest.js`),
+then all others by size. Click one to fly there and see its mark and note. An agent that has looked at an
+airport marks it 🔵 **Checked**; a person then looks again and marks it 🟢 **Good**, or 🔴 **Needs work** (with a
+note saying what is wrong) to send it back. **Fix in the editor** opens the airport editor beside it; **Next ▶**
+goes on down the list, and the filters show what is left to check or to approve. The marks are in
+`js/data/checks.js` and are saved like the fixes: straight into the file under `./play.sh`, as a commit on the
+website when signed in to GitHub (in the airport editor), else only in that browser. Agents use
+`node tools/checks.mjs` (`next`, `mark CODE --note "…"`, `status`; same order as the game).
+
 Controls: Space = pause, 1/2/3 = speed. The game autosaves to the browser (localStorage).
 
 ## Extending
@@ -249,6 +259,7 @@ All content is plain data:
 - `js/data/presets.js` – the Quick start airlines (home, money, planes and their routes)
 - `js/config.js` – starting conditions, map bounds, economy balance, game modes, event rates
 - `js/data/fixes.js` – airport fixes drawn with the airport editor (F3), written by `tools/serve.py`
+- `js/data/checks.js` – the airport checklist marks (F4), `js/data/busiest.js` – the busiest airports, in checking order
 
 `js/game.js` is the simulation (no DOM), `js/ui.js` the map and sidebar, `js/view3d.js` the 3D view,
 `js/hangar3d.js` the turnable 3D aircraft in the marketplace. `js/models3d.js` loads the 3D models

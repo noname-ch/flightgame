@@ -305,6 +305,11 @@
           ${FG.fixes ? `<span class="muted small">${FG.fixes.codes().length} airport${FG.fixes.codes().length === 1 ? '' : 's'} fixed${FG.fixes.unsaved().length ? `, ${FG.fixes.unsaved().length} not saved` : ''}</span>` : ''}
         </div>
       </section>
+      <section><h4>Airport checklist <span class="muted">F4</span></h4>
+        <div class="dev-row">
+          <button data-dev="airportCheck" class="${FG.checks && FG.checks.open ? 'primary' : ''}" title="Every airport in order (start airports, then the busiest): an agent marks it blue when checked, a person green when good">✅ ${FG.checks && FG.checks.open ? 'Close' : 'Check airports'}</button>
+        </div>
+      </section>
       <section><h4>Events <span class="muted">${G.activeEffects().length} active</span></h4>
         <div class="dev-row"><select id="dev-event">${options(D.worldEvents.map((e) => [e.id, e.id]), dv.event)}</select>
           <button data-dev="event">Trigger</button>
@@ -336,6 +341,7 @@
       case 'finish': finishProjects(); break;
       case 'preview': togglePreview(); break;
       case 'airportEdit': if (FG.airportEdit) { FG.airportEdit.toggle(); render(); } break;
+      case 'airportCheck': if (FG.checks && FG.checks.toggle) { FG.checks.toggle(); render(); } break;
       case 'examples': exampleAirports(); break;
       case 'event': triggerEvent(); break;
       case 'clearEffects': clearEffects(); break;

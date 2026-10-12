@@ -252,37 +252,45 @@
     return btoa(bin);
   }
   const fromBase64 = (b64) => new TextDecoder().decode(Uint8Array.from(atob(b64.replace(/\s/g, '')), (c) => c.charCodeAt(0)));
-  // These airports' fixes into js/data/fixes.js on GitHub, in one commit (again if the file changed meanwhile).
-  async function commit(codes) {
-    const at = `/repos/${GH.repo}/contents/${GH.path}`;
+  // Change one file of the repo on GitHub in one commit: edit(text now, '' if none) gives the new text. Done
+  // again on top if someone saved the file meanwhile.
+  async function commitFile(path, edit, message) {
+    if (!gh) throw new Error('Sign in to GitHub first.');
+    const at = `/repos/${GH.repo}/contents/${path}`;
     for (let tries = 0; tries < 3; tries++) {
       const r = await ghFetch(`${at}?ref=${GH.branch}`, { cache: 'no-store' });
-      let all = {};
+      let text = '';
       let sha;
       if (r.ok) {
         const j = await r.json();
         sha = j.sha;
-        let text = j.content ? fromBase64(j.content) : '';
+        text = j.content ? fromBase64(j.content) : '';
         if (!text && j.size) { // (over 1 MB: the API gives the text only on its own)
           const raw = await ghFetch(`${at}?ref=${GH.branch}`, { cache: 'no-store', headers: { Accept: 'application/vnd.github.raw' } });
           text = await raw.text();
         }
-        if (text) all = parseFile(text);
       } else if (r.status === 401) throw new Error('GitHub no longer takes this token (expired?): sign in again.');
       else if (r.status !== 404) throw new Error(`GitHub answered ${r.status}.`);
-      for (const c of codes) { const ops = opsOf(c); if (ops.length) all[c] = ops; else delete all[c]; }
       const put = await ghFetch(at, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: `Airport fixes: ${codes.join(', ')}`, content: toBase64(fileText(all)), sha, branch: GH.branch }),
+        body: JSON.stringify({ message, content: toBase64(edit(text)), sha, branch: GH.branch }),
       });
       if (put.ok) return;
       if (put.status === 409) continue; // someone saved in between: on top of theirs
       if (put.status === 401) throw new Error('GitHub no longer takes this token (expired?): sign in again.');
-      if (put.status === 403 || put.status === 404) throw new Error(`${gh.login} may not change ${GH.repo} (or the token lacks the right): only its contributors can save fixes.`);
+      if (put.status === 403 || put.status === 404) throw new Error(`${gh.login} may not change ${GH.repo} (or the token lacks the right): only its contributors can save.`);
       throw new Error(`GitHub answered ${put.status}.`);
     }
     throw new Error('the file kept changing on GitHub: save again.');
+  }
+  // These airports' fixes into js/data/fixes.js on GitHub, in one commit.
+  function commit(codes) {
+    return commitFile(GH.path, (text) => {
+      const all = text ? parseFile(text) : {};
+      for (const c of codes) { const ops = opsOf(c); if (ops.length) all[c] = ops; else delete all[c]; }
+      return fileText(all);
+    }, `Airport fixes: ${codes.join(', ')}`);
   }
 
   FG.fixes = {
@@ -367,6 +375,7 @@
         gh = null;
         try { localStorage.removeItem(GH_KEY); } catch (e) { /* not kept */ }
       },
+      commitFile, // (the airport checklist, js/airportcheck.js, saves its file this way too)
     },
     // js/data/fixes.js with every fix in it (for when there is no dev server to write it).
     fileText: () => {

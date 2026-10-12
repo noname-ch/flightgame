@@ -1,0 +1,31 @@
+// The world's busiest airports by flights (aircraft movements a year, about 2023-24, airline airports first),
+// busiest first. The airport checklist (F4, js/airportcheck.js) goes through the start airports, then these,
+// then every other airport by size.
+window.FG = window.FG || {};
+FG.data = FG.data || {};
+FG.data.busiest = [
+  'ATL', 'ORD', 'DFW', 'DEN', 'LAX', 'CLT', 'LAS', 'IST', 'PHX', 'IAH',
+  'CAN', 'PEK', 'SEA', 'PVG', 'AMS', 'CDG', 'FRA', 'LHR', 'MIA', 'EWR',
+  'JFK', 'SFO', 'MSP', 'DTW', 'BOS', 'MAD', 'SZX', 'MCO', 'DEL', 'CTU',
+  'HND', 'MEX', 'YYZ', 'BCN', 'DXB', 'PHL', 'LGA', 'DCA', 'SLC', 'CKG',
+  'MUC', 'GRU', 'BOG', 'KMG', 'BOM', 'FCO', 'ICN', 'PKX', 'XIY', 'SHA',
+  'SAW', 'BKK', 'SIN', 'CGK', 'IAD', 'BWI', 'SAN', 'TPA', 'FLL', 'MDW',
+  'BNA', 'AUS', 'HKG', 'HGH', 'KUL', 'SYD', 'LGW', 'ZRH', 'CPH', 'OSL',
+  'ARN', 'DUB', 'VIE', 'LIS', 'PMI', 'TFU', 'NKG', 'WUH', 'CSX', 'XMN',
+  'MNL', 'BLR', 'YVR', 'MEL', 'HNL', 'PDX', 'STL', 'DAL', 'HOU', 'MSY',
+  'DOH', 'JED', 'RUH', 'SVO', 'TPE', 'NRT', 'KIX', 'FUK', 'CTS', 'OKA',
+  'GMP', 'CJU', 'MAA', 'HYD', 'CCU', 'CUN', 'GDL', 'MTY', 'CGH', 'GIG',
+  'BSB', 'SCL', 'LIM', 'EZE', 'AEP', 'PTY', 'YUL', 'YYC', 'BNE', 'AKL',
+  'PER', 'MXP', 'BRU', 'ATH', 'HEL', 'WAW', 'MAN', 'GVA', 'DUS', 'HAM',
+  'BER', 'PRG', 'BUD', 'ORY', 'NCE', 'AYT', 'DME', 'LED', 'VKO', 'STN',
+  'DMK', 'HKT', 'SGN', 'HAN', 'DAD', 'DPS', 'SUB', 'CEB', 'TAO', 'CGO',
+  'HAK', 'SYX', 'URC', 'TSN', 'SHE', 'HRB', 'DLC', 'NNG', 'KWE', 'FOC',
+  'ITM', 'AUH', 'DMM', 'KWI', 'TLV', 'CAI', 'JNB', 'CPT', 'ADD', 'NBO',
+  'LOS', 'CMN', 'SJC', 'OAK', 'SMF', 'RDU', 'MCI', 'SNA', 'SAT', 'IND',
+  'CLE', 'PIT', 'CMH', 'CVG', 'RSW', 'JAX', 'OGG', 'ANC', 'ABQ', 'BUR',
+  'MFM', 'VCP', 'CNF', 'REC', 'SSA', 'POA', 'MDE', 'CLO', 'UIO', 'SJO',
+  'SDQ', 'MBJ', 'TIJ', 'SJD', 'ADL', 'CHC', 'WLG', 'OOL', 'CNS', 'AGP',
+  'ALC', 'LPA', 'TFS', 'IBZ', 'VLC', 'BGY', 'VCE', 'NAP', 'CTA', 'LYS',
+  'MRS', 'TLS', 'EDI', 'BHX', 'STR', 'CGN', 'BSL', 'OPO', 'FAO', 'KRK',
+  'OTP', 'SOF', 'BEG', 'ZAG', 'RIX', 'TLL', 'VNO', 'KEF', 'GOT', 'BGO',
+];

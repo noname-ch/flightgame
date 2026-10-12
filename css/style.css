@@ -1179,3 +1179,57 @@ body { height: 100dvh; } /* the visible height, also while the phone's address b
   .pcard.add { width: 44px; font-size: 18px; }
   #devtools { top: 44px; max-height: calc(100dvh - 56px); }
 }
+
+/* ---------- airport checklist (js/airportcheck.js, F4) ---------- */
+#apcheck {
+  position: fixed;
+  top: 56px;
+  left: 12px;
+  z-index: 2001;
+  width: min(400px, calc(100vw - 24px));
+  max-height: calc(100vh - 70px);
+  display: flex;
+  flex-direction: column;
+  padding: 10px 12px;
+  background: var(--panel);
+  border: 2px dashed #4ade80;
+  border-radius: 10px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+  font-size: 13px;
+}
+#apcheck.beside { left: 384px; } /* the airport editor is open on the left */
+#apcheck[hidden] { display: none; }
+#apcheck .dev-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+#apcheck .muted { color: var(--muted); }
+#apcheck .small { font-size: 12px; }
+#apcheck section { border-top: 1px solid var(--border); padding: 6px 0 0; margin-top: 6px; }
+#apcheck .dev-row { display: flex; flex-wrap: wrap; gap: 5px; margin: 5px 0; }
+#apcheck input, #apcheck textarea { font: inherit; padding: 3px 6px; border: 1px solid var(--input-border); border-radius: 6px; flex: 1; min-width: 0;
+  background: var(--panel-2); color: var(--text); }
+#apcheck textarea { width: 100%; box-sizing: border-box; resize: vertical; }
+#apcheck .ck-filter { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+#apcheck .ck-filter button { font-size: 12px; padding: 2px 7px; }
+.ck-bar { display: flex; height: 6px; border-radius: 3px; background: var(--panel-2); overflow: hidden; margin-bottom: 4px; }
+.ck-bar i { display: block; height: 100%; min-width: 0; }
+.ck-bar i.ok { background: #22c55e; }
+.ck-bar i.checked { background: #3b82f6; }
+.ck-bar i.bad { background: #ef4444; }
+.ck-list { list-style: none; margin: 4px 0; padding: 0; overflow-y: auto; flex: 1; min-height: 120px; }
+.ck-row { display: flex; align-items: center; gap: 6px; padding: 3px 4px; border-radius: 6px; cursor: pointer; border-left: 3px solid transparent; }
+.ck-row:hover { background: var(--panel-2); }
+.ck-row.sel { background: var(--panel-2); outline: 1px solid var(--border); }
+.ck-row.checked { border-left-color: #3b82f6; }
+.ck-row.ok { border-left-color: #22c55e; }
+.ck-row.bad { border-left-color: #ef4444; }
+.ck-n { width: 34px; text-align: right; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; flex: none; }
+.ck-dot { flex: none; font-size: 12px; }
+.ck-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ck-name small { color: var(--muted); }
+.ck-tag { flex: none; font-size: 11px; color: var(--muted); padding: 0 5px; border-radius: 8px; background: var(--bg); }
+.ck-tag.start { color: var(--warn); }
+.ck-tag.busy { color: #93c5fd; }
+.ck-unsaved { color: var(--warn); font-weight: 700; flex: none; }
+.ck-detail { padding: 4px 6px 8px 44px; border-bottom: 1px solid var(--border); }
+#ck-msg { min-height: 1.4em; color: var(--pos); font-size: 12px; }
+#ck-msg.bad { color: var(--neg); }
+@media (max-width: 1100px) { #apcheck.beside { left: auto; right: 12px; } }

@@ -42,6 +42,9 @@ Play online: https://noname-ch.github.io/flightgame/ (GitHub Pages, deployed fro
   was unreliable.
 - Airport editor (F3): `js/airportedit.js` edits airports and `js/fixes.js` applies the saved fixes
   (`js/data/fixes.js`). Saving goes through `tools/serve.py`, which `./play.sh` starts.
+- Airport checklist (F4): `js/airportcheck.js`, marks in `js/data/checks.js`. When you check airports, take
+  them from `node tools/checks.mjs next` and mark each with `node tools/checks.mjs mark CODE --note "what you
+  checked or fixed"` (blue). Never mark an airport good (green): only a person approves.
 - Planning uses timetables only (`p.schedule.legs`). Slots are shared, and one slot equals one stand.
 
 ## What the user wants
