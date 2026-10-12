@@ -4,7 +4,7 @@
 FG.data.checks = {
 "ACK": {"s":"checked","by":"agent","at":"2026-10-12","note":"No jet bridges (Nantucket has none): bridges off. Removed a stand that pointed into the FBO buildings. Terminal, aprons and both runways match."},
 "ANR": {"s":"checked","by":"agent","at":"2026-10-12","note":"Tidied: 12 taxiways straightened, 18 buildings/aprons squared. Earlier: terminal/hangar swap, 5 real stands."},
-"AVN": {"s":"checked","by":"agent","at":"2026-10-12","note":"Removed the north block of the main apron (grass, 2 stands on it) and 2 taxiway stubs into the fields. Added 2 stands where airliners park in front of the terminal."},
+"AVN": {"s":"checked","by":"agent","at":"2026-10-12","note":"Tidied: 14 taxiways straightened, 15 buildings/aprons squared. Earlier: no grass apron, stands where airliners park."},
 "BRN": {"s":"checked","by":"agent","at":"2026-10-12","note":"Tidied: 5 taxiways straightened, 6 buildings/aprons squared; added the missing terminal apron (stands Y2, Y3A, Y4, S3 stood on unmapped concrete). Earlier: no jet bridges."},
 "BZO": {"s":"checked","by":"agent","at":"2026-10-12","note":"Tidied: 1 taxiway straightened, 12 buildings/aprons squared; removed stand S1, whose lead line ran through the terminal. Earlier: no jet bridges, no grass apron."},
 "EPA": {"s":"checked","by":"agent","at":"2026-10-12","note":"Military apron with its hangars, the old civil terminal apron in the north and the taxiways match the satellite picture; nothing to fix."},
@@ -13,7 +13,7 @@ FG.data.checks = {
 "ISP": {"s":"checked","by":"agent","at":"2026-10-12","note":"Terminal, jet-bridge gates A/B, aprons and the 3 runways match the satellite picture; nothing to fix."},
 "JOI": {"s":"checked","by":"agent","at":"2026-10-12","note":"Runway 15/33 was drawn at the wrong angle, ~300 m off at the ends: moved onto the real one. No jet bridges (Joinville has none)."},
 "KNA": {"s":"checked","by":"agent","at":"2026-10-12","note":"Runway 05/23, the air-force apron with its hangars and the small south apron match the satellite picture; nothing to fix."},
-"LRH": {"s":"checked","by":"agent","at":"2026-10-12","note":"Removed the light-aircraft grass parking mapped as apron (1 stand). Main apron with 4 nose-in stands, terminal and runway match."},
+"LRH": {"s":"checked","by":"agent","at":"2026-10-12","note":"Tidied: 2 taxiways straightened, 10 buildings/aprons squared. Earlier: no grass apron."},
 "LUA": {"s":"ok","by":"lianhirter-arch","at":"2026-10-12"},
 "LUG": {"s":"checked","by":"agent","at":"2026-10-12","note":"Tidied: 2 taxiways straightened, 8 buildings/aprons squared. Earlier: real terminal, no grass taxiways, stand pushbacks."},
 "SBA": {"s":"checked","by":"agent","at":"2026-10-12","note":"Runways 7/25, 15L/33R and 15R/33L, terminal with its jet bridges, RON and south aprons match the satellite picture; nothing to fix."},
