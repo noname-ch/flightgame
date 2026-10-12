@@ -48,6 +48,8 @@ Play online: https://noname-ch.github.io/flightgame/ (GitHub Pages, deployed fro
 - Airport checklist (F8): `js/airportcheck.js`, marks in `js/data/checks.js`. When you check airports, take
   them from `node tools/checks.mjs next` and mark each with `node tools/checks.mjs mark CODE --note "what you
   checked or fixed"` (blue). Never mark an airport good (green): only a person approves.
+  The tools for looking, fixing, tidying and pushing are in `tools/agent/` (see its README.md). Push after every
+  2 airports (the user asked for that).
 - Planning uses timetables only (`p.schedule.legs`). Slots are shared, and one slot equals one stand.
 
 ## What the user wants
