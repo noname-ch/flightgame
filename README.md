@@ -123,8 +123,15 @@ taxiways and stands (`js/data/layouts/<CODE>.json`, loaded when the airport is f
 `js/layouts.js`). There planes park on the real stands nearest the main terminal and taxi the shortest way
 along the real taxiways. The data is © OpenStreetMap contributors (ODbL); `tools/build_layouts.html` makes the
 files, from Overpass API downloads where there are any and else from the vector tiles of the 3D map
-(OpenFreeMap): there the stands are placed in front of the mapped gates. Every other airport, and one with
-too few mapped gates, is laid out by the game as described above.
+(OpenFreeMap): there the stands are placed in front of the mapped gates. Every other airport is read off
+those vector tiles in the browser the first time it is needed (zoomed in on, or flown to), by
+`js/osmairports.js`, and kept in the browser (localStorage, the last 120 airports): its real aprons, taxiways
+and buildings with their mapped heights. The terminal is the building at the mapped gates, or else the
+biggest one beside an apron; the others beside an apron are hangars. Stands are put in front of the mapped
+gates and, where there are fewer than the airport could use, in rows along the terminal's apron side (nose to
+it), beside the taxi lanes and in rows on the other aprons. Planes may also taxi along the runway (small
+fields have no parallel taxiway). Only where no apron is mapped at all does the game lay the airport out
+itself as described above.
 
 Terminal concepts: the game lays terminals out in the three common ways. Linear: the gates in one row along
 the building (up to size 2; a longer one has its remote stands across the taxi lane). Pier: on both sides of

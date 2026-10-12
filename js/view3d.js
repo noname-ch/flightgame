@@ -415,7 +415,9 @@ function readObstacles() {
   if (obstacleBusy || map.getZoom() < 13) return;
   const b = map.getBounds();
   const real = new Set(D.layouts || []);
-  const a = D.airports.find((x) => !x.factory && !real.has(x.code) && !FG.obstacles[x.code] && b.contains([x.lon, x.lat]));
+  // (only where no real layout came off the tiles either: js/osmairports.js)
+  const a = D.airports.find((x) => !x.factory && !real.has(x.code) && !FG.obstacles[x.code] && b.contains([x.lon, x.lat])
+    && FG.layouts.settled(x.code) && !FG.layouts.has(x.code));
   if (!a) return;
   obstacleBusy = true;
   const box = document.createElement('div');

@@ -705,7 +705,7 @@
         // roughly agrees, else park straight out from the taxiway.
         let heading = mapped;
         const foot = footOnTaxiway([lat, lon]);
-        if (foot.pt && foot.d > 3) {
+        if (lay.source === 'tiles') { /* read off the tiles: the reader already turned it the right way */ } else if (foot.pt && foot.d > 3) {
           const away = bearing({ lat: foot.pt[0], lon: foot.pt[1] }, { lat, lon });
           const flip = (mapped + 180) % 360;
           heading = angleDiff(mapped, away) <= angleDiff(flip, away) ? mapped : flip;
@@ -725,7 +725,7 @@
           }
           if (best > 40) push = TAXI_LANE; // no taxiway behind the stand
         }
-        const bridge = toTerminal(ahead(stop + 10)) < 45;
+        const bridge = lay.bridges !== false && toTerminal(ahead(stop + 10)) < 45; // (read off the tiles: only where gates are mapped)
         const st = { lat, lon, heading, push, name: name || `S${i + 1}`, bridge, lead: [ahead(-push), ahead(stop)], stopBar: [ahead(stop, -4), ahead(stop, 4)] };
         if (bridge) st.bridgePoly = [ahead(stop - 7, -6.3), ahead(stop - 7, -2.7), ahead(stop + 22, -2.7), ahead(stop + 22, -6.3)];
         return st;
@@ -736,8 +736,9 @@
     const tw = 5 + size;
     const th = [10, 14, 20, 30, 42, 55][size];
     const buildings = [
-      ...lay.terminals.map((ring) => ({ ring, base: 0, h: 10 + 3 * size, kind: 'terminal' })),
-      ...lay.hangars.map((ring) => ({ ring, base: 0, h: 14, kind: 'hangar' })),
+      // the mapped height where the tiles give one
+      ...lay.terminals.map((ring, i) => ({ ring, base: 0, h: (lay.heights && lay.heights.terminals[i]) || 10 + 3 * size, kind: 'terminal' })),
+      ...lay.hangars.map((ring, i) => ({ ring, base: 0, h: (lay.heights && lay.heights.hangars[i]) || 14, kind: 'hangar' })),
       ...towers.flatMap((p) => [{ ring: square(p, tw / 2), base: 0, h: th, kind: 'tower' }, { ring: square(p, tw / 2 + 2), base: th, h: th + 5, kind: 'cab' }]),
     ];
     return {
@@ -912,11 +913,12 @@
       if (!index.has(k)) { index.set(k, g.pts.length); g.pts.push(p); g.adj.push([]); }
       return index.get(k);
     };
-    for (const line of lay.taxiways) {
+    // `links` (layouts read off the tiles): the runways and a way from the apron, taken only where needed
+    for (const [line, cost] of [...lay.taxiways.map((l) => [l, 1]), ...(lay.links || []).map((l) => [l, 3])]) {
       for (let i = 1; i < line.length; i++) {
         const u = node(line[i - 1]);
         const v = node(line[i]);
-        const d = metres(line[i - 1], line[i]);
+        const d = metres(line[i - 1], line[i]) * cost;
         g.adj[u].push([v, d]);
         g.adj[v].push([u, d]);
       }
