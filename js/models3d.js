@@ -7,7 +7,7 @@ import { buildPlane } from './planebuilder.js';
 
 const MODELS = new URL('../models/', import.meta.url);
 const raws = {};    // file -> Promise of the unpainted scene
-const loads = {};   // file + stretch -> Promise of the painted scene
+const loads = {};   // file + stretch + livery -> Promise of the painted scene
 
 // The 3D map draws with MapLibre's projection, which is mirrored on the flat map compared to an ordinary
 // camera. three.js then takes the front of each face for its back and lights double-sided materials from
@@ -45,16 +45,17 @@ function raw(file) {
   return raws[file];
 }
 
-// The painted model of a type, 1 unit long: scale it with modelSize(type). The scene is shared, clone() it
+// The model of a type painted in a livery (the airline's, FG.livery(), unless another is asked for), 1 unit
+// long: scale it with modelSize(type). The scene is shared, clone() it
 // for every aircraft drawn. Stretched types get their own materials, so the livery can keep its proportions.
-export function loadModel(type) {
+export function loadModel(type, livery = FG.livery()) {
   const { file, stretch } = modelSize(type);
-  const key = `${file}|${stretch}`;
+  const key = `${file}|${stretch}|${livery.id}`;
   if (!loads[key]) {
     loads[key] = raw(file).then((scene) => {
       const copy = scene.clone();
       copy.traverse((o) => { if (o.isMesh) o.material = o.material.clone(); });
-      return paintLivery(copy, file, patchFacing, stretch);
+      return paintLivery(copy, file, patchFacing, stretch, livery);
     });
     loads[key].catch((e) => console.warn(`3D model ${file} not loaded`, e));
   }

@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { loadModel, modelSize } from './models3d.js';
 
 const PX = 192;             // picture size; the marker is 28 px and grows to ~100 px at the gates
-const icons = {};           // type -> { url, len }, or null while rendering
+const icons = {};           // type + livery -> { url, len }, or null while rendering
 let r = null;
 
 function setup() {
@@ -30,7 +30,7 @@ function setup() {
   r = { renderer, camera, scene, holder };
 }
 
-function render(type, model) {
+function render(key, type, model) {
   if (!r) setup();
   const plane = model.clone();
   // Models are 1 long (a stretched type is narrower in proportion, see modelSize); frame the larger of
@@ -44,7 +44,7 @@ function render(type, model) {
   r.holder.scale.setScalar(1 / size);
   r.holder.add(plane);
   r.renderer.render(r.scene, r.camera);
-  icons[type] = { url: r.renderer.domElement.toDataURL('image/png'), len: 1 / size };
+  icons[key] = { url: r.renderer.domElement.toDataURL('image/png'), len: 1 / size };
   r.holder.clear();
 }
 
@@ -52,10 +52,11 @@ FG.planeIcons = {
   // { url, len } for the type (len = aircraft length as a share of the picture), or null.
   get(type) {
     if (!FG.data.models || !FG.data.models[type] || !FG.data.looks[type]) return null;
-    if (icons[type] === undefined) {
-      icons[type] = null;
-      loadModel(type).then((model) => render(type, model), () => {});
+    const key = `${type}|${FG.livery().id}`;
+    if (icons[key] === undefined) {
+      icons[key] = null;
+      loadModel(type).then((model) => render(key, type, model), () => {});
     }
-    return icons[type];
+    return icons[key];
   },
 };

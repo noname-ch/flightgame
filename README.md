@@ -145,7 +145,8 @@ taxiways and stands (`js/data/layouts/<CODE>.json`, loaded when the airport is f
 `js/layouts.js`). There planes park on the real stands nearest the main terminal and taxi the shortest way
 along the real taxiways. The data is © OpenStreetMap contributors (ODbL); `tools/build_layouts.html` makes the
 files, from Overpass API downloads where there are any and else from the vector tiles of the 3D map
-(OpenFreeMap): there the stands are placed in front of the mapped gates. Reichenbach (LSGR) has a file made
+(OpenFreeMap): there the stands are placed in front of the mapped gates. Lukla (LUA) has a file made by hand
+too: its real apron, taxi loops and buildings with four stands in the bays. Reichenbach (LSGR) has a file made
 by hand: its real taxiway and hangars, and a small apron with three stands beside the taxiway, as none is mapped
 (a layout file may also say `"tower": false` and `"bridges": false`). Every other airport is read off
 those vector tiles in the browser the first time it is needed (zoomed in on, or flown to), by
@@ -190,6 +191,14 @@ aircraft for free (delivered instantly to the chosen or selected airport, slot i
 damage / repair / remove the selected plane, free slots and 100% airport ownership, finish all
 construction, trigger or clear any world event, and skip an hour, day or week. Every cheat is noted
 in the log (`js/devtools.js`).
+
+Stands in buildings: in every layout that loads, a stand that lies in a building (a mapped gate sits on its
+terminal) is moved out in front of the nearest wall, nose to it, or dropped where there is no room
+(`js/layouts.js` tidy; only onto an apron, never out to the land side); stands a fix already moves or deletes
+are left to the fix. The runways of the big
+airports were checked against the map (and each change against the satellite picture): 27 that lay 20 to 60 m
+beside the real runway at one end are moved onto it in
+`js/data/fixes.js` (their lengths are kept), and Bern's grass runway, which was there twice, is there once.
 
 Airport editor: in the developer tools (✏️ "Fix airports on the map", or F3) you fix airports where the
 map data is wrong or missing. Click the satellite picture where something is off; a window opens there:
@@ -241,5 +250,9 @@ All content is plain data:
 `js/game.js` is the simulation (no DOM), `js/ui.js` the map and sidebar, `js/view3d.js` the 3D view,
 `js/hangar3d.js` the turnable 3D aircraft in the marketplace. `js/models3d.js` loads the 3D models
 (`js/planebuilder.js` builds the ones without a file) and
-`js/livery.js` paints them: white with a red fin, a white cross and the title, after the livery of SWISS
-(change `LIVERY` there for another title or colour, then make the hangar pictures again).
+`js/livery.js` paints them in the airline's livery, chosen in the settings (⚙ → Livery, kept in the saved game):
+SWISS, Lufthansa, KLM, Delta, Ryanair, Eurowings and easyJet (`js/data/liveries.js`), simplified after photographs of the real
+ones: the fuselage in one or two colours, coloured engines (found as the round pieces beside the fuselage), a
+coloured fin with a mark or a simple logo (crown, crane, harp), the title on the
+forward fuselage, coloured wing tips. The first livery has its hangar pictures in `models/hangar/`; in the
+others `js/shots3d.js` renders them in the browser. `tools/liveries.html` shows all of them on a few types.

@@ -1656,7 +1656,9 @@
   const STATUS_DOT = { flying: 'fly', turnaround: 'turn', idle: 'idle' };
   function renderStrip() {
     const planes = G.state.planes;
-    const sig = planes.map((p) => `${p.id}:${p.type}`).join('|') + `|${ui.selectedPlane}|${ui.follow}`;
+    // (the picture in the airline's livery: the file in the first one, else rendered by js/shots3d.js)
+    const shot = (type) => (FG.planeShots && FG.planeShots.get(type)) || `models/hangar/${D.typeSlug(type)}.webp`;
+    const sig = planes.map((p) => `${p.id}:${p.type}:${shot(p.type)}`).join('|') + `|${ui.selectedPlane}|${ui.follow}`;
     if (sig === ui.stripSig) {
       // Same cards: only the status dots change (planes take off and land all the time).
       const dots = $('strip-list').querySelectorAll('.pcard[data-plane] .st');
@@ -1668,7 +1670,7 @@
     }
     ui.stripSig = sig;
     $('strip-list').innerHTML = planes.map((p) => `<div class="pcard${p.id === ui.selectedPlane ? ' sel' : ''}${p.id === ui.follow ? ' follow' : ''}" data-plane="${p.id}">
-        <img src="models/hangar/${D.typeSlug(p.type)}.webp" alt="" draggable="false" onerror="this.style.visibility='hidden'">
+        <img src="${shot(p.type)}" alt="" draggable="false" onerror="this.style.visibility='hidden'">
         <i class="st ${STATUS_DOT[p.status] || 'idle'}${p.repair ? ' repair' : ''}"></i>
         <div class="pc-type">${p.type}</div></div>`).join('') +
       `<button class="pcard add" data-action-strip="market" title="Marketplace">＋<div class="pc-type">Buy</div></button>`;
@@ -1825,6 +1827,8 @@
       <h4>On the map</h4>${Object.keys(ui.overlays).map((n) =>
         `<label class="check"><input type="checkbox" data-set="overlay" data-v="${n}" ${ui.map.hasLayer(ui.overlays[n]) ? 'checked' : ''}> ${n}</label>`).join('')}
       <label class="check"><input type="checkbox" data-set="legend" ${set.legend ? 'checked' : ''}> Legend</label>
+      <h4>Livery</h4><div class="chips">${FG.data.liveries.map((l) =>
+        `<button class="${l.id === FG.livery().id ? 'on' : ''}" data-set="livery" data-v="${l.id}">${l.name}</button>`).join('')}</div>
       <h4>Game</h4>
       <label class="check"><input type="checkbox" data-set="autosave" ${set.autosave ? 'checked' : ''}> Save automatically every 30 s</label>
       <h4>3D view</h4><div class="row"><button data-set="3d">${FG.view3d && FG.view3d.on ? 'Back to 2D' : 'Open 3D view'} <span class="muted">V</span></button></div>
@@ -1839,6 +1843,7 @@
     if (k === 'overlay') { set.overlays[t.dataset.v] = t.checked; applySettings(); }
     if (k === 'legend') { set.legend = t.checked; applySettings(); }
     if (k === 'autosave') set.autosave = t.checked;
+    if (k === 'livery') { G.state.livery = t.dataset.v; G.dirty = true; } // every aircraft of the airline is repainted
     if (k === '3d') { $('view3d-toggle').click(); }
     saveSettings();
     renderSettings();

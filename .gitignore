@@ -1,3 +1,6 @@
 tools/cache/
 __pycache__/
 osm-raw/
+
+# pictures saved by the tool pages
+bilder/

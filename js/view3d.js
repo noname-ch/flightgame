@@ -818,12 +818,13 @@ const planeLayer = {
     const parked = {}; // airport code -> planes on the ground there so far
     let moving = 0; // fastest plane in view, in pixels per second
     const alive = new Set();
+    const livery = FG.livery().id;
     for (const p of G.state.planes) {
       alive.add(p.id);
       let e = v.planes[p.id];
-      if (!e || e.type !== p.type) {
+      if (!e || e.type !== p.type || e.livery !== livery) { // (a new plane, or the airline changed its livery)
         if (e) this.world.remove(e.obj);
-        e = v.planes[p.id] = { obj: planeModel(p.type), type: p.type, world: new THREE.Vector3() };
+        e = v.planes[p.id] = { obj: planeModel(p.type), type: p.type, livery, world: new THREE.Vector3() };
         this.world.add(e.obj);
       }
       const flying = p.status === 'flying';

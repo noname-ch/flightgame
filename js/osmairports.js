@@ -180,10 +180,11 @@ function build(code, parts, base) {
   const others = [];
   if (base) {
     // The file's own come first (in its order: js/data/terminals.js counts its terminals) and take the
-    // heights of the buildings in the tiles that are the same; the tiles add the ones it lacks.
-    const own = (rings) => rings.map((r) => ({ ring: r.map(F.xy), ll: r, h: 0 }));
-    terminals.push(...own(base.terminals));
-    hangars.push(...own(base.hangars));
+    // heights of the buildings in the tiles that are the same, unless the file gives a greater one; the tiles
+    // add the ones it lacks.
+    const own = (rings, heights) => rings.map((r, i) => ({ ring: r.map(F.xy), ll: r, h: (heights && heights[i]) || 0 }));
+    terminals.push(...own(base.terminals, base.heights && base.heights.terminals));
+    hangars.push(...own(base.hangars, base.heights && base.heights.hangars));
     const have = [...terminals, ...hangars];
     const same = (x, y) => inRing(centre(x), y) || inRing(centre(y), x) || x.some((p) => inRing(p, y));
     buildings = buildings.filter((b) => {
