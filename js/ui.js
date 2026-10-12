@@ -5,6 +5,9 @@
   const D = FG.data;
 
   const TICK_MS = 100;
+  // A tick moves the game on by the real time since the last one, but by no more than this: after a
+  // longer stall (busy page, laptop asleep) the game slows down instead of jumping ahead.
+  const MAX_STEP_MS = 250;
   // Speed is a multiple of real time: 1 = one game minute per real minute.
   // The slider is logarithmic, from real time up to twice the old top speed
   // (30 game minutes per tick).
@@ -16,6 +19,7 @@
 
   const ui = {
     charts: {}, // chart id -> data for hover tooltips
+    areas: {}, // what was last drawn where, see drawnArea
     map: null,
     airportMarkers: {},
     planeMarkers: {},
@@ -46,6 +50,7 @@
   };
 
   const $ = (id) => document.getElementById(id);
+  const in3d = () => !!(FG.view3d && FG.view3d.on);
   const fmtPop = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : `${Math.round(n / 1000)}k`);
 
   function toast(msg, bad) {
@@ -162,8 +167,6 @@
     return (inEurope(a) ? [9, 8, 7, 7, 6, 5] : [9, 8, 7, 6, 4, 2])[G.airportSize(a.code)];
   }
   const townMinPop = (z) => (z <= 3 ? 1000000 : z === 4 ? 400000 : z === 5 ? 150000 : z === 6 ? 60000 : z === 7 ? 30000 : 0);
-  const importantAirport = (a) => G.ownsSlot(a.code) || G.stake(a.code) > 0 || a.built ||
-    ui.selectedAirport === a.code;
 
   // Great-circle path between two airports as a list of [lat, lon]. Longitudes are unwrapped
   // so a Pacific crossing runs past ±180° instead of jumping across the whole map.
@@ -322,7 +325,7 @@
     });
 
     map.on('zoomend', () => { resizeMarkers(); drawRoutes(); });
-    map.on('moveend', () => { updateVisible(); drawRunways(); });
+    map.on('moveend', viewChanged);
     map.on('dragstart', () => setFollow2d(null));
     map.on('click', (e) => {
       if (ui.buildMode) { buildAt(e.latlng); return; }
@@ -333,6 +336,18 @@
     });
     updateVisible();
     resizeMarkers();
+  }
+
+  // Airports, towns and runways for the new view; at most four times a second, as following a plane
+  // moves the map every frame.
+  function viewChanged() {
+    if (ui.viewTimer) { ui.viewAgain = true; return; }
+    updateVisible();
+    drawRunways();
+    ui.viewTimer = setTimeout(() => {
+      ui.viewTimer = null;
+      if (ui.viewAgain) { ui.viewAgain = false; viewChanged(); }
+    }, 250);
   }
 
   function createAirportMarker(a) {
@@ -355,10 +370,26 @@
   }
 
   // Add/remove airport and town markers for the current view.
+  // The area last drawn for `key` (markers, runways, gates) still covers the view at the same zoom and
+  // `sig`: then a small pan, or following a plane, needs nothing new. Else it becomes the view padded by `pad`.
+  function drawnArea(key, sig, pad) {
+    const bounds = ui.map.getBounds();
+    const a = ui.areas[key];
+    if (a && a.sig === sig && a.box.contains(bounds)) return null;
+    const box = bounds.pad(pad);
+    ui.areas[key] = { sig, box };
+    return box;
+  }
+
   function updateVisible() {
     const map = ui.map;
     const z = map.getZoom();
-    const view = map.getBounds().pad(0.3);
+    const s = G.state;
+    const important = new Set(Object.keys(s.slots));
+    for (const [code, inf] of Object.entries(s.infra)) if (inf.stake > 0) important.add(code);
+    if (ui.selectedAirport) important.add(ui.selectedAirport);
+    const view = drawnArea('airports', `${z}|${[...important].join()}|${D.airports.length}|${s.projects.length}`, 0.3);
+    if (!view) return;
     for (const code of Object.keys(ui.airportMarkers)) {
       if (!G.airportByCode[code]) { // gone after a new game
         ui.airportMarkers[code].remove();
@@ -366,7 +397,7 @@
       }
     }
     for (const a of D.airports) {
-      const show = importantAirport(a) || (z >= airportMinZoom(a) && view.contains([a.lat, a.lon]));
+      const show = important.has(a.code) || a.built || (view.contains([a.lat, a.lon]) && z >= airportMinZoom(a));
       let m = ui.airportMarkers[a.code];
       if (show && !m) m = createAirportMarker(a);
       if (!m) continue;
@@ -433,10 +464,12 @@
   function drawGates() {
     const z = ui.map.getZoom();
     if (z < GATE_ZOOM) {
-      if (ui.gateSig) { ui.gateLayer.clearLayers(); ui.gateSig = ''; }
+      if (ui.gateSig) { ui.gateLayer.clearLayers(); ui.gateSig = ''; delete ui.areas.gates; }
       return;
     }
-    const view = ui.map.getBounds().pad(1); // an apron can lie up to 3 km from the airport's reference point
+    // (padded a lot: an apron can lie up to 3 km from the airport's reference point)
+    const view = drawnArea('gates', `${z}|${FG.layouts ? FG.layouts.version : 0}|${FG.devPreview ? ui.selectedAirport : ''}|${D.airports.length}|${G.state.projects.length}`, 1);
+    if (!view) return;
     const list = D.airports.filter((a) => !a.factory && view.contains([a.lat, a.lon]));
     const sig = `${z}|${FG.layouts ? FG.layouts.version : 0}|${FG.devPreview ? ui.selectedAirport : ''}|${list.map((a) => `${a.code}:${G.airportSize(a.code)}:${G.airportRunways(a.code).length}`).join(',')}`;
     if (sig === ui.gateSig) return; // redrawn only when the view or an airport changes
@@ -489,11 +522,18 @@
   // Real runways (OurAirports) plus whatever the player built, from C.map.runwayZoom on.
   function drawRunways() {
     drawGates();
+    const z = ui.map.getZoom();
+    const projects = G.state.projects.map((p) => p.code + p.kind).join();
+    const view = drawnArea('runways', `${z}|${projects}|${D.airports.length}`, 0.4);
+    if (!view) return;
+    const list = z < C.map.runwayZoom ? [] : D.airports.filter((a) => view.contains([a.lat, a.lon]));
+    // Redrawn only when the zoom, the airports in view or a construction site changes.
+    const sig = `${z}|${list.map((a) => `${a.code}:${G.airportRunways(a.code).length}`).join()}|${projects}`;
+    if (sig === ui.runwaySig) return;
+    ui.runwaySig = sig;
     ui.runwayLayer.clearLayers();
-    if (ui.map.getZoom() < C.map.runwayZoom) return;
-    const view = ui.map.getBounds().pad(0.2);
-    for (const a of D.airports) {
-      if (!view.contains([a.lat, a.lon])) continue;
+    if (z < C.map.runwayZoom) return;
+    for (const a of list) {
       for (const r of G.airportRunways(a.code)) drawRunway(a.code, r, false);
     }
     for (const p of G.state.projects) {
@@ -564,7 +604,8 @@
   function styleAirport(a) {
     const color = G.ownsSlot(a.code) ? COLORS.green : G.stake(a.code) > 0 ? COLORS.purple
       : a.built && !a.open ? COLORS.orange : a.minor ? COLORS.gray : COLORS.blue;
-    ui.airportMarkers[a.code].setStyle({ fillColor: color });
+    const m = ui.airportMarkers[a.code];
+    if (m.options.fillColor !== color) m.setStyle({ fillColor: color });
     updateLabel(a);
   }
 
@@ -613,6 +654,18 @@
   }
 
   function drawRoutes() {
+    // Redrawn only when something on it changes: a schedule, the selection, a ferry or delivery flight,
+    // the day (today's runways), or near the runways the zoom and the taxiways.
+    const z = ui.map.getZoom();
+    const sig = `${z >= 13 ? `${FG.layouts ? FG.layouts.version : 0}` : 'far'}|${Math.floor(G.state.time / 1440)}|${ui.selectedPlane}|` +
+      G.state.planes.map((p) => {
+        const f = p.status === 'flying' && (p.id === ui.selectedPlane || p.flight.kind !== 'scheduled') ? p.flight : null;
+        const draft = FG.planner.draftStops(p.id);
+        return `${p.id}${p.type}:${(draft || p.schedule.stops).join('-')}${draft ? 'd' : ''}${p.schedule.active ? 1 : 0}` +
+          `${f ? `${f.kind}${f.from}${f.to}${f.dep}` : ''}${p.pendingFerry ? p.pendingFerry + p.location : ''}`;
+      }).join(',');
+    if (sig === ui.routeSig) return;
+    ui.routeSig = sig;
     ui.routeLayer.clearLayers();
     const ap = (c) => G.airportByCode[c];
     // Selected plane last so its route ends up on top.
@@ -663,19 +716,19 @@
     }
   }
 
-  // Game time including the fraction of a minute, so planes glide instead of jumping.
   // Game time with the fraction since the last tick, so planes move smoothly even at real time
-  // (where a whole game minute takes 600 ticks).
+  // (where a whole game minute takes 600 ticks). The tick adds exactly this much (see loop), so the
+  // time runs on evenly across ticks instead of stalling or jumping when a tick comes late or early.
   const nowMinutes = () => {
     const t = G.state.time + ui.pendingMinutes;
     if (ui.paused || st.open) return t;
-    return t + Math.min(performance.now() - ui.lastTick, TICK_MS) * ui.speed / 60000;
+    return t + Math.min(performance.now() - ui.lastTick, MAX_STEP_MS) * ui.speed / 60000;
   };
 
   // Flying planes follow their track (runway, climb, cruise, approach); parked ones sit at the airport.
-  function planePosition(p) {
+  function planePosition(p, t = nowMinutes()) {
     if (p.status === 'flying') {
-      const st = G.flightState(p, nowMinutes());
+      const st = G.flightState(p, t);
       return { latlng: [st.lat, st.lon], heading: st.heading, alt: st.altFt, ground: st.altFt <= 0, st };
     }
     const g = G.gateOf(p.location, p.id);
@@ -754,55 +807,85 @@
     }
   }
 
-  function updatePlanes() {
-    const parked = {}; // airport code -> planes on the ground there so far
-    for (const id of Object.keys(ui.planeMarkers)) {
-      if (!G.plane(id)) {
-        ui.planeMarkers[id].remove();
-        delete ui.planeMarkers[id];
+  // Leaflet puts markers on whole pixels, so a plane that moves less than a pixel per frame stepped
+  // instead of gliding. Plane markers go to the exact spot (z-index still a whole number).
+  const PlaneMarker = L.Marker.extend({
+    update() {
+      if (this._icon && this._map) this._setPos(this._map.latLngToLayerPoint(this._latlng));
+      return this;
+    },
+    _updateZIndex(offset) {
+      if (this._icon) this._icon.style.zIndex = Math.round(this._zIndex + offset);
+    },
+  });
+
+  // Plane markers. Every animation frame moves the flying ones (smooth at any game speed); a `tick`
+  // (every 100 ms) also handles the parked ones, adds and removes markers, and updates tooltips.
+  // Planes outside the view are taken off the map, so they cost nothing until they come back into it.
+  function updatePlanes(tick) {
+    const map = ui.map;
+    if (tick) {
+      for (const id of Object.keys(ui.planeMarkers)) {
+        if (!G.plane(id)) {
+          ui.planeMarkers[id].remove();
+          delete ui.planeMarkers[id];
+        }
       }
     }
+    if (map._animatingZoom) return; // Leaflet places the markers itself during a zoom animation
+    const t = nowMinutes();
+    const z = map.getZoom();
+    const view = map.getBounds().pad(0.15);
+    const parked = {}; // airport code -> planes on the ground there so far
     for (const p of G.state.planes) {
-      const pos = planePosition(p);
+      const flying = p.status === 'flying';
+      if (!flying && !tick) continue;
+      const pos = planePosition(p, t);
+      if (ui.follow === p.id && !(map._panAnim && map._panAnim._inProgress)) map.panTo(pos.latlng, { animate: false });
+      // Zoomed in on an airport, planes on the ground are drawn at their gate at real size;
+      // further out, parked planes line up above their airport so it stays clickable.
+      const close = pos.ground && z >= GATE_ZOOM;
+      const n = flying || close ? 0 : (parked[p.location] = (parked[p.location] || 0) + 1) - 1;
       let m = ui.planeMarkers[p.id];
+      if (!view.contains(pos.latlng)) {
+        if (m && map.hasLayer(m)) m.remove();
+        continue;
+      }
       if (!m) {
-        m = L.marker(pos.latlng, {
+        m = new PlaneMarker(pos.latlng, {
           icon: L.divIcon({ className: 'plane-icon', html: `<div class="plane">${PLANE_SVG}</div>`, iconSize: [28, 28], iconAnchor: [14, 14] }),
           zIndexOffset: 1000,
-        }).bindTooltip(planeTip(p), { direction: 'top', offset: [0, -14] }).addTo(ui.map);
+        }).bindTooltip(planeTip(p), { direction: 'top', offset: [0, -14] });
         m.on('click', () => selectPlane(p.id));
         ui.planeMarkers[p.id] = m;
       }
-      m.setLatLng(pos.latlng);
-      if (ui.follow === p.id) ui.map.panTo(pos.latlng, { animate: false });
-      if (p.status === 'flying' && m.isTooltipOpen()) m.setTooltipContent(planeTip(p));
+      if (!map.hasLayer(m)) m.setLatLng(pos.latlng).addTo(map);
+      else if (flying || tick) m.setLatLng(pos.latlng);
+      if (tick && flying && m.isTooltipOpen()) m.setTooltipContent(planeTip(p));
       const el = m.getElement();
-      if (el) {
-        const glyph = el.querySelector('.plane');
-        // The type's 3D model seen from above (js/icons3d.js) replaces the flat shape once it is rendered.
-        const icon = FG.planeIcons && FG.planeIcons.get(p.type);
-        if (icon && glyph.dataset.icon !== icon.url) {
-          glyph.dataset.icon = icon.url;
-          glyph.innerHTML = `<img src="${icon.url}" alt="" draggable="false">`;
-        }
-        const flying = p.status === 'flying';
-        // Zoomed in on an airport, planes on the ground are drawn at their gate at real size;
-        // further out, parked planes line up above their airport so it stays clickable.
-        const close = pos.ground && ui.map.getZoom() >= GATE_ZOOM;
-        const n = flying || close ? 0 : (parked[p.location] = (parked[p.location] || 0) + 1) - 1;
-        // Higher planes look a little bigger and cast their shadow further away.
-        const h = Math.min(1, pos.alt / 38000);
-        glyph.style.transform = close
-          ? `rotate(${pos.heading}deg) scale(${groundScale(p, pos.latlng[0], icon ? 28 * icon.len : 23)})`
-          : flying
-            ? `rotate(${pos.heading}deg) scale(${pos.ground ? 0.7 : 0.8 + 0.25 * h})`
-            : `translate(${n * 13}px, -15px) scale(0.75)`;
-        glyph.classList.toggle('pushback', !!(pos.st && pos.st.phase === 'pushback'));
-        const sh = flying && !pos.ground ? 1 + 7 * h : 1;
-        glyph.style.setProperty('--shadow', `drop-shadow(${sh * 0.7}px ${sh}px ${1 + sh * 0.4}px rgba(0, 0, 0, ${0.4 - 0.2 * h}))`);
-        glyph.classList.toggle('grounded', !flying || pos.ground);
-        glyph.classList.toggle('selected', ui.selectedPlane === p.id);
+      if (!el) continue;
+      const glyph = el.firstElementChild; // a marker put back on the map gets a new element
+      // The type's 3D model seen from above (js/icons3d.js) replaces the flat shape once it is rendered.
+      const icon = FG.planeIcons && FG.planeIcons.get(p.type);
+      if (icon && glyph.dataset.icon !== icon.url) {
+        glyph.dataset.icon = icon.url;
+        glyph.innerHTML = `<img src="${icon.url}" alt="" draggable="false">`;
       }
+      // Higher planes look a little bigger and cast their shadow further away (in steps, as the
+      // shadow filter is costly to change every frame).
+      const h = Math.round(Math.min(1, pos.alt / 38000) * 20) / 20;
+      const transform = close
+        ? `rotate(${(pos.heading || 0).toFixed(1)}deg) scale(${groundScale(p, pos.latlng[0], icon ? 28 * icon.len : 23).toFixed(3)})`
+        : flying
+          ? `rotate(${(pos.heading || 0).toFixed(1)}deg) scale(${pos.ground ? 0.7 : 0.8 + 0.25 * h})`
+          : `translate(${n * 13}px, -15px) scale(0.75)`;
+      if (glyph.fgTransform !== transform) { glyph.fgTransform = transform; glyph.style.transform = transform; }
+      const sh = flying && !pos.ground ? 1 + 7 * h : 1;
+      const shadow = `drop-shadow(${sh * 0.7}px ${sh}px ${1 + sh * 0.4}px rgba(0, 0, 0, ${0.4 - 0.2 * h}))`;
+      if (glyph.fgShadow !== shadow) { glyph.fgShadow = shadow; glyph.style.setProperty('--shadow', shadow); }
+      glyph.classList.toggle('pushback', !!(pos.st && pos.st.phase === 'pushback'));
+      glyph.classList.toggle('grounded', !flying || pos.ground);
+      glyph.classList.toggle('selected', ui.selectedPlane === p.id);
     }
   }
 
@@ -1570,8 +1653,16 @@
   const STATUS_DOT = { flying: 'fly', turnaround: 'turn', idle: 'idle' };
   function renderStrip() {
     const planes = G.state.planes;
-    const sig = planes.map((p) => `${p.id}:${p.type}:${p.status}`).join('|') + `|${ui.selectedPlane}|${ui.follow}`;
-    if (sig === ui.stripSig) return;
+    const sig = planes.map((p) => `${p.id}:${p.type}`).join('|') + `|${ui.selectedPlane}|${ui.follow}`;
+    if (sig === ui.stripSig) {
+      // Same cards: only the status dots change (planes take off and land all the time).
+      const dots = $('strip-list').querySelectorAll('.pcard[data-plane] .st');
+      planes.forEach((p, i) => {
+        const cls = `st ${STATUS_DOT[p.status] || 'idle'}${p.repair ? ' repair' : ''}`;
+        if (dots[i] && dots[i].className !== cls) dots[i].className = cls;
+      });
+      return;
+    }
     ui.stripSig = sig;
     $('strip-list').innerHTML = planes.map((p) => `<div class="pcard${p.id === ui.selectedPlane ? ' sel' : ''}${p.id === ui.follow ? ' follow' : ''}" data-plane="${p.id}">
         <img src="models/hangar/${D.typeSlug(p.type)}.webp" alt="" draggable="false" onerror="this.style.visibility='hidden'">
@@ -1801,9 +1892,26 @@
   function renderAll() {
     renderStrip();
     renderSidebar();
+    // The 2D map is hidden under the 3D view: it is brought up to date when it shows again (frame).
+    if (in3d()) { ui.map2dStale = true; return; }
     refreshAirports();
     refreshPlanes();
     drawRoutes();
+  }
+
+  // Every animation frame: the planes on the 2D map move on (the 3D view draws its own).
+  function frame() {
+    requestAnimationFrame(frame);
+    if (in3d()) return;
+    if (ui.map2dStale) {
+      ui.map2dStale = false;
+      refreshAirports();
+      refreshPlanes();
+      drawRoutes();
+      updatePlanes(true);
+      updateRivalPlanes();
+    }
+    updatePlanes(false);
   }
 
   // ---------- events & newspaper ----------
@@ -2172,17 +2280,21 @@
   }
 
   function loop() {
-    ui.lastTick = performance.now();
+    const now = performance.now();
+    const elapsed = Math.min(now - ui.lastTick, MAX_STEP_MS);
+    ui.lastTick = now;
     if (!ui.paused && !st.open) {
-      ui.pendingMinutes += (ui.speed * TICK_MS) / 60000;
+      ui.pendingMinutes += (ui.speed * elapsed) / 60000;
       const whole = Math.floor(ui.pendingMinutes);
       ui.pendingMinutes -= whole;
       if (whole > 0) G.advance(whole);
     }
     showNewspaper();
     renderHeader();
-    updatePlanes();
-    updateRivalPlanes();
+    if (!in3d()) {
+      updatePlanes(true);
+      updateRivalPlanes();
+    }
     if (ui.hoverCard) updateStripTip();
     if (mk.open) {
       if (mk.version !== G.state.market.nextId) renderMarket(); // new weekly offers
@@ -2206,6 +2318,7 @@
     renderAll();
     openStart(saved && !G.state.gameOver);
     setInterval(loop, TICK_MS);
+    requestAnimationFrame(frame);
     setInterval(() => { if (set.autosave) G.save(); }, 30000);
     // Hook for the 3D view (js/view3d.js).
     FG.ui = {

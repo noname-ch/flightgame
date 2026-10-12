@@ -1208,8 +1208,10 @@
       },
       // Position and heading at distance sv.
       at(sv) {
+        // first point at or beyond sv (binary search: called for every plane in every frame)
         let i = 1;
-        while (i < cum.length - 1 && cum[i] < sv) i++;
+        let hi = cum.length - 1;
+        while (i < hi) { const m = (i + hi) >> 1; if (cum[m] < sv) i = m + 1; else hi = m; }
         const a = pts[i - 1];
         const b = pts[i];
         const fr = cum[i] > cum[i - 1] ? Math.min(1, Math.max(0, (sv - cum[i - 1]) / (cum[i] - cum[i - 1]))) : 1;
@@ -1227,13 +1229,23 @@
   function flightTrack(p) {
     const f = p.flight;
     if (!f) return null;
-    const key = `${p.id}|${f.dep}|${f.from}|${f.to}|${FG.layouts ? FG.layouts.version : 0}`; // a layout that arrives changes the taxi ways
+    const key = `${p.id}|${f.dep}|${f.from}|${f.to}`;
+    const version = FG.layouts ? FG.layouts.version : 0;
     let t = trackCache.get(key);
-    if (!t) {
-      if (trackCache.size > 300) trackCache.clear();
-      t = buildTrack(p.type, f, p.id);
-      trackCache.set(key, t);
+    // A layout that arrives changes the taxi ways, but only at its own airport: a track whose two
+    // airports still have the same apron is kept (rebuilding them all made the planes hitch).
+    if (t && t.version !== version) {
+      if (apronOf(f.from) === t.aprons[0] && apronOf(f.to) === t.aprons[1]) t.version = version;
+      else t = null;
     }
+    if (!t) {
+      t = buildTrack(p.type, f, p.id);
+      t.version = version;
+      t.aprons = [apronOf(f.from), apronOf(f.to)];
+      // Least recently used ones go (clearing them all made every flying plane rebuild its track at once).
+      if (trackCache.size >= 300) trackCache.delete(trackCache.keys().next().value);
+    } else trackCache.delete(key);
+    trackCache.set(key, t); // (to the end: most recently used)
     return t;
   }
 

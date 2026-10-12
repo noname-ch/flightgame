@@ -81,10 +81,11 @@ function attitude(p, st, t) {
   return { heading, bank, pitch };
 }
 
-// { lat, lon, altM, heading, bank, pitch } of a plane. Uses G.flightState when the game provides it.
-function planePose(p, t) {
+// { lat, lon, altM, heading, bank, pitch } of a plane. Uses G.flightState when the game provides it
+// (`st`: its result for time t, when already at hand).
+function planePose(p, t, st0) {
   if (p.status === 'flying' && G.flightState) {
-    const st = G.flightState(p, t);
+    const st = st0 || G.flightState(p, t);
     if (st) {
       const att = attitude(p, st, t);
       return { lat: st.lat, lon: st.lon, altM: (st.altFt || 0) * 0.3048, flying: true, st, ...att };
@@ -537,6 +538,11 @@ function routeFeatures() {
 function refreshData() {
   const map = v.map;
   const sel = FG.ui ? `${FG.ui.selectedAirport}|${FG.ui.selectedPlane}` : '';
+  // Four times a second is enough (this runs after every frame), unless the selection or the view changed.
+  const now = performance.now();
+  if (sel === v.dataSel && !v.gatesDirty && now - v.dataAt < 250) return;
+  v.dataSel = sel;
+  v.dataAt = now;
   const aSig = `${Object.keys(G.state.slots).join(',')}|${D.airports.length}|${sel}`;
   if (aSig !== v.sig.airports) {
     v.sig.airports = aSig;
@@ -551,10 +557,13 @@ function refreshData() {
 }
 
 // ---------- style ----------
+const LOD = { zoomLevels: 13, tileRatio: 2 }; // see map.setSourceTileLodParams in createMap
 function transformStyle(_prev, style) {
   style.projection = { type: 'globe' };
-  style.sources.terrain = { type: 'raster-dem', url: 'https://tiles.mapterhorn.com/tilejson.json' };
-  style.sources.hillshade = { type: 'raster-dem', url: 'https://tiles.mapterhorn.com/tilejson.json' };
+  // Terrain heights from zoom 12 on are only made larger, not loaded finer: runways are flat, and the
+  // finer tiles cost a lot of downloads and memory when zoomed in on an airport.
+  style.sources.terrain = { type: 'raster-dem', url: 'https://tiles.mapterhorn.com/tilejson.json', maxzoom: 12 };
+  style.sources.hillshade = { type: 'raster-dem', url: 'https://tiles.mapterhorn.com/tilejson.json', maxzoom: 13 };
   // Esri's aerial imagery, the same as the 2D map: sharp down to single aircraft (Sentinel-2 stopped at 10 m).
   style.sources.satellite = {
     type: 'raster', tileSize: 256, maxzoom: 18,
@@ -568,6 +577,12 @@ function transformStyle(_prev, style) {
     'atmosphere-blend': ['interpolate', ['linear'], ['zoom'], 0, 1, 5, 1, 8, 0],
   };
   const firstSymbol = style.layers.findIndex((l) => l.type === 'symbol');
+  // The map's own land, water and roads lie under the satellite picture: not drawn (nor their tiles
+  // read) while it shows. The background stays for where an aerial tile is still loading.
+  v.underSatellite = style.layers.slice(0, firstSymbol).filter((l) => l.type !== 'background').map((l) => l.id);
+  for (const l of style.layers.slice(0, firstSymbol)) {
+    if (v.underSatellite.includes(l.id)) l.layout = { ...l.layout, visibility: v.satellite ? 'none' : (l.layout && l.layout.visibility) || 'visible' };
+  }
   style.layers.splice(firstSymbol, 0,
     { id: 'satellite', type: 'raster', source: 'satellite', layout: { visibility: v.satellite ? 'visible' : 'none' } },
     { id: 'hills', type: 'hillshade', source: 'hillshade', paint: { 'hillshade-exaggeration': 0.35, 'hillshade-shadow-color': '#47402f' } });
@@ -727,8 +742,10 @@ const planeLayer = {
     v.globe = globe;
     v.clip = globe ? pd.clippingPlane : null;
 
-    const t = smoothTime();
     const now = performance.now();
+    // The follow camera was put where the plane is at v.nextT (followTick): draw it there too.
+    const t = v.nextT != null && now - v.nextAt < 1000 ? v.nextT : smoothTime();
+    v.nextT = null;
     const zoom = map.getZoom();
     const center = map.getCenter();
     const mpp = EARTH_CIRC * Math.cos(center.lat * Math.PI / 180) / (512 * 2 ** zoom); // metres per pixel
@@ -744,6 +761,10 @@ const planeLayer = {
     this.world.position.copy(tmp.pos).negate();
     this.camera.projectionMatrix.multiply(this.shift.makeTranslation(tmp.pos.x, tmp.pos.y, tmp.pos.z));
 
+    // Planes outside the view are not posed or drawn at all (zoomed out, half the globe is in view anyway).
+    const view = zoom >= 5 ? viewBox(map) : null;
+    const parked = {}; // airport code -> planes on the ground there so far
+    let moving = 0; // fastest plane in view, in pixels per second
     const alive = new Set();
     for (const p of G.state.planes) {
       alive.add(p.id);
@@ -753,7 +774,19 @@ const planeLayer = {
         e = v.planes[p.id] = { obj: planeModel(p.type), type: p.type, world: new THREE.Vector3() };
         this.world.add(e.obj);
       }
-      const pose = planePose(p, t);
+      const flying = p.status === 'flying';
+      const n = flying ? 0 : (parked[p.location] = (parked[p.location] || 0) + 1) - 1;
+      const st = flying && G.flightState ? G.flightState(p, t) : null;
+      if (view) {
+        const at = st || (G.gateOf ? G.gateOf(p.location, p.id) : G.airportByCode[p.location]);
+        if (at && !inBox(view, at.lat, at.lon)) {
+          e.obj.visible = false;
+          e.att = null; // eased afresh when it comes back
+          continue;
+        }
+      }
+      const pose = planePose(p, t, st);
+      if (st && st.speedKmh) moving = Math.max(moving, (st.speedKmh / 3.6) * (FG.ui ? FG.ui.speed : 0) / mpp);
       const len = e.obj.userData.len;
       const exag = Math.max(1, px * mpp / len) * (p.id === sel ? 1.35 : 1);
       // Shown height: real cruise height, but always clearly above the ground when zoomed out.
@@ -791,7 +824,6 @@ const planeLayer = {
       right.copy(wing);
       // Zoomed out, enlarged parked planes would overlap at their gates: line them up instead.
       if (!pose.flying && (!pose.gate || exag > 2.5)) {
-        const n = G.state.planes.filter((q) => q.status !== 'flying' && q.location === p.location).indexOf(p);
         pos.addScaledVector(east, n * len * exag * 1.1 * unit).addScaledVector(north, len * exag * 0.9 * unit);
       }
       const s = unit * exag;
@@ -822,9 +854,40 @@ const planeLayer = {
     // three.js and MapLibre share the WebGL context: put the GL state back and make MapLibre
     // re-apply its own, or real GPUs draw an empty map (texture uploads, framebuffer bindings).
     restoreGl(this.renderer, map);
-    map.triggerRepaint();
+    // Next frame: right away while a plane in view visibly moves or the camera follows one; planes that
+    // crawl across the screen less often; when nothing in view moves (paused), once a second for the
+    // planes that come into view.
+    if (v.follow || moving > 30) map.triggerRepaint();
+    else repaintIn(moving > 0 ? Math.min(250, 1000 / moving) : 1000);
   },
 };
+
+// Draw again in `ms`, or sooner when a plane or airport is selected or the camera starts following one.
+function repaintIn(ms) {
+  clearTimeout(v.repaintTimer);
+  const due = performance.now() + ms;
+  const check = () => {
+    if (!v.on) return;
+    const sel = FG.ui ? `${FG.ui.selectedAirport}|${FG.ui.selectedPlane}` : '';
+    if (v.follow || sel !== v.dataSel || performance.now() >= due) v.map.triggerRepaint();
+    else v.repaintTimer = setTimeout(check, Math.min(100, due - performance.now()));
+  };
+  v.repaintTimer = setTimeout(check, Math.min(100, ms));
+}
+
+// The part of the globe in view (padded so planes at the edge, drawn larger than life, don't pop),
+// and whether a point lies in it (also across the antimeridian).
+function viewBox(map) {
+  const b = map.getBounds();
+  const padLat = (b.getNorth() - b.getSouth()) * 0.25;
+  const padLon = (b.getEast() - b.getWest()) * 0.25;
+  return { s: b.getSouth() - padLat, n: b.getNorth() + padLat, w: b.getWest() - padLon, e: b.getEast() + padLon };
+}
+function inBox(box, lat, lon) {
+  if (lat < box.s || lat > box.n) return false;
+  if (box.e - box.w >= 360) return true;
+  return [lon, lon - 360, lon + 360].some((x) => x >= box.w && x <= box.e);
+}
 
 // The selected plane's whole flight path as a line in the air (needs G.flightTrack).
 planeLayer.drawTrack = function (p, len, exag, globe) {
@@ -970,18 +1033,27 @@ function setFollow(on) {
 // Chase camera: behind the selected plane, turning with it. Starts close in; the wheel still zooms.
 function followTick() {
   if (!v.follow) return;
+  const p = G.plane(FG.ui.selectedPlane);
   const e = v.planes[FG.ui.selectedPlane];
-  if (!e || !e.lngLat) { setFollow(false); return; }
+  if (!p || !e) { setFollow(false); return; }
   const map = v.map;
-  const target = map.getBearing() + ((((e.heading - map.getBearing()) % 360) + 540) % 360 - 180) * 0.06;
-  const opts = { center: e.lngLat, bearing: target, pitch: Math.max(map.getPitch(), 62) };
+  // Centre on where the plane will be in the next frame, and draw it there (render uses v.nextT):
+  // centring on the last frame's position left the plane running ahead of the camera.
+  v.nextT = smoothTime();
+  v.nextAt = performance.now();
+  const pose = planePose(p, v.nextT);
+  // (a plane that was out of view has no drawn heading and height yet)
+  const drawn = e.obj.visible && e.altM != null;
+  const heading = drawn ? e.heading : pose.heading;
+  const target = map.getBearing() + ((((heading - map.getBearing()) % 360) + 540) % 360 - 180) * (drawn ? 0.06 : 1);
+  const opts = { center: [pose.lon, pose.lat], bearing: target, pitch: Math.max(map.getPitch(), 62) };
   if (v.followStart) {
-    opts.zoom = e.pose && e.pose.altM > 300 ? 12 : 16;
+    opts.zoom = pose.altM > 300 ? 12 : 16;
     v.followStart = false;
   } else {
     opts.zoom = Math.max(map.getZoom(), 6.5);
   }
-  if (map.setCenterClampedToGround) opts.elevation = e.altM;
+  if (map.setCenterClampedToGround) opts.elevation = drawn ? e.altM : pose.altM * TERRAIN_EXAG;
   map.jumpTo(opts);
 }
 
@@ -1121,7 +1193,10 @@ function controls() {
   box.querySelector('.sat').onclick = (ev) => {
     v.satellite = !v.satellite;
     ev.currentTarget.classList.toggle('active', v.satellite);
-    if (v.map.getLayer('satellite')) v.map.setLayoutProperty('satellite', 'visibility', v.satellite ? 'visible' : 'none');
+    if (v.map.getLayer('satellite')) {
+      v.map.setLayoutProperty('satellite', 'visibility', v.satellite ? 'visible' : 'none');
+      for (const id of v.underSatellite || []) v.map.setLayoutProperty(id, 'visibility', v.satellite ? 'none' : 'visible');
+    }
     savePrefs();
   };
   box.querySelector('.sat').classList.toggle('active', v.satellite);
@@ -1146,6 +1221,12 @@ function createMap() {
   map.addControl(new maplibregl.ScaleControl(), 'bottom-left');
   el.appendChild(controls());
   map.once('style.load', () => {
+    // Tilted towards the horizon, far away tiles are loaded much coarser (and fewer of them) than
+    // MapLibre's default (9.3 zoom levels on screen, 3× the tiles of a flat view): the distance shows
+    // early as a rough picture, the detail only comes close to the camera.
+    map.setSourceTileLodParams(LOD.zoomLevels, LOD.tileRatio);
+    map.setSourceTileLodParams(LOD.zoomLevels + 2, 1.5, 'terrain');
+    map.setSourceTileLodParams(LOD.zoomLevels + 2, 1.5, 'hillshade');
     map.addLayer(planeLayer, 'fg-airport-labels');
     v.ready = true;
     refreshData();
