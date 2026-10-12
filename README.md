@@ -23,6 +23,10 @@ Or run it locally: `./play.sh` starts a small server (`tools/serve.py`) and open
 the browser; the airport editor saves its fixes through it.
 Double-clicking `index.html` (a `file://` page) is not enough: browsers block the 3D view's modules there.
 
+**Smoke test**: `node tools/smoke.mjs` (Node 22+, Chrome or Chromium) loads the game headless, starts an airline,
+flies a timetable for a month of game time, opens every section and the 3D view, and fails on any script error.
+It runs on GitHub for every push (Actions tab); run it before you push.
+
 ## How to play
 
 **Screen**: top left ⋯ opens the menu (save, load, new game, settings with map style and layers,

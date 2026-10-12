@@ -95,11 +95,6 @@ realistic flight tracks in 2D and 3D, AI rival airlines, random events and a dev
 
 ## Polish, tech and infrastructure
 
-- [ ] **Phones and tablets** (M). There is no touch handling or small-screen layout yet. The rail, the
-  plane strip and the overlays need a mobile layout; the map itself already works with touch.
-- [ ] **A smoke test on every push** (S/M). A GitHub Action that loads the game in headless Chromium, plays a
-  few days at full speed and fails on any console error. `node --check` misses errors like the undefined
-  variable that once stopped all 3D airports from being drawn.
 - [ ] **Split the big files** (M). `js/game.js` (~3,100 lines) and `js/ui.js` (~2,300 lines) are getting hard
   to work on together; split by topic (flights, slots, rivals, airports, finance) into ES modules.
 - [ ] **Storage** (S/M). Save and the airport layout cache share localStorage (about 5 MB). Move the layout
@@ -123,6 +118,8 @@ realistic flight tracks in 2D and 3D, AI rival airlines, random events and a dev
 
 Recent milestones, newest first (see `git log` for the rest):
 
+- A smoke test on every push: `tools/smoke.mjs` plays the game in headless Chrome (GitHub Action)
+- Phones and tablets: bottom tab bar, the sidebar as a draggable sheet, installable as an app
 - Airport editor: fix runways, taxiways, aprons, buildings and stands on the satellite map, for every game
 - Slot market by airport and reputation
 - Real layouts at every airport, read off the map's vector tiles
