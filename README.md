@@ -218,7 +218,11 @@ where planes need no taxiways: they go straight across it from where they come o
 drawn; any apron can be turned into a pad and back. **Stand row** places stands evenly
 along a line you click (start, end): set the spacing and a name prefix, and turn them round if the noses
 point the wrong way. Stands added or moved with the editor are always used by the game (one slot each), on
-top of the ones an airport of its size uses. Adding and redrawing first look in the map data (OpenStreetMap vector tiles) and show what they
+top of the ones an airport of its size uses. Where too little is mapped, the game lays an airport out itself
+(apron, terminal, hangars, taxiways and stands beside the runway); those can be picked too ("made up by the
+game"). Change or delete one and everything the game made up there becomes that airport's own fixes, to change
+or delete piece by piece, and the game stops making it up. The last stand stays: without one the game would
+make the airport up again. Adding and redrawing first look in the map data (OpenStreetMap vector tiles) and show what they
 found in cyan: **Use it**, or **Draw it myself** by clicking its points (snapped to the taxiways and corners
 already there; Shift = no snapping). Changes show at once (green = new or changed, red dashed = removed);
 ↶ Undo (Ctrl+Z) takes them back. **Save** puts them into `js/data/fixes.js`, which every player loads:

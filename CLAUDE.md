@@ -41,7 +41,10 @@ Play online: https://noname-ch.github.io/flightgame/ (GitHub Pages, deployed fro
   localStorage is for the save game and settings only: don't put big caches there. Don't depend on the Overpass API at runtime, because it
   was unreliable.
 - Airport editor (F3): `js/airportedit.js` edits airports and `js/fixes.js` applies the saved fixes
-  (`js/data/fixes.js`). Saving goes through `tools/serve.py`, which `./play.sh` starts.
+  (`js/data/fixes.js`). Saving goes through `tools/serve.py`, which `./play.sh` starts. Where too little is
+  mapped, game.js `apronOf` makes a layout up. The editor lists those parts too (`madeUp(code)`): the first
+  change turns them all into fix ops, so a made-up apron can be deleted. Never let an airport lose its last
+  stand: the game would make it up again.
 - Airport checklist (F8): `js/airportcheck.js`, marks in `js/data/checks.js`. When you check airports, take
   them from `node tools/checks.mjs next` and mark each with `node tools/checks.mjs mark CODE --note "what you
   checked or fixed"` (blue). Never mark an airport good (green): only a person approves.

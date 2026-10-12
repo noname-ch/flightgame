@@ -503,9 +503,12 @@
         for (const b of pv.buildings) L.polygon(b.ring, plan).addTo(ui.gateLayer);
         for (const st of pv.stands) L.polyline(st.lead, { ...plan, weight: 1.5 }).addTo(ui.gateLayer);
       }
-      L.polygon(ap.terminal, { pane: 'gates', color: '#e2e8f0', weight: 1, fillColor: '#64748b', fillOpacity: 1, bubblingMouseEvents: false })
-        .bindTooltip(`${a.code} terminal · ${ap.gates.length} gates with jet bridges · ${ap.stands.length - ap.gates.length} remote stands`, { sticky: true })
-        .addTo(ui.gateLayer);
+      // (a real layout without a terminal has none: not the square game.js puts in for it)
+      if (!ap.real || ap.real.terminals.length) {
+        L.polygon(ap.terminal, { pane: 'gates', color: '#e2e8f0', weight: 1, fillColor: '#64748b', fillOpacity: 1, bubblingMouseEvents: false })
+          .bindTooltip(`${a.code} terminal · ${ap.gates.length} gates with jet bridges · ${ap.stands.length - ap.gates.length} remote stands`, { sticky: true })
+          .addTo(ui.gateLayer);
+      }
       for (const mk of ap.markings || []) {
         L.polyline(mk.line, { ...quiet, color: mk.kind === 'w' ? '#e5e7eb' : '#facc15', weight: 1, opacity: 0.8 }).addTo(ui.gateLayer);
       }

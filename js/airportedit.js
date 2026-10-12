@@ -228,6 +228,31 @@
     const out = G.airportRunways(code).map((g) => ({ code, kind: 'runway', geom: g }));
     const lay = layoutOf(code);
     if (lay) for (const [kind, list] of Object.entries(FG.fixes.LISTS)) for (const g of lay[list] || []) out.push({ code, kind, geom: g });
+    return out.concat(madeUp(code));
+  }
+  // Where too little is mapped, the game lays the airport out itself (game.js apronOf). Its apron, terminal
+  // buildings, hangars, taxiways and stands can be picked like the rest (`madeUp: true`). The first change to
+  // one of them turns them all into fixes, added as they are (see commit), so the airport has a layout of its
+  // own from then on and the change applies to that: the game stops making it up.
+  function madeUp(code) {
+    if (!code || FG.layouts.has(code) || FG.layouts.pending(code)) return [];
+    const ap = G.apronOf(code);
+    if (!ap || ap.real) return [];
+    const pt = ([lat, lon]) => [r5(lat), r5(lon)];
+    const out = [];
+    const seen = new Set();
+    const put = (kind, geom) => {
+      const k = `${kind}|${keyOf(geom)}`;
+      if (!seen.has(k)) { seen.add(k); out.push({ code, kind, geom, madeUp: true }); }
+    };
+    put('apron', ap.apron.map(pt));
+    put('terminal', ap.terminal.map(pt));
+    for (const b of ap.buildings) {
+      if (b.kind === 'terminal' || b.kind === 'hall') put('terminal', b.ring.map(pt));
+      else if (b.kind === 'hangar') put('hangar', b.ring.map(pt));
+    }
+    for (const l of G.taxiwaysOf(code)) put('taxiway', l.map(pt));
+    for (const st of ap.stands) put('stand', [r5(st.lat), r5(st.lon), Math.round(st.heading), st.name || '', 1]);
     return out;
   }
   function airportsNear(p, km) {
@@ -271,6 +296,7 @@
     if (kind === 'stand') return `Stand ${g[3] || '(no name)'}`;
     if (kind === 'tower') return 'Tower';
     if (kind === 'airport') return `Airport ${g.code} · ${g.name}`;
+    if (kind === 'bridges') return `Jet bridges ${g ? 'on' : 'off'}`;
     const a = areaOf(g);
     return `${cap(NAMES[kind])} · ${a >= 10000 ? `${(a / 10000).toFixed(1)} ha` : `${Math.round(a)} m²`}`;
   }
@@ -463,8 +489,15 @@
   }
   // `op`: one change, or several undone together (the last one is selected).
   function commit(code, op, msg) {
-    const list = [].concat(op);
+    let list = [].concat(op);
     const last = list[list.length - 1];
+    // A change to something the game made up: all it made up becomes fixes first (see madeUp).
+    const made = madeUp(code);
+    const isMade = new Set(made.map((e) => `${e.kind}|${keyOf(e.geom)}`));
+    if (list.some((o) => o.op !== 'add' && isMade.has(`${o.kind}|${keyOf(o.op === 'del' ? o.geom : o.from)}`))) {
+      list = made.map((e) => ({ op: 'add', kind: e.kind, geom: e.geom })).concat(list);
+      msg = `${msg} The rest the game made up here is this airport's own now: change or delete it piece by piece.`;
+    }
     record(code, list);
     ed.code = code;
     ed.sel = last.op === 'del' || last.kind === 'airport' ? null : { code, kind: last.kind, geom: last.geom };
@@ -603,6 +636,12 @@
   function del() {
     const e = selection();
     if (!e) return;
+    // Without a stand the game makes the airport up again (and what was deleted would be back).
+    if (e.kind === 'stand') {
+      const left = e.madeUp ? madeUp(e.code).filter((x) => x.kind === 'stand').length
+        : FG.layouts.has(e.code) ? FG.layouts.get(e.code).stands.length : Infinity;
+      if (left <= 1) { note('Planes need a stand here: add the real one first (Add here → Stand), then delete this one.', true); return; }
+    }
     commit(e.code, { op: 'del', kind: e.kind, geom: e.geom }, `${cap(NAMES[e.kind])} deleted (Ctrl+Z to undo).`);
   }
   function setRunway() {
@@ -894,9 +933,12 @@
     if (code && map.getZoom() >= 13) {
       // every stand of the layout (the game draws only those it uses), from close up
       const lay = layoutOf(code);
-      if (lay && map.getZoom() >= 15) for (const s of lay.stands) drawShape(layer, 'stand', s, STYLE.stand);
+      if (map.getZoom() >= 15) {
+        for (const s of lay ? lay.stands : []) drawShape(layer, 'stand', s, STYLE.stand);
+        for (const e of madeUp(code)) if (e.kind === 'stand') drawShape(layer, 'stand', e.geom, STYLE.stand);
+      }
       for (const op of FG.fixes.ops(code)) {
-        if (op.kind === 'airport') continue;
+        if (op.kind === 'airport' || op.kind === 'bridges') continue; // (no shape)
         if (op.op !== 'add') drawShape(layer, op.kind, op.op === 'del' ? op.geom : op.from, STYLE.del);
         if (op.op !== 'del') drawShape(layer, op.kind, op.geom, STYLE.add);
       }
@@ -957,9 +999,12 @@
     }
     if (e) {
       parts.push(`<div class="ae-sel"><b>${esc(describe(e.kind, e.geom))}</b>${e.code !== code ? ` (${esc(e.code)})` : ''}</div>`);
+      if (e.madeUp) parts.push('<div class="ae-also">Made up by the game (too little is mapped here). Change or delete it, and what the game made up here becomes this airport\'s own, to fix piece by piece.</div>');
       const others = ed.hits.filter((h) => h !== e);
       if (others.length) {
-        parts.push(`<div class="ae-also">Also here: ${others.slice(0, 4).map((h) => `<button class="mini" data-ae="pick" data-i="${ed.hits.indexOf(h)}">${esc(describe(h.kind, h.geom).split(' · ')[0])}</button>`).join(' ')}</div>`);
+        // (an apron lies under everything else on it: always offered)
+        const offer = others.filter((h, i) => i < 4 || h.kind === 'apron' || h.kind === 'pad');
+        parts.push(`<div class="ae-also">Also here: ${offer.map((h) => `<button class="mini" data-ae="pick" data-i="${ed.hits.indexOf(h)}">${esc(describe(h.kind, h.geom).split(' · ')[0])}</button>`).join(' ')}</div>`);
       }
       const point = e.kind === 'stand' || e.kind === 'tower';
       parts.push(`<div class="ae-row">
@@ -1065,7 +1110,7 @@
       if (FG.layouts.pending(code)) state = 'reading the map data…';
       else if (lay && lay.source === 'fixes') state = 'layout: drawn with fixes';
       else if (lay) state = `layout: ${(D.layouts || []).includes(code) ? 'layout file + map data' : 'map data'}${lay.fixed ? ' + fixes' : ''}`;
-      else state = 'layout: made up by the game (too little mapped). Draw an apron and a stand to give it its own.';
+      else state = 'layout: made up by the game (too little mapped). Click its apron, buildings, taxiways or stands to move or delete them, or draw the real apron and stands.';
     }
     const fixed = FG.fixes.codes().filter((c) => c !== code);
     const user = FG.fixes.github.user;
@@ -1113,7 +1158,7 @@
     const a = G.airportByCode[code];
     if (!a) return;
     ed.code = code;
-    if (op && op.kind !== 'airport') {
+    if (op && op.kind !== 'airport' && op.kind !== 'bridges') {
       const pts = shape(op.kind, op.geom);
       map.fitBounds(L.latLngBounds(pts).pad(0.6), { maxZoom: 17 });
       ed.sel = op.op === 'del' ? null : { code, kind: op.kind, geom: op.geom };
@@ -1273,7 +1318,7 @@
     toggle,
     unsaved: () => FG.fixes.unsaved(),
     // for tests: what the editor would find or make
-    straightLine, squareRing, lookup, hitsAt: (lat, lon) => hitsAt([lat, lon]),
+    straightLine, squareRing, lookup, hitsAt: (lat, lon) => hitsAt([lat, lon]), madeUp,
     click(lat, lon) { onMapClick({ latlng: L.latLng(lat, lon) }); },
     state: ed,
   };

@@ -251,6 +251,55 @@ try {
     if (ed.real && ed.n1 !== ed.n0 + 1) errors.push(`airport editor: the new stand did not reach the layout (${ed.n0} → ${ed.n1})`);
   }
 
+  step('airport editor: delete part of a made-up layout (test airport ZZT on the sea, nothing mapped there)');
+  const mu = await evaluate(async () => {
+    const code = 'ZZT';
+    const lat = 43.2;
+    const lon = 7.6;
+    FG.fixes.edit(code, [
+      { op: 'add', kind: 'airport', geom: { code, name: 'Smoke test field', city: 'Test', country: 'FR', lat, lon, size: 2, minor: false } },
+      { op: 'add', kind: 'runway', geom: [lat - 0.009, lon, lat + 0.009, lon, 30, 1] },
+    ]);
+    FG.layouts.get(code);
+    const t0 = performance.now();
+    while (FG.layouts.pending(code) && performance.now() - t0 < 60000) await new Promise((r) => setTimeout(r, 200));
+    const made = FG.airportEdit.madeUp(code);
+    const stands = made.filter((e) => e.kind === 'stand').length;
+    const apron = made.find((e) => e.kind === 'apron');
+    if (!apron || !stands) return { err: `no made-up layout to edit (${made.length} parts)` };
+    FG.airportEdit.toggle(true);
+    FG.ui.showAirport(code);
+    const r = apron.geom;
+    // a point on the apron, a third of the way in from its runway-side edge (clear of the stands)
+    const at = [0, 1].map((k) => ((r[0][k] + r[1][k]) / 2) * 0.67 + ((r[2][k] + r[3][k]) / 2) * 0.33);
+    FG.airportEdit.click(at[0], at[1]);
+    const st = FG.airportEdit.state;
+    const i = st.hits.findIndex((h) => h.kind === 'apron' && h.madeUp);
+    if (i < 0) return { err: `the made-up apron can't be picked (hits: ${st.hits.map((h) => h.kind).join(', ') || 'none'})` };
+    st.sel = st.hits[i]; // (as picked under "Also here")
+    document.querySelector('[data-ae="del"]').click();
+    const lay = FG.layouts.get(code);
+    const out = {
+      parts: made.length, stands, own: FG.layouts.has(code),
+      apronGone: !!lay && !lay.aprons.some((g) => JSON.stringify(g) === JSON.stringify(apron.geom)),
+      kept: lay ? lay.stands.length : 0, madeUpLeft: FG.airportEdit.madeUp(code).length,
+    };
+    G.apronOf(code); // the game lays it out from the fixes now
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }));
+    out.undone = !FG.layouts.has(code) && FG.airportEdit.madeUp(code).length === made.length;
+    FG.fixes.discard(code);
+    FG.airportEdit.toggle(false);
+    out.unsaved = FG.fixes.unsaved();
+    return out;
+  });
+  if (mu.err) errors.push(`airport editor, made-up layout: ${mu.err}`);
+  else {
+    step(`made up: ${mu.parts} parts, ${mu.stands} stands; after deleting its apron: own layout ${mu.own}, ${mu.kept} stands kept`);
+    if (!mu.own || !mu.apronGone || mu.kept !== mu.stands || mu.madeUpLeft) errors.push(`airport editor: deleting a made-up apron went wrong (${JSON.stringify(mu)})`);
+    if (!mu.undone) errors.push('airport editor: Ctrl+Z did not bring the made-up layout back');
+    if (mu.unsaved.length) errors.push(`airport editor: unsaved fixes left (${mu.unsaved.join(', ')})`);
+  }
+
   step('3D view (V), following a plane');
   await evaluate(() => { document.querySelector('#speed-pop [data-speed="60"]').click(); });
   const has3d = await waitFor(() => window.FG && FG.view3d, 90000);
