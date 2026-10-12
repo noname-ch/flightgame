@@ -16,9 +16,9 @@ FG.data.checks = {
 "LRH": {"s":"checked","by":"agent","at":"2026-10-12","note":"Tidied: 2 taxiways straightened, 10 buildings/aprons squared. Earlier: no grass apron."},
 "LUA": {"s":"ok","by":"lianhirter-arch","at":"2026-10-12"},
 "LUG": {"s":"checked","by":"agent","at":"2026-10-12","note":"Tidied: 2 taxiways straightened, 8 buildings/aprons squared. Earlier: real terminal, no grass taxiways, stand pushbacks."},
-"SBA": {"s":"checked","by":"agent","at":"2026-10-12","note":"Runways 7/25, 15L/33R and 15R/33L, terminal with its jet bridges, RON and south aprons match the satellite picture; nothing to fix."},
+"SBA": {"s":"checked","by":"agent","at":"2026-10-12","note":"Tidied: 12 taxiways straightened, 1 bend made a 90° turn, 8 buildings/aprons squared. Earlier: matched the satellite picture."},
 "SEN": {"s":"checked","by":"agent","at":"2026-10-12","note":"Tidied: 4 taxiways straightened, 7 buildings/aprons squared; removed a stand that crossed S10 on the north apron. Earlier: no jet bridges."},
 "SIR": {"s":"checked","by":"agent","at":"2026-10-12","note":"Tidied: 29 taxiways straightened, 1 bend made a 90° turn, 15 buildings/aprons squared. Earlier: matched the satellite picture."},
 "SOU": {"s":"checked","by":"agent","at":"2026-10-12","note":"Tidied: 4 buildings/aprons squared (its taxiways were straight already). Earlier: car park no hangar, no jet bridges."},
-"YTZ": {"s":"checked","by":"agent","at":"2026-10-12","note":"No jet bridges (Billy Bishop boards on foot): bridges off. Terminal, stands, aprons and both runways match."}
+"YTZ": {"s":"checked","by":"agent","at":"2026-10-12","note":"Tidied: 3 taxiways straightened, 6 buildings/aprons squared. Earlier: no jet bridges."}
 };
