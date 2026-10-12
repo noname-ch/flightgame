@@ -11,6 +11,8 @@ FG.data.checks = {
 "EXT": {"s":"checked","by":"agent","at":"2026-10-12","note":"Removed the grass parking mapped as a big apron, its 3 stands on the grass and a taxiway stub ending in the grass. No jet bridges (Exeter has none)."},
 "HPN": {"s":"checked","by":"agent","at":"2026-10-12","note":"Runway 11/29: east end was ~30 m too far south (moved to the real threshold). Terminal with jet bridges, FBO ramps and stands match."},
 "ISP": {"s":"checked","by":"agent","at":"2026-10-12","note":"Terminal, jet-bridge gates A/B, aprons and the 3 runways match the satellite picture; nothing to fix."},
+"JOI": {"s":"checked","by":"agent","at":"2026-10-12","note":"Runway 15/33 was drawn at the wrong angle, ~300 m off at the ends: moved onto the real one. No jet bridges (Joinville has none)."},
+"KNA": {"s":"checked","by":"agent","at":"2026-10-12","note":"Runway 05/23, the air-force apron with its hangars and the small south apron match the satellite picture; nothing to fix."},
 "LRH": {"s":"checked","by":"agent","at":"2026-10-12","note":"Removed the light-aircraft grass parking mapped as apron (1 stand). Main apron with 4 nose-in stands, terminal and runway match."},
 "LUA": {"s":"ok","by":"lianhirter-arch","at":"2026-10-12"},
 "LUG": {"s":"ok","by":"noname-ch","at":"2026-10-12","note":"Terminal was the tennis hall: now the building along the apron. Removed 2 grass paths drawn as paved taxiways. S2 pushed off the apron into the street (shorter pushback), north stand turned to push onto its taxiway."},
