@@ -185,6 +185,14 @@ damage / repair / remove the selected plane, free slots and 100% airport ownersh
 construction, trigger or clear any world event, and skip an hour, day or week. Every cheat is noted
 in the log (`js/devtools.js`).
 
+Stands in buildings: in every layout that loads, a stand that lies in a building (a mapped gate sits on its
+terminal) is moved out in front of the nearest wall, nose to it, or dropped where there is no room
+(`js/layouts.js` tidy; only onto an apron, never out to the land side); stands a fix already moves or deletes
+are left to the fix. The runways of the big
+airports were checked against the map (and each change against the satellite picture): 27 that lay 20 to 60 m
+beside the real runway at one end are moved onto it in
+`js/data/fixes.js` (their lengths are kept), and Bern's grass runway, which was there twice, is there once.
+
 Airport editor: in the developer tools (✏️ "Fix airports on the map", or F3) you fix airports where the
 map data is wrong or missing. Click the satellite picture where something is off; a window opens there:
 on a runway, taxiway, apron, building, stand or tower you can **Redraw** it, **Straighten** it (a taxiway

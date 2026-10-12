@@ -6,7 +6,8 @@
 //   setReader) the first time it is needed, and the result is kept in the browser. Where too little is
 //   mapped (no apron), and until a layout is there, the game lays the airport out itself (game.js apronOf),
 //   clear of the taxiways and buildings the tiles had (FG.obstacles).
-// The airport fixes (js/fixes.js) are applied to every layout that arrives; with them an airport can have a
+// In every layout that arrives, stands that lie in a building are moved out in front of it (tidy). Then the
+// airport fixes (js/fixes.js) are applied; with them an airport can have a
 // layout where too little is mapped.
 (function () {
   const have = new Set(FG.data.layouts || []);
@@ -21,9 +22,61 @@
   const KEEP = 120;                      // airports kept
   const RETRY = 7 * 864e5;               // an airport without a usable layout is asked again after a week
   const usable = (lay) => !!(lay && lay.stands.length && (lay.aprons.length || lay.fixed));
+  // A stand never lies in a building (a mapped gate sits on its terminal, and stands put in front of gates or
+  // in rows can end up in the next wing): it is moved out onto the apron in front of the nearest wall, nose to
+  // it, or dropped
+  // where there is no room there clear of the buildings and the other stands. Before the fixes, which may still
+  // move it elsewhere; the stands a fix already moves or deletes (`fixed`: their spots) are left to it.
+  function tidy(lay, fixed = []) {
+    if (!lay || !lay.stands || !lay.stands.length) return lay;
+    const M = 111320;
+    const DEG = Math.PI / 180;
+    const buildings = [...(lay.terminals || []), ...(lay.hangars || []), ...(lay.others || [])].filter((r) => r.length > 2);
+    if (!buildings.length) return lay;
+    const boxes = buildings.map((r) => [Math.min(...r.map((p) => p[0])), Math.max(...r.map((p) => p[0])), Math.min(...r.map((p) => p[1])), Math.max(...r.map((p) => p[1]))]);
+    const inRing = (p, r) => {
+      let inside = false;
+      for (let i = 0, j = r.length - 1; i < r.length; j = i++) {
+        const a = r[i], b = r[j];
+        if ((a[0] > p[0]) !== (b[0] > p[0]) && p[1] < ((b[1] - a[1]) * (p[0] - a[0])) / (b[0] - a[0]) + a[1]) inside = !inside;
+      }
+      return inside;
+    };
+    const aprons = (lay.aprons || []).filter((r) => r.length > 2);
+    const paved = (p) => !aprons.length || aprons.some((r) => inRing(p, r));
+    const built = (p) => buildings.some((r, i) => p[0] >= boxes[i][0] && p[0] <= boxes[i][1] && p[1] >= boxes[i][2] && p[1] <= boxes[i][3] && inRing(p, r));
+    const move = (p, hdg, m) => [p[0] + (m * Math.cos(hdg * DEG)) / M, p[1] + (m * Math.sin(hdg * DEG)) / (M * Math.cos(p[0] * DEG))];
+    const apart = (p, q) => Math.hypot((q[1] - p[1]) * M * Math.cos(p[0] * DEG), (q[0] - p[0]) * M);
+    const r5 = (n) => Math.round(n * 1e5) / 1e5;
+    const at = lay.stands.map((s) => [s[0], s[1]]);
+    const wrong = at.map((p) => built(p) && !fixed.some((f) => apart(p, f) < 6));
+    if (!wrong.some(Boolean)) return lay;
+    const stands = [];
+    lay.stands.forEach((s, i) => {
+      if (!wrong[i]) { stands.push(s); return; }
+      // The nearest way out (looked for every 15 degrees) that ends on an apron, clear of the buildings and
+      // the other stands: the stand point 18 m from the wall (the nose stops 14 m ahead of it), with open
+      // ground behind it. Not out to the land side (a car park, a road).
+      let out = null;
+      for (let hdg = 0; hdg < 360; hdg += 15) {
+        for (let m = 5; m <= 150 && (!out || m < out.m); m += 5) {
+          if (built(move(at[i], hdg, m))) continue;
+          const q = move(at[i], hdg, m + 18);
+          if (!built(q) && !built(move(at[i], hdg, m + 40)) && paved(q) && at.every((o, j) => j === i || !o || apart(q, o) > 30)) out = { m, hdg, q };
+          break;
+        }
+      }
+      if (out) {
+        at[i] = out.q;
+        stands.push([r5(out.q[0]), r5(out.q[1]), (out.hdg + 180) % 360, ...s.slice(3)]);
+      } else at[i] = null;
+    });
+    return Object.assign({}, lay, { stands });
+  }
   // The layout the game uses: the one read, with the fixes (if there is enough for a layout).
   function settle(code, lay) {
-    raw[code] = lay;
+    const ops = FG.fixes ? FG.fixes.ops(code).filter((o) => o.kind === 'stand' && o.op !== 'add') : [];
+    raw[code] = lay = tidy(lay, ops.map((o) => (o.op === 'set' ? o.from : o.geom)));
     const out = FG.fixes ? FG.fixes.layout(code, lay) : lay;
     loaded[code] = usable(out) ? out : null;
   }
