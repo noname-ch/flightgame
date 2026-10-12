@@ -97,8 +97,6 @@ realistic flight tracks in 2D and 3D, AI rival airlines, random events and a dev
 
 - [ ] **Split the big files** (M). `js/game.js` (~3,100 lines) and `js/ui.js` (~2,300 lines) are getting hard
   to work on together; split by topic (flights, slots, rivals, airports, finance) into ES modules.
-- [ ] **Storage** (S/M). Save and the airport layout cache share localStorage (about 5 MB). Move the layout
-  cache to IndexedDB so it never pushes the save out.
 - [ ] **Languages** (M). German and French next to English. Needs the UI texts in one place first.
 - [ ] **Play offline** (M). A service worker that keeps the game, the models and the tiles you have seen, so
   it starts without internet (an installable web app).
@@ -118,6 +116,7 @@ realistic flight tracks in 2D and 3D, AI rival airlines, random events and a dev
 
 Recent milestones, newest first (see `git log` for the rest):
 
+- Storage: the airport layout cache moved from localStorage to IndexedDB, so it can never push the save out
 - A smoke test on every push: `tools/smoke.mjs` plays the game in headless Chrome (GitHub Action)
 - Phones and tablets: bottom tab bar, the sidebar as a draggable sheet, installable as an app
 - Airport editor: fix runways, taxiways, aprons, buildings and stands on the satellite map, for every game

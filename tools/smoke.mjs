@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Smoke test: serves the game, loads it in headless Chrome, starts a new airline, flies a timetable
-// for a few game days at full speed, opens every section and the 3D view, and fails on any script
+// for a few game days at full speed, opens every section, the airport editor and the 3D view, and fails on any script
 // error, console.error or missing file of our own. Map tiles and CDNs that fail are only warnings.
 //
 //   node tools/smoke.mjs            (needs Node 22+ and Chrome or Chromium; CHROME=/path overrides)
@@ -122,7 +122,8 @@ handlers.push((msg) => {
       break;
     case 'Network.requestWillBeSent': requests.set(p.requestId, p.request.url); break;
     case 'Network.responseReceived':
-      if (ours(p.response.url) && p.response.status >= 400) errors.push(`HTTP ${p.response.status}: ${p.response.url.replace(ORIGIN, '')}`);
+      // (the airport editor asks whether ./play.sh's server is there: not on a plain server)
+      if (ours(p.response.url) && p.response.status >= 400 && !p.response.url.includes('/__fixes')) errors.push(`HTTP ${p.response.status}: ${p.response.url.replace(ORIGIN, '')}`);
       break;
     case 'Network.loadingFailed': {
       const url = requests.get(p.requestId) || '?';
@@ -144,10 +145,10 @@ async function evaluate(fn, ...args) {
   if (r.exceptionDetails) throw new Error(`in page: ${(r.exceptionDetails.exception && r.exceptionDetails.exception.description) || r.exceptionDetails.text}`);
   return r.result.value;
 }
-async function waitFor(fn, ms, what) {
+async function waitFor(fn, ms, what, ...args) {
   const end = Date.now() + ms;
   while (Date.now() < end) {
-    if (await evaluate(fn).catch(() => false)) return true;
+    if (await evaluate(fn, ...args).catch(() => false)) return true;
     await sleep(250);
   }
   if (what) throw new Error(`timed out waiting for ${what}`);
@@ -217,6 +218,38 @@ try {
   step(`day ${result.day}: ${result.flights} flights, money ${result.money.toLocaleString('en')}`);
   if (!result.flights) errors.push('no flight landed in 30 game days');
   if (result.gameOver) warnings.push('the airline went bankrupt during the test');
+
+  step(`airport editor (F3): add a stand at ${home}, then drop it`);
+  await waitFor((h) => FG.layouts.settled(h), 60000, null, home);
+  const ed = await evaluate(async (code) => {
+    FG.ui.showAirport(code);
+    await new Promise((r) => setTimeout(r, 500));
+    FG.airportEdit.toggle(true);
+    if (!FG.airportEdit.on) return { err: 'the editor did not open' };
+    const lay = FG.layouts.get(code);
+    const a = G.airportByCode[code];
+    // the middle of the biggest apron, or the airport itself where the game made its layout up
+    const ring = lay && lay.aprons.slice().sort((x, y) => y.length - x.length)[0];
+    const p = ring ? [ring.reduce((s, q) => s + q[0], 0) / ring.length, ring.reduce((s, q) => s + q[1], 0) / ring.length] : [a.lat, a.lon];
+    const n0 = lay ? lay.stands.length : 0;
+    FG.airportEdit.click(p[0], p[1]);
+    const b = document.querySelector('[data-ae="add"][data-kind="stand"]');
+    if (!b) return { err: 'no "Add stand" button in the editor popup' };
+    b.click();
+    await new Promise((r) => setTimeout(r, 300));
+    const lay2 = FG.layouts.get(code);
+    const out = { real: !!lay, n0, n1: lay2 ? lay2.stands.length : 0, unsaved: FG.fixes.unsaved().includes(code) };
+    G.apronOf(code); // the game lays the airport out with the fix
+    FG.fixes.discard(code);
+    FG.airportEdit.toggle(false);
+    return out;
+  }, home);
+  if (ed.err) errors.push(`airport editor: ${ed.err}`);
+  else {
+    step(`editor: stands ${ed.n0} → ${ed.n1}${ed.real ? '' : ' (made-up layout)'}`);
+    if (!ed.unsaved) errors.push('airport editor: the new stand is not an unsaved fix');
+    if (ed.real && ed.n1 !== ed.n0 + 1) errors.push(`airport editor: the new stand did not reach the layout (${ed.n0} → ${ed.n1})`);
+  }
 
   step('3D view (V), following a plane');
   await evaluate(() => { document.querySelector('#speed-pop [data-speed="60"]').click(); });

@@ -457,10 +457,17 @@ function hideMapBuildings(rings) {
 // Real taxiways and buildings around the airports the game lays out itself, so that it keeps its own apron
 // clear of them (game.js apronOf looks at FG.obstacles[code]). When such an airport comes into view from
 // zoom 13, a hidden map of 2000 px at zoom 14 (about 3 km each way) is opened over it once and its vector
-// tiles are read. The result is kept in the browser for the airports seen last.
+// tiles are read. The result is kept in the browser (IndexedDB: js/idb.js) for the airports seen last.
 const OBSTACLE_KEY = 'flightgame.obstacles';
+const OBSTACLES_KEPT = 60;
 FG.obstacles = FG.obstacles || {};
-try { Object.assign(FG.obstacles, JSON.parse(localStorage.getItem(OBSTACLE_KEY)) || {}); } catch (e) { /* none kept */ }
+FG.idb.adopt([OBSTACLE_KEY]).then(() => FG.idb.get(OBSTACLE_KEY)).then((kept) => {
+  if (!kept) return;
+  // (read in this session already: the newer one stays)
+  for (const [code, o] of Object.entries(kept)) if (!FG.obstacles[code]) FG.obstacles[code] = o;
+  if (FG.layouts) FG.layouts.version++;
+  v.gatesDirty = true;
+});
 let obstacleBusy = false;
 function readObstacles() {
   const map = v.map;
@@ -497,10 +504,8 @@ function readObstacles() {
     box.remove();
     // `reach`: how far from the airport the surroundings are known, in metres
     FG.obstacles[a.code] = { lines, rings, reach: Math.round((sb.getNorth() - sb.getSouth()) * 111320 / 2) };
-    try {
-      const keep = Object.keys(FG.obstacles).slice(-25);
-      localStorage.setItem(OBSTACLE_KEY, JSON.stringify(Object.fromEntries(keep.map((k) => [k, FG.obstacles[k]]))));
-    } catch (e) { /* too big to keep: read again next time */ }
+    const keep = Object.keys(FG.obstacles).slice(-OBSTACLES_KEPT);
+    FG.idb.set(OBSTACLE_KEY, Object.fromEntries(keep.map((k) => [k, FG.obstacles[k]])));
     if (FG.layouts) FG.layouts.version++; // layouts and taxi ways made without them are dropped
     v.gatesDirty = true;
     obstacleBusy = false;

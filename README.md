@@ -24,7 +24,8 @@ the browser; the airport editor saves its fixes through it.
 Double-clicking `index.html` (a `file://` page) is not enough: browsers block the 3D view's modules there.
 
 **Smoke test**: `node tools/smoke.mjs` (Node 22+, Chrome or Chromium) loads the game headless, starts an airline,
-flies a timetable for a month of game time, opens every section and the 3D view, and fails on any script error.
+flies a timetable for a month of game time, opens every section, the airport editor and the 3D view, and fails
+on any script error.
 It runs on GitHub for every push (Actions tab); run it before you push.
 
 ## How to play
@@ -154,7 +155,7 @@ too: its real apron, taxi loops and buildings with four stands in the bays. Reic
 by hand: its real taxiway and hangars, and a small apron with three stands beside the taxiway, as none is mapped
 (a layout file may also say `"tower": false` and `"bridges": false`). Every other airport is read off
 those vector tiles in the browser the first time it is needed (zoomed in on, or flown to), by
-`js/osmairports.js`, and kept in the browser (localStorage, the last 120 airports): its real aprons, taxiways
+`js/osmairports.js`, and kept in the browser (IndexedDB, the last 300 airports): its real aprons, taxiways
 and buildings with their mapped heights. The terminal is the building at the mapped gates, or else the
 biggest one beside an apron; the others beside an apron are hangars. Stands are put in front of the mapped
 gates and, where there are fewer than the airport could use, in rows along the terminal's apron side (nose to
@@ -240,7 +241,7 @@ goes on down the list, and the filters show what is left to check or to approve.
 website when signed in to GitHub (in the airport editor), else only in that browser. Agents use
 `node tools/checks.mjs` (`next`, `mark CODE --note "…"`, `status`; same order as the game).
 
-Controls: Space = pause, 1/2/3 = speed. The game autosaves to the browser (localStorage).
+Controls: Space = pause, 1/2/3 = speed. The game autosaves to the browser (localStorage; the airport layouts read off the map are kept apart, in IndexedDB).
 
 ## Extending
 

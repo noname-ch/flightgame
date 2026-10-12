@@ -15,11 +15,10 @@
   const raw = {};      // code -> the layout as read (before the fixes; also when it is not usable on its own)
   FG.obstacles = FG.obstacles || {}; // code -> { lines, rings, reach }: what is in the way of a made-up apron
 
-  // ---------- kept in the browser ----------
-  const KEY = 'flightgame.osm.';         // + code: { v, t, lay } (lay null or without stands: too little is mapped)
-  const INDEX = 'flightgame.osm.index';  // codes, oldest first
+  // ---------- kept in the browser (IndexedDB: js/idb.js) ----------
+  const KEY = 'flightgame.osm.';         // + code: { v, t, lay, obstacles } (lay null or without stands: too little is mapped)
   const FORMAT = 3;                      // bump when the reader changes, so old results are read again
-  const KEEP = 120;                      // airports kept
+  const KEEP = 300;                      // airports kept (the oldest read go first)
   const RETRY = 7 * 864e5;               // an airport without a usable layout is asked again after a week
   const usable = (lay) => !!(lay && lay.stands.length && (lay.aprons.length || lay.fixed));
   // A stand never lies in a building (a mapped gate sits on its terminal, and stands put in front of gates or
@@ -80,29 +79,47 @@
     const out = FG.fixes ? FG.fixes.layout(code, lay) : lay;
     loaded[code] = usable(out) ? out : null;
   }
-  const index = () => { try { return JSON.parse(localStorage.getItem(INDEX)) || []; } catch (e) { return []; } };
+  // All kept airports are read into `store` once at the start; until then an airport asked for waits in
+  // `early` (it counts as pending, so the maps don't draw a made-up layout meanwhile).
+  const store = {};          // code -> { v, t, lay, obstacles }
+  const early = [];          // codes asked for before the store was read
+  const forgot = new Set();  // codes reloaded before the store was read
+  let ready = false;
   function kept(code) {
-    try {
-      const k = JSON.parse(localStorage.getItem(KEY + code));
-      if (k && k.v === FORMAT && (usable(k.lay) || Date.now() - k.t < RETRY)) return k;
-    } catch (e) { /* not there or not readable */ }
-    return null;
+    const k = store[code];
+    return k && k.v === FORMAT && (usable(k.lay) || Date.now() - k.t < RETRY) ? k : null;
   }
   function keep(code, lay, obstacles) {
-    const text = JSON.stringify({ v: FORMAT, t: Date.now(), lay, obstacles });
-    const list = index().filter((c) => c !== code);
-    list.push(code);
-    for (let tries = 0; tries < 6; tries++) {
-      try {
-        while (list.length > KEEP) localStorage.removeItem(KEY + list.shift());
-        localStorage.setItem(KEY + code, text);
-        localStorage.setItem(INDEX, JSON.stringify(list));
-        return;
-      } catch (e) { // full: drop the oldest few and try again
-        for (const c of list.splice(0, Math.min(10, list.length - 1))) localStorage.removeItem(KEY + c);
-      }
+    store[code] = { v: FORMAT, t: Date.now(), lay, obstacles };
+    FG.idb.set(KEY + code, store[code]);
+    const codes = Object.keys(store);
+    if (codes.length <= KEEP) return;
+    codes.sort((a, b) => store[a].t - store[b].t);
+    for (const c of codes.slice(0, codes.length - KEEP)) {
+      delete store[c];
+      FG.idb.del(KEY + c);
     }
   }
+  // Older versions kept the layouts in localStorage, where they could fill it up and stop the game from
+  // being saved: move them over once.
+  const oldIndex = `${KEY}index`;
+  try { localStorage.removeItem(oldIndex); } catch (e) { /* no access */ }
+  FG.idb.adopt(FG.idb.localKeys(KEY)).then(() => FG.idb.all(KEY)).then((entries) => {
+    for (const [key, k] of Object.entries(entries)) {
+      const code = key.slice(KEY.length);
+      if (k && k.v && !forgot.has(code) && !store[code]) store[code] = k;
+    }
+    ready = true;
+    for (const code of early.splice(0)) {
+      waiting.delete(code);
+      delete loaded[code];
+      FG.layouts.get(code);
+      if (!waiting.has(code)) { // it was kept
+        changed();
+        done(code);
+      }
+    }
+  });
 
   // ---------- reading the tiles, newest wish first, two airports at a time ----------
   const queue = [];          // [code, layout file or undefined]
@@ -164,6 +181,11 @@
         }).catch(() => { done(code); /* e.g. opened from file://: the airport keeps the layout the game makes */ });
         return null;
       }
+      if (!ready) {
+        waiting.add(code);
+        early.push(code);
+        return null;
+      }
       const k = kept(code);
       if (k) {
         if (k.obstacles) FG.obstacles[code] = k.obstacles;
@@ -191,7 +213,9 @@
     // Read the airport again (its runways changed: the tiles are read round them, the runways are links).
     reload(code) {
       if (waiting.has(code)) return;
-      try { localStorage.removeItem(KEY + code); } catch (e) { /* not kept */ }
+      delete store[code];
+      if (!ready) forgot.add(code);
+      FG.idb.del(KEY + code);
       delete loaded[code];
       delete raw[code];
       delete FG.obstacles[code];
