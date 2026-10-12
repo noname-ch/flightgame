@@ -2,17 +2,17 @@
 // ok (green, a person approved it) or bad (red, needs work). Written by tools/serve.py, tools/checks.mjs or a commit
 // from the game: commit this file to give everyone the checks.
 FG.data.checks = {
-"ACK": {"s":"checked","by":"agent","at":"2026-10-12","note":"No jet bridges (Nantucket has none): bridges off. Removed a stand that pointed into the FBO buildings. Terminal, aprons and both runways match."},
+"ACK": {"s":"checked","by":"agent","at":"2026-10-12","note":"Tidied: 6 taxiways straightened, 7 buildings/aprons squared; removed 2 stands that stood in other stands' way. Earlier: no jet bridges."},
 "ANR": {"s":"checked","by":"agent","at":"2026-10-12","note":"Tidied: 12 taxiways straightened, 18 buildings/aprons squared. Earlier: terminal/hangar swap, 5 real stands."},
 "AVN": {"s":"checked","by":"agent","at":"2026-10-12","note":"Tidied: 14 taxiways straightened, 15 buildings/aprons squared. Earlier: no grass apron, stands where airliners park."},
 "BRN": {"s":"checked","by":"agent","at":"2026-10-12","note":"Tidied: 5 taxiways straightened, 6 buildings/aprons squared; added the missing terminal apron (stands Y2, Y3A, Y4, S3 stood on unmapped concrete). Earlier: no jet bridges."},
 "BZO": {"s":"checked","by":"agent","at":"2026-10-12","note":"Tidied: 1 taxiway straightened, 12 buildings/aprons squared; removed stand S1, whose lead line ran through the terminal. Earlier: no jet bridges, no grass apron."},
-"EPA": {"s":"checked","by":"agent","at":"2026-10-12","note":"Military apron with its hangars, the old civil terminal apron in the north and the taxiways match the satellite picture; nothing to fix."},
-"EXT": {"s":"checked","by":"agent","at":"2026-10-12","note":"Tidied: 5 taxiways straightened, 3 buildings/aprons squared; added the light concrete strip of the main apron (S5 and 3 stood half off the apron). Earlier: no grass apron, no jet bridges."},
+"EPA": {"s":"checked","by":"agent","at":"2026-10-12","note":"Tidied: 3 taxiways straightened, 5 buildings/aprons squared; removed a stand in another's way."},
+"EXT": {"s":"checked","by":"agent","at":"2026-10-12","note":"Tidied: 5 taxiways straightened, 3 buildings/aprons squared; added the light concrete strip of the main apron; removed a stand whose lead-in crossed S3's. Earlier: no grass apron, no jet bridges."},
 "HPN": {"s":"checked","by":"agent","at":"2026-10-12","note":"Tidied: 31 buildings/aprons squared (taxiways were straight); added the concrete strip in front of the terminal gates. Earlier: runway 11/29 east end."},
 "ISP": {"s":"checked","by":"agent","at":"2026-10-12","note":"Tidied: 4 taxiways straightened, 7 buildings/aprons squared. Earlier: matched the satellite picture."},
-"JOI": {"s":"checked","by":"agent","at":"2026-10-12","note":"Runway 15/33 was drawn at the wrong angle, ~300 m off at the ends: moved onto the real one. No jet bridges (Joinville has none)."},
-"KNA": {"s":"checked","by":"agent","at":"2026-10-12","note":"Runway 05/23, the air-force apron with its hangars and the small south apron match the satellite picture; nothing to fix."},
+"JOI": {"s":"checked","by":"agent","at":"2026-10-12","note":"Tidied: 2 taxiways straightened, 1 building squared. Earlier: runway onto the real one, no jet bridges."},
+"KNA": {"s":"checked","by":"agent","at":"2026-10-12","note":"Tidied: 1 taxiway straightened, 5 buildings/aprons squared."},
 "LRH": {"s":"checked","by":"agent","at":"2026-10-12","note":"Tidied: 2 taxiways straightened, 10 buildings/aprons squared. Earlier: no grass apron."},
 "LUA": {"s":"ok","by":"lianhirter-arch","at":"2026-10-12"},
 "LUG": {"s":"checked","by":"agent","at":"2026-10-12","note":"Tidied: 2 taxiways straightened, 8 buildings/aprons squared. Earlier: real terminal, no grass taxiways, stand pushbacks."},
