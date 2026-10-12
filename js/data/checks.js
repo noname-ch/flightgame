@@ -8,7 +8,7 @@ FG.data.checks = {
 "BRN": {"s":"checked","by":"agent","at":"2026-10-12","note":"Tidied: 5 taxiways straightened, 6 buildings/aprons squared; added the missing terminal apron (stands Y2, Y3A, Y4, S3 stood on unmapped concrete). Earlier: no jet bridges."},
 "BZO": {"s":"checked","by":"agent","at":"2026-10-12","note":"No jet bridges (Bolzano has none). Removed the grass parking north of the main apron (mapped as paved apron) and its 2 stands. Military-side aprons in the west kept."},
 "EPA": {"s":"checked","by":"agent","at":"2026-10-12","note":"Military apron with its hangars, the old civil terminal apron in the north and the taxiways match the satellite picture; nothing to fix."},
-"EXT": {"s":"checked","by":"agent","at":"2026-10-12","note":"Removed the grass parking mapped as a big apron, its 3 stands on the grass and a taxiway stub ending in the grass. No jet bridges (Exeter has none)."},
+"EXT": {"s":"checked","by":"agent","at":"2026-10-12","note":"Tidied: 5 taxiways straightened, 3 buildings/aprons squared; added the light concrete strip of the main apron (S5 and 3 stood half off the apron). Earlier: no grass apron, no jet bridges."},
 "HPN": {"s":"checked","by":"agent","at":"2026-10-12","note":"Runway 11/29: east end was ~30 m too far south (moved to the real threshold). Terminal with jet bridges, FBO ramps and stands match."},
 "ISP": {"s":"checked","by":"agent","at":"2026-10-12","note":"Terminal, jet-bridge gates A/B, aprons and the 3 runways match the satellite picture; nothing to fix."},
 "JOI": {"s":"checked","by":"agent","at":"2026-10-12","note":"Runway 15/33 was drawn at the wrong angle, ~300 m off at the ends: moved onto the real one. No jet bridges (Joinville has none)."},
@@ -17,7 +17,7 @@ FG.data.checks = {
 "LUA": {"s":"ok","by":"lianhirter-arch","at":"2026-10-12"},
 "LUG": {"s":"checked","by":"agent","at":"2026-10-12","note":"Tidied: 2 taxiways straightened, 8 buildings/aprons squared. Earlier: real terminal, no grass taxiways, stand pushbacks."},
 "SBA": {"s":"checked","by":"agent","at":"2026-10-12","note":"Runways 7/25, 15L/33R and 15R/33L, terminal with its jet bridges, RON and south aprons match the satellite picture; nothing to fix."},
-"SEN": {"s":"checked","by":"agent","at":"2026-10-12","note":"No jet bridges (Southend has none). Runways, aprons, terminal, tower and 12 stands match the satellite picture."},
+"SEN": {"s":"checked","by":"agent","at":"2026-10-12","note":"Tidied: 4 taxiways straightened, 7 buildings/aprons squared; removed a stand that crossed S10 on the north apron. Earlier: no jet bridges."},
 "SIR": {"s":"checked","by":"agent","at":"2026-10-12","note":"Tidied: 29 taxiways straightened, 1 bend made a 90° turn, 15 buildings/aprons squared. Earlier: matched the satellite picture."},
 "SOU": {"s":"checked","by":"agent","at":"2026-10-12","note":"Tidied: 4 buildings/aprons squared (its taxiways were straight already). Earlier: car park no hangar, no jet bridges."},
 "YTZ": {"s":"checked","by":"agent","at":"2026-10-12","note":"No jet bridges (Billy Bishop boards on foot): bridges off. Terminal, stands, aprons and both runways match."}
