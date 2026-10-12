@@ -1470,6 +1470,41 @@
       this.dirty = true;
     },
 
+    // Start a ready-made airline from D.presets (start screen Quick start, ?preset=<id>): a new
+    // game plus the preset's planes, free slots and running timetables. Returns the problems
+    // (planes that could not get their timetable), an empty list if all went well.
+    applyPreset(id) {
+      const pr = D.presets[id];
+      if (!pr) return [`No preset "${id}".`];
+      const home = airportByCode[pr.home] ? pr.home : C.startAirport;
+      const planes = pr.planes.filter(([type]) => D.aircraft[type]);
+      this.newGame({ mode: pr.mode, difficulty: pr.difficulty, airport: home,
+        aircraft: planes.length ? planes[0][0] : undefined, company: pr.company });
+      const s = this.state;
+      const errors = [];
+      // One slot per plane at home and per plane that stops there elsewhere, all free.
+      const need = { [home]: Math.max(1, planes.length) };
+      for (const [, stops] of planes) for (const c of stops) need[c] = (need[c] || 0) + 1;
+      for (const [code, n] of Object.entries(need)) {
+        if (airportByCode[code]) s.slots[code] = { since: 0, count: n };
+        else errors.push(`Unknown airport ${code}.`);
+      }
+      const ids = [s.planes[0].id, ...planes.slice(1).map(([type]) => this.addPlane(type, home, 'leased', 0))];
+      planes.forEach(([type, stops], i) => {
+        if (!stops.length) return;
+        // Departures 10 minutes apart, so a busy hub doesn't send everything off at once.
+        const legs = this.buildTimetable(type, [home, ...stops], C.curfew.start + 60 + (i % 12) * 10);
+        const err = legs.length < 2 ? `${home}→${stops.join('→')} does not fit into one day.`
+          : this.setTimetable(ids[i], legs) || this.setScheduleActive(ids[i], true);
+        if (err) errors.push(`${ids[i]} (${D.aircraft[type].name}): ${err}`);
+      });
+      if (pr.money != null) s.money = pr.money;
+      this.log(`Quick start "${pr.name}": ${planes.length} plane${planes.length === 1 ? '' : 's'} at ${home}.` +
+        (errors.length ? ` Problems: ${errors.join(' ')}` : ''));
+      this.dirty = true;
+      return errors;
+    },
+
     load() {
       try {
         const raw = localStorage.getItem(SAVE_KEY);

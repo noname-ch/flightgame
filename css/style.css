@@ -1017,6 +1017,10 @@ i.s-net { background: var(--muted); }
 .st-plane { padding: 0 0 10px; overflow: hidden; }
 .st-plane b, .st-plane span { padding: 0 11px; }
 .st-plane .neg { color: var(--neg); }
+.st-quick { margin-top: 18px; }
+.st-quick summary { cursor: pointer; font-weight: 700; margin-bottom: 10px; }
+.st-quick summary .muted { font-weight: 400; font-size: 12px; margin-left: 6px; }
+.st-presets .st-choice { padding: 8px 11px; }
 .st-art svg { display: block; width: 100%; height: auto; }
 .st-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; flex-wrap: wrap; }
 button.big { padding: 10px 22px; font-size: 15px; font-weight: 700; border-radius: 10px; }

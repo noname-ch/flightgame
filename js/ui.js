@@ -2013,7 +2013,7 @@
   // ---------- start screen ----------
   // Shown on every page load and by "New game": continue the saved airline or set up a new one.
   const st = { open: false, hasGame: false, mode: C.defaultMode, difficulty: C.defaultDifficulty,
-    airport: C.startAirport, aircraft: C.startAircraft };
+    airport: C.startAirport, aircraft: C.startAircraft, quickOpen: true };
 
   // Home airport choices, grouped by region (C.startAirports).
   function startAirportOptions() {
@@ -2041,6 +2041,12 @@
     }).join('');
   }
 
+  // Quick start: ready-made airlines (D.presets), one click and they are flying.
+  function startPresets() {
+    return `<div class="st-choices st-presets">${Object.entries(D.presets || {}).map(([id, pr]) =>
+      `<button class="st-choice" data-st="preset" data-id="${id}"><b>${pr.name}</b><span>${pr.desc}</span></button>`).join('')}</div>`;
+  }
+
   function renderStart() {
     const s = G.state;
     // Keep the chosen plane valid for the chosen airport.
@@ -2055,6 +2061,8 @@
       ${st.hasGame ? `<div class="st-continue">
         <div><b>${s.company}</b><span>${G.mode().name} · ${G.difficulty().name} · ${G.fmtTime(s.time)} · ${G.fmtMoney(s.money)} · ${s.planes.length} plane${s.planes.length === 1 ? '' : 's'}</span></div>
         <button class="primary big" data-st="continue">Continue ▶</button></div>` : ''}
+      <details class="st-quick"${st.quickOpen ? ' open' : ''}><summary>Quick start <span class="muted">ready-made airlines, already flying – good for testing</span></summary>
+        ${startPresets()}</details>
       <h2>${st.hasGame ? 'Or start a new airline' : 'New airline'}</h2>
       <label class="st-label" for="st-name">Airline name</label>
       <input id="st-name" maxlength="40" value="${(st.name ?? C.companyName).replace(/"/g, '&quot;')}">
@@ -2090,6 +2098,7 @@
     const { st: what, id } = b.dataset;
     if (what === 'continue' || what === 'cancel') { closeStart(); return; }
     if (what === 'start') { startNewGame(); return; }
+    if (what === 'preset') { startPreset(id); return; }
     st[what] = id; // mode, difficulty or aircraft
     renderStart();
   }
@@ -2109,6 +2118,17 @@
   function startNewGame() {
     G.newGame({ mode: st.mode, difficulty: st.difficulty, airport: st.airport, aircraft: st.aircraft,
       company: st.name ?? C.companyName });
+    afterNewGame();
+  }
+
+  function startPreset(id) {
+    const errors = G.applyPreset(id);
+    if (errors.length) console.warn('Quick start:', errors);
+    afterNewGame();
+    toast(errors.length ? `Started with ${errors.length} problem(s) – see the log.` : `Quick start: ${G.state.company}`);
+  }
+
+  function afterNewGame() {
     closeStart();
     resetView();
     const home = G.airportByCode[G.home()];
@@ -2238,6 +2258,9 @@
     $('start-screen').addEventListener('click', onStartClick);
     $('start-screen').addEventListener('input', onStartInput);
     $('start-screen').addEventListener('change', onStartInput);
+    $('start-screen').addEventListener('toggle', (e) => { // 'toggle' doesn't bubble
+      if (e.target.classList.contains('st-quick')) st.quickOpen = e.target.open;
+    }, true);
     $('newspaper').addEventListener('click', (e) => {
       if (e.target.closest('[data-action="newsNext"]')) closeNewspaper();
     });
@@ -2320,6 +2343,9 @@
     bindControls();
     renderAll();
     openStart(saved && !G.state.gameOver);
+    // index.html?preset=<id> starts that ready-made airline straight away (on every reload).
+    const preset = new URLSearchParams(location.search).get('preset');
+    if (preset && D.presets && D.presets[preset]) startPreset(preset);
     setInterval(loop, TICK_MS);
     requestAnimationFrame(frame);
     setInterval(() => { if (set.autosave) G.save(); }, 30000);

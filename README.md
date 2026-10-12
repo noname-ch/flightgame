@@ -10,6 +10,12 @@ airport (30 small airports across the world with cheap slots, `startAirports` in
 leased aircraft (ATR 72, Dash 8-400, E190, A220-300, A320neo or 737-800). The default is
 **Bern-Belp (BRN)** with an **Airbus A220-300**.
 
+**Quick start** (top of the start screen) skips the setup for testing: one click starts a ready-made
+airline whose planes already fly daily timetables (Swiss regional, European network, Widebodies,
+Busy hub with 20 planes, Sandbox with CHF 1 billion, Hard start). `index.html?preset=<id>` (for
+example `?preset=europe`) starts one straight away, on every reload. The presets are in
+`js/data/presets.js`.
+
 ## Run
 
 Open `index.html` in a browser (needs internet for the map tiles and Leaflet).
@@ -228,6 +234,7 @@ All content is plain data:
   stretched to its own length. Each type's hangar picture (`models/hangar/*.webp`) and map icon
   (`models/icons/*.webp`) are made with `tools/hangar_shots.html`
 - `js/data/events.js` – random events, incidents and their newspaper stories
+- `js/data/presets.js` – the Quick start airlines (home, money, planes and their routes)
 - `js/config.js` – starting conditions, map bounds, economy balance, game modes, event rates
 - `js/data/fixes.js` – airport fixes drawn with the airport editor (F3), written by `tools/serve.py`
 
