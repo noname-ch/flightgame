@@ -24,7 +24,7 @@ CHECKS_HEADER = ('// Airport checklist (developer tools, F4), see js/airportchec
                  '// ok (green, a person approved it) or bad (red, needs work). Written by tools/serve.py, tools/checks.mjs or a commit\n'
                  '// from the game: commit this file to give everyone the checks.\n')
 CHECK_KEYS = ('s', 'by', 'at', 'note')
-KINDS = {'runway', 'taxiway', 'apron', 'pad', 'terminal', 'hangar', 'building', 'stand', 'tower', 'airport'}
+KINDS = {'runway', 'taxiway', 'apron', 'pad', 'terminal', 'hangar', 'building', 'stand', 'tower', 'airport', 'bridges'}
 lock = threading.Lock()
 
 

@@ -7,7 +7,8 @@
 // Kinds: runway ([lat1, lon1, lat2, lon2, width m, paved 0/1], in FG.data.runways), taxiway (line [[lat, lon]..]),
 // apron, pad (open concrete where planes go straight to their stand), terminal, hangar, building (rings), stand ([lat, lon, heading, name, 1, length m of its lead-in line and
 // pushback, if set]), tower ([lat, lon]) and
-// airport (add only: { code, name, city, country, lat, lon, size }, kept under its own code).
+// airport (add only: { code, name, city, country, lat, lon, size }, kept under its own code), and
+// bridges ({ op: 'set', kind: 'bridges', geom: false | true }: whether its stands at a terminal get jet bridges).
 // An element is found again by its shape (within a few metres), so a fix still holds when the map data round it
 // changes a little. A `set` whose element is gone adds its new shape anyway; a `del` then does nothing.
 // js/data/fixes.js has everyone's fixes. Save puts them there: through the dev server (tools/serve.py, when the
@@ -152,8 +153,9 @@
     const ops = opsOf(code);
     const own = ops.filter((o) => LISTS[o.kind]);
     const rw = ops.some((o) => o.kind === 'runway');
+    const br = ops.filter((o) => o.kind === 'bridges').pop();
     delete missedLay[code];
-    if (!own.length && !rw) return raw;
+    if (!own.length && !rw && !br) return raw;
     const out = Object.assign({ aprons: [], terminals: [], hangars: [], others: [], towers: [], taxiways: [], stands: [], links: [] }, raw);
     for (const k of Object.values(LISTS).concat('links')) out[k] = (out[k] || []).slice();
     const h0 = (raw && raw.heights) || {};
@@ -187,6 +189,7 @@
     // The stands the fixes added or moved: the game uses them, whatever its rule for how many (game.js realApron).
     const placed = own.filter((o) => o.kind === 'stand' && o.op !== 'del').map((o) => JSON.stringify(o.geom));
     out.pinned = new Set(out.stands.filter((st) => placed.includes(JSON.stringify(st))));
+    if (br) out.bridges = !!br.geom;
     out.source = raw ? `${raw.source || 'file'}+fixes` : 'fixes';
     out.fixed = true;
     out.key = `${code}#fix${revs[code] || 0}`; // (game.js caches the taxi graph by it)
