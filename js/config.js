@@ -72,7 +72,18 @@ FG.config = {
     buyPremium: 1.05,
     sellDiscount: 0.95,
     boardStake: 25,           // stake needed to order construction
-    majorityStake: 50,        // from here you pay no weekly slot fee at the airport
+    majorityStake: 50,        // from here you pay no weekly slot fee at the airport, and nothing to lease a free one
+    // Slots: one per aircraft stand. Airlines that aren't in the game hold this share, by airport size.
+    otherAirlines: [0, 0.1, 0.25, 0.4, 0.55, 0.7],
+    // Offers for a slot someone holds: fair price = slot lease upfront * fairUpfronts (* hubFactor at a
+    // rival's hub). The airport's view: offer / fair * (repLow..repHigh by reputation 0..100) = v, chance
+    // (v - from) / span, at most maxChance.
+    offer: { fairUpfronts: 3, hubFactor: 1.5, repLow: 0.6, repHigh: 1.4, from: 0.55, span: 0.8, maxChance: 0.95 },
+    // Reputation 0-100: base + flights flown (1 point per flightsPerPoint, up to experienceMax) + punctuality
+    // (on time share against 85 %, up to +-punctuality) - crashes and incidents (fading over their days)
+    // + at an airport: perStake per percent you own there, home at your home base.
+    reputation: { base: 50, flightsPerPoint: 40, experienceMax: 15, punctuality: 15, crash: 30, crashDays: 120,
+      incident: 6, incidentDays: 30, perStake: 0.2, home: 5 },
     // Construction. Costs in CHF, durations in weeks.
     runwayLengths: [1200, 1800, 2500, 3200, 4000],
     runwayCost: { base: 2000000, perM: 4000 }, runwayWeeks: { base: 4, perKm: 2 },

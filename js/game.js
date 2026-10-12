@@ -1387,6 +1387,9 @@
         projects: [], // construction under way
         built: [],    // airports the player built
         fees: {},     // code -> landing and passenger fees paid there this week (for dividends)
+        rep: { flown: 0, onTime: 0, late: 0, crashes: [], incidents: [] }, // what the reputation is made of
+        slotBuys: {}, // code -> { holder id -> slots bought from it }
+        offers: {},   // 'code|holder' -> time a slot offer was turned down (no new one for a day)
         gameOver: false,
       };
       this.registerBuilt();
@@ -1435,6 +1438,9 @@
       if (!s.projects) s.projects = [];
       if (!s.built) s.built = [];
       if (!s.fees) s.fees = {};
+      if (!s.rep) s.rep = { flown: s.planes.reduce((n, p) => n + p.stats.flights, 0), onTime: 0, late: 0, crashes: [], incidents: [] };
+      if (!s.slotBuys) s.slotBuys = {};
+      if (!s.offers) s.offers = {};
       for (const code of Object.keys(s.slots)) {
         if (!s.slots[code].count) {
           const here = s.planes.filter((p) => (p.status === 'flying' && p.flight ? p.flight.to : p.location) === code).length;
@@ -1881,6 +1887,9 @@
       s.today = { revenue: 0, cost: 0, fixed: 0, flights: 0, pax: 0 };
       s.carriedToday = {};
       s.crews.forEach((c) => { c.dutyToday = 0; });
+      // punctuality counts the last few weeks most
+      s.rep.onTime *= 0.93;
+      s.rep.late *= 0.93;
 
       if (day % 7 === 0) {
         const w = this.weeklyCosts();
@@ -1930,6 +1939,7 @@
       p.stats.profit += result;
       if (f.kind === 'scheduled') {
         s.today.flights++;
+        s.rep.flown++;
         s.today.pax += f.pax;
         p.stats.flights++;
         p.stats.pax += f.pax;
@@ -2016,7 +2026,12 @@
         s.carriedToday[key] = (s.carriedToday[key] || 0) + pax;
         revenue = pax * this.fare(p.location, leg.to);
         p.schedule.index = leg.nextIndex;
-        if (leg.timed) p.schedule.due = nextAt(p.schedule.legs[leg.nextIndex].dep, p.schedule.due + 1);
+        if (leg.timed) {
+          // punctual: within 15 minutes of the timetable
+          if (t - p.schedule.due > 15) s.rep.late++;
+          else s.rep.onTime++;
+          p.schedule.due = nextAt(p.schedule.legs[leg.nextIndex].dep, p.schedule.due + 1);
+        }
       } else if (p.pendingFerry === leg.to) {
         p.pendingFerry = null;
       }
@@ -2118,6 +2133,123 @@
         } else if (this.staysUntil(q, code, t)) used++;
       }
       return used < this.slotCount(code);
+    },
+
+    // ---------- the slots of an airport ----------
+    // An airport has one slot per aircraft stand (apronOf: the real stands where there is a real layout).
+    // You hold some, rivals hold those for their flights there (a few more at their hubs), other airlines a
+    // share that grows with the airport's size; the rest are free to lease. When none is free you can make
+    // a holder an offer for one of theirs: the airport agrees depending on the offer and your reputation.
+    slotCapacity(code) {
+      return Math.max(this.slotCount(code), 2, apronOf(code).stands.length);
+    },
+    // Who holds the slots: [{ id, name, color, n, hub }] (rivals, then 'others'), at most what is left.
+    slotHolders(code) {
+      const a = airportByCode[code];
+      const bought = this.state.slotBuys[code] || {};
+      const cap = this.slotCapacity(code);
+      let left = cap - this.slotCount(code);
+      const out = [];
+      for (const r of this.state.rivals || []) {
+        const hub = r.hubs.includes(code);
+        const n = Math.min(left, Math.max(0, this.rivalSlotNeed(r, code) - (bought[r.id] || 0)));
+        if (n <= 0) continue;
+        left -= n;
+        out.push({ id: r.id, name: r.name, color: r.color, n, hub });
+      }
+      if (a && !a.built) {
+        const n = Math.min(left, Math.max(0, Math.round(cap * A.otherAirlines[airportSize(code)]) - (bought.others || 0)));
+        if (n > 0) out.push({ id: 'others', name: 'Other airlines', color: '#64748b', n, hub: false });
+      }
+      return out;
+    },
+    // Slots a rival's flights need at an airport: one per 4 daily flights on each route, 2 more at a hub.
+    rivalSlotNeed(r, code) {
+      let n = r.hubs.includes(code) ? 2 : 0;
+      for (const rt of r.routes) if (rt.a === code || rt.b === code) n += Math.ceil(rt.perDay / 4);
+      return n;
+    },
+    freeSlots(code) {
+      return Math.max(0, this.slotCapacity(code) - this.slotCount(code) - this.slotHolders(code).reduce((n, h) => n + h.n, 0));
+    },
+    // What leasing a free slot costs upfront: nothing at an airport you control.
+    slotPrice(code) { return this.stake(code) >= A.majorityStake ? 0 : slotUpfront(code); },
+
+    // Reputation 0-100: { value, parts: [[label, points]] }. With `code`: as that airport sees you (your
+    // shares there count, and your home base knows you).
+    reputation(code) {
+      const s = this.state;
+      const R = A.reputation;
+      const parts = [['Base', R.base]];
+      parts.push(['Flights flown', Math.min(R.experienceMax, s.rep.flown / R.flightsPerPoint)]);
+      const n = s.rep.onTime + s.rep.late;
+      if (n >= 5) parts.push(['Punctuality', Math.max(-R.punctuality, Math.min(R.punctuality * 0.6, (s.rep.onTime / n - 0.85) * R.punctuality * 6))]);
+      const fade = (list, pts, days) => list.reduce((sum, t) => sum + pts * Math.max(0, 1 - (s.time - t) / (days * DAY)), 0);
+      const crash = fade(s.rep.crashes, R.crash, R.crashDays);
+      if (crash) parts.push(['Crashes', -crash]);
+      const inc = fade(s.rep.incidents, R.incident, R.incidentDays);
+      if (inc) parts.push(['Incidents', -inc]);
+      if (code) {
+        if (this.stake(code)) parts.push([`Your ${this.stake(code)}% of ${code}`, this.stake(code) * R.perStake]);
+        if (code === this.home()) parts.push(['Home base', R.home]);
+      }
+      const value = Math.round(Math.max(0, Math.min(100, parts.reduce((sum, x) => sum + x[1], 0))));
+      return { value, parts: parts.map(([l, v]) => [l, Math.round(v)]) };
+    },
+
+    // A fair price for taking over a slot someone holds (more at a rival's hub).
+    slotOfferPrice(code, holder) {
+      const r = this.rival(holder);
+      return slotUpfront(code) * A.offer.fairUpfronts * (r && r.hubs.includes(code) ? A.offer.hubFactor : 1);
+    },
+    // Chance (0..0.95) that the airport agrees to move one of `holder`'s slots to you for `amount`.
+    slotOfferChance(code, holder, amount) {
+      const O = A.offer;
+      const rep = this.reputation(code).value;
+      const v = (amount / this.slotOfferPrice(code, holder)) * (O.repLow + (rep / 100) * (O.repHigh - O.repLow));
+      return Math.max(0, Math.min(O.maxChance, (v - O.from) / O.span));
+    },
+    // Make an offer; the airport decides at once. Error string, or { accepted, text }.
+    makeSlotOffer(code, holder, amount) {
+      const s = this.state;
+      const a = airportByCode[code];
+      const h = this.slotHolders(code).find((x) => x.id === holder);
+      if (!h) return 'They hold no slot there any more.';
+      if (this.freeSlots(code)) return 'A slot is free there: lease that one.';
+      amount = Math.round(amount);
+      if (amount <= 0) return 'Offer something.';
+      if (s.money < amount) return `Not enough money (${fmtMoney(amount)}).`;
+      const key = `${code}|${holder}`;
+      if (s.offers[key] && s.time - s.offers[key] < DAY) return `${a.name} won't look at another offer for ${h.name}'s slots before tomorrow.`;
+      if (Math.random() >= this.slotOfferChance(code, holder, amount)) {
+        s.offers[key] = s.time;
+        this.log(`${a.name} turned down your offer of ${fmtMoney(amount)} for one of ${h.name}'s slots.`, 'bad');
+        return { accepted: false, text: `${a.name} turned your offer down. Try again tomorrow, with more money or a better reputation.` };
+      }
+      s.money -= amount;
+      s.today.cost += amount;
+      delete s.offers[key];
+      if (s.slots[code]) s.slots[code].count = this.slotCount(code) + 1;
+      else s.slots[code] = { since: s.time, count: 1 };
+      // The rival gives up a daily flight there (its busiest route through the airport). It holds exactly
+      // one slot less: what the dropped flight frees is counted against what you bought.
+      const r = this.rival(holder);
+      const need = r ? this.rivalSlotNeed(r, code) : 0;
+      let dropped = '';
+      if (r) {
+        const rt = r.routes.filter((x) => x.a === code || x.b === code).sort((x, y) => y.perDay - x.perDay)[0];
+        if (rt) {
+          rt.perDay--;
+          dropped = rt.perDay > 0 ? ` and flies ${rt.a}–${rt.b} once a day less` : ` and stops flying ${rt.a}–${rt.b}`;
+          if (rt.perDay <= 0) r.routes.splice(r.routes.indexOf(rt), 1);
+          this.indexRivals();
+        }
+      }
+      s.slotBuys[code] = s.slotBuys[code] || {};
+      s.slotBuys[code][holder] = (s.slotBuys[code][holder] || 0) + 1 - (r ? need - this.rivalSlotNeed(r, code) : 0);
+      this.log(`${a.name} moved one of ${h.name}'s slots to you for ${fmtMoney(amount)}${dropped}.`, 'good');
+      this.dirty = true;
+      return { accepted: true, text: `Accepted! You now hold ${this.slotCount(code)} slot${this.slotCount(code) === 1 ? '' : 's'} at ${code}.` };
     },
 
     // Why this plane can't leave for `to` right now (strike, weather), or null.
@@ -2223,6 +2355,7 @@
       else s.today.revenue += cash;
       s.planes = s.planes.filter((x) => x !== p);
       s.crews = s.crews.filter((c) => c.id !== p.crewId);
+      s.rep.crashes.push(s.time);
       const rep = E.crashReputation;
       s.effects.push({ label: `Bookings slump after the ${p.id} crash`, where: { all: true },
         demandMult: rep.demandMult, until: s.time + rep.days * DAY });
@@ -2248,6 +2381,7 @@
       s.today.cost += inc.repair;
       p.readyAt = Math.max(p.readyAt, s.time + inc.groundedHours * 60);
       p.repair = inc.id;
+      s.rep.incidents.push(s.time);
       const ac = D.aircraft[p.type];
       this.news(inc.story({
         id: p.id, company: s.company, type: ac.name, from: f.from, to: f.to,
@@ -2256,15 +2390,21 @@
     },
 
     // ---------- player actions (return an error string or null) ----------
+    // Lease one of the free slots at an airport (the first, or one more).
     leaseSlot(code) {
       const s = this.state;
-      if (s.slots[code]) return 'You already have a slot there.';
-      const cost = slotUpfront(code);
+      const a = airportByCode[code];
+      if (a.built && !a.open) return `${a.name} isn't open yet.`;
+      if (!this.freeSlots(code)) return `All ${this.slotCapacity(code)} slots at ${code} are taken – make one of the holders an offer.`;
+      const cost = this.slotPrice(code);
       if (s.money < cost) return `Not enough money (${fmtMoney(cost)} needed).`;
       s.money -= cost;
-      s.slots[code] = { since: s.time };
-      this.log(`Leased a slot at ${airportByCode[code].name} for ${fmtMoney(cost)} ` +
-        `(+${fmtMoney(slotWeekly(code))}/week).`, 'cost');
+      if (s.slots[code]) s.slots[code].count = this.slotCount(code) + 1;
+      else s.slots[code] = { since: s.time, count: 1 };
+      const fee = this.slotFee(code);
+      this.log(`Leased slot ${this.slotCount(code)} at ${a.name}${cost ? ` for ${fmtMoney(cost)}` : ' (yours: no charge)'}` +
+        `${fee ? ` (+${fmtMoney(fee)}/week)` : ''}.`, 'cost');
+      this.dirty = true;
       return null;
     },
 
@@ -2868,17 +3008,7 @@
     },
 
     // Lease one more slot at an airport where you already have one.
-    addSlot(code) {
-      const s = this.state;
-      if (!s.slots[code]) return this.leaseSlot(code);
-      const cost = slotUpfront(code);
-      if (s.money < cost) return `Not enough money (${fmtMoney(cost)} needed).`;
-      s.money -= cost;
-      s.slots[code].count = this.slotCount(code) + 1;
-      this.log(`Leased slot ${s.slots[code].count} at ${airportByCode[code].name} for ${fmtMoney(cost)}.`, 'cost');
-      this.dirty = true;
-      return null;
-    },
+    addSlot(code) { return this.leaseSlot(code); },
 
     // Give one slot back; the last one goes with releaseSlot.
     dropSlot(code) {

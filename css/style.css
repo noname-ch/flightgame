@@ -990,3 +990,14 @@ ul.slot-check .warn-li button { margin-left: 2px; }
 .slots-now li { padding: 2px 6px; border-radius: 6px; }
 .slots-now li:hover { background: var(--panel-2); }
 .label.neg { color: var(--neg); }
+
+/* Slot market of an airport: who holds the slots, lease, offers */
+.slot-market { margin: 6px 0 8px; font-size: 12px; }
+.sm-bar { display: flex; height: 12px; border-radius: 4px; overflow: hidden; margin: 5px 0; background: var(--panel-2); gap: 1px; }
+.sm-bar i { display: block; min-width: 3px; }
+.sm-bar i.free { background: repeating-linear-gradient(135deg, rgba(148, 163, 184, 0.35) 0 3px, transparent 3px 6px) !important; }
+.sm-table td { vertical-align: middle; padding: 2px 4px; }
+.sm-table td.num, .sm-overview td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.rv-dot.sm-free { background: repeating-linear-gradient(135deg, rgba(148, 163, 184, 0.7) 0 2px, transparent 2px 4px); }
+.sm-rep { margin-top: 4px; cursor: help; }
+.sm-overview tr.on td { background: var(--panel-2); }

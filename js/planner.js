@@ -16,6 +16,7 @@
     draft: null,      // { stops, first, rounds, legs } being edited
     slotAt: null,     // airport shown in the Slots section
     open: {},         // airport code -> expanded in the Airports section
+    offer: {},        // 'code|holder' -> amount of the offer being made
     lastClick: { key: null, t: 0 }, // for double clicks that survive a re-render
   };
   let ctx = null; // helpers from ui.js: { ui, toast, planeGlyph, fmtPop, setTab, selectAirport, selectPlane }
@@ -171,10 +172,66 @@
       }
       const when = c.clash.map((x) => `${clock(x.from)}–${clock(x.to)}${x.planes.length ? ` (with ${x.planes.join(', ')})` : ''}`).join(', ');
       h += `<li class="warn-li">⚠ <b>${c.code}</b>: more planes than slots at ${when}. Whichever comes last waits at its gate
-        until a slot is free, which delays it. Move a time, or <button class="mini" data-pl="addSlot" data-code="${c.code}">lease another slot · ${G.fmtMoney(G.slotUpfront(c.code))}</button>.</li>`;
+        until a slot is free, which delays it. Move a time, or ${G.freeSlots(c.code) ? `<button class="mini" data-pl="addSlot" data-code="${c.code}">lease another slot · ${G.fmtMoney(G.slotPrice(c.code))}</button>` : `get another slot (none is free: <button class="mini" data-pl="slotAt" data-code="${c.code}">make an offer</button>)`}.</li>`;
     }
     h += '</ul>';
     return h + [...new Set(legs.map((l) => l.from))].map((c) => slotLanes(c, { planeId: p.id, type: p.type, legs }, true)).join('');
+  }
+
+  // ---------- slot market of one airport ----------
+  // Who holds the airport's slots, leasing a free one, and offers for someone else's when none is free.
+  function slotMarket(code) {
+    const s = G.state;
+    const cap = G.slotCapacity(code);
+    const mine = G.slotCount(code);
+    const holders = G.slotHolders(code);
+    const free = G.freeSlots(code);
+    const price = G.slotPrice(code);
+    const fee = G.slotFee(code);
+    const seg = (n, color, title, cls = '') => (n ? `<i class="${cls}" style="flex:${n};background:${color}" title="${title}"></i>` : '');
+    let h = `<div class="slot-market">
+      <div class="sm-head"><b>${cap} slots</b> <span class="muted">(one per aircraft stand)</span> ·
+        <b class="pos">${mine} yours</b> · ${free ? `<b>${free} free</b>` : '<b class="neg">none free</b>'}</div>
+      <div class="sm-bar">${seg(mine, 'var(--accent)', `yours: ${mine}`)}${holders.map((x) => seg(x.n, x.color, `${x.name}: ${x.n}`)).join('')}${seg(free, 'transparent', `free: ${free}`, 'free')}</div>
+      <table class="small sm-table">
+        <tr><td><span class="rv-dot" style="background:var(--accent)"></span>You</td><td class="num">${mine}</td>
+          <td class="muted">${mine ? (fee ? `${G.fmtMoney(fee)}/week each` : 'no weekly fee (you control the airport)') : ''}</td>
+          <td>${mine && (mine > 1 || code !== G.home()) ? `<button class="mini" data-pl="dropSlot" data-code="${code}">Give one back</button>` : ''}</td></tr>
+        <tr><td><span class="rv-dot sm-free"></span>Free</td><td class="num">${free}</td>
+          <td class="muted">${price ? `${G.fmtMoney(price)} + ${G.fmtMoney(G.slotWeekly(code))}/week` : 'no charge: you control the airport'}</td>
+          <td>${free ? `<button class="mini primary" data-pl="leaseFree" data-code="${code}" ${s.money < price ? 'disabled' : ''}>Lease one</button>` : ''}</td></tr>`;
+    for (const x of holders) {
+      h += `<tr><td><span class="rv-dot" style="background:${x.color}"></span>${x.name}${x.hub ? ' <span class="muted">(hub)</span>' : ''}</td><td class="num">${x.n}</td>`;
+      if (free) { h += '<td></td><td></td></tr>'; continue; }
+      const key = `${code}|${x.id}`;
+      const fair = G.slotOfferPrice(code, x.id);
+      const amount = pl.offer[key] || Math.round(fair);
+      const chance = Math.round(G.slotOfferChance(code, x.id, amount) * 100);
+      const wait = s.offers[key] && s.time - s.offers[key] < 1440;
+      h += `<td class="nowrap"><button class="mini" data-pl="offerStep" data-key="${key}" data-fair="${fair}" data-by="-0.1">−</button>
+          <b>${G.fmtMoney(amount)}</b>
+          <button class="mini" data-pl="offerStep" data-key="${key}" data-fair="${fair}" data-by="0.1">+</button>
+          <span class="${chance >= 60 ? 'pos' : chance >= 30 ? '' : 'neg'}" title="Chance the airport agrees">${chance}%</span></td>
+        <td>${wait ? '<span class="muted">tomorrow</span>' : `<button class="mini" data-pl="offer" data-code="${code}" data-holder="${x.id}" data-amount="${amount}" ${s.money < amount ? 'disabled' : ''}>Make offer</button>`}</td></tr>`;
+    }
+    h += '</table>';
+    const rep = G.reputation(code);
+    h += `<div class="muted sm-rep" title="${rep.parts.map(([l, v]) => `${l}: ${v > 0 && l !== 'Base' ? '+' : ''}${v}`).join('\n')}">
+      Your reputation at ${code}: <b class="${rep.value >= 60 ? 'pos' : rep.value < 40 ? 'neg' : ''}">${rep.value}/100</b>
+      ${free ? '' : '· when no slot is free, offer a holder money for one of theirs: the airport decides by your offer and reputation'}</div>`;
+    return h + '</div>';
+  }
+
+  // All the airports where you hold slots.
+  function slotOverview() {
+    const codes = Object.keys(G.state.slots);
+    if (!codes.length) return '';
+    return `<table class="small sm-overview"><tr><th>Airport</th><th>yours</th><th>of</th><th>free</th><th>held by</th></tr>${codes.map((c) => {
+      const holders = G.slotHolders(c);
+      return `<tr class="click${c === pl.slotAt ? ' on' : ''}" data-pl="slotAt" data-code="${c}"><td><b>${c}</b> <span class="muted">${G.airportByCode[c].city}</span></td>
+        <td class="num pos">${G.slotCount(c)}</td><td class="num">${G.slotCapacity(c)}</td><td class="num">${G.freeSlots(c) || '<span class="neg">0</span>'}</td>
+        <td>${holders.map((x) => `<span class="rv-dot" style="background:${x.color}" title="${x.name}: ${x.n}"></span>${x.n}`).join(' ')}</td></tr>`;
+    }).join('')}</table>`;
   }
 
   // ---------- Slots ----------
@@ -237,24 +294,16 @@
     const s = G.state;
     const codes = Object.keys(s.slots);
     if (!pl.slotAt || !s.slots[pl.slotAt]) pl.slotAt = codes.includes(ctx.ui.selectedAirport) ? ctx.ui.selectedAirport : codes[0];
-    let h = `<div class="panel"><h3>Your slots</h3><div class="chips">${codes.map((c) => {
-      const u = G.slotUsage(c);
-      return `<button class="${c === pl.slotAt ? 'on' : ''}${u.need > u.have ? ' bad' : ''}" data-pl="slotAt" data-code="${c}"
-        title="${c}: at the busiest time ${u.need} plane${u.need === 1 ? '' : 's'} for ${u.have} slot${u.have === 1 ? '' : 's'}">${c} <span class="n">${u.need}/${u.have}</span></button>`;
-    }).join('')}</div><div class="muted">A slot is a parking place for <b>one plane at a time</b>. A plane uses it from landing
+    let h = `<div class="panel"><h3>Your slots</h3>${slotOverview()}<div class="muted">A slot is a parking place for <b>one plane at a time</b>. A plane uses it from landing
       until it takes off. After that the slot is free and any other plane can use it. If all slots are taken when a plane wants
       to fly there, it waits at its gate until one frees up.</div></div>`;
     const code = pl.slotAt;
     if (code) {
       const a = G.airportByCode[code];
-      const n = G.slotCount(code);
-      const fee = G.slotFee(code);
       h += `<div class="panel"><h3>${code} · ${a.name}</h3>
-        <div class="muted">${a.city}, ${a.country} · ${n} slot${n === 1 ? '' : 's'} · ${fee ? `${G.fmtMoney(fee)}/week each` : 'no weekly fee – you control the airport'}</div>
-        <div class="row"><button class="primary" data-pl="addSlot" data-code="${code}" ${s.money < G.slotUpfront(code) ? 'disabled' : ''}>
-          Lease another slot · ${G.fmtMoney(G.slotUpfront(code))}</button>
-          ${n > 1 || code !== G.home() ? `<button data-pl="dropSlot" data-code="${code}">Give one back</button>` : ''}
-          <button data-pl="showAirport" data-code="${code}">Show on map</button></div>
+        <div class="muted">${a.city}, ${a.country}${G.stake(code) ? ` · you own ${G.stake(code)}%` : ''}</div>
+        ${slotMarket(code)}
+        <div class="row"><button data-pl="showAirport" data-code="${code}">Show on map</button></div>
         <h4>Right now</h4>${slotsNow(code)}
         <h4>Today's plan</h4>${slotLanes(code)}
         <h4>Today's arrivals and departures</h4>${board(code)}</div>`;
@@ -293,7 +342,7 @@
             🅿 ${G.slotCount(code)} slot${G.slotCount(code) === 1 ? '' : 's'} · busiest ${u.need}/${u.have} · ${G.fmtMoney(G.slotFee(code))}/week each
             <span class="muted">(double-click)</span></div>`;
         } else {
-          h += `<div class="muted">No slot here. <button class="mini" data-pl="addSlot" data-code="${code}">Lease one · ${G.fmtMoney(G.slotUpfront(code))}</button></div>`;
+          h += `<div class="muted">No slot here. ${G.freeSlots(code) ? `<button class="mini" data-pl="addSlot" data-code="${code}">Lease one · ${G.fmtMoney(G.slotPrice(code))}</button>` : `All ${G.slotCapacity(code)} are taken: <button class="mini" data-pl="showAirport" data-code="${code}">make an offer</button>`}</div>`;
         }
         if (planes.length) {
           h += `<table class="small"><tr><th>Plane</th><th>route</th><th>here</th></tr>${planes.map((p) => {
@@ -367,6 +416,19 @@
         pl.slotAt = code; ctx.setTab('slots'); break;
       case 'toggleAp': pl.open[code] = !pl.open[code]; break;
       case 'addSlot': err = G.addSlot(code); break;
+      case 'leaseFree': err = G.leaseSlot(code); break;
+      case 'offerStep': {
+        const fair = Number(el.dataset.fair);
+        const now = pl.offer[el.dataset.key] || Math.round(fair);
+        pl.offer[el.dataset.key] = Math.max(Math.round(fair * 0.3), Math.round(now + fair * Number(el.dataset.by)));
+        break;
+      }
+      case 'offer': {
+        const r = G.makeSlotOffer(code, el.dataset.holder, Number(el.dataset.amount));
+        if (typeof r === 'string') err = r;
+        else { ctx.toast(r.text, !r.accepted); delete pl.offer[`${code}|${el.dataset.holder}`]; }
+        break;
+      }
       case 'dropSlot': err = G.dropSlot(code); break;
       case 'showAirport': ctx.selectAirport(code); break;
       default: return;
@@ -393,7 +455,7 @@
 
   FG.planner = {
     init(c) { ctx = c; },
-    scheduleTab, slotsTab, airportsTab, action, change,
+    scheduleTab, slotsTab, airportsTab, action, change, slotMarket,
     editing() { return pl.edit && pl.draft ? pl.edit : null; },
     // Stops of the timetable being edited for this plane (drawn on the map as a dotted route), or null.
     draftStops(id) { return pl.edit === id && pl.draft && pl.draft.stops.length >= 2 ? pl.draft.stops : null; },
@@ -409,6 +471,6 @@
       return null;
     },
     openPlane(id) { const p = G.plane(id); if (p) { pl.edit = id; startDraft(p); } },
-    reset() { pl.edit = null; pl.draft = null; pl.slotAt = null; pl.open = {}; },
+    reset() { pl.edit = null; pl.draft = null; pl.slotAt = null; pl.open = {}; pl.offer = {}; },
   };
 })();

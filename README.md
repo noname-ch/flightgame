@@ -25,15 +25,23 @@ follow it (2D or 3D).
 
 **Timetables** (Schedule section): each plane gets a day plan that repeats every day. Pick the route,
 the first departure and how many loops, then move single flights with − / + or type a time. Each
-slot holds one plane on the ground at a time, from landing until departure; the Slots section shows
-every slot of an airport over the day plus its arrivals and departures, and **Lease another slot**
-adds room for more planes. A timetable that needs a slot that is already taken can't be saved.
-Planes without a timetable still fly their loop "when ready" as before.
+slot holds one plane on the ground at a time, from landing until departure; when it is empty any of
+your planes can use it, and a plane that would find every slot at its destination taken waits at its
+gate (a timetable that plans that is only warned about). The Slots section shows every slot of an
+airport over the day, what stands in them right now and the arrivals and departures.
 
-1. Click an airport on the map to see its catchment, demand from your slots and slot price.
-2. **Lease a slot** there (upfront fee + weekly fee).
-3. In the **Fleet** tab: *Ferry there* to move the plane, or **Edit schedule** to build a loop
-   (e.g. `BRN → BCN → BRN → LHR`) and press **Start schedule**.
+**Slots of an airport**: an airport has one slot per aircraft stand. The Slots section and the airport
+panel show who holds them: you, the rivals that fly there (one slot per 4 daily flights on a route, 2
+more at their hub) and other airlines (a share by airport size); the rest are free to lease (upfront +
+weekly fee; nothing at all where you own 50 %). When none is free you can offer a holder money for one
+of theirs: the airport decides by your offer and your **reputation** (0–100: flights flown,
+punctuality, crashes and incidents, your shares in that airport, your home base). A rejected offer can
+be made again the next day; a rival that gives up a slot flies one daily flight less there.
+
+1. Click an airport on the map to see its catchment, demand from your slots and its slots.
+2. **Lease one** of its free slots (upfront fee + weekly fee), or make an offer when none is free.
+3. In the **Schedule** tab: click the plane, pick its airports (e.g. `BRN → BCN → BRN → LHR`),
+   **Fill the day** and **Save & fly**.
 4. Watch revenue in the **Log** and **Finance** tabs. Weekly costs (aircraft lease, crew, slots)
    are charged every Monday 00:00. Below CHF -500k you're bankrupt.
 5. Set the **ticket price** of each route with − / + (in the plane's card or the airport panel),
@@ -63,7 +71,7 @@ Planes without a timetable still fly their loop "when ready" as before.
    weekly dividend from its traffic (plus the fees your airline pays there). With **25%** you can
    order construction and pay your share of the cost: a new parallel or crosswind runway, a runway
    extension, or a terminal expansion that raises the airport size (bigger planes, more passengers).
-   With **50%** your slot there is free. The **Airports** tab lists your stakes and building sites,
+   With **50%** your slots there are free (no upfront, no weekly fee). The **Airports** tab lists your stakes and building sites,
    and **builds new airports**: pick a site on the map, it opens after 12 weeks and is 100% yours.
    Only where the terrain is fit for one: level ground (heights from the terrain tiles of the 3D view), no
    water, glacier or built-up area (from the map data); `FG.terrain.check(lat, lon)` in `js/view3d.js`.

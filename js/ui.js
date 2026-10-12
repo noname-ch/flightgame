@@ -860,15 +860,7 @@
       <div>${runwayText(code)}</div>${rivalsAt(code)}`;
     if (a.built && !a.open) h += `<div class="warn">🏗 Under construction – opens ${openDate(code)}.</div>`;
 
-    if (owned) {
-      const fee = G.slotFee(code);
-      h += `<div class="ok">✔ You hold a slot here (${fee ? `${G.fmtMoney(fee)}/week` : 'free – you control the airport'})</div>`;
-      if (code !== G.home()) h += `<button data-action="releaseSlot" data-code="${code}">Release slot</button>`;
-    } else {
-      const up = G.slotUpfront(code);
-      h += `<div>Slot lease: <b>${G.fmtMoney(up)}</b> upfront + ${G.fmtMoney(G.slotWeekly(code))}/week</div>
-        <button class="primary" data-action="leaseSlot" data-code="${code}" ${s.money < up ? 'disabled' : ''}>Lease slot</button>`;
-    }
+    if (!a.built || a.open) h += `<h4>Slots</h4>${FG.planner.slotMarket(code)}`;
 
     if (owned) {
       for (const p of s.planes) {
@@ -1382,7 +1374,7 @@
     for (const { a, demand } of ranked) {
       h += `<tr class="click" data-action="selectAirport" data-code="${a.code}">
         <td>${G.ownsSlot(a.code) ? '✔ ' : ''}${a.code} · ${a.city}</td><td>${Math.round(G.dist(G.home(), a.code))}</td>
-        <td>${demand}${rivalBadge(G.home(), a.code)}</td><td>${G.fmtMoney(G.slotUpfront(a.code))}</td></tr>`;
+        <td>${demand}${rivalBadge(G.home(), a.code)}</td><td>${G.fmtMoney(G.slotPrice(a.code))}</td></tr>`;
     }
     return h + `</table></div>`;
   }
