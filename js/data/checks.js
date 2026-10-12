@@ -3,10 +3,10 @@
 // from the game: commit this file to give everyone the checks.
 FG.data.checks = {
 "ACK": {"s":"checked","by":"agent","at":"2026-10-12","note":"No jet bridges (Nantucket has none): bridges off. Removed a stand that pointed into the FBO buildings. Terminal, aprons and both runways match."},
-"ANR": {"s":"checked","by":"agent","at":"2026-10-12","note":"Terminal and the big east hangar were swapped (fixed). Only 1 stand was mapped: now 5 on the marked stands in front of the terminal, nose in. No jet bridges."},
+"ANR": {"s":"checked","by":"agent","at":"2026-10-12","note":"Tidied: 12 taxiways straightened, 18 buildings/aprons squared. Earlier: terminal/hangar swap, 5 real stands."},
 "AVN": {"s":"checked","by":"agent","at":"2026-10-12","note":"Removed the north block of the main apron (grass, 2 stands on it) and 2 taxiway stubs into the fields. Added 2 stands where airliners park in front of the terminal."},
 "BRN": {"s":"checked","by":"agent","at":"2026-10-12","note":"Tidied: 5 taxiways straightened, 6 buildings/aprons squared; added the missing terminal apron (stands Y2, Y3A, Y4, S3 stood on unmapped concrete). Earlier: no jet bridges."},
-"BZO": {"s":"checked","by":"agent","at":"2026-10-12","note":"No jet bridges (Bolzano has none). Removed the grass parking north of the main apron (mapped as paved apron) and its 2 stands. Military-side aprons in the west kept."},
+"BZO": {"s":"checked","by":"agent","at":"2026-10-12","note":"Tidied: 1 taxiway straightened, 12 buildings/aprons squared; removed stand S1, whose lead line ran through the terminal. Earlier: no jet bridges, no grass apron."},
 "EPA": {"s":"checked","by":"agent","at":"2026-10-12","note":"Military apron with its hangars, the old civil terminal apron in the north and the taxiways match the satellite picture; nothing to fix."},
 "EXT": {"s":"checked","by":"agent","at":"2026-10-12","note":"Tidied: 5 taxiways straightened, 3 buildings/aprons squared; added the light concrete strip of the main apron (S5 and 3 stood half off the apron). Earlier: no grass apron, no jet bridges."},
 "HPN": {"s":"checked","by":"agent","at":"2026-10-12","note":"Runway 11/29: east end was ~30 m too far south (moved to the real threshold). Terminal with jet bridges, FBO ramps and stands match."},
