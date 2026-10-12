@@ -25,6 +25,11 @@ Schedule, Marketplace, Finance, Rivals, Log). Every plane has a card at the bott
 where it comes from and goes to, the time left and its fuel; click to select, double-click to
 follow it (2D or 3D).
 
+**On a phone**: the sections are a tab bar at the bottom and open as a sheet over the map. Drag the
+sheet's top edge to make it taller or shorter, pull it down to close it, or tap it to switch to full
+height. Pinch to zoom the map; tap a plane card to select it, tap it twice to follow it. In the
+browser menu, *Add to Home screen* installs the game as an app without the address bar.
+
 **Timetables** (Schedule section): each plane gets a day plan that repeats every day. Pick the route,
 the first departure and how many loops, then move single flights with − / + or type a time. Each
 slot holds one plane on the ground at a time, from landing until departure; when it is empty any of

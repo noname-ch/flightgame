@@ -345,6 +345,7 @@
     m.on('click', () => {
       if (ui.buildMode) return;
       ui.selectedAirport = a.code;
+      if (phone.matches) panIntoView(m.getLatLng()); // or the sheet that opens would cover it
       G.dirty = true;
     });
     m.on('mouseover', () => { ui.hoverAirport = a.code; m.setRadius(airportRadius(a) + 2); updateLabel(a); });
@@ -1636,19 +1637,65 @@
       if (!(FG.view3d && FG.view3d.on)) {
         const pos = planePosition(G.plane(id));
         if (ui.follow && ui.follow !== id) setFollow2d(null);
-        ui.map.panTo(pos.latlng);
+        panIntoView(pos.latlng);
       }
     });
-    list.addEventListener('mouseover', (e) => {
+    // Mouse only: on a touch screen the tip would stay up after the tap, and the Fleet tab shows the same.
+    list.addEventListener('pointerover', (e) => {
+      if (e.pointerType !== 'mouse') return;
       const card = e.target.closest('.pcard[data-plane]');
       ui.hoverCard = card ? card.dataset.plane : null;
       updateStripTip();
     });
-    list.addEventListener('mouseleave', () => { ui.hoverCard = null; updateStripTip(); });
+    list.addEventListener('pointerleave', () => { ui.hoverCard = null; updateStripTip(); });
     // The mouse wheel scrolls the strip sideways.
     list.addEventListener('wheel', (e) => {
       if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) { list.scrollLeft += e.deltaY; e.preventDefault(); }
     }, { passive: false });
+  }
+
+  // ---------- phones: the sidebar is a sheet over the lower part of the map ----------
+  const phone = window.matchMedia('(max-width: 640px)');
+  const SHEET_TOP = 0.34; // default: the top third of the map stays visible
+  ui.sheetTop = SHEET_TOP;
+  function setSheetTop(f) {
+    ui.sheetTop = f;
+    $('sidebar').style.setProperty('--sheet-top', `${(f * 100).toFixed(1)}%`);
+  }
+  // Drag the sheet's head to resize it, pull it down to close it, tap it to switch full / normal height.
+  function bindSheet() {
+    const sheet = $('sidebar');
+    const head = sheet.querySelector('.side-head');
+    let drag = null;
+    head.addEventListener('pointerdown', (e) => {
+      if (!phone.matches || e.target.closest('button')) return;
+      drag = { y: e.clientY, top: ui.sheetTop, h: sheet.parentElement.clientHeight, moved: false };
+      head.setPointerCapture(e.pointerId);
+      sheet.classList.add('dragging');
+    });
+    head.addEventListener('pointermove', (e) => {
+      if (!drag) return;
+      const dy = e.clientY - drag.y;
+      if (Math.abs(dy) > 6) drag.moved = true;
+      if (drag.moved) setSheetTop(Math.min(0.9, Math.max(0, drag.top + dy / drag.h)));
+    });
+    const end = () => {
+      if (!drag) return;
+      sheet.classList.remove('dragging');
+      if (!drag.moved) setSheetTop(ui.sheetTop > 0.05 ? 0 : SHEET_TOP);
+      else if (ui.sheetTop > 0.72) { setSheetTop(SHEET_TOP); ui.tab = null; ui.selectedAirport = null; G.dirty = true; }
+      else if (ui.sheetTop < 0.08) setSheetTop(0);
+      drag = null;
+    };
+    head.addEventListener('pointerup', end);
+    head.addEventListener('pointercancel', end);
+  }
+  // Centre the map on a selection; on phones in the part the sheet leaves free.
+  function panIntoView(latlng) {
+    const map = ui.map;
+    if (!phone.matches || ui.sheetTop < 0.08) { map.panTo(latlng); return; }
+    const h = map.getSize().y;
+    map.panTo(map.unproject(map.project(latlng).add([0, (h - h * ui.sheetTop) / 2])));
   }
 
   // ---------- menu, speed and settings ----------
@@ -1687,7 +1734,7 @@
       <h4>Game</h4>
       <label class="check"><input type="checkbox" data-set="autosave" ${set.autosave ? 'checked' : ''}> Save automatically every 30 s</label>
       <h4>3D view</h4><div class="row"><button data-set="3d">${FG.view3d && FG.view3d.on ? 'Back to 2D' : 'Open 3D view'} <span class="muted">V</span></button></div>
-      <h4>Keys</h4><div class="muted">Space pause · ← → speed · V 3D · F2 developer tools · Esc menu</div></div>`;
+      <h4 class="keys-help">Keys</h4><div class="muted keys-help">Space pause · ← → speed · V 3D · F2 developer tools · Esc menu</div></div>`;
   }
   function onSettings(e) {
     const t = e.target.closest('[data-set]');
@@ -2039,8 +2086,11 @@
     $('sidebar').addEventListener('change', (e) => { if (FG.planner.change(e.target)) ui.selectOpen = false; });
     bindStrip();
     bindTopbar();
+    bindSheet();
     $('sidebar').addEventListener('mousemove', chartHover);
     $('sidebar').addEventListener('mouseleave', () => { $('chart-tip').hidden = true; });
+    // A tap on a chart leaves its tip up on touch screens; scrolling the panel takes it away.
+    $('sidebar').addEventListener('scroll', () => { $('chart-tip').hidden = true; }, { passive: true });
     document.querySelectorAll('[data-tab]').forEach((b) => b.addEventListener('click', () => {
       // A second click on the open section closes the sidebar.
       setTab(ui.tab === b.dataset.tab ? null : b.dataset.tab);
@@ -2151,7 +2201,7 @@
     initMap();
     applySettings();
     FG.planner.init({ ui, toast, planeGlyph, setTab, bestRoutes, legacyAirports: airportsTab,
-      selectAirport(code) { const a = G.airportByCode[code]; ui.selectedAirport = code; ui.map.panTo([a.lat, a.lon]); G.dirty = true; } });
+      selectAirport(code) { const a = G.airportByCode[code]; ui.selectedAirport = code; panIntoView([a.lat, a.lon]); G.dirty = true; } });
     bindControls();
     renderAll();
     openStart(saved && !G.state.gameOver);

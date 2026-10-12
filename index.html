@@ -2,13 +2,20 @@
 <html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f1620">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon-180.png">
   <meta name="color-scheme" content="dark">
   <title>Flightgame</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=UnifrakturMaguntia&family=Old+Standard+TT:ital,wght@0,400;0,700;1,400&family=Playfair+Display:wght@700;900&display=swap">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@6.13.0/dist/maplibre-gl.css">
-  <link rel="stylesheet" href="css/style.css?v=202610120925">
+  <link rel="stylesheet" href="css/style.css?v=202610121318">
   <script type="importmap">
     {
       "imports": {
@@ -60,7 +67,7 @@
   <main>
     <div id="map"><div id="view3d" hidden></div></div>
     <aside id="sidebar" hidden>
-      <div class="side-head"><h2 id="side-title"></h2><button class="close" id="side-close" title="Close">×</button></div>
+      <div class="side-head"><span class="sheet-grip" aria-hidden="true"></span><h2 id="side-title"></h2><button class="close" id="side-close" title="Close">×</button></div>
       <div id="details"></div>
       <div id="events"></div>
       <div id="tab-content"></div>
@@ -90,26 +97,26 @@
   <div id="chart-tip" hidden></div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="js/config.js?v=202610120925"></script>
-  <script src="js/data/aircraft.js?v=202610120925"></script>
-  <script src="js/data/airports.js?v=202610120925"></script>
-  <script src="js/data/airports-more.js?v=202610120925"></script>
-  <script src="js/data/runways.js?v=202610120925"></script>
-  <script src="js/data/towns.js?v=202610120925"></script>
-  <script src="js/data/cities.js?v=202610120925"></script>
-  <script src="js/data/factories.js?v=202610120925"></script>
-  <script src="js/data/looks.js?v=202610120925"></script>
-  <script src="js/data/models.js?v=202610120925"></script>
-  <script src="js/data/layouts.js?v=202610120925"></script>
-  <script src="js/data/terminals.js?v=202610120925"></script>
-  <script src="js/layouts.js?v=202610120925"></script>
-  <script src="js/data/events.js?v=202610120925"></script>
-  <script src="js/data/rivals.js?v=202610120925"></script>
-  <script src="js/game.js?v=202610120925"></script>
-  <script src="js/hangar.js?v=202610120925"></script>
-  <script src="js/planner.js?v=202610120925"></script>
-  <script src="js/ui.js?v=202610120925"></script>
-  <script src="js/devtools.js?v=202610120925"></script>
+  <script src="js/config.js?v=202610121318"></script>
+  <script src="js/data/aircraft.js?v=202610121318"></script>
+  <script src="js/data/airports.js?v=202610121318"></script>
+  <script src="js/data/airports-more.js?v=202610121318"></script>
+  <script src="js/data/runways.js?v=202610121318"></script>
+  <script src="js/data/towns.js?v=202610121318"></script>
+  <script src="js/data/cities.js?v=202610121318"></script>
+  <script src="js/data/factories.js?v=202610121318"></script>
+  <script src="js/data/looks.js?v=202610121318"></script>
+  <script src="js/data/models.js?v=202610121318"></script>
+  <script src="js/data/layouts.js?v=202610121318"></script>
+  <script src="js/data/terminals.js?v=202610121318"></script>
+  <script src="js/layouts.js?v=202610121318"></script>
+  <script src="js/data/events.js?v=202610121318"></script>
+  <script src="js/data/rivals.js?v=202610121318"></script>
+  <script src="js/game.js?v=202610121318"></script>
+  <script src="js/hangar.js?v=202610121318"></script>
+  <script src="js/planner.js?v=202610121318"></script>
+  <script src="js/ui.js?v=202610121318"></script>
+  <script src="js/devtools.js?v=202610121318"></script>
   <script>
     // The 3D view is an ES module with imports from the internet. If it fails to load (offline, a
     // blocked CDN, or old cached files mixed with new ones), say so instead of leaving a dead button.
@@ -132,9 +139,9 @@
       }));
     })();
   </script>
-  <script type="module" src="js/osmairports.js?v=202610120925"></script>
-  <script type="module" src="js/view3d.js?v=202610120925"></script>
-  <script type="module" src="js/hangar3d.js?v=202610120925"></script>
-  <script type="module" src="js/icons3d.js?v=202610120925"></script>
+  <script type="module" src="js/osmairports.js?v=202610121318"></script>
+  <script type="module" src="js/view3d.js?v=202610121318"></script>
+  <script type="module" src="js/hangar3d.js?v=202610121318"></script>
+  <script type="module" src="js/icons3d.js?v=202610121318"></script>
 </body>
 </html>

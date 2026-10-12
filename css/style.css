@@ -1001,3 +1001,101 @@ ul.slot-check .warn-li button { margin-left: 2px; }
 .rv-dot.sm-free { background: repeating-linear-gradient(135deg, rgba(148, 163, 184, 0.7) 0 2px, transparent 2px 4px); }
 .sm-rep { margin-top: 4px; cursor: help; }
 .sm-overview tr.on td { background: var(--panel-2); }
+
+/* ---------- phones and touch screens ---------- */
+/* No double-tap zoom on controls, no pull-to-refresh while panning the map or scrolling a panel. */
+button, .pcard, #rail, #topbar, #strip, .leaflet-control a { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+html, body { overscroll-behavior: none; }
+body { height: 100dvh; } /* the visible height, also while the phone's address bar is shown */
+#sidebar, #strip-list, #market, .set-card, #devtools { overscroll-behavior: contain; }
+.sheet-grip { display: none; }
+/* Notches and the home indicator (viewport-fit=cover in index.html). */
+#topbar {
+  padding-top: max(6px, env(safe-area-inset-top));
+  padding-left: max(12px, env(safe-area-inset-left));
+  padding-right: max(12px, env(safe-area-inset-right));
+}
+#strip { padding: 0 env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+
+@media (pointer: coarse) {
+  input, select, textarea { font-size: 16px; } /* smaller fields make iPhones zoom in on focus */
+  table.legs input[type=time] { width: 96px; }
+  .keys-help, #devtools-toggle .muted { display: none; }
+}
+@media (hover: none) {
+  #rail button:hover:not(.active) { background: none; } /* no hover colour stuck on the last tapped tab */
+}
+
+/* Portrait phones: the sections become a tab bar at the bottom and the sidebar a sheet over the map. */
+@media (max-width: 640px) {
+  :root { --tabbar-h: 56px; }
+  body { padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom)); }
+  #topbar { gap: 8px; padding-bottom: 5px; padding-left: max(8px, env(safe-area-inset-left)); padding-right: max(8px, env(safe-area-inset-right)); }
+  .tb-left { gap: 4px; }
+  .icon-btn { height: 36px; min-width: 36px; }
+  #speed-label { min-width: 0; max-width: 58px; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #speed-pop { width: min(280px, calc(100vw - 60px)); }
+  .tb-center { gap: 8px; min-width: 0; }
+  #money { font-size: 15px; white-space: nowrap; }
+  #clock-time { font-size: 15px; }
+  #clock-day { font-size: 10px; white-space: nowrap; }
+  .menu { left: max(8px, env(safe-area-inset-left)); top: calc(48px + env(safe-area-inset-top)); }
+
+  #rail {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 2050;
+    width: auto; height: calc(var(--tabbar-h) + env(safe-area-inset-bottom));
+    flex-direction: row; gap: 0;
+    padding: 3px max(4px, env(safe-area-inset-right)) env(safe-area-inset-bottom) max(4px, env(safe-area-inset-left));
+    border-left: none; border-top: 1px solid var(--border);
+    overflow-x: auto; overflow-y: hidden; scrollbar-width: none;
+  }
+  #rail button { flex: 1 0 44px; justify-content: center; padding: 4px 0; }
+
+  #sidebar {
+    top: var(--sheet-top, 34%); left: 0; right: 0; bottom: 0; width: auto; max-width: none;
+    padding: 0 12px 16px;
+    border-left: none; border-top: 1px solid var(--border); border-radius: 14px 14px 0 0;
+    box-shadow: 0 -10px 28px rgba(0, 0, 0, 0.45);
+    transition: top 0.18s ease-out;
+  }
+  #sidebar.dragging { transition: none; }
+  /* The head stays on top while the sheet scrolls; drag it to resize the sheet, tap it for full height. */
+  .side-head {
+    position: sticky; top: 0; z-index: 5; margin: 0 -12px; padding: 18px 12px 8px;
+    background: rgb(11, 15, 21); touch-action: none; cursor: grab;
+  }
+  .sheet-grip { display: block; position: absolute; top: 6px; left: 50%; width: 40px; height: 5px; margin-left: -20px; border-radius: 3px; background: #475569; }
+  .side-head .close { font-size: 22px; min-width: 36px; min-height: 36px; }
+
+  #strip-list { gap: 5px; padding: 5px 6px; }
+  .pcard { width: 92px; height: 60px; }
+  .pcard img { height: 38px; }
+  .pcard.add { width: 48px; }
+  #toast { bottom: auto; top: calc(56px + env(safe-area-inset-top)); max-width: calc(100vw - 24px); text-align: center; }
+  #devtools { top: calc(52px + env(safe-area-inset-top)); left: 8px; max-height: calc(100dvh - 150px); }
+  .mk-top { gap: 10px; padding: 10px 12px 4px; }
+  .mk-top h1 { font-size: 16px; }
+  .mk-money { white-space: nowrap; }
+  .leaflet-control-scale { display: none; }
+  .leaflet-control-attribution { font-size: 9px; }
+}
+@media (max-width: 640px) and (pointer: coarse), (max-height: 500px) and (pointer: coarse) {
+  .leaflet-control-zoom { display: none; } /* pinch to zoom */
+}
+
+/* Phones held sideways: little height, so a slim rail without labels and smaller plane cards. */
+@media (max-height: 500px) and (min-width: 641px) {
+  #topbar { padding-top: max(3px, env(safe-area-inset-top)); padding-bottom: 3px; }
+  .icon-btn { height: 30px; min-width: 30px; }
+  #money, #clock-time { font-size: 15px; }
+  #rail { width: calc(52px + env(safe-area-inset-right)); padding: 2px max(2px, env(safe-area-inset-right)) 2px 2px; gap: 0; }
+  #rail button { padding: 6px 0; }
+  #rail button small { display: none; }
+  #sidebar { right: calc(52px + env(safe-area-inset-right)); width: min(440px, 62%); }
+  #strip-list { padding: 4px 6px; }
+  .pcard { width: 84px; height: 48px; }
+  .pcard img { height: 30px; }
+  .pc-type { font-size: 10px; }
+  .pcard.add { width: 44px; font-size: 18px; }
+  #devtools { top: 44px; max-height: calc(100dvh - 56px); }
+}
