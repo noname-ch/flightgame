@@ -131,7 +131,9 @@ taxiways and stands (`js/data/layouts/<CODE>.json`, loaded when the airport is f
 `js/layouts.js`). There planes park on the real stands nearest the main terminal and taxi the shortest way
 along the real taxiways. The data is © OpenStreetMap contributors (ODbL); `tools/build_layouts.html` makes the
 files, from Overpass API downloads where there are any and else from the vector tiles of the 3D map
-(OpenFreeMap): there the stands are placed in front of the mapped gates. Every other airport is read off
+(OpenFreeMap): there the stands are placed in front of the mapped gates. Reichenbach (LSGR) has a file made
+by hand: its real taxiway and hangars, and a small apron with three stands beside the taxiway, as none is mapped
+(a layout file may also say `"tower": false` and `"bridges": false`). Every other airport is read off
 those vector tiles in the browser the first time it is needed (zoomed in on, or flown to), by
 `js/osmairports.js`, and kept in the browser (localStorage, the last 120 airports): its real aprons, taxiways
 and buildings with their mapped heights. The terminal is the building at the mapped gates, or else the

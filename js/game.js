@@ -731,8 +731,9 @@
         return st;
       });
     const ref = middle(stands.map((st) => st.lead[0]));
-    // Where no tower is mapped, one stands behind the main terminal, away from the stands.
-    const towers = lay.towers.length ? lay.towers : [offsetPoint(main[0], main[1], bearing({ lat: ref[0], lon: ref[1] }, { lat: main[0], lon: main[1] }), 80)];
+    // Where no tower is mapped, one stands behind the main terminal, away from the stands (unless the layout
+    // says the airfield has none).
+    const towers = lay.towers.length || lay.tower === false ? lay.towers : [offsetPoint(main[0], main[1], bearing({ lat: ref[0], lon: ref[1] }, { lat: main[0], lon: main[1] }), 80)];
     const tw = 5 + size;
     const th = [10, 14, 20, 30, 42, 55][size];
     const buildings = [
