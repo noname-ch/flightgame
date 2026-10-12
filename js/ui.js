@@ -468,23 +468,25 @@
       return;
     }
     // (padded a lot: an apron can lie up to 3 km from the airport's reference point)
-    const view = drawnArea('gates', `${z}|${FG.layouts ? FG.layouts.version : 0}|${FG.devPreview ? ui.selectedAirport : ''}|${D.airports.length}|${G.state.projects.length}`, 1);
+    const view = drawnArea('gates', `${z}|${FG.layouts ? `${FG.layouts.version}.${FG.layouts.looked}` : 0}|${FG.devPreview ? ui.selectedAirport : ''}|${D.airports.length}|${G.state.projects.length}`, 1);
     if (!view) return;
     const list = D.airports.filter((a) => !a.factory && view.contains([a.lat, a.lon]));
-    const sig = `${z}|${FG.layouts ? FG.layouts.version : 0}|${FG.devPreview ? ui.selectedAirport : ''}|${list.map((a) => `${a.code}:${G.airportSize(a.code)}:${G.airportRunways(a.code).length}`).join(',')}`;
+    const sig = `${z}|${FG.layouts ? `${FG.layouts.version}.${FG.layouts.looked}` : 0}|${FG.devPreview ? ui.selectedAirport : ''}|${list.map((a) => `${a.code}:${G.airportSize(a.code)}:${G.airportRunways(a.code).length}`).join(',')}`;
     if (sig === ui.gateSig) return; // redrawn only when the view or an airport changes
     ui.gateSig = sig;
     ui.gateLayer.clearLayers();
     const quiet = { pane: 'gates', interactive: false };
     for (const a of list) {
       const ap = G.apronOf(a.code);
+      // Its real layout is on the way: not the one the game makes up meanwhile (it would stand somewhere else).
+      if (FG.layouts && FG.layouts.pending(a.code)) continue;
       // taxiways, aprons and buildings (the real ones where the airport has a layout from OpenStreetMap)
       for (const tw of ap.real ? ap.real.taxiways : G.taxiwaysOf(a.code)) {
         L.polyline(tw, { ...quiet, color: '#4a515c', weight: z >= 16 ? 9 : 4, opacity: 1 }).addTo(ui.gateLayer);
       }
       for (const r of ap.aprons || [ap.apron]) L.polygon(r, { ...quiet, stroke: false, fillColor: '#3a4049', fillOpacity: 0.92 }).addTo(ui.gateLayer);
       for (const b of ap.buildings) {
-        const fill = { terminal: '#64748b', hall: '#6b7a90', roof: '#94a3b8', tower: '#cbd5e1', bridge: '#cbd5e1', road: '#3b4048', carpark: '#57606c', hangar: '#57606c' }[b.kind];
+        const fill = { terminal: '#64748b', hall: '#6b7a90', roof: '#94a3b8', tower: '#cbd5e1', bridge: '#cbd5e1', road: '#3b4048', carpark: '#57606c', hangar: '#57606c', other: '#5b6470' }[b.kind];
         if (!fill) continue; // glazing, roof plant, masts and the like are too small to show from above
         L.polygon(b.ring, { ...quiet, color: '#e2e8f0', weight: b.kind === 'road' ? 0 : 1, fillColor: fill, fillOpacity: 1 }).addTo(ui.gateLayer);
       }

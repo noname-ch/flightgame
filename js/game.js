@@ -319,6 +319,7 @@
     const C = (p) => rwyCoords(main, p);
     const segs = [
       ...rws.filter((x) => x !== r).map((x) => [C([x[0], x[1]]), C([x[2], x[3]]), 110]),
+      ...neighbours(code, 8).flatMap((b) => airportRunways(b.code)).map((x) => [C([x[0], x[1]]), C([x[2], x[3]]), 110]),
       ...known.lines.map(([p, q]) => [C(p), C(q), 18]),
     ];
     const pts = known.rings.flat().map(C);
@@ -365,6 +366,33 @@
       }
     }
     return { main, side: best.side, along: best.along, edge: best.edge };
+  }
+
+  // The other airports within `km` (an airfield next to a big airport must keep its apron off the other's runways).
+  const nearGrid = { n: -1, cells: new Map() };
+  function neighbours(code, km) {
+    const all = D.airports;
+    if (nearGrid.n !== all.length) { // (again when the player builds an airport)
+      nearGrid.n = all.length;
+      nearGrid.cells.clear();
+      for (const x of all) {
+        const k = `${Math.floor(x.lat * 10)}|${Math.floor(x.lon * 10)}`;
+        if (!nearGrid.cells.has(k)) nearGrid.cells.set(k, []);
+        nearGrid.cells.get(k).push(x);
+      }
+    }
+    const a = airportByCode[code];
+    const out = [];
+    const dj = Math.ceil(km / (11.1 * Math.max(0.1, Math.cos(toRad(a.lat)))));
+    const di = Math.ceil(km / 11.1);
+    for (let i = -di; i <= di; i++) {
+      for (let j = -dj; j <= dj; j++) {
+        for (const b of nearGrid.cells.get(`${Math.floor(a.lat * 10) + i}|${Math.floor(a.lon * 10) + j}`) || []) {
+          if (b.code !== code && !b.factory && distanceKm(a, b) < km) out.push(b);
+        }
+      }
+    }
+    return out;
   }
 
   // `sizeAs`: lay the airport out as if it had this size (for the expansion preview).
@@ -443,7 +471,9 @@
     let side = 1;
     let base = [a.lat, a.lon];
     if (rws.length) {
-      const place = apronPlace(code, rws, reach, deepest - near);
+      // (the hangars and the cargo shed stand beyond the apron's ends: they must be clear of the runways too)
+      const ends = size >= 3 ? 45 + 75 * Math.ceil((size - 1) / 2) + 75 : size >= 2 ? 75 : 0;
+      const place = apronPlace(code, rws, reach + ends, deepest - near);
       hdg = place.main.hdg;
       side = place.side;
       base = rwyPoint(place.main, place.along, place.side * (place.edge - near));
@@ -697,15 +727,34 @@
       return best;
     };
     const angleDiff = (x, y) => Math.abs((((x - y) % 360) + 540) % 360 - 180);
-    const stands = lay.stands.map((s) => [s, metres(s, main)]).sort((x, y) => x[1] - y[1]).slice(0, 2 * GATE_COUNT[size])
-      .map(([[lat, lon, mapped, name]], i) => {
+    // As many stands as the airport's size gives gates, shared out among the terminals: each terminal's
+    // stands nearest it first, taken in turn from each, the biggest terminal first (else planes parked at
+    // the main terminal only and the others stood empty). Stands at no terminal come last.
+    const wallsOf = lay.terminals.map((r) => r.map((q, i) => [q, r[(i + 1) % r.length]]));
+    const byTerminal = lay.terminals.map((r, i) => ({ i, spread: spread(r), list: [] }));
+    const loose = [];
+    for (const s of lay.stands) {
+      let best = null;
+      wallsOf.forEach((ws, i) => {
+        const d = ws.reduce((m, [w0, w1]) => Math.min(m, segMetres(s, w0, w1).d), Infinity);
+        if (d < 120 && (!best || d < best.d)) best = { i, d };
+      });
+      if (best) byTerminal[best.i].list.push([s, best.d]); else loose.push([s, metres(s, main)]);
+    }
+    const order = [];
+    const groups = byTerminal.filter((g) => g.list.length).sort((x, y) => y.spread - x.spread);
+    for (const g of groups) g.list.sort((x, y) => x[1] - y[1]);
+    for (let k = 0; groups.some((g) => k < g.list.length); k++) for (const g of groups) if (k < g.list.length) order.push(g.list[k][0]);
+    order.push(...loose.sort((x, y) => x[1] - y[1]).map(([s]) => s));
+    const stands = order.slice(0, 2 * GATE_COUNT[size])
+      .map(([lat, lon, mapped, name, right], i) => {
         const aheadOf = (h) => (m, across = 0) => { const p = offsetPoint(lat, lon, h, m); return offsetPoint(p[0], p[1], h + 90, across); };
         // The mapped direction is often the wrong way round or missing. A plane is pushed back onto the
         // nearest taxiway, so its nose points away from it: keep the mapped line (either way round) when it
         // roughly agrees, else park straight out from the taxiway.
         let heading = mapped;
         const foot = footOnTaxiway([lat, lon]);
-        if (lay.source === 'tiles') { /* read off the tiles: the reader already turned it the right way */ } else if (foot.pt && foot.d > 3) {
+        if (right || (lay.source === 'tiles' && right == null)) { /* the reader already turned it the right way */ } else if (foot.pt && foot.d > 3) {
           const away = bearing({ lat: foot.pt[0], lon: foot.pt[1] }, { lat, lon });
           const flip = (mapped + 180) % 360;
           heading = angleDiff(mapped, away) <= angleDiff(flip, away) ? mapped : flip;
@@ -738,8 +787,10 @@
     const th = [10, 14, 20, 30, 42, 55][size];
     const buildings = [
       // the mapped height where the tiles give one
-      ...lay.terminals.map((ring, i) => ({ ring, base: 0, h: (lay.heights && lay.heights.terminals[i]) || 10 + 3 * size, kind: 'terminal' })),
-      ...lay.hangars.map((ring, i) => ({ ring, base: 0, h: (lay.heights && lay.heights.hangars[i]) || 14, kind: 'hangar' })),
+      // (5 m is what the tiles give a building without a known height)
+      ...lay.terminals.map((ring, i) => ({ ring, base: 0, h: (lay.heights && lay.heights.terminals[i] > 5 && lay.heights.terminals[i]) || 10 + 3 * size, kind: 'terminal' })),
+      ...lay.hangars.map((ring, i) => ({ ring, base: 0, h: (lay.heights && lay.heights.hangars[i] > 5 && lay.heights.hangars[i]) || 14, kind: 'hangar' })),
+      ...(lay.others || []).map((ring, i) => ({ ring, base: 0, h: (lay.heights && lay.heights.others && lay.heights.others[i]) || 6, kind: 'other' })),
       ...towers.flatMap((p) => [{ ring: square(p, tw / 2), base: 0, h: th, kind: 'tower' }, { ring: square(p, tw / 2 + 2), base: th, h: th + 5, kind: 'cab' }]),
     ];
     return {

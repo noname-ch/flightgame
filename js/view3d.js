@@ -341,7 +341,8 @@ function holdBars(f, p, q, width) {
   return bars;
 }
 
-function gateFeatures(list, gates) {
+// `hide` gets the outlines the map's own buildings must stay out of (hideMapBuildings).
+function gateFeatures(list, gates, hide = []) {
   const feats = [];
   const ring = (pts) => { const r = pts.map(([lat, lon]) => [lon, lat]); r.push(r[0]); return [r]; };
   const line = (pts) => pts.map(([lat, lon]) => [lon, lat]);
@@ -377,6 +378,8 @@ function gateFeatures(list, gates) {
       for (const st of pv.stands) path(st.lead, { kind: 'pvline' });
     }
     if (!gates) continue;
+    // Its real layout is on the way: not the one the game makes up meanwhile (it would stand somewhere else).
+    if (FG.layouts && FG.layouts.pending(a.code)) continue;
     const big = G.airportSize(a.code) >= 3;
     // Taxiways as wide lines along every bend, with round joints (not one box per line, whose corners stuck out).
     const width = big ? 23 : 15;
@@ -392,6 +395,8 @@ function gateFeatures(list, gates) {
     const ap = G.apronOf(a.code);
     for (const r of ap.aprons || [ap.apron]) poly(r, { kind: 'apron' });
     for (const b of ap.buildings) poly(b.ring, { kind: 'building', part: b.kind, base: b.base, h: b.h });
+    for (const b of ap.buildings) if (HIDES.has(b.kind)) hide.push(b.ring);
+    if (!ap.real) hide.push(...(ap.aprons || [ap.apron])); // (a made-up apron may lie over real buildings)
     for (const m of ap.markings || []) path(m.line, { kind: m.kind === 'w' ? 'paint' : 'lead' });
     for (const st of ap.stands) {
       path(st.lead, { kind: 'lead' });
@@ -401,6 +406,51 @@ function gateFeatures(list, gates) {
     }
   }
   return { type: 'FeatureCollection', features: feats };
+}
+
+// The map's own buildings (OpenFreeMap) where the game draws one, or a made-up apron: else two stood in the
+// same place, the map's in another colour and a bit off, and a terminal seemed to be on the map but not in
+// the game. Every outline is drawn in by 1.5 m first, so that a building that only shares a wall with one of
+// the game's stays. (MapLibre's 'within' doesn't take polygons; 'distance' does.)
+const HIDES = new Set(['terminal', 'hall', 'hangar', 'other', 'tower', 'carpark']);
+function inset(ring, d) {
+  const lat0 = ring[0][0];
+  const kx = 111320 * Math.cos(lat0 * DEG);
+  const P = ring.map(([lat, lon]) => [(lon - ring[0][1]) * kx, (lat - lat0) * 111320]);
+  let a2 = 0;
+  for (let i = 0; i < P.length; i++) { const p = P[i]; const q = P[(i + 1) % P.length]; a2 += p[0] * q[1] - q[0] * p[1]; }
+  if (Math.abs(a2) / 2 < 8 * d * d) return null; // too small to draw in
+  const s = a2 > 0 ? 1 : -1; // counter-clockwise: the inside is on the left of each edge
+  const out = [];
+  for (let i = 0; i < P.length; i++) {
+    const p = P[(i + P.length - 1) % P.length];
+    const c = P[i];
+    const n = P[(i + 1) % P.length];
+    const e1 = [c[0] - p[0], c[1] - p[1]];
+    const e2 = [n[0] - c[0], n[1] - c[1]];
+    const l1 = Math.hypot(...e1) || 1;
+    const l2 = Math.hypot(...e2) || 1;
+    const n1 = [(-e1[1] / l1) * s, (e1[0] / l1) * s]; // inward normals
+    const n2 = [(-e2[1] / l2) * s, (e2[0] / l2) * s];
+    const b = [n1[0] + n2[0], n1[1] + n2[1]];
+    const cos = (b[0] * n1[0] + b[1] * n1[1]) / (Math.hypot(...b) || 1);
+    const m = Math.min(3 * d, d / Math.max(0.2, cos)); // the corner moves this far along the bisector
+    const bl = Math.hypot(...b) || 1;
+    out.push([c[0] + (b[0] / bl) * m, c[1] + (b[1] / bl) * m]);
+  }
+  return out.map(([x, y]) => [ring[0][1] + x / kx, lat0 + y / 111320]); // [lon, lat]
+}
+function hideMapBuildings(rings) {
+  const polys = [];
+  for (const r of rings) {
+    const q = inset(r, 1.5);
+    if (q) polys.push([[...q, q[0]]]);
+  }
+  const filter = polys.length ? ['>', ['distance', { type: 'MultiPolygon', coordinates: polys }], 0] : null;
+  const sig = JSON.stringify(filter);
+  if (sig === v.sig.hidden) return;
+  v.sig.hidden = sig;
+  for (const id of ['building', 'building-3d']) if (v.map.getLayer(id)) v.map.setFilter(id, filter);
 }
 
 // Real taxiways and buildings around the airports the game lays out itself, so that it keeps its own apron
@@ -461,7 +511,7 @@ function readObstacles() {
 function refreshGates() {
   const map = v.map;
   readObstacles();
-  const infra = (FG.layouts ? FG.layouts.version : 0) + (FG.devPreview ? `pv${FG.ui && FG.ui.selectedAirport}` : '') + Object.entries(G.state.infra).map(([c, i]) => `${c}${i.terminal || 0}${i.runways ? i.runways.length : ''}`).join();
+  const infra = (FG.layouts ? `${FG.layouts.version}.${FG.layouts.looked}` : 0) + (FG.devPreview ? `pv${FG.ui && FG.ui.selectedAirport}` : '') + Object.entries(G.state.infra).map(([c, i]) => `${c}${i.terminal || 0}${i.runways ? i.runways.length : ''}`).join();
   if (!v.gatesDirty && infra === v.gatesInfra) return;
   v.gatesDirty = false;
   v.gatesInfra = infra;
@@ -481,7 +531,9 @@ function refreshGates() {
   const sig = gates + infra + list.map((a) => `${a.code}:${G.airportSize(a.code)}:${G.airportRunways(a.code).length}`).join(',');
   if (sig === v.sig.gates) return;
   v.sig.gates = sig;
-  map.getSource('fg-gates').setData(gateFeatures(list, gates));
+  const hide = [];
+  map.getSource('fg-gates').setData(gateFeatures(list, gates, hide));
+  hideMapBuildings(hide);
 }
 
 // Great-circle polyline.
