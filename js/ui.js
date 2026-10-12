@@ -482,7 +482,7 @@
       // Its real layout is on the way: not the one the game makes up meanwhile (it would stand somewhere else).
       if (FG.layouts && FG.layouts.pending(a.code)) continue;
       // taxiways, aprons and buildings (the real ones where the airport has a layout from OpenStreetMap)
-      for (const tw of ap.real ? ap.real.taxiways : G.taxiwaysOf(a.code)) {
+      for (const tw of G.drawnTaxiways(a.code)) { // (not across the aprons and pads)
         L.polyline(tw, { ...quiet, color: '#4a515c', weight: z >= 16 ? 9 : 4, opacity: 1 }).addTo(ui.gateLayer);
       }
       for (const r of ap.aprons || [ap.apron]) L.polygon(r, { ...quiet, stroke: false, fillColor: '#3a4049', fillOpacity: 0.92 }).addTo(ui.gateLayer);

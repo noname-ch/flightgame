@@ -385,7 +385,7 @@ function gateFeatures(list, gates, hide = []) {
     const width = big ? 23 : 15;
     const tww = metresWidth(width, a.lat);
     const edge = metresWidth(width + (big ? 14 : 7), a.lat); // with its shoulders
-    for (const tw of G.taxiwaysOf(a.code)) {
+    for (const tw of G.drawnTaxiways(a.code)) { // (not across the aprons and pads: planes cross the open slab)
       path(tw, { kind: 'taxiway', ...tww, e10: edge.w10, e22: edge.w22 });
       path(tw, { kind: 'twline' });
       for (const f of paved) {

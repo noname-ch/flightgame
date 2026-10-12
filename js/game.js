@@ -290,6 +290,48 @@
     }
     return lines;
   }
+  // The taxiways as the maps draw them: without the parts on the concrete (aprons and pads), where planes go
+  // across the open slab. Planes still taxi along the whole lines (taxiwaysOf).
+  const drawnCache = new WeakMap(); // apronOf result -> lines
+  function drawnTaxiways(code) {
+    const ap = apronOf(code);
+    if (drawnCache.has(ap)) return drawnCache.get(ap);
+    const lines = taxiwaysOf(code);
+    const rings = [...(ap.aprons || [ap.apron]), ...(ap.pads || [])].filter((r) => r && r.length > 2);
+    const boxes = rings.map((r) => [Math.min(...r.map((p) => p[0])), Math.max(...r.map((p) => p[0])), Math.min(...r.map((p) => p[1])), Math.max(...r.map((p) => p[1]))]);
+    const inRing = (p, r) => {
+      let inside = false;
+      for (let i = 0, j = r.length - 1; i < r.length; j = i++) {
+        const a = r[i], b = r[j];
+        if ((a[0] > p[0]) !== (b[0] > p[0]) && p[1] < ((b[1] - a[1]) * (p[0] - a[0])) / (b[0] - a[0]) + a[1]) inside = !inside;
+      }
+      return inside;
+    };
+    const onConcrete = (p) => rings.some((r, i) => p[0] >= boxes[i][0] && p[0] <= boxes[i][1] && p[1] >= boxes[i][2] && p[1] <= boxes[i][3] && inRing(p, r));
+    const out = [];
+    for (const line of lines) {
+      let cur = [];
+      const end = () => { if (cur.length > 1) out.push(cur); cur = []; };
+      for (let i = 0; i < line.length; i++) {
+        if (i === 0) { if (!onConcrete(line[0])) cur.push(line[0]); continue; }
+        const a = line[i - 1], b = line[i];
+        // looked at every ~4 m, so a line is cut where it reaches the concrete's edge
+        const n = Math.max(1, Math.ceil(distanceKm({ lat: a[0], lon: a[1] }, { lat: b[0], lon: b[1] }) * 250));
+        let was = !onConcrete(a);
+        for (let k = 1; k <= n; k++) {
+          const p = k === n ? b : [a[0] + ((b[0] - a[0]) * k) / n, a[1] + ((b[1] - a[1]) * k) / n];
+          const off = !onConcrete(p);
+          if (off && !was) cur.push(p);         // back off the concrete
+          else if (!off && was) { cur.push(p); end(); } // onto it: the line ends here
+          else if (off && k === n) cur.push(p); // a bend
+          was = off;
+        }
+      }
+      end();
+    }
+    drawnCache.set(ap, out);
+    return out;
+  }
 
   // ---------- gates ----------
   // Every airport has an apron beside its longest runway, on the side of the airport reference point if
@@ -1437,7 +1479,7 @@
     ticketPrice, routeKey, blockMinutes, landingFee, slotUpfront, slotWeekly,
     priceNew, fitsAirport, fitsReason, crewFor, factoryOf,
     airportSize, airportRunways, runwayLength, longestRunway, runwayNeed, attraction,
-    flightTrack, flightState, legTrack, cruiseFt, windFrom, gateOf, apronOf, taxiwaysOf, expansionPreview, terminalPiece,
+    flightTrack, flightState, legTrack, cruiseFt, windFrom, gateOf, apronOf, taxiwaysOf, drawnTaxiways, expansionPreview, terminalPiece,
     fmtMoney, fmtTime, fmtClock, fmtDuration,
 
     // opts: { mode, difficulty, airport, aircraft, company } from the start screen; all optional.
