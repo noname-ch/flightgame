@@ -3,6 +3,9 @@
 //   junctions stay joined);
 // - a taxiway that turns about 90 degrees once (legs 25 m+) becomes the editor's "90° turn" when that stays
 //   within 8 m of it;
+// - one that turns once by another angle (15-165 degrees: exits, angled links) becomes the editor's Curve
+//   (fitCurve + curvePts: straight legs along its two ends, a round corner) with the radius that follows it
+//   best, when that stays within 6 m of it;
 // - aprons and buildings get square corners (editor "Straighten") when that moves no point more than 2.5 m
 //   (aprons 4 m).
 window.tidy = async function (code) {
@@ -15,7 +18,25 @@ window.tidy = async function (code) {
   const M = 111320, DEG = Math.PI / 180;
   const xy = (o) => { const kx = M * Math.cos(o[0] * DEG); return (p) => [(p[1] - o[1]) * kx, (p[0] - o[0]) * M]; };
   const ops = [];
-  const stats = { straight: 0, turn: 0, square: 0 };
+  const stats = { straight: 0, turn: 0, curve: 0, square: 0 };
+  const RADII = [15, 20, 30, 45, 60, 80, 110, 150, 200, 300, 450, 700, 1000];
+  // The Curve tool's curve from the taxiway's first point to its last, leaving and arriving along its ends.
+  function curveOf(l, F, t1, t2) {
+    const o = l[0], kx = M * Math.cos(o[0] * DEG);
+    const ll = (q) => [Math.round((o[0] + q[1] / M) * 1e6) / 1e6, Math.round((o[1] + q[0] / kx) * 1e6) / 1e6];
+    const a = F(l[0]), b = F(l[l.length - 1]);
+    const fit = E.fitCurve(a, b, t1, t2);
+    if (!fit) return null;
+    let best = null;
+    for (const R of RADII) {
+      const c = E.curvePts(a, b, fit.angle, fit.side, fit.bend, R);
+      if (c.radius < R * 0.5 && best) break; // (no room for bigger ones)
+      const g = [l[0], ...c.pts.slice(1, -1).map(ll), l[l.length - 1]];
+      const d = gap('taxiway', g, l);
+      if (!best || d < best.d) best = { g, d };
+    }
+    return best;
+  }
   for (const l of lay.taxiways) {
     if (l.length < 3) continue;
     const F = xy(l[0]);
@@ -34,7 +55,12 @@ window.tidy = async function (code) {
     const s = along(0, 1), e = along(p.length - 1, -1);
     const t1 = Math.atan2(s[1] - a[1], s[0] - a[0]), t2 = Math.atan2(b[1] - e[1], b[0] - e[0]);
     let turn = Math.abs(((t2 - t1) / DEG + 540) % 360 - 180);
-    if (turn < 70 || turn > 110) continue;
+    if (turn < 70 || turn > 110) {
+      if (turn < 15 || turn > 165) continue;
+      const c = curveOf(l, F, t1, t2);
+      if (c && c.d <= 6 && c.d > 0.5) { ops.push({ op: 'set', kind: 'taxiway', from: l, geom: c.g }); stats.curve++; }
+      continue;
+    }
     const g = E.rightTurn(l);
     if (!g) continue;
     const gp = g.map(F);
