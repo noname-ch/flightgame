@@ -15,12 +15,12 @@
   const M = 111320;
   const DEG = Math.PI / 180;
   const r5 = (n) => Math.round(n * 1e5) / 1e5;
-  const NAMES = { row: 'stand row', runway: 'runway', taxiway: 'taxiway', apron: 'apron', terminal: 'terminal', hangar: 'hangar', building: 'building', stand: 'stand', tower: 'tower', airport: 'airport' };
+  const NAMES = { row: 'stand row', runway: 'runway', taxiway: 'taxiway', apron: 'apron', pad: 'pad', terminal: 'terminal', hangar: 'hangar', building: 'building', stand: 'stand', tower: 'tower', airport: 'airport' };
   const cap = (s) => s[0].toUpperCase() + s.slice(1);
-  const RINGS = new Set(['apron', 'terminal', 'hangar', 'building']);
+  const RINGS = new Set(['apron', 'pad', 'terminal', 'hangar', 'building']);
   const BUILDINGS = ['terminal', 'hangar', 'building'];
-  const ADD = ['runway', 'taxiway', 'stand', 'row', 'apron', 'terminal', 'hangar', 'building', 'tower'];
-  const ORDER = { stand: 0, tower: 1, terminal: 2, hangar: 2, building: 2, taxiway: 3, runway: 4, apron: 5 }; // on top first
+  const ADD = ['runway', 'taxiway', 'stand', 'row', 'apron', 'pad', 'terminal', 'hangar', 'building', 'tower'];
+  const ORDER = { stand: 0, tower: 1, terminal: 2, hangar: 2, building: 2, taxiway: 3, runway: 4, apron: 5, pad: 5 }; // on top first
   const MAX_ZOOM = 19; // closer than the game's map goes (the satellite tiles end at 18)
   const STYLE = {
     sel: { color: '#facc15', weight: 3, fillColor: '#facc15', fillOpacity: 0.15 },
@@ -418,6 +418,7 @@
   async function lookup(kind, p) {
     if (kind === 'runway') return findRunway(p);
     if (kind === 'taxiway') return findTaxiway(p);
+    if (kind === 'pad') return findRing(p, 'apron'); // (the asphalt mapped there)
     if (RINGS.has(kind)) return findRing(p, kind);
     return [];
   }
@@ -979,6 +980,9 @@
         parts.push(`<div class="ae-row ae-form">Name <input id="ae-name" value="${esc(e.geom[3] || '')}" maxlength="12">
           Length <input id="ae-len" type="number" min="10" max="150" value="${e.geom[5] || ''}" placeholder="${used ? Math.round(used.push) : 'auto'}" title="Of its lead-in line, and how far planes are pushed back; empty: the game finds it"> m
           <button data-ae="rename">Apply</button></div>`);
+      }
+      if (e.kind === 'apron' || e.kind === 'pad') {
+        parts.push(`<div class="ae-row">It is ${['apron', 'pad'].map((k) => `<button class="mini${k === e.kind ? ' on' : ''}" data-ae="becomes" data-kind="${k}" title="${k === 'pad' ? 'Open concrete: planes go straight across it to their stands' : 'Planes taxi along the taxiways on it'}">${k === 'pad' ? 'a pad (free taxiing)' : 'an apron'}</button>`).join(' ')}</div>`);
       }
       if (BUILDINGS.includes(e.kind)) {
         parts.push(`<div class="ae-row">It is a ${BUILDINGS.map((k) => `<button class="mini${k === e.kind ? ' on' : ''}" data-ae="becomes" data-kind="${k}">${k}</button>`).join(' ')}</div>`);

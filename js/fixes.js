@@ -5,7 +5,7 @@
 //   { op: 'del', kind, geom }        the element with this shape goes
 //   { op: 'set', kind, from, geom }  the element with the shape `from` becomes `geom`
 // Kinds: runway ([lat1, lon1, lat2, lon2, width m, paved 0/1], in FG.data.runways), taxiway (line [[lat, lon]..]),
-// apron, terminal, hangar, building (rings), stand ([lat, lon, heading, name, 1, length m of its lead-in line and
+// apron, pad (open concrete where planes go straight to their stand), terminal, hangar, building (rings), stand ([lat, lon, heading, name, 1, length m of its lead-in line and
 // pushback, if set]), tower ([lat, lon]) and
 // airport (add only: { code, name, city, country, lat, lon, size }, kept under its own code).
 // An element is found again by its shape (within a few metres), so a fix still holds when the map data round it
@@ -21,9 +21,9 @@
   const DEG = Math.PI / 180;
   const TOL = 6; // m: how far an element may lie from the shape a fix remembers
   // where each kind lives in a layout (js/layouts.js), and its heights
-  const LISTS = { taxiway: 'taxiways', apron: 'aprons', terminal: 'terminals', hangar: 'hangars', building: 'others', stand: 'stands', tower: 'towers' };
+  const LISTS = { taxiway: 'taxiways', apron: 'aprons', pad: 'pads', terminal: 'terminals', hangar: 'hangars', building: 'others', stand: 'stands', tower: 'towers' };
   const HEIGHTS = { terminal: 'terminals', hangar: 'hangars', building: 'others' };
-  const RINGS = new Set(['apron', 'terminal', 'hangar', 'building']);
+  const RINGS = new Set(['apron', 'pad', 'terminal', 'hangar', 'building']);
 
   const SENT = 'flightgame.fixes.sent';  // code -> when it was committed to GitHub (kept here until the site has it)
   const SENT_FOR = 3600e3;               // after an hour the website's file is the one that counts

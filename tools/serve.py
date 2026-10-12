@@ -17,7 +17,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FIXES = os.path.join(ROOT, 'js', 'data', 'fixes.js')
 HEADER = ('// Airport fixes drawn with the airport editor (developer tools, F3), see js/fixes.js.\n'
           '// Written by tools/serve.py when the game runs from ./play.sh: commit this file to give everyone the fixes.\n')
-KINDS = {'runway', 'taxiway', 'apron', 'terminal', 'hangar', 'building', 'stand', 'tower', 'airport'}
+KINDS = {'runway', 'taxiway', 'apron', 'pad', 'terminal', 'hangar', 'building', 'stand', 'tower', 'airport'}
 lock = threading.Lock()
 
 

@@ -207,7 +207,10 @@ becomes one straight line, an apron or building gets square corners), **Move poi
 the small dot between two points adds one, a right-click removes one), turn a stand or set its name and
 length (of its lead-in line and the pushback), change a runway's width and surface, make a building a
 terminal or hangar, or **Delete** it. Anywhere you can add a runway, taxiway, stand, apron, terminal, hangar,
-building or tower, and away from other airports a whole new airport. **Stand row** places stands evenly
+building or tower, and away from other airports a whole new airport. A **pad** is open concrete or asphalt
+where planes need no taxiways: they go straight across it from where they come onto it to their stand
+(from the nearest taxiway or runway if none reaches it). It is taken from the mapped apron there or
+drawn; any apron can be turned into a pad and back. **Stand row** places stands evenly
 along a line you click (start, end): set the spacing and a name prefix, and turn them round if the noses
 point the wrong way. Stands added or moved with the editor are always used by the game (one slot each), on
 top of the ones an airport of its size uses. Adding and redrawing first look in the map data (OpenStreetMap vector tiles) and show what they

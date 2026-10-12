@@ -799,7 +799,7 @@
     ];
     return {
       code, real: lay, hdg: 0, side: 1, nose: stands[0].heading, spacing: 60, gates: stands.filter((st) => st.bridge), stands, buildings,
-      terminal: mainTerminal || square(main, 20), apron: biggest(lay.aprons) || square(ref, 60), aprons: lay.aprons,
+      terminal: mainTerminal || square(main, 20), apron: biggest(lay.aprons) || square(ref, 60), aprons: lay.aprons, pads: lay.pads || [],
       lane: [ref, ref], ref, exits: [ref],
     };
   }
@@ -1001,6 +1001,45 @@
         if (d < near) { near = d; best = s; }
       }
       if (best) for (const w of best) { const d = metres(p, g.pts[w]); g.adj[u].push([w, d]); g.adj[w].push([u, d]); }
+    }
+    // Pads (airport fixes): open concrete where planes go straight from where they come onto it to their
+    // stand. Every point on a pad (taxiway points, where the stands' lead-in lines start) is joined to every
+    // other one that a straight way across the pad reaches; a pad no taxiway reaches is joined to the nearest one.
+    const ap = lay.pads && lay.pads.length ? apronOf(code) : null;
+    for (const pad of ap && ap.real === lay ? lay.pads : []) {
+      const edge = (p) => pad.reduce((d, q, i) => Math.min(d, segMetres(p, q, pad[(i + 1) % pad.length]).d), Infinity);
+      const inside = (p) => {
+        let ins = false;
+        for (let i = 0, j = pad.length - 1; i < pad.length; j = i++) {
+          const a = pad[i];
+          const b = pad[j];
+          if ((a[1] > p[1]) !== (b[1] > p[1]) && p[0] < ((b[0] - a[0]) * (p[1] - a[1])) / (b[1] - a[1]) + a[0]) ins = !ins;
+        }
+        return ins;
+      };
+      const onPad = (p) => inside(p) || edge(p) < 20;
+      const ways = [];
+      for (let i = 0; i < g.pts.length; i++) if (onPad(g.pts[i])) ways.push(i);
+      const stands = ap.stands.filter((st) => onPad([st.lat, st.lon])).map((st) => node(st.lead[0]));
+      const all = [...new Set([...ways, ...stands])];
+      const link = (u, w) => { const d = metres(g.pts[u], g.pts[w]); g.adj[u].push([w, d]); g.adj[w].push([u, d]); };
+      for (let i = 0; i < all.length; i++) {
+        for (let j = i + 1; j < all.length; j++) {
+          const a = g.pts[all[i]];
+          const b = g.pts[all[j]];
+          if ([0.25, 0.5, 0.75].every((f) => onPad([a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f]))) link(all[i], all[j]);
+        }
+      }
+      if (!ways.length && stands.length) { // the nearest taxiway (or runway) point to the pad
+        let best = -1;
+        let bd = Infinity;
+        for (let i = 0; i < g.pts.length; i++) {
+          if (all.includes(i)) continue;
+          const d = metres(g.pts[i], g.pts[stands[0]]);
+          if (d < bd) { bd = d; best = i; }
+        }
+        if (best >= 0) for (const s of stands) link(s, best);
+      }
     }
     // Which points belong to the biggest connected piece of the taxiways.
     const piece = new Int32Array(g.pts.length).fill(-1);

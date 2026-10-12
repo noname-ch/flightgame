@@ -394,6 +394,7 @@ function gateFeatures(list, gates, hide = []) {
     }
     const ap = G.apronOf(a.code);
     for (const r of ap.aprons || [ap.apron]) poly(r, { kind: 'apron' });
+    for (const r of ap.pads || []) poly(r, { kind: 'pad' }); // (airport fixes: open concrete)
     for (const b of ap.buildings) poly(b.ring, { kind: 'building', part: b.kind, base: b.base, h: b.h });
     for (const b of ap.buildings) if (HIDES.has(b.kind)) hide.push(b.ring);
     if (!ap.real) hide.push(...(ap.aprons || [ap.apron])); // (a made-up apron may lie over real buildings)
@@ -654,6 +655,8 @@ function transformStyle(_prev, style) {
       paint: { 'fill-color': ['case', ['==', ['get', 'paved'], 1], '#2b2f36', '#6f9a55'] } },
     { id: 'fg-apron', type: 'fill', source: 'fg-gates', minzoom: GATE_MINZOOM, filter: kind('apron'),
       paint: { 'fill-color': '#3a4049', 'fill-opacity': 0.92 } },
+    { id: 'fg-pad', type: 'fill', source: 'fg-gates', minzoom: GATE_MINZOOM, filter: kind('pad'),
+      paint: { 'fill-color': '#6b7280', 'fill-opacity': 0.95, 'fill-outline-color': '#cbd5e1' } },
     { id: 'fg-taxi-lines', type: 'line', source: 'fg-gates', minzoom: 14, filter: kind('twline'),
       layout: { 'line-join': 'round', 'line-cap': 'round' },
       paint: { 'line-color': '#e3b70f', 'line-width': ['interpolate', ['linear'], ['zoom'], 14, 0.8, 17, 1.6, 19, 3] } },

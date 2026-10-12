@@ -486,6 +486,8 @@
         L.polyline(tw, { ...quiet, color: '#4a515c', weight: z >= 16 ? 9 : 4, opacity: 1 }).addTo(ui.gateLayer);
       }
       for (const r of ap.aprons || [ap.apron]) L.polygon(r, { ...quiet, stroke: false, fillColor: '#3a4049', fillOpacity: 0.92 }).addTo(ui.gateLayer);
+      // pads (airport fixes): open concrete, planes go straight across them to their stands
+      for (const r of ap.pads || []) L.polygon(r, { ...quiet, color: '#cbd5e1', weight: 1, dashArray: '5 4', fillColor: '#6b7280', fillOpacity: 0.95 }).addTo(ui.gateLayer);
       for (const b of ap.buildings) {
         const fill = { terminal: '#64748b', hall: '#6b7a90', roof: '#94a3b8', tower: '#cbd5e1', bridge: '#cbd5e1', road: '#3b4048', carpark: '#57606c', hangar: '#57606c', other: '#5b6470' }[b.kind];
         if (!fill) continue; // glazing, roof plant, masts and the like are too small to show from above
