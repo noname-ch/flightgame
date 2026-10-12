@@ -30,6 +30,8 @@ Screenshots and logs go to `tools/agent/shots/` (not committed).
    - `python3 tools/agent/row.py CODE VIEW x1 y1 x2 y2 SPACING_M PREFIX [START]` adds stands evenly along a line
      between two pixels of a shot (like the editor's "Stand row"): put the line ~12 m off a pier face, where the
      noses stop. Then run nosein.mjs to aim them.
+   - `python3 tools/agent/hull.py CODE i j ...` replaces raw aprons i, j, ... (numbers from raw.sh) by one solid
+     apron over them (their convex hull): for aprons mapped as jagged pieces cut round every gate.
    - `node tools/agent/nosein.mjs CODE` turns every stand within 70 m of a terminal nose-in to its nearest face
      (mapped stands often have odd headings, which shows as lead-in lines fanning out at angles).
 5. Tidy: `node tools/agent/tidy.mjs CODE` straightens wobbly taxiways (ends kept, so junctions stay joined),
