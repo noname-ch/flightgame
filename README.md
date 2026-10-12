@@ -208,11 +208,12 @@ beside the real runway at one end are moved onto it in
 Airport editor: in the developer tools (✏️ "Fix airports on the map", or F3) you fix airports where the
 map data is wrong or missing. Click the satellite picture where something is off; a window opens there:
 on a runway, taxiway, apron, building, stand or tower you can **Redraw** it, **Straighten** it (a taxiway
-becomes one straight line, an apron or building gets square corners), make a bent taxiway a **90° turn** (two
-straight legs at a right angle with a round corner), **Move points** (drag them; a click on
+becomes one straight line, an apron or building gets square corners), make part of a taxiway a **Curve** (click
+two points on it: what lies between becomes two straight legs joined by a round curve; set its angle, radius and
+where the corner sits, or drag the corner; it starts as the taxiway runs there), **Move points** (drag them; a click on
 the small dot between two points adds one, a right-click removes one), turn a stand or set its name and
 length (of its lead-in line and the pushback), change a runway's width and surface, make a building a
-terminal or hangar, or **Delete** it. Anywhere you can add a runway, taxiway, stand, apron, terminal, hangar,
+terminal or hangar, or **Delete** it. Anywhere you can add a runway, taxiway (also as a curve between two points), stand, apron, terminal, hangar,
 building or tower, and away from other airports a whole new airport. A **pad** is open concrete or asphalt
 where planes need no taxiways: they go straight across it from where they come onto it to their stand
 (from the nearest taxiway or runway if none reaches it). It is taken from the mapped apron there or

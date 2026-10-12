@@ -1,8 +1,8 @@
 // Airport editor (developer tools, F3): fix airports where the map data is wrong or missing. Click the
 // satellite picture where something is off; a window there offers what can be done at that spot:
 // - on a runway, taxiway, apron, building, stand or tower: redraw it, straighten it (a taxiway becomes one
-//   straight line, an apron or building gets square corners; "90° turn" makes a bent taxiway two straight
-//   legs at a right angle with a round corner), move its points, or delete it;
+//   straight line, an apron or building gets square corners; "Curve" makes the part of a taxiway between two
+//   points a clean curve, its angle and radius set by hand), move its points, or delete it;
 // - anywhere: add a runway, taxiway, stand, apron, terminal, hangar, other building or tower, and where no
 //   airport is near, a whole airport.
 // Adding and redrawing first look for the thing in the map data (OpenStreetMap vector tiles, read by
@@ -16,11 +16,12 @@
   const M = 111320;
   const DEG = Math.PI / 180;
   const r5 = (n) => Math.round(n * 1e5) / 1e5;
-  const NAMES = { row: 'stand row', runway: 'runway', taxiway: 'taxiway', apron: 'apron', pad: 'pad', terminal: 'terminal', hangar: 'hangar', building: 'building', stand: 'stand', tower: 'tower', airport: 'airport' };
+  const r6 = (n) => Math.round(n * 1e6) / 1e6;
+  const NAMES = { row: 'stand row', curve: 'curve', runway: 'runway', taxiway: 'taxiway', apron: 'apron', pad: 'pad', terminal: 'terminal', hangar: 'hangar', building: 'building', stand: 'stand', tower: 'tower', airport: 'airport' };
   const cap = (s) => s[0].toUpperCase() + s.slice(1);
   const RINGS = new Set(['apron', 'pad', 'terminal', 'hangar', 'building']);
   const BUILDINGS = ['terminal', 'hangar', 'building'];
-  const ADD = ['runway', 'taxiway', 'stand', 'row', 'apron', 'pad', 'terminal', 'hangar', 'building', 'tower'];
+  const ADD = ['runway', 'taxiway', 'curve', 'stand', 'row', 'apron', 'pad', 'terminal', 'hangar', 'building', 'tower'];
   const ORDER = { stand: 0, tower: 1, terminal: 2, hangar: 2, building: 2, taxiway: 3, runway: 4, apron: 5, pad: 5 }; // on top first
   const MAX_ZOOM = 19; // closer than the game's map goes (the satellite tiles end at 18)
   const STYLE = {
@@ -43,6 +44,7 @@
     edit: null,   // moving points: { e, pts }
     found: null,  // from the map data, shown before it is used: { kind, geoms, replace, text }
     row: null,    // a row of stands being placed: { a, b, spacing, flip, prefix }
+    curve: null,  // a curve being shaped: { e (the taxiway, or null: a new one), code, a, b, pa, pb, angle, side, bend, radius, fit }
     busy: false,  // looking in the map data, saving or signing in
     target: null, // where Save puts the fixes: 'server', 'github' or 'browser' (FG.fixes.target)
     signin: false, // the GitHub sign-in form is open
@@ -63,7 +65,12 @@
   // ---------- geometry ([lat, lon], metres round a point) ----------
   function frame(o) {
     const kx = M * Math.cos(o[0] * DEG);
-    return { xy: (p) => [(p[1] - o[1]) * kx, (p[0] - o[0]) * M], ll: (q) => [r5(o[0] + q[1] / M), r5(o[1] + q[0] / kx)] };
+    return {
+      xy: (p) => [(p[1] - o[1]) * kx, (p[0] - o[0]) * M],
+      ll: (q) => [r5(o[0] + q[1] / M), r5(o[1] + q[0] / kx)],
+      // to 0.1 m: a curve rounded to 1 m (r5) wobbles
+      fine: (q) => [r6(o[0] + q[1] / M), r6(o[1] + q[0] / kx)],
+    };
   }
   const dist = (p, q) => Math.hypot((q[1] - p[1]) * M * Math.cos(p[0] * DEG), (q[0] - p[0]) * M);
   // Nearest point of segment a-b to p (metres frame): { d, q, t }.
@@ -207,11 +214,73 @@
     const R = Math.min(RADIUS, lA * 0.8, lB * 0.8);
     const o = [c[0] - u[0] * R + w[0] * R, c[1] - u[1] * R + w[1] * R]; // the corner's centre
     const arc = [];
-    for (let i = 0; i <= 8; i++) {
-      const f = (i / 8) * Math.PI / 2;
+    for (let i = 0; i <= 18; i++) {
+      const f = (i / 18) * Math.PI / 2;
       arc.push([o[0] + R * (-w[0] * Math.cos(f) + u[0] * Math.sin(f)), o[1] + R * (-w[1] * Math.cos(f) + u[1] * Math.sin(f))]);
     }
-    return [a, ...arc, b].map(F.ll);
+    return [line[0], ...arc.map(F.fine), line[n - 1]];
+  }
+  // ---------- curves ----------
+  // A curve from a to b (metres frame): it leaves a, turns `angle` degrees (side 1: left, -1: right) round a
+  // circle of `radius` m and comes into b; straight legs before and after. The legs meet at the corner c;
+  // `bend` (0 to 1) is how much of the turn lies at a's end: 0.5, the corner is as far from a as from b.
+  // { pts, c, radius (as it fits between the legs) }
+  const MAX_ANGLE = 170;
+  function curvePts(a, b, angle, side, bend, radius) {
+    const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    const th = Math.max(0, Math.min(MAX_ANGLE, angle)) * DEG;
+    if (th < 0.5 * DEG || L < 1) return { pts: [a, b], c: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], radius: 0 };
+    const phi = Math.atan2(b[1] - a[1], b[0] - a[0]);
+    const f = Math.max(0.05, Math.min(0.95, bend));
+    const al = th * f;
+    const be = th - al;
+    const dA = phi - side * al;
+    const dB = phi + side * be;
+    const uA = [Math.cos(dA), Math.sin(dA)];
+    const uB = [Math.cos(dB), Math.sin(dB)];
+    const la = (L * Math.sin(be)) / Math.sin(th); // leg lengths (law of sines)
+    const lb = (L * Math.sin(al)) / Math.sin(th);
+    const c = [a[0] + uA[0] * la, a[1] + uA[1] * la];
+    const tanHalf = Math.tan(th / 2);
+    const R = Math.max(0, Math.min(radius, Math.min(la, lb) / tanHalf));
+    const T = R * tanHalf; // the circle touches the legs this far from the corner
+    const p1 = [c[0] - uA[0] * T, c[1] - uA[1] * T];
+    const n = [-side * uA[1], side * uA[0]]; // from leg A to the circle's centre
+    const o = [p1[0] + n[0] * R, p1[1] + n[1] * R];
+    const pts = [a];
+    const steps = R > 0 ? Math.max(2, Math.ceil(th / (4 * DEG))) : 0; // a point every 4 degrees
+    for (let i = 0; i <= steps; i++) {
+      const x = side * (i / steps) * th;
+      const v = [-n[0] * R, -n[1] * R];
+      pts.push([o[0] + v[0] * Math.cos(x) - v[1] * Math.sin(x), o[1] + v[0] * Math.sin(x) + v[1] * Math.cos(x)]);
+    }
+    if (!steps) pts.push(c);
+    pts.push(b);
+    const out = pts.filter((q, i) => !i || Math.hypot(q[0] - pts[i - 1][0], q[1] - pts[i - 1][1]) > 0.3);
+    if (out.length > 2 && Math.hypot(out[out.length - 1][0] - out[out.length - 2][0], out[out.length - 1][1] - out[out.length - 2][1]) < 0.3) out.splice(out.length - 2, 1);
+    return { pts: out, c, radius: R };
+  }
+  // The corner at c: angle, side and bend of the curve from a to b whose legs meet there.
+  function cornerAt(a, b, c) {
+    const ang = (u, v) => Math.acos(Math.max(-1, Math.min(1, (u[0] * v[0] + u[1] * v[1]) / (Math.hypot(...u) * Math.hypot(...v) || 1))));
+    const ab = [b[0] - a[0], b[1] - a[1]];
+    const al = ang(ab, [c[0] - a[0], c[1] - a[1]]);
+    const be = ang([-ab[0], -ab[1]], [c[0] - b[0], c[1] - b[1]]);
+    const side = ab[0] * (c[1] - a[1]) - ab[1] * (c[0] - a[0]) < 0 ? 1 : -1; // corner right of a-b: a left turn
+    const th = Math.min(MAX_ANGLE * DEG, al + be);
+    return { angle: th / DEG, side, bend: al + be > 0 ? al / (al + be) : 0.5 };
+  }
+  // The curve that leaves a heading dA and comes into b heading dB (radians, metres frame), or null where
+  // no such curve goes from a to b (the two directions cross behind one of them).
+  function fitCurve(a, b, dA, dB) {
+    const wrap = (x) => Math.atan2(Math.sin(x), Math.cos(x));
+    const turn = wrap(dB - dA);
+    const side = turn >= 0 ? 1 : -1;
+    const th = Math.abs(turn);
+    const phi = Math.atan2(b[1] - a[1], b[0] - a[0]);
+    const al = side * wrap(phi - dA);
+    if (th < 3 * DEG || th > MAX_ANGLE * DEG || al <= 0.02 * th || al >= 0.98 * th) return null;
+    return { angle: th / DEG, side, bend: al / th };
   }
   // An apron or building: square corners. Its sides are turned to the main direction (or across it) and
   // where two sides meet is the corner; with fewer than four sides, the smallest rectangle round it.
@@ -673,14 +742,6 @@
     if (FG.fixes.gap(e.kind, geom, e.geom) < 0.5) { note('It is straight already.'); return; }
     commit(e.code, { op: 'set', kind: e.kind, from: e.geom, geom }, `${cap(NAMES[e.kind])} straightened (Ctrl+Z to undo).`);
   }
-  function rightAngle() {
-    const e = selection();
-    if (!e || e.kind !== 'taxiway') return;
-    const geom = rightTurn(e.geom);
-    if (!geom) { note('This taxiway doesn\u2019t turn: draw it with a bend (or use Straighten).'); return; }
-    if (FG.fixes.gap(e.kind, geom, e.geom) < 0.5) { note('It is a 90\u00b0 turn already.'); return; }
-    commit(e.code, { op: 'set', kind: e.kind, from: e.geom, geom }, 'Taxiway made a 90\u00b0 turn (Ctrl+Z to undo).');
-  }
   function del() {
     const e = selection();
     if (!e) return;
@@ -759,6 +820,181 @@
     const b = popEl.querySelector('[data-ae="placeRow"]');
     if (b) b.textContent = `Place ${n} stand${n > 1 ? 's' : ''}`;
   }
+  // ---------- a curve between two points ----------
+  // On a taxiway (Curve in its window) the part between the two points becomes the curve; anywhere else
+  // (Add here → Curve) it is a new taxiway. The angle, radius and where the corner sits are set in the window,
+  // or by dragging the corner point; the curve starts as the taxiways there run (Fit).
+  const wrap = (x) => Math.atan2(Math.sin(x), Math.cos(x));
+  // p on taxiway `line`: its point within 12 px, else the nearest point of it within 15 px. { q, pos (i + t) } or null.
+  function onLine(line, p) {
+    const k = mpp(p[0]);
+    let best = null;
+    line.forEach((v, i) => { const d = dist(p, v); if (d < 12 * k && (!best || d < best.d)) best = { d, q: v.slice(0, 2), pos: i }; });
+    if (best) return best;
+    const F = frame(p);
+    const pts = line.map(F.xy);
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const f = foot([0, 0], pts[i], pts[i + 1]);
+      if (f.d < 15 * k && (!best || f.d < best.d)) best = { d: f.d, q: F.fine(f.q), pos: i + f.t };
+    }
+    return best;
+  }
+  // Where the curve's ends snap: on the taxiway being changed, else to the taxiways and runways there.
+  function curveSnap(p, e, ev) {
+    if (e) return onLine(e.geom, p);
+    return { q: ev && ev.originalEvent && ev.originalEvent.shiftKey ? [r5(p[0]), r5(p[1])] : snap(p, 'taxiway'), pos: null };
+  }
+  // The direction (radians, frame F) of the taxiway or runway that p lies on, or null.
+  function lineDirAt(p, F) {
+    let best = null;
+    for (const e of ed.code ? elements(ed.code) : []) {
+      if (e.kind !== 'taxiway' && e.kind !== 'runway') continue;
+      const l = shape(e.kind, e.geom);
+      const n = nearest(p, l);
+      if (n.d < 1 && (!best || n.d < best.d)) {
+        const a = F.xy(l[n.i]);
+        const b = F.xy(l[n.i + 1]);
+        best = { d: n.d, dir: Math.atan2(b[1] - a[1], b[0] - a[0]) };
+      }
+    }
+    return best ? best.dir : null;
+  }
+  // The curve that carries on from the directions at its ends (null: unknown); with one of them, as much
+  // turn at the other end.
+  function fitFrom(A, B, dA, dB) {
+    const phi = Math.atan2(B[1] - A[1], B[0] - A[0]);
+    if (dA != null && dB != null) return fitCurve(A, B, dA, dB);
+    const x = dA != null ? wrap(phi - dA) : dB != null ? wrap(dB - phi) : 0;
+    if (Math.abs(x) < 1.5 * DEG || Math.abs(x) > 85 * DEG) return null;
+    return { angle: (2 * Math.abs(x)) / DEG, side: x > 0 ? 1 : -1, bend: 0.5 };
+  }
+  function startCurve(a, b, e, pa, pb) {
+    if (e && pa > pb) { [a, b, pa, pb] = [b, a, pb, pa]; }
+    const F = frame(a);
+    const A = F.xy(a);
+    const B = F.xy(b);
+    let dA = null;
+    let dB = null;
+    let side = 1;
+    if (e) {
+      // as the taxiway comes into the first point and leaves the last (outside the part that changes)
+      const P = e.geom.map(F.xy);
+      const n = P.length;
+      const seg = (i) => Math.atan2(P[i + 1][1] - P[i][1], P[i + 1][0] - P[i][0]);
+      const whole = (x) => Math.abs(x - Math.round(x)) < 1e-6;
+      dA = seg(whole(pa) && pa > 0 ? Math.round(pa) - 1 : Math.min(n - 2, Math.floor(pa + 1e-6)));
+      dB = seg(whole(pb) && pb < n - 1 ? Math.round(pb) : Math.min(n - 2, Math.floor(pb + 1e-6)));
+      // (it bulges to the side of its point farthest from the line between the two)
+      let far = 0;
+      for (let i = Math.ceil(pa + 1e-6); i < pb - 1e-6; i++) {
+        const c = (B[0] - A[0]) * (P[i][1] - A[1]) - (B[1] - A[1]) * (P[i][0] - A[0]);
+        if (Math.abs(c) > far) { far = Math.abs(c); side = c < 0 ? 1 : -1; }
+      }
+    } else {
+      dA = lineDirAt(a, F);
+      dB = lineDirAt(b, F);
+      const phi = Math.atan2(B[1] - A[1], B[0] - A[0]);
+      if (dA != null && Math.cos(dA - phi) < 0) dA += Math.PI; // (along the way from a to b)
+      if (dB != null && Math.cos(dB - phi) < 0) dB += Math.PI;
+    }
+    const fit = fitFrom(A, B, dA, dB);
+    ed.curve = Object.assign({ e: e || null, code: e ? e.code : ed.code, a, b, pa, pb, radius: RADIUS, fit }, fit || { angle: 90, side, bend: 0.5 });
+    const c = curveGeom(ed.curve).c;
+    ed.at = [a, b, c].reduce((n, q) => (q[0] > n[0] ? q : n)); // (the window above the curve)
+    curveHandles();
+    drawLayer();
+    showPopup();
+  }
+  // The curve: { line ([lat, lon], from a to b), c (its corner), radius (as it fits) }.
+  function curveGeom(cv) {
+    const F = frame(cv.a);
+    const r = curvePts(F.xy(cv.a), F.xy(cv.b), cv.angle, cv.side, cv.bend, cv.radius);
+    return { line: [cv.a, ...r.pts.slice(1, -1).map(F.fine), cv.b], c: F.fine(r.c), radius: r.radius };
+  }
+  // The taxiway with the curve in it (or the new one).
+  function curveResult(cv) {
+    const mid = curveGeom(cv).line;
+    if (!cv.e) return mid;
+    const line = cv.e.geom;
+    const out = line.filter((q, i) => i < cv.pa - 1e-6).concat(mid, line.filter((q, i) => i > cv.pb + 1e-6));
+    return out.filter((q, i) => !i || dist(q, out[i - 1]) > 0.3);
+  }
+  function curveInfo(cv) {
+    const g = curveGeom(cv);
+    const less = g.radius < cv.radius - 0.5 ? ` (only ${Math.round(g.radius)} m fit)` : '';
+    return `${Math.round(cv.angle)}° to the ${cv.side > 0 ? 'left' : 'right'}, radius ${Math.round(g.radius)} m${less} · ${Math.round(lengthOf(g.line))} m`;
+  }
+  // After a change: the preview, the corner point and the window's fields (`fields`: those too).
+  function curveChanged(fields) {
+    const cv = ed.curve;
+    if (!cv) return;
+    cv.angle = Math.max(1, Math.min(MAX_ANGLE, cv.angle));
+    drawLayer();
+    if (cv.cm && !cv.dragging) cv.cm.setLatLng(curveGeom(cv).c);
+    if (!popEl) return;
+    const set = (id, v) => { const el = popEl.querySelector(`#${id}`); if (el && document.activeElement !== el) el.value = v; };
+    if (fields) { set('ae-angle', Math.round(cv.angle)); set('ae-radius', Math.round(cv.radius)); }
+    set('ae-bend', Math.round(cv.bend * 100));
+    const info = popEl.querySelector('#ae-curveinfo');
+    if (info) info.textContent = curveInfo(cv);
+  }
+  function curveInput() {
+    const cv = ed.curve;
+    const num = (id) => { const el = $(id); return el && el.value !== '' ? Number(el.value) : NaN; };
+    const angle = num('ae-angle');
+    const radius = num('ae-radius');
+    const bend = num('ae-bend');
+    if (angle >= 1 && angle <= MAX_ANGLE) cv.angle = angle;
+    if (radius >= 0 && radius <= 1000) cv.radius = radius;
+    if (bend >= 5 && bend <= 95) cv.bend = bend / 100;
+    curveChanged(false);
+  }
+  // The two ends and the corner can be dragged.
+  function curveHandles() {
+    handleLayer.clearLayers();
+    const cv = ed.curve;
+    if (!cv) return;
+    const icon = (cls) => L.divIcon({ className: `ae-handle ${cls}`, iconSize: [14, 14] });
+    for (const end of ['a', 'b']) {
+      const m = L.marker(cv[end], { pane: 'apedit', draggable: true, icon: icon(''), keyboard: false, title: 'Drag: where the curve starts or ends' }).addTo(handleLayer);
+      m.on('drag', () => {
+        const ll = m.getLatLng();
+        const s = curveSnap([ll.lat, ll.lng], cv.e, null);
+        if (!s) return;
+        cv[end] = s.q;
+        cv[end === 'a' ? 'pa' : 'pb'] = s.pos;
+        curveChanged(false);
+      });
+      m.on('dragend', () => {
+        if (cv.e && cv.pa > cv.pb) { [cv.a, cv.b, cv.pa, cv.pb] = [cv.b, cv.a, cv.pb, cv.pa]; cv.side = -cv.side; cv.bend = 1 - cv.bend; }
+        curveHandles();
+        curveChanged(true);
+      });
+    }
+    cv.cm = L.marker(curveGeom(cv).c, { pane: 'apedit', draggable: true, icon: icon('ae-corner'), keyboard: false, title: 'Drag: the corner (angle and where it turns)' }).addTo(handleLayer);
+    cv.cm.on('dragstart', () => { cv.dragging = true; });
+    cv.cm.on('drag', () => {
+      const F = frame(cv.a);
+      const ll = cv.cm.getLatLng();
+      Object.assign(cv, cornerAt(F.xy(cv.a), F.xy(cv.b), F.xy([ll.lat, ll.lng])));
+      curveChanged(true);
+    });
+    cv.cm.on('dragend', () => { cv.dragging = false; curveChanged(true); });
+  }
+  function stopCurve() {
+    ed.curve = null;
+    handleLayer.clearLayers();
+  }
+  function applyCurve() {
+    const cv = ed.curve;
+    if (!cv) return;
+    const geom = curveResult(cv);
+    const info = curveInfo(cv).split(' · ')[0];
+    ed.at = curveGeom(cv).c;
+    stopCurve();
+    if (cv.e) commit(cv.e.code, { op: 'set', kind: 'taxiway', from: cv.e.geom, geom }, `Curve: ${info} (Ctrl+Z to undo).`);
+    else commit(cv.code, { op: 'add', kind: 'taxiway', geom }, `Taxiway added as a curve: ${info}.`);
+  }
   function becomes(kind) {
     const e = selection();
     if (!e || e.kind === kind) return;
@@ -787,6 +1023,7 @@
     if (!ed.code) { note('No airport within 8 km: add an airport first.', true); return; }
     if (kind === 'stand') { addStand(); return; }
     if (kind === 'row') { ed.sel = null; startDraw('row', null); return; }
+    if (kind === 'curve') { ed.sel = null; startDraw('curve', null); return; }
     if (kind === 'tower') { commit(ed.code, { op: 'add', kind, geom: [r5(ed.at[0]), r5(ed.at[1])] }, 'Tower added.'); return; }
     ed.sel = null;
     await auto(kind, ed.at, null);
@@ -816,6 +1053,7 @@
     taxiway: 'click points along its centre line; click the last point again (or Enter) when done',
     ring: 'click its corners; click the first corner again (or Enter) when done',
     turn: 'click where the nose of the plane points',
+    curve: 'click where the curve starts, then where it ends',
   };
   function startDraw(kind, replace) {
     ed.draw = { kind, pts: [], replace: replace || null, mouse: null };
@@ -867,6 +1105,20 @@
       commit(e.code, { op: 'set', kind: 'stand', from: e.geom, geom }, `Stand turned to ${geom[2]}°.`);
       return;
     }
+    if (d.kind === 'curve') {
+      const s = curveSnap(p, d.replace, ev);
+      if (!s) { note('Click on the taxiway (yellow).', true); return; }
+      if (d.pts.length && dist(s.q, d.pts[0]) < 5) { note('Click the end a bit away from the start.', true); return; }
+      d.pts.push(s.q);
+      d.pos = (d.pos || []).slice(0, d.pts.length - 1).concat([s.pos]); // (Backspace takes points off d.pts only)
+      if (d.pts.length < 2) { drawDraft(); banner(); return; }
+      const [a, b] = d.pts;
+      const [pa, pb] = d.pos;
+      const e = d.replace;
+      stopDraw();
+      startCurve(a, b, e, pa, pb);
+      return;
+    }
     const ring = RINGS.has(d.kind);
     const q = ev && ev.originalEvent && ev.originalEvent.shiftKey ? [r5(p[0]), r5(p[1])] : snap(p, d.kind, d.replace);
     if (ring && d.pts.length >= 3 && px(q, d.pts[0]) < 10) { finishDraw(); return; }
@@ -904,6 +1156,7 @@
     if (ed.edit) { stopEdit(); note('Not moved.'); return true; }
     if (ed.found) { ed.found = null; drawLayer(); showPopup(); return true; }
     if (ed.row) { ed.row = null; closePopup(); drawLayer(); return true; }
+    if (ed.curve) { stopCurve(); drawLayer(); if (ed.sel) showPopup(); note('No curve.'); return true; }
     if (pop && map.hasLayer(pop)) { closePopup(); ed.sel = null; drawLayer(); return true; }
     return false;
   }
@@ -991,7 +1244,15 @@
         if (op.op !== 'del') drawShape(layer, op.kind, op.geom, STYLE.add);
       }
     }
-    if (ed.sel && !ed.edit) drawShape(layer, ed.sel.kind, ed.sel.geom, STYLE.sel);
+    if (ed.sel && !ed.edit && !ed.curve) drawShape(layer, ed.sel.kind, ed.sel.geom, STYLE.sel);
+    if (ed.curve) {
+      const cv = ed.curve;
+      const g = curveGeom(cv);
+      const o = { pane: 'apedit', interactive: false, renderer };
+      if (cv.e) drawShape(layer, 'taxiway', cv.e.geom, STYLE.del);
+      L.polyline([cv.a, g.c, cv.b], Object.assign({}, o, { color: '#e2e8f0', weight: 1, dashArray: '3 5' })).addTo(layer); // its legs
+      drawShape(layer, 'taxiway', curveResult(cv), STYLE.found);
+    }
     if (ed.found) for (const g of ed.found.geoms) drawShape(layer, ed.found.kind, g, STYLE.found);
     if (ed.row) {
       L.polyline([ed.row.a, ed.row.b], Object.assign({ pane: 'apedit', interactive: false, renderer }, STYLE.draw)).addTo(layer);
@@ -1007,7 +1268,7 @@
     }
     const d = ed.draw;
     if (!d) return;
-    if (d.replace) drawShape(draftLayer, d.replace.kind, d.replace.geom, STYLE.del);
+    if (d.replace) drawShape(draftLayer, d.replace.kind, d.replace.geom, d.kind === 'curve' ? STYLE.sel : STYLE.del);
     const pts = d.mouse && d.kind !== 'turn' ? d.pts.concat([d.mouse]) : d.pts;
     const o = Object.assign({ pane: 'apedit', interactive: false, renderer }, STYLE.draw);
     if (d.kind === 'turn' && d.mouse) {
@@ -1040,6 +1301,18 @@
         <div class="ae-row"><button class="primary" data-ae="placeRow">Place ${n} stand${n > 1 ? 's' : ''}</button><button data-ae="cancel">Cancel</button></div>`);
       return parts.join('');
     }
+    if (ed.curve) {
+      const cv = ed.curve;
+      parts.push(`<div class="ae-sel"><b>${cv.e ? 'Curve on the taxiway' : 'New taxiway: a curve'}</b> · <span id="ae-curveinfo">${esc(curveInfo(cv))}</span></div>
+        <div class="ae-row ae-form">Angle <input id="ae-angle" type="number" min="1" max="${MAX_ANGLE}" step="1" value="${Math.round(cv.angle)}"> °
+          ${[30, 45, 60, 90, 120, 135].map((v) => `<button class="mini" data-ae="curveAngle" data-v="${v}">${v}°</button>`).join('')}</div>
+        <div class="ae-row ae-form">Radius <input id="ae-radius" type="number" min="0" max="1000" step="5" value="${Math.round(cv.radius)}"> m
+          <button data-ae="curveFlip" title="Turn the other way">⇄ Other way</button></div>
+        <div class="ae-row ae-form" title="Where the corner sits: nearer the start or nearer the end">Corner <span class="muted small">start</span><input id="ae-bend" type="range" min="5" max="95" value="${Math.round(cv.bend * 100)}"><span class="muted small">end</span></div>
+        <div class="muted small">Drag the square to move the corner, the dots to move the ends.</div>
+        <div class="ae-row"><button class="primary" data-ae="applyCurve">Apply</button>${cv.fit ? '<button data-ae="curveFit" title="As the taxiways run into its ends">Fit</button>' : ''}<button data-ae="cancel">Cancel</button></div>`);
+      return parts.join('');
+    }
     if (ed.found) {
       parts.push(`<div class="ae-found">Found in the map data: <b>${esc(ed.found.text)}</b> (dashed, cyan)</div>
         <div class="ae-row"><button class="primary" data-ae="use">Use it</button><button data-ae="drawSelf">Draw it myself</button><button data-ae="cancel">Cancel</button></div>`);
@@ -1058,7 +1331,7 @@
       parts.push(`<div class="ae-row">
         ${point ? '' : '<button data-ae="redraw" title="From the map data if it has it right, else draw it yourself">Redraw</button>'}
         ${e.kind === 'taxiway' || RINGS.has(e.kind) ? `<button data-ae="straighten" title="${e.kind === 'taxiway' ? 'One straight line from its first to its last point' : 'Square corners'}">Straighten</button>` : ''}
-        ${e.kind === 'taxiway' ? '<button data-ae="corner" title="Two straight legs at a right angle, with a round corner">90\u00b0 turn</button>' : ''}
+        ${e.kind === 'taxiway' ? '<button data-ae="curve" title="Click two points on it: the part between becomes a curve, its angle and radius set by you">Curve</button>' : ''}
         <button data-ae="points">${point ? 'Move' : 'Move points'}</button>
         ${e.kind === 'stand' ? '<button data-ae="turn">Turn</button>' : ''}
         <button class="danger" data-ae="del">Delete</button></div>`);
@@ -1103,19 +1376,23 @@
       popEl.className = 'ae-pop';
       // (the window is redrawn while its button is clicked: the map would take that click for its own)
       popEl.addEventListener('click', (ev) => { ev.stopPropagation(); onClick(ev); });
-      popEl.addEventListener('input', rowInput);
+      popEl.addEventListener('input', () => (ed.curve ? curveInput() : rowInput()));
       popEl.addEventListener('keydown', (ev) => {
         ev.stopPropagation(); // typing here must not pause the game or move the speed slider
         if (ev.key === 'Enter') {
           if (ev.target.id === 'ae-width') setRunway();
           if (ev.target.id === 'ae-name' || ev.target.id === 'ae-len') rename();
           if (ev.target.id === 'ae-spacing' || ev.target.id === 'ae-prefix') rowInput();
+          if (ev.target.id === 'ae-angle' || ev.target.id === 'ae-radius') { curveInput(); curveChanged(true); }
           if (ev.target.id === 'ae-aname' || ev.target.id === 'ae-code') addAirport();
         }
         if (ev.key === 'Escape') { ev.target.blur(); cancel(); }
       });
       pop = L.popup({ className: 'ae-popup', maxWidth: 340, minWidth: 250, closeOnClick: false, autoPanPadding: [40, 40] });
-      pop.on('remove', () => { if (!ed.draw && !ed.edit) { ed.found = null; } });
+      pop.on('remove', () => {
+        if (!ed.draw && !ed.edit) { ed.found = null; }
+        if (ed.curve) { stopCurve(); drawLayer(); } // (closed with its ✕)
+      });
     }
     popEl.innerHTML = popupHtml();
     pop.setLatLng(ed.at).setContent(popEl);
@@ -1131,10 +1408,11 @@
     const d = ed.draw;
     let html = '';
     if (d) {
-      const name = d.kind === 'turn' ? 'Turning the stand' : `${d.replace ? 'Redrawing' : 'Drawing'} the ${NAMES[d.kind]}`;
-      const hint = d.kind === 'turn' ? HINT.turn : RINGS.has(d.kind) ? HINT.ring : HINT[d.kind];
-      html = `<b>${name}:</b> ${hint}. <span class="muted">Shift: no snapping.</span>
-        ${d.kind !== 'turn' && d.kind !== 'runway' ? '<button class="primary" data-ae="finish">Done</button>' : ''}
+      const name = d.kind === 'turn' ? 'Turning the stand' : d.kind === 'curve' ? (d.replace ? 'Curve on the taxiway' : 'New taxiway as a curve') : `${d.replace ? 'Redrawing' : 'Drawing'} the ${NAMES[d.kind]}`;
+      let hint = d.kind === 'turn' ? HINT.turn : RINGS.has(d.kind) ? HINT.ring : HINT[d.kind];
+      if (d.kind === 'curve' && d.replace) hint += ' on the yellow taxiway (the part between becomes the curve)';
+      html = `<b>${name}:</b> ${hint}. ${d.kind === 'curve' && d.replace ? '' : '<span class="muted">Shift: no snapping.</span>'}
+        ${d.kind !== 'turn' && d.kind !== 'runway' && d.kind !== 'curve' ? '<button class="primary" data-ae="finish">Done</button>' : ''}
         ${d.pts.length ? '<button data-ae="back">Remove last point</button>' : ''}<button data-ae="cancel">Cancel</button>`;
     } else if (ed.edit) {
       const k = ed.edit.e.kind;
@@ -1225,7 +1503,11 @@
       case 'pick': ed.sel = ed.hits[Number(d.i)]; ed.code = ed.sel.code; drawLayer(); showPopup(); renderPanel(); break;
       case 'redraw': redraw(); break;
       case 'straighten': straighten(); break;
-      case 'corner': rightAngle(); break;
+      case 'curve': if (selection()) startDraw('curve', ed.sel); break;
+      case 'curveAngle': if (ed.curve) { ed.curve.angle = Number(d.v); curveChanged(true); } break;
+      case 'curveFlip': if (ed.curve) { ed.curve.side = -ed.curve.side; curveChanged(true); } break;
+      case 'curveFit': if (ed.curve && ed.curve.fit) { Object.assign(ed.curve, ed.curve.fit); curveChanged(true); } break;
+      case 'applyCurve': applyCurve(); break;
       case 'points': startEdit(); break;
       case 'turn': if (selection()) startDraw('turn', ed.sel); break;
       case 'del': del(); break;
@@ -1275,6 +1557,7 @@
     ed.form = null;
     ed.found = null;
     ed.row = null;
+    if (ed.curve) stopCurve();
     ed.hits = hitsAt(p);
     ed.sel = ed.hits[0] || null;
     const o = ed.sel ? null : owner(p);
@@ -1286,6 +1569,7 @@
   function onMove(e) {
     if (!ed.draw) return;
     const p = [e.latlng.lat, e.latlng.lng];
+    if (ed.draw.kind === 'curve') { const s = curveSnap(p, ed.draw.replace, e); ed.draw.mouse = s ? s.q : p; drawDraft(); return; }
     ed.draw.mouse = ed.draw.kind === 'turn' || (e.originalEvent && e.originalEvent.shiftKey) ? p : snap(p, ed.draw.kind, ed.draw.replace);
     drawDraft();
   }
@@ -1294,7 +1578,7 @@
     if (!ed.on || (e.target instanceof Element && e.target.matches('input, select, textarea'))) return;
     let used = true;
     if (e.key === 'Escape') { if (!cancel()) toggle(false); } else if (e.key === 'Enter') {
-      if (ed.draw) finishDraw(); else if (ed.edit) finishEdit(); else if (ed.found) useFound(); else used = false;
+      if (ed.draw) finishDraw(); else if (ed.edit) finishEdit(); else if (ed.found) useFound(); else if (ed.curve) applyCurve(); else used = false;
     } else if (e.key === 'Backspace' && ed.draw) { ed.draw.pts.pop(); drawDraft(); banner(); } else if ((e.key === 'z' || e.key === 'Z') && (e.ctrlKey || e.metaKey)) undo();
     else if (e.key === 'Delete' && ed.sel && !ed.draw && !ed.edit) del();
     else if (e.key === 'v' || e.key === 'V') note('The editor works on the 2D map: close it (F3) for the 3D view.');
@@ -1334,6 +1618,7 @@
       if (ed.edit) stopEdit();
       ed.found = null;
       ed.row = null;
+      if (ed.curve) stopCurve();
       ed.sel = null;
       closePopup();
       layer.clearLayers();
@@ -1368,7 +1653,7 @@
     toggle,
     unsaved: () => FG.fixes.unsaved(),
     // for tests: what the editor would find or make
-    straightLine, rightTurn, squareRing, lookup, hitsAt: (lat, lon) => hitsAt([lat, lon]), madeUp,
+    straightLine, rightTurn, squareRing, curvePts, cornerAt, fitCurve, curveResult: () => ed.curve && curveResult(ed.curve), lookup, hitsAt: (lat, lon) => hitsAt([lat, lon]), madeUp,
     click(lat, lon) { onMapClick({ latlng: L.latLng(lat, lon) }); },
     state: ed,
   };

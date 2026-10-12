@@ -251,6 +251,36 @@ try {
     if (ed.real && ed.n1 !== ed.n0 + 1) errors.push(`airport editor: the new stand did not reach the layout (${ed.n0} → ${ed.n1})`);
   }
 
+  step(`airport editor: a new taxiway as a curve at ${home} (Add here → Curve, two points, 60°, Apply)`);
+  const cu = await evaluate(async (code) => {
+    FG.airportEdit.toggle(true);
+    const a = G.airportByCode[code];
+    const p = [a.lat + 0.004, a.lon + 0.004];
+    FG.airportEdit.click(p[0], p[1]);
+    const b = document.querySelector('[data-ae="add"][data-kind="curve"]');
+    if (!b) return { err: 'no "Add Curve" button in the editor popup' };
+    b.click();
+    FG.airportEdit.click(p[0], p[1]);
+    FG.airportEdit.click(p[0] + 0.0015, p[1] + 0.002);
+    const st = FG.airportEdit.state;
+    if (!st.curve) return { err: 'two clicks did not start a curve' };
+    document.querySelector('[data-ae="curveAngle"][data-v="60"]').click();
+    document.querySelector('[data-ae="applyCurve"]').click();
+    const op = FG.fixes.ops(code).slice(-1)[0];
+    const g = op && op.geom;
+    const dir = (q, r) => Math.atan2(r[0] - q[0], (r[1] - q[1]) * Math.cos(q[0] * Math.PI / 180));
+    const turn = g ? Math.abs((((dir(g[g.length - 2], g[g.length - 1]) - dir(g[0], g[1])) * 180) / Math.PI + 540) % 360 - 180) : 0;
+    const out = { kind: op && op.op + ' ' + op.kind, points: g ? g.length : 0, turn: Math.round(turn), left: !!st.curve };
+    FG.fixes.discard(code);
+    FG.airportEdit.toggle(false);
+    return out;
+  }, home);
+  if (cu.err) errors.push(`airport editor, curve: ${cu.err}`);
+  else {
+    step(`curve: ${cu.kind}, ${cu.points} points, turns ${cu.turn}°`);
+    if (cu.kind !== 'add taxiway' || cu.points < 10 || Math.abs(cu.turn - 60) > 1 || cu.left) errors.push(`airport editor: the curve went wrong (${JSON.stringify(cu)})`);
+  }
+
   step('airport editor: delete part of a made-up layout (test airport ZZT on the sea, nothing mapped there)');
   const mu = await evaluate(async () => {
     const code = 'ZZT';

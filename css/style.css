@@ -897,6 +897,7 @@ i.s-net { background: var(--muted); }
 #map.ap-edit .leaflet-interactive { pointer-events: none !important; }
 #map.ap-edit .leaflet-apedit-pane .leaflet-interactive { pointer-events: auto !important; }
 .ae-handle { background: #facc15; border: 2px solid #111827; border-radius: 50%; box-sizing: border-box; cursor: grab; }
+.ae-handle.ae-corner { background: #22d3ee; border-radius: 2px; cursor: move; }
 .ae-handle.ae-mid { background: rgba(250, 204, 21, 0.45); border-width: 1px; cursor: copy; }
 #ae-banner {
   position: fixed;
