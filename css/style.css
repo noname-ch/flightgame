@@ -1180,7 +1180,7 @@ body { height: 100dvh; } /* the visible height, also while the phone's address b
   #devtools { top: 44px; max-height: calc(100dvh - 56px); }
 }
 
-/* ---------- airport checklist (js/airportcheck.js, F4) ---------- */
+/* ---------- airport checklist (js/airportcheck.js, F8) ---------- */
 #apcheck {
   position: fixed;
   top: 56px;

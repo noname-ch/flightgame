@@ -1,4 +1,4 @@
-// Airport checklist (developer tools, F4): every airport in the order to check them. The start airports come
+// Airport checklist (developer tools, F8): every airport in the order to check them. The start airports come
 // first, then the world's busiest (js/data/busiest.js), then every other airport by size. An agent looks at an
 // airport and marks it blue (checked), then a person looks again and marks it green (good) or red (needs work).
 // The marks are in js/data/checks.js: { CODE: { s: 'checked' | 'ok' | 'bad', by, at: 'YYYY-MM-DD', note } }.
@@ -22,7 +22,7 @@
     return out;
   }
   // The text of js/data/checks.js (tools/serve.py and tools/checks.mjs write the same): one airport per line.
-  const HEADER = '// Airport checklist (developer tools, F4), see js/airportcheck.js: s = checked (blue, an agent looked at it),\n' +
+  const HEADER = '// Airport checklist (developer tools, F8), see js/airportcheck.js: s = checked (blue, an agent looked at it),\n' +
     '// ok (green, a person approved it) or bad (red, needs work). Written by tools/serve.py, tools/checks.mjs or a commit\n' +
     '// from the game: commit this file to give everyone the checks.\n';
   function fileText(all) {
@@ -218,7 +218,7 @@
     const pct = (n) => `${((100 * n) / list.length).toFixed(2)}%`;
     el.classList.toggle('beside', !!(FG.airportEdit && FG.airportEdit.on));
     el.innerHTML = `
-      <div class="dev-head"><b>✅ Airport checklist</b><button class="mini" data-ck="close" title="Close (F4)">✕</button></div>
+      <div class="dev-head"><b>✅ Airport checklist</b><button class="mini" data-ck="close" title="Close (F8)">✕</button></div>
       <div class="ck-bar" title="Green: good · blue: checked · red: needs work">
         <i class="ok" style="width:${pct(count.ok)}"></i><i class="checked" style="width:${pct(count.checked)}"></i><i class="bad" style="width:${pct(count.bad)}"></i></div>
       <div class="muted small">Start + busiest ${top}: <b>${topOk}</b> good · all ${list.length}: 🟢 ${count.ok} · 🔵 ${count.checked} · 🔴 ${count.bad} · ⬜ ${count.open}</div>
@@ -318,14 +318,16 @@
   function init() {
     const el = $('apcheck');
     el.addEventListener('click', onClick);
+    // (also from the menu: some browsers keep the function keys for themselves)
+    if ($('apcheck-toggle')) $('apcheck-toggle').addEventListener('click', () => toggle());
     el.addEventListener('input', onInput);
     el.addEventListener('keydown', (e) => {
-      if (e.key === 'F4') return;
+      if (e.key === 'F8') return;
       e.stopPropagation(); // typing here must not pause the game or open its menu
       if (e.key === 'Escape') { e.target.blur(); toggle(false); }
     });
     window.addEventListener('keydown', (e) => {
-      if (e.key === 'F4') { toggle(); e.preventDefault(); e.stopPropagation(); }
+      if (e.key === 'F8') { toggle(); e.preventDefault(); e.stopPropagation(); }
     }, true);
     window.addEventListener('beforeunload', (e) => {
       if (ck.target === 'github' && pending().length) { e.preventDefault(); e.returnValue = ''; }

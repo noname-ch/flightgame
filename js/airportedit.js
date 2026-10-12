@@ -1255,6 +1255,8 @@
   function init() {
     const el = $('apedit');
     el.addEventListener('click', onClick);
+    // (also from the menu: some browsers keep the function keys for themselves)
+    if ($('apedit-toggle')) $('apedit-toggle').addEventListener('click', () => toggle());
     el.addEventListener('keydown', (e) => {
       e.stopPropagation();
       if (e.key === 'Enter' && e.target.id === 'ae-token') signIn();

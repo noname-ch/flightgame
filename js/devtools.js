@@ -305,7 +305,7 @@
           ${FG.fixes ? `<span class="muted small">${FG.fixes.codes().length} airport${FG.fixes.codes().length === 1 ? '' : 's'} fixed${FG.fixes.unsaved().length ? `, ${FG.fixes.unsaved().length} not saved` : ''}</span>` : ''}
         </div>
       </section>
-      <section><h4>Airport checklist <span class="muted">F4</span></h4>
+      <section><h4>Airport checklist <span class="muted">F8</span></h4>
         <div class="dev-row">
           <button data-dev="airportCheck" class="${FG.checks && FG.checks.open ? 'primary' : ''}" title="Every airport in order (start airports, then the busiest): an agent marks it blue when checked, a person green when good">✅ ${FG.checks && FG.checks.open ? 'Close' : 'Check airports'}</button>
         </div>

@@ -1,5 +1,5 @@
 // The world's busiest airports by flights (aircraft movements a year, about 2023-24, airline airports first),
-// busiest first. The airport checklist (F4, js/airportcheck.js) goes through the start airports, then these,
+// busiest first. The airport checklist (F8, js/airportcheck.js) goes through the start airports, then these,
 // then every other airport by size.
 window.FG = window.FG || {};
 FG.data = FG.data || {};

@@ -4,7 +4,7 @@
 The airport editor (developer tools, F3) saves its fixes here: POST /__fixes with {"code": "BRN", "ops": [...]}
 puts that airport's fixes into js/data/fixes.js (no ops: the airport's fixes are removed). Commit that file to
 give everyone the fixes. GET /__fixes tells the page that it can save here.
-The airport checklist (F4) does the same with POST /__checks {"code": "BRN", "check": {"s": "ok", ...} or null}
+The airport checklist (F8) does the same with POST /__checks {"code": "BRN", "check": {"s": "ok", ...} or null}
 into js/data/checks.js.
 """
 import http.server
@@ -20,7 +20,7 @@ FIXES = os.path.join(ROOT, 'js', 'data', 'fixes.js')
 HEADER = ('// Airport fixes drawn with the airport editor (developer tools, F3), see js/fixes.js.\n'
           '// Written by tools/serve.py when the game runs from ./play.sh: commit this file to give everyone the fixes.\n')
 CHECKS = os.path.join(ROOT, 'js', 'data', 'checks.js')
-CHECKS_HEADER = ('// Airport checklist (developer tools, F4), see js/airportcheck.js: s = checked (blue, an agent looked at it),\n'
+CHECKS_HEADER = ('// Airport checklist (developer tools, F8), see js/airportcheck.js: s = checked (blue, an agent looked at it),\n'
                  '// ok (green, a person approved it) or bad (red, needs work). Written by tools/serve.py, tools/checks.mjs or a commit\n'
                  '// from the game: commit this file to give everyone the checks.\n')
 CHECK_KEYS = ('s', 'by', 'at', 'note')

@@ -1834,7 +1834,7 @@
       <h4>Game</h4>
       <label class="check"><input type="checkbox" data-set="autosave" ${set.autosave ? 'checked' : ''}> Save automatically every 30 s</label>
       <h4>3D view</h4><div class="row"><button data-set="3d">${FG.view3d && FG.view3d.on ? 'Back to 2D' : 'Open 3D view'} <span class="muted">V</span></button></div>
-      <h4 class="keys-help">Keys</h4><div class="muted keys-help">Space pause · ← → speed · V 3D · F2 developer tools · F3 airport editor · F4 airport checklist · Esc menu</div></div>`;
+      <h4 class="keys-help">Keys</h4><div class="muted keys-help">Space pause · ← → speed · V 3D · F2 developer tools · F3 airport editor · F8 airport checklist · Esc menu</div></div>`;
   }
   function onSettings(e) {
     const t = e.target.closest('[data-set]');

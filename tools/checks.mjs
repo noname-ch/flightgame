@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// The airport checklist (F4 in the game) from the command line, for agents going through the airports.
+// The airport checklist (F8 in the game) from the command line, for agents going through the airports.
 // It loads the game's own data and js/airportcheck.js, so the order is the same as in the game.
 //
 //   node tools/checks.mjs status                     how many airports are in each state
