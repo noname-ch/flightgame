@@ -1,7 +1,8 @@
 // Airport editor (developer tools, F3): fix airports where the map data is wrong or missing. Click the
 // satellite picture where something is off; a window there offers what can be done at that spot:
 // - on a runway, taxiway, apron, building, stand or tower: redraw it, straighten it (a taxiway becomes one
-//   straight line, an apron or building gets square corners), move its points, or delete it;
+//   straight line, an apron or building gets square corners; "90° turn" makes a bent taxiway two straight
+//   legs at a right angle with a round corner), move its points, or delete it;
 // - anywhere: add a runway, taxiway, stand, apron, terminal, hangar, other building or tower, and where no
 //   airport is near, a whole airport.
 // Adding and redrawing first look for the thing in the map data (OpenStreetMap vector tiles, read by
@@ -172,6 +173,45 @@
     const u = [Math.cos(th), Math.sin(th)];
     const on = (q) => { const s = (q[0] - c[0]) * u[0] + (q[1] - c[1]) * u[1]; return [c[0] + s * u[0], c[1] + s * u[1]]; };
     return [F.ll(on(p[0])), F.ll(on(p[n - 1]))];
+  }
+  // A taxiway that turns: two straight legs at a right angle, joined by a round corner. The legs keep the
+  // taxiway's ends and the mean direction of its two halves (split where it is farthest from its chord);
+  // the corner's radius is RADIUS m, less where a leg is short. Null where it doesn't turn.
+  const RADIUS = 45;
+  function rightTurn(line) {
+    const F = frame(line[0]);
+    const p = line.map(F.xy);
+    const n = p.length;
+    const a = p[0], b = p[n - 1];
+    const ch = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (n < 3 || ch < 5) return null;
+    let k = 0, far = 0;
+    for (let i = 1; i < n - 1; i++) {
+      const d = Math.abs((b[0] - a[0]) * (p[i][1] - a[1]) - (b[1] - a[1]) * (p[i][0] - a[0])) / ch;
+      if (d > far) { far = d; k = i; }
+    }
+    if (far < 3) return null; // (straight: Straighten does that)
+    const dir = (from, to) => Math.atan2(to[1] - from[1], to[0] - from[0]);
+    const tA = dir(a, p[k]);
+    const tB = dir(p[k], b);
+    const s = Math.sin(tB - tA) >= 0 ? 1 : -1; // turning left (1) or right
+    // leg A's direction: between its own and leg B's turned back by 90 degrees
+    const tB0 = tB - s * Math.PI / 2;
+    const t = Math.atan2(Math.sin(tA) + Math.sin(tB0), Math.cos(tA) + Math.cos(tB0));
+    const u = [Math.cos(t), Math.sin(t)];
+    const w = [-s * u[1], s * u[0]];
+    const lA = (b[0] - a[0]) * u[0] + (b[1] - a[1]) * u[1]; // the corner lies this far along leg A
+    const c = [a[0] + lA * u[0], a[1] + lA * u[1]];
+    const lB = (b[0] - c[0]) * w[0] + (b[1] - c[1]) * w[1];
+    if (lA < 5 || lB < 5) return null;
+    const R = Math.min(RADIUS, lA * 0.8, lB * 0.8);
+    const o = [c[0] - u[0] * R + w[0] * R, c[1] - u[1] * R + w[1] * R]; // the corner's centre
+    const arc = [];
+    for (let i = 0; i <= 8; i++) {
+      const f = (i / 8) * Math.PI / 2;
+      arc.push([o[0] + R * (-w[0] * Math.cos(f) + u[0] * Math.sin(f)), o[1] + R * (-w[1] * Math.cos(f) + u[1] * Math.sin(f))]);
+    }
+    return [a, ...arc, b].map(F.ll);
   }
   // An apron or building: square corners. Its sides are turned to the main direction (or across it) and
   // where two sides meet is the corner; with fewer than four sides, the smallest rectangle round it.
@@ -633,6 +673,14 @@
     if (FG.fixes.gap(e.kind, geom, e.geom) < 0.5) { note('It is straight already.'); return; }
     commit(e.code, { op: 'set', kind: e.kind, from: e.geom, geom }, `${cap(NAMES[e.kind])} straightened (Ctrl+Z to undo).`);
   }
+  function rightAngle() {
+    const e = selection();
+    if (!e || e.kind !== 'taxiway') return;
+    const geom = rightTurn(e.geom);
+    if (!geom) { note('This taxiway doesn\u2019t turn: draw it with a bend (or use Straighten).'); return; }
+    if (FG.fixes.gap(e.kind, geom, e.geom) < 0.5) { note('It is a 90\u00b0 turn already.'); return; }
+    commit(e.code, { op: 'set', kind: e.kind, from: e.geom, geom }, 'Taxiway made a 90\u00b0 turn (Ctrl+Z to undo).');
+  }
   function del() {
     const e = selection();
     if (!e) return;
@@ -1010,6 +1058,7 @@
       parts.push(`<div class="ae-row">
         ${point ? '' : '<button data-ae="redraw" title="From the map data if it has it right, else draw it yourself">Redraw</button>'}
         ${e.kind === 'taxiway' || RINGS.has(e.kind) ? `<button data-ae="straighten" title="${e.kind === 'taxiway' ? 'One straight line from its first to its last point' : 'Square corners'}">Straighten</button>` : ''}
+        ${e.kind === 'taxiway' ? '<button data-ae="corner" title="Two straight legs at a right angle, with a round corner">90\u00b0 turn</button>' : ''}
         <button data-ae="points">${point ? 'Move' : 'Move points'}</button>
         ${e.kind === 'stand' ? '<button data-ae="turn">Turn</button>' : ''}
         <button class="danger" data-ae="del">Delete</button></div>`);
@@ -1176,6 +1225,7 @@
       case 'pick': ed.sel = ed.hits[Number(d.i)]; ed.code = ed.sel.code; drawLayer(); showPopup(); renderPanel(); break;
       case 'redraw': redraw(); break;
       case 'straighten': straighten(); break;
+      case 'corner': rightAngle(); break;
       case 'points': startEdit(); break;
       case 'turn': if (selection()) startDraw('turn', ed.sel); break;
       case 'del': del(); break;
@@ -1318,7 +1368,7 @@
     toggle,
     unsaved: () => FG.fixes.unsaved(),
     // for tests: what the editor would find or make
-    straightLine, squareRing, lookup, hitsAt: (lat, lon) => hitsAt([lat, lon]), madeUp,
+    straightLine, rightTurn, squareRing, lookup, hitsAt: (lat, lon) => hitsAt([lat, lon]), madeUp,
     click(lat, lon) { onMapClick({ latlng: L.latLng(lat, lon) }); },
     state: ed,
   };

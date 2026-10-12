@@ -208,7 +208,8 @@ beside the real runway at one end are moved onto it in
 Airport editor: in the developer tools (✏️ "Fix airports on the map", or F3) you fix airports where the
 map data is wrong or missing. Click the satellite picture where something is off; a window opens there:
 on a runway, taxiway, apron, building, stand or tower you can **Redraw** it, **Straighten** it (a taxiway
-becomes one straight line, an apron or building gets square corners), **Move points** (drag them; a click on
+becomes one straight line, an apron or building gets square corners), make a bent taxiway a **90° turn** (two
+straight legs at a right angle with a round corner), **Move points** (drag them; a click on
 the small dot between two points adds one, a right-click removes one), turn a stand or set its name and
 length (of its lead-in line and the pushback), change a runway's width and surface, make a building a
 terminal or hangar, or **Delete** it. Anywhere you can add a runway, taxiway, stand, apron, terminal, hangar,
