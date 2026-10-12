@@ -5,7 +5,8 @@
 //   { op: 'del', kind, geom }        the element with this shape goes
 //   { op: 'set', kind, from, geom }  the element with the shape `from` becomes `geom`
 // Kinds: runway ([lat1, lon1, lat2, lon2, width m, paved 0/1], in FG.data.runways), taxiway (line [[lat, lon]..]),
-// apron, terminal, hangar, building (rings), stand ([lat, lon, heading, name, 1]), tower ([lat, lon]) and
+// apron, terminal, hangar, building (rings), stand ([lat, lon, heading, name, 1, length m of its lead-in line and
+// pushback, if set]), tower ([lat, lon]) and
 // airport (add only: { code, name, city, country, lat, lon, size }, kept under its own code).
 // An element is found again by its shape (within a few metres), so a fix still holds when the map data round it
 // changes a little. A `set` whose element is gone adds its new shape anyway; a `del` then does nothing.

@@ -15,11 +15,11 @@
   const M = 111320;
   const DEG = Math.PI / 180;
   const r5 = (n) => Math.round(n * 1e5) / 1e5;
-  const NAMES = { runway: 'runway', taxiway: 'taxiway', apron: 'apron', terminal: 'terminal', hangar: 'hangar', building: 'building', stand: 'stand', tower: 'tower', airport: 'airport' };
+  const NAMES = { row: 'stand row', runway: 'runway', taxiway: 'taxiway', apron: 'apron', terminal: 'terminal', hangar: 'hangar', building: 'building', stand: 'stand', tower: 'tower', airport: 'airport' };
   const cap = (s) => s[0].toUpperCase() + s.slice(1);
   const RINGS = new Set(['apron', 'terminal', 'hangar', 'building']);
   const BUILDINGS = ['terminal', 'hangar', 'building'];
-  const ADD = ['runway', 'taxiway', 'stand', 'apron', 'terminal', 'hangar', 'building', 'tower'];
+  const ADD = ['runway', 'taxiway', 'stand', 'row', 'apron', 'terminal', 'hangar', 'building', 'tower'];
   const ORDER = { stand: 0, tower: 1, terminal: 2, hangar: 2, building: 2, taxiway: 3, runway: 4, apron: 5 }; // on top first
   const MAX_ZOOM = 19; // closer than the game's map goes (the satellite tiles end at 18)
   const STYLE = {
@@ -41,6 +41,7 @@
     draw: null,   // drawing: { kind, pts, replace, mouse }
     edit: null,   // moving points: { e, pts }
     found: null,  // from the map data, shown before it is used: { kind, geoms, replace, text }
+    row: null,    // a row of stands being placed: { a, b, spacing, flip, prefix }
     busy: false,  // looking in the map data, saving or signing in
     target: null, // where Save puts the fixes: 'server', 'github' or 'browser' (FG.fixes.target)
     signin: false, // the GitHub sign-in form is open
@@ -612,12 +613,63 @@
     if (JSON.stringify(geom) === JSON.stringify(e.geom)) return;
     commit(e.code, { op: 'set', kind: 'runway', from: e.geom, geom }, `Runway ${runwayName(geom)}: ${w} m, ${geom[5] ? 'paved' : 'grass'}.`);
   }
+  // A stand's name and length (of its lead-in line and the pushback; empty: the game finds it).
   function rename() {
     const e = selection();
     if (!e || e.kind !== 'stand') return;
     const name = $('ae-name').value.trim().slice(0, 12);
+    const len = Math.round(Number($('ae-len').value));
+    if ($('ae-len').value && !(len >= 10 && len <= 150)) { note('Length: 10 to 150 m (or empty: automatic).', true); return; }
     const geom = e.geom.slice(0, 3).concat(name, 1);
-    commit(e.code, { op: 'set', kind: 'stand', from: e.geom, geom }, `Stand ${name || '(no name)'}.`);
+    if ($('ae-len').value) geom.push(len);
+    if (JSON.stringify(geom) === JSON.stringify(e.geom)) return;
+    commit(e.code, { op: 'set', kind: 'stand', from: e.geom, geom }, `Stand ${name || '(no name)'}${len ? `, ${len} m long` : ''}.`);
+  }
+  // ---------- a row of stands along a line ----------
+  const SPACING = [42, 45, 55, 65, 75, 80]; // m between stands by airport size (as game.js)
+  function rowStands(r) {
+    const len = dist(r.a, r.b);
+    const n = Math.max(1, Math.floor(len / r.spacing + 1e-6) + 1);
+    const h = bearing(r.a, r.b);
+    const nose = Math.round((h + (r.flip ? -90 : 90) + 360) % 360);
+    return Array.from({ length: n }, (_, i) => {
+      const p = offset(r.a, h, n === 1 ? len / 2 : (i * len) / (n - 1));
+      return [r5(p[0]), r5(p[1]), nose, r.prefix ? `${r.prefix}${i + 1}` : '', 1];
+    });
+  }
+  function startRow(a, b) {
+    const code = ed.code;
+    const lay = layoutOf(code);
+    // noses to the nearest building, on whichever side of the line it is
+    const mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    let near = { d: Infinity };
+    for (const r of lay ? [...lay.terminals, ...lay.hangars] : []) { const n = nearest(mid, r, true); if (n.d < near.d) near = n; }
+    const h = bearing(a, b);
+    const right = near.q ? Math.sin((bearing(mid, near.q) - h) * DEG) > 0 : true;
+    ed.row = { a, b, spacing: SPACING[G.airportSize(code)] || 45, flip: !right, prefix: '' };
+    ed.at = mid;
+    drawLayer();
+    showPopup();
+  }
+  function placeRow() {
+    const r = ed.row;
+    const ops = rowStands(r).map((geom) => ({ op: 'add', kind: 'stand', geom }));
+    ed.row = null;
+    commit(ed.code, ops, `${ops.length} stands placed in a row (Ctrl+Z takes them all back).`);
+    ed.sel = null;
+    closePopup();
+    drawLayer();
+  }
+  function rowInput() {
+    const r = ed.row;
+    if (!r) return;
+    const sp = Number($('ae-spacing').value);
+    if (sp >= 20 && sp <= 150) r.spacing = sp;
+    r.prefix = $('ae-prefix').value.trim().slice(0, 6);
+    drawLayer();
+    const n = rowStands(r).length;
+    const b = popEl.querySelector('[data-ae="placeRow"]');
+    if (b) b.textContent = `Place ${n} stand${n > 1 ? 's' : ''}`;
   }
   function becomes(kind) {
     const e = selection();
@@ -646,6 +698,7 @@
   async function add(kind) {
     if (!ed.code) { note('No airport within 8 km: add an airport first.', true); return; }
     if (kind === 'stand') { addStand(); return; }
+    if (kind === 'row') { ed.sel = null; startDraw('row', null); return; }
     if (kind === 'tower') { commit(ed.code, { op: 'add', kind, geom: [r5(ed.at[0]), r5(ed.at[1])] }, 'Tower added.'); return; }
     ed.sel = null;
     await auto(kind, ed.at, null);
@@ -671,6 +724,7 @@
   // ---------- drawing ----------
   const HINT = {
     runway: 'click one end of the runway on its centre line, then the other end',
+    row: 'click where the row of stands starts, then where it ends (along the terminal or apron edge)',
     taxiway: 'click points along its centre line; click the last point again (or Enter) when done',
     ring: 'click its corners; click the first corner again (or Enter) when done',
     turn: 'click where the nose of the plane points',
@@ -730,7 +784,7 @@
     if (ring && d.pts.length >= 3 && px(q, d.pts[0]) < 10) { finishDraw(); return; }
     if (!ring && d.pts.length >= 2 && px(q, d.pts[d.pts.length - 1]) < 8) { finishDraw(); return; }
     d.pts.push(q);
-    if (d.kind === 'runway' && d.pts.length === 2) { finishDraw(); return; }
+    if ((d.kind === 'runway' || d.kind === 'row') && d.pts.length === 2) { finishDraw(); return; }
     drawDraft();
     banner();
   }
@@ -740,6 +794,12 @@
     const need = RINGS.has(d.kind) ? 3 : 2;
     if (d.pts.length < need) { note(`A ${NAMES[d.kind]} needs at least ${need} points.`, true); return; }
     let geom = d.pts.map((q) => [r5(q[0]), r5(q[1])]);
+    if (d.kind === 'row') {
+      if (dist(geom[0], geom[1]) < 10) { note('Click where the row starts and, a bit away, where it ends.', true); d.pts = []; drawDraft(); return; }
+      stopDraw();
+      startRow(geom[0], geom[1]);
+      return;
+    }
     if (d.kind === 'runway') {
       const old = d.replace && d.replace.geom;
       if (dist(geom[0], geom[1]) < 100) { note('A runway is at least 100 m long: click its two ends.', true); d.pts = []; drawDraft(); return; }
@@ -755,6 +815,7 @@
     if (ed.draw) { stopDraw(); note('Drawing cancelled.'); drawLayer(); return true; }
     if (ed.edit) { stopEdit(); note('Not moved.'); return true; }
     if (ed.found) { ed.found = null; drawLayer(); showPopup(); return true; }
+    if (ed.row) { ed.row = null; closePopup(); drawLayer(); return true; }
     if (pop && map.hasLayer(pop)) { closePopup(); ed.sel = null; drawLayer(); return true; }
     return false;
   }
@@ -772,7 +833,7 @@
   function editedGeom() {
     const { e, pts } = ed.edit;
     if (e.kind === 'runway') return [r5(pts[0][0]), r5(pts[0][1]), r5(pts[1][0]), r5(pts[1][1]), e.geom[4], e.geom[5]];
-    if (e.kind === 'stand') return [r5(pts[0][0]), r5(pts[0][1]), e.geom[2], e.geom[3], 1];
+    if (e.kind === 'stand') return [r5(pts[0][0]), r5(pts[0][1]), e.geom[2], e.geom[3], 1, ...e.geom.slice(5)];
     if (e.kind === 'tower') return [r5(pts[0][0]), r5(pts[0][1])];
     return pts.map((q) => [r5(q[0]), r5(q[1])]);
   }
@@ -841,6 +902,10 @@
     }
     if (ed.sel && !ed.edit) drawShape(layer, ed.sel.kind, ed.sel.geom, STYLE.sel);
     if (ed.found) for (const g of ed.found.geoms) drawShape(layer, ed.found.kind, g, STYLE.found);
+    if (ed.row) {
+      L.polyline([ed.row.a, ed.row.b], Object.assign({ pane: 'apedit', interactive: false, renderer }, STYLE.draw)).addTo(layer);
+      for (const g of rowStands(ed.row)) drawShape(layer, 'stand', g, STYLE.found);
+    }
     drawDraft();
   }
   function drawDraft() {
@@ -876,6 +941,14 @@
     const parts = [];
     parts.push(`<div class="ae-title">${a ? `${esc(code)} · ${esc(a.name)}` : 'No airport within 8 km'}</div>`);
     if (ed.busy) parts.push('<div class="ae-busy">Looking in the map data…</div>');
+    if (ed.row) {
+      const n = rowStands(ed.row).length;
+      parts.push(`<div class="ae-sel"><b>Stand row</b> · ${Math.round(dist(ed.row.a, ed.row.b))} m (cyan: where they go)</div>
+        <div class="ae-row ae-form">Every <input id="ae-spacing" type="number" min="20" max="150" value="${ed.row.spacing}"> m · names <input id="ae-prefix" placeholder="e.g. A" maxlength="6" value="${esc(ed.row.prefix)}"></div>
+        <div class="ae-row"><button data-ae="flipRow" title="The noses point to the other side of the line">⇅ Turn them round</button></div>
+        <div class="ae-row"><button class="primary" data-ae="placeRow">Place ${n} stand${n > 1 ? 's' : ''}</button><button data-ae="cancel">Cancel</button></div>`);
+      return parts.join('');
+    }
     if (ed.found) {
       parts.push(`<div class="ae-found">Found in the map data: <b>${esc(ed.found.text)}</b> (dashed, cyan)</div>
         <div class="ae-row"><button class="primary" data-ae="use">Use it</button><button data-ae="drawSelf">Draw it myself</button><button data-ae="cancel">Cancel</button></div>`);
@@ -902,7 +975,10 @@
         parts.push(`<div class="ae-warn">The game does not use this stand: it uses the ${G.apronOf(e.code).stands.length} nearest the terminals. Move, turn or rename it and it is used too.</div>`);
       }
       if (e.kind === 'stand') {
-        parts.push(`<div class="ae-row ae-form">Name <input id="ae-name" value="${esc(e.geom[3] || '')}" maxlength="12"><button data-ae="rename">Apply</button></div>`);
+        const used = G.apronOf(e.code).stands.find((st) => st.lat === e.geom[0] && st.lon === e.geom[1]);
+        parts.push(`<div class="ae-row ae-form">Name <input id="ae-name" value="${esc(e.geom[3] || '')}" maxlength="12">
+          Length <input id="ae-len" type="number" min="10" max="150" value="${e.geom[5] || ''}" placeholder="${used ? Math.round(used.push) : 'auto'}" title="Of its lead-in line, and how far planes are pushed back; empty: the game finds it"> m
+          <button data-ae="rename">Apply</button></div>`);
       }
       if (BUILDINGS.includes(e.kind)) {
         parts.push(`<div class="ae-row">It is a ${BUILDINGS.map((k) => `<button class="mini${k === e.kind ? ' on' : ''}" data-ae="becomes" data-kind="${k}">${k}</button>`).join(' ')}</div>`);
@@ -929,11 +1005,13 @@
       popEl.className = 'ae-pop';
       // (the window is redrawn while its button is clicked: the map would take that click for its own)
       popEl.addEventListener('click', (ev) => { ev.stopPropagation(); onClick(ev); });
+      popEl.addEventListener('input', rowInput);
       popEl.addEventListener('keydown', (ev) => {
         ev.stopPropagation(); // typing here must not pause the game or move the speed slider
         if (ev.key === 'Enter') {
           if (ev.target.id === 'ae-width') setRunway();
-          if (ev.target.id === 'ae-name') rename();
+          if (ev.target.id === 'ae-name' || ev.target.id === 'ae-len') rename();
+          if (ev.target.id === 'ae-spacing' || ev.target.id === 'ae-prefix') rowInput();
           if (ev.target.id === 'ae-aname' || ev.target.id === 'ae-code') addAirport();
         }
         if (ev.key === 'Escape') { ev.target.blur(); cancel(); }
@@ -1054,6 +1132,8 @@
       case 'del': del(); break;
       case 'setRunway': setRunway(); break;
       case 'rename': rename(); break;
+      case 'flipRow': if (ed.row) { ed.row.flip = !ed.row.flip; drawLayer(); } break;
+      case 'placeRow': if (ed.row) placeRow(); break;
       case 'becomes': becomes(d.kind); break;
       case 'add': add(d.kind); break;
       case 'airportForm': ed.form = 'airport'; showPopup(); break;
@@ -1095,6 +1175,7 @@
     ed.at = p;
     ed.form = null;
     ed.found = null;
+    ed.row = null;
     ed.hits = hitsAt(p);
     ed.sel = ed.hits[0] || null;
     const o = ed.sel ? null : owner(p);
@@ -1153,6 +1234,7 @@
       if (ed.draw) stopDraw();
       if (ed.edit) stopEdit();
       ed.found = null;
+      ed.row = null;
       ed.sel = null;
       closePopup();
       layer.clearLayers();

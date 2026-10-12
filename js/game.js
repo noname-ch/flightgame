@@ -750,7 +750,7 @@
     // Stands an airport fix added or moved (js/fixes.js: lay.pinned) are always used, on top of those.
     let room = 2 * GATE_COUNT[size];
     const stands = order.filter((st) => (lay.pinned && lay.pinned.has(st)) || room-- > 0)
-      .map(([lat, lon, mapped, name, right], i) => {
+      .map(([lat, lon, mapped, name, right, length], i) => {
         const aheadOf = (h) => (m, across = 0) => { const p = offsetPoint(lat, lon, h, m); return offsetPoint(p[0], p[1], h + 90, across); };
         // The mapped direction is often the wrong way round or missing. A plane is pushed back onto the
         // nearest taxiway, so its nose points away from it: keep the mapped line (either way round) when it
@@ -769,7 +769,8 @@
         const ahead = aheadOf(heading);
         // Pushed back straight out until the tail is on the nearest taxiway centreline (20-90 m).
         let push = TAXI_LANE;
-        if (lay.taxiways.length) {
+        if (length > 0) push = length; // (set with the airport editor)
+        else if (lay.taxiways.length) {
           let best = Infinity;
           for (let m = 20; m <= 90; m += 2.5) {
             const d = toTaxiway(ahead(-m));
