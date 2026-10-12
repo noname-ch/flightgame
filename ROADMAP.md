@@ -1,0 +1,136 @@
+# Roadmap
+
+What we could add next, and what would be great. Nothing here is promised: it is a list to pick from.
+Tick a box when it is done and move it to **Done** at the bottom. Effort: **S** = an evening, **M** = a few
+days, **L** = a big project.
+
+Where we are (October 2026): a world map with ~16,000 airports, 55 aircraft types in 3D, timetables and
+shared slots, a slot market with reputation, airport shares and construction, real airport layouts,
+realistic flight tracks in 2D and 3D, AI rival airlines, random events and a developer panel.
+
+## Next up: small steps on what is already there
+
+- [ ] **Rival planes in 3D** (S). `G.rivalFlights(t)` already gives the airborne rival planes and the 2D map
+  draws them; `js/view3d.js` only draws ours. Same models, painted in the rival's colour.
+- [ ] **A profit table per route** (S). Planes keep totals (`p.stats`), but there is no list of routes with
+  load factor, revenue, cost and profit per week, sortable. It would show at a glance what to cut.
+- [ ] **Curfews per airport** (S/M). `C.curfew` is the same 06:00–22:00 everywhere. Real airports differ:
+  Zurich closes at 23:30, Frankfurt and London have night quotas, many hubs are open all night. Hand-written
+  for the main airports, a default by size for the rest.
+- [ ] **Loans** (S). Today there is only the bankruptcy limit. A bank loan with interest and a credit
+  rating from reputation and fleet value would let a player grow faster, at a risk.
+- [ ] **Several save games and save files** (S). One autosave in localStorage now. Save slots, plus export
+  and import as a `.json` file, so a game moves between browsers and can be sent to someone.
+- [ ] **A first-game tutorial** (S/M). A short guided start: lease a slot, build a timetable,
+  Save & fly, watch the first flight land and the money come in. Skippable, shown once.
+- [ ] **Bump the `?v=` tags automatically** (S). They are bumped by hand on every push today. A git
+  pre-commit hook or a GitHub Action could do it.
+
+## Bigger features
+
+### Running an airline
+
+- [ ] **Delays that ripple** (M). Reputation already counts on-time and late flights. Real delays from
+  weather, ATC, technical faults and tight turnarounds that carry through the day's timetable would make
+  buffer time in the plan a real choice.
+- [ ] **Maintenance checks** (M). Ageing now only raises costs (`agingCostPerYear`). A, C and D checks would
+  take a plane out of service for hours to weeks, cost less at your own hangar (a building at your airports)
+  and, when skipped, raise the incident rate in `js/data/events.js`.
+- [ ] **Cabin layout and classes** (M). Seats are fixed per type. Let the player pick a layout (dense
+  low-cost, two classes, premium); business travellers come from big cities and pay more but want early
+  and late flights.
+- [ ] **Cargo** (M/L). Belly cargo on passenger flights first (small extra revenue by route), then freighters
+  (747F, 777F, ATR 72F) and cargo hubs.
+- [ ] **Crew as people** (M). Pilots rated per type family, hiring, training to a new type, crew bases,
+  salaries; underpaid crews strike (the strike event already exists).
+- [ ] **Marketing** (S/M). Campaigns per region or route that lift demand for a while, and a brand value
+  that grows with reputation.
+- [ ] **Fuel price over time and hedging** (M). `fuelMult()` already swings with events. A fuel price chart
+  in Finance and contracts that fix the price for some months.
+
+### Passengers and demand
+
+- [ ] **Demand by time of day and weekday** (M). Morning and evening peaks for business routes, weekends for
+  leisure, so the departure time in the timetable matters.
+- [ ] **Seasons** (M). Ski airports full in winter, Mediterranean islands in summer, a quieter November.
+  Needs a calendar (game days mapped to months) and a season profile per airport or region.
+- [ ] **Transfer passengers and hubs** (L). Today every route is point to point. Passengers who change planes
+  at your hub (Bern → Zurich → New York) are what makes a hub-and-spoke network pay. Probably the biggest
+  change to how the game plays.
+- [ ] **Long haul** (M). Range is checked, but long flights need more: tech stops for short-range types,
+  ETOPS rules for twins over the ocean, crew rest on flights over 12 hours.
+
+### Competition
+
+- [ ] **Alliances and codeshares** (M). Join a rival in an alliance: shared passengers on each other's
+  routes, no fare war between you.
+- [ ] **Buy a rival** (M). Take over a weak rival (its fleet, slots and routes) instead of only watching it
+  go bust.
+- [ ] **Your own share price** (M). Go public (IPO): money for growth, but shareholders want profit every
+  quarter.
+
+### Goals and scenarios
+
+- [ ] **Scenarios** (M). Start conditions with a goal and a deadline: "connect 10 capitals from Bern in two
+  years", "save a bankrupt regional airline", "the jet age in 1958" (only the types of that time: the
+  catalogue already has the Ju 52 and the Concorde).
+- [ ] **Aircraft by year** (S/M). First flight and last delivery per type in `js/data/aircraft.js`, and a
+  start year for the game: new types appear in the market over time.
+- [ ] **Achievements and a score** (S). First long-haul flight, 1 million passengers, a year without an
+  incident, ten airports owned. A score to compare games.
+
+## The world and the views
+
+- [ ] **Your own livery** (M). `LIVERY` in `js/livery.js` is fixed (after SWISS). Pick colours and the title
+  at New game; the hangar pictures and map icons would then have to be rendered in the browser instead of
+  being the prepared `.webp` files.
+- [ ] **Weather on the map** (M). Real wind, rain and fog from a free weather service; low visibility and
+  storms close runways, strong crosswinds rule out short ones.
+- [ ] **Cockpit and tower cameras in 3D** (S/M). Next to the 🎥 follow camera: a view from the cockpit and
+  one from the control tower of the airport.
+- [ ] **Sound** (S/M). Engines when following a plane, a quiet airport ambience, a radio call on take-off.
+  Off by default.
+- [ ] **Night in 3D** (M). Darker map and lit runways, taxiways and terminals after sunset at the plane's
+  position.
+
+## Polish, tech and infrastructure
+
+- [ ] **Phones and tablets** (M). There is no touch handling or small-screen layout yet. The rail, the
+  plane strip and the overlays need a mobile layout; the map itself already works with touch.
+- [ ] **A smoke test on every push** (S/M). A GitHub Action that loads the game in headless Chromium, plays a
+  few days at full speed and fails on any console error. `node --check` misses errors like the undefined
+  variable that once stopped all 3D airports from being drawn.
+- [ ] **Split the big files** (M). `js/game.js` (~3,100 lines) and `js/ui.js` (~2,300 lines) are getting hard
+  to work on together; split by topic (flights, slots, rivals, airports, finance) into ES modules.
+- [ ] **Storage** (S/M). Save and the airport layout cache share localStorage (about 5 MB). Move the layout
+  cache to IndexedDB so it never pushes the save out.
+- [ ] **Languages** (M). German and French next to English. Needs the UI texts in one place first.
+- [ ] **Play offline** (M). A service worker that keeps the game, the models and the tiles you have seen, so
+  it starts without internet (an installable web app).
+- [ ] **Balance pass** (S, again and again). Play a full year on each difficulty and tune fares, demand,
+  costs and event rates in `js/config.js`.
+
+## Someday
+
+- [ ] **Play together** (L). A shared world on a small server: several players' airlines compete for the
+  same slots and passengers, at a slow pace (one game day per real hour).
+- [ ] **Real traffic layer** (M). Live aircraft from OpenSky (or from an own ADS-B receiver) as background
+  traffic on the map, to compare your network with the real one.
+- [ ] **Airport manager mode** (L). Run an airport instead of an airline: build, set fees, attract airlines.
+  The construction and share system is already half of it.
+
+## Done
+
+Recent milestones, newest first (see `git log` for the rest):
+
+- Slot market by airport and reputation
+- Real layouts at every airport, read off the map's vector tiles
+- One planning system: timetables and shared slots
+- New UI: top bar, side rail, plane cards
+- AI rival airlines
+- 3D airports, all 55 aircraft as 3D models, realistic flight heights and speeds
+- Gates and stands at every airport, pushback and nose-in docking
+- Start screen, game modes and difficulties
+- Random events as newspaper stories, developer panel
+- The whole world: ~16,000 airports, runways, airport shares and construction
+- Hangar marketplace with 55 types, delivery flights from the factories
