@@ -898,6 +898,9 @@
         parts.push(`<div class="ae-row ae-form">Width <input id="ae-width" type="number" min="5" max="120" value="${e.geom[4]}"> m
           <label><input id="ae-paved" type="checkbox"${e.geom[5] ? ' checked' : ''}> paved</label><button data-ae="setRunway">Apply</button></div>`);
       }
+      if (e.kind === 'stand' && !G.apronOf(e.code).stands.some((st) => st.lat === e.geom[0] && st.lon === e.geom[1])) {
+        parts.push(`<div class="ae-warn">The game does not use this stand: it uses the ${G.apronOf(e.code).stands.length} nearest the terminals. Move, turn or rename it and it is used too.</div>`);
+      }
       if (e.kind === 'stand') {
         parts.push(`<div class="ae-row ae-form">Name <input id="ae-name" value="${esc(e.geom[3] || '')}" maxlength="12"><button data-ae="rename">Apply</button></div>`);
       }

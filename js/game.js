@@ -747,7 +747,9 @@
     for (const g of groups) g.list.sort((x, y) => x[1] - y[1]);
     for (let k = 0; groups.some((g) => k < g.list.length); k++) for (const g of groups) if (k < g.list.length) order.push(g.list[k][0]);
     order.push(...loose.sort((x, y) => x[1] - y[1]).map(([s]) => s));
-    const stands = order.slice(0, 2 * GATE_COUNT[size])
+    // Stands an airport fix added or moved (js/fixes.js: lay.pinned) are always used, on top of those.
+    let room = 2 * GATE_COUNT[size];
+    const stands = order.filter((st) => (lay.pinned && lay.pinned.has(st)) || room-- > 0)
       .map(([lat, lon, mapped, name, right], i) => {
         const aheadOf = (h) => (m, across = 0) => { const p = offsetPoint(lat, lon, h, m); return offsetPoint(p[0], p[1], h + 90, across); };
         // The mapped direction is often the wrong way round or missing. A plane is pushed back onto the

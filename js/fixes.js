@@ -183,6 +183,9 @@
       }
       if (best.line) out.links.push(best.line);
     }
+    // The stands the fixes added or moved: the game uses them, whatever its rule for how many (game.js realApron).
+    const placed = own.filter((o) => o.kind === 'stand' && o.op !== 'del').map((o) => JSON.stringify(o.geom));
+    out.pinned = new Set(out.stands.filter((st) => placed.includes(JSON.stringify(st))));
     out.source = raw ? `${raw.source || 'file'}+fixes` : 'fixes';
     out.fixed = true;
     out.key = `${code}#fix${revs[code] || 0}`; // (game.js caches the taxi graph by it)
