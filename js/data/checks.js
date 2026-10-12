@@ -3,5 +3,7 @@
 // from the game: commit this file to give everyone the checks.
 FG.data.checks = {
 "BRN": {"s":"checked","by":"agent","at":"2026-10-12","note":"No jet bridges (Bern has none): bridges:false in its layout file. Runways, aprons, stands as fixed by hand before."},
-"LUG": {"s":"checked","by":"agent","at":"2026-10-12","note":"Terminal was the tennis hall: now the building along the apron. Removed 2 grass paths drawn as paved taxiways. S2 pushed off the apron into the street (shorter pushback), north stand turned to push onto its taxiway."}
+"LUG": {"s":"checked","by":"agent","at":"2026-10-12","note":"Terminal was the tennis hall: now the building along the apron. Removed 2 grass paths drawn as paved taxiways. S2 pushed off the apron into the street (shorter pushback), north stand turned to push onto its taxiway."},
+"SIR": {"s":"checked","by":"agent","at":"2026-10-12","note":"Runways (paved + grass), aprons, terminal and 6 stands match the satellite picture; nothing to fix."},
+"SOU": {"s":"checked","by":"agent","at":"2026-10-12","note":"Multi-storey car park was a hangar: now a plain building. Terminal, aprons, runway and stands match. Still open: the game draws jet bridges at 3 stands, but SOU has none (needs a 'bridges' fix op)."}
 };
