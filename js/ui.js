@@ -727,10 +727,11 @@
   // Game time with the fraction since the last tick, so planes move smoothly even at real time
   // (where a whole game minute takes 600 ticks). The tick adds exactly this much (see loop), so the
   // time runs on evenly across ticks instead of stalling or jumping when a tick comes late or early.
-  const nowMinutes = () => {
+  // Game time at the moment `at` (performance.now() scale; a frame's timestamp may lie just before the last tick).
+  const nowMinutes = (at = performance.now()) => {
     const t = G.state.time + ui.pendingMinutes;
     if (ui.paused || st.open) return t;
-    return t + Math.min(performance.now() - ui.lastTick, MAX_STEP_MS) * ui.speed / 60000;
+    return t + Math.min(at - ui.lastTick, MAX_STEP_MS) * ui.speed / 60000;
   };
 
   // Flying planes follow their track (runway, climb, cruise, approach); parked ones sit at the airport.
@@ -841,7 +842,7 @@
       }
     }
     if (map._animatingZoom) return; // Leaflet places the markers itself during a zoom animation
-    const t = nowMinutes();
+    const t = nowMinutes(tick || ui.frameAt == null ? undefined : ui.frameAt); // (in a frame: at its timestamp)
     const z = map.getZoom();
     const view = map.getBounds().pad(0.15);
     const parked = {}; // airport code -> planes on the ground there so far
@@ -1913,9 +1914,11 @@
   }
 
   // Every animation frame: the planes on the 2D map move on (the 3D view draws its own).
-  function frame() {
+  // Every frame, at the frame's own timestamp (evenly spaced: planes and a followed plane move smoothly).
+  function frame(ts) {
     requestAnimationFrame(frame);
     if (in3d()) return;
+    ui.frameAt = ts;
     if (ui.map2dStale) {
       ui.map2dStale = false;
       refreshAirports();
@@ -2365,6 +2368,7 @@
       get selectedAirport() { return ui.selectedAirport; },
       get speed() { return ui.paused || st.open ? 0 : ui.speed; },
       get time() { return nowMinutes(); }, // fractional game minutes
+      timeAt: (at) => nowMinutes(at), // ... at a moment (performance.now() scale), e.g. a frame's timestamp
       selectPlane,
       selectAirport(code) { ui.selectedAirport = code; G.dirty = true; },
       showAirport(code) { // select it and bring it into view, close enough for its gates

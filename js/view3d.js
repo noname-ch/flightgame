@@ -35,7 +35,11 @@ function savePrefs() {
 
 // ---------- flight position ----------
 // Game time with a fraction, so planes move smoothly between the 100 ms game ticks.
-function smoothTime() {
+// The time this frame is shown at: the frame's own timestamp (the same for everything drawn in it, and
+// evenly spaced with the screen's refresh), not the moment the code happens to run.
+const frameNow = () => (document.timeline && document.timeline.currentTime != null ? document.timeline.currentTime : performance.now());
+function smoothTime(at) {
+  if (at != null && FG.ui && FG.ui.timeAt) return FG.ui.timeAt(at); // game time at that moment, from ui.js
   if (FG.ui && FG.ui.time != null) return FG.ui.time; // exact fractional game time from ui.js
   const s = G.state;
   const now = performance.now();
@@ -739,6 +743,19 @@ function fieldElevation(map, code) {
   return e || 0;
 }
 // Shown height: the real height, but stretched when zoomed out so planes stay clearly above the ground.
+// Height a plane is drawn at: heights in the game are above the airports, from the departure field's ground
+// to the arrival field's, stretched like the hills, and never below the terrain under the plane; always
+// clearly above the ground when zoomed out (shownAlt).
+function drawnAlt(map, p, pose, len, exag) {
+  const under = map.queryTerrainElevation([pose.lon, pose.lat]) || 0;
+  let base = under;
+  if (pose.st && pose.altM > 0) {
+    const f = pose.st.airFrac;
+    base = fieldElevation(map, p.flight.from) * (1 - f) + fieldElevation(map, p.flight.to) * f;
+  }
+  const rise = shownAlt(pose.altM * TERRAIN_EXAG, len, exag);
+  return Math.max(base + rise, under + Math.min(rise, 150 * TERRAIN_EXAG) + (pose.altM > 0 ? len * exag * 0.12 : 0));
+}
 function shownAlt(altM, len, exag) {
   return Math.max(altM, (altM / 11000) * len * exag * 1.2) + len * exag * 0.12;
 }
@@ -804,7 +821,7 @@ const planeLayer = {
 
     const now = performance.now();
     // The follow camera was put where the plane is at v.nextT (followTick): draw it there too.
-    const t = v.nextT != null && now - v.nextAt < 1000 ? v.nextT : smoothTime();
+    const t = v.nextT != null && now - v.nextAt < 1000 ? v.nextT : smoothTime(frameNow());
     v.nextT = null;
     const zoom = map.getZoom();
     const center = map.getCenter();
@@ -851,16 +868,7 @@ const planeLayer = {
       const len = e.obj.userData.len;
       const exag = Math.max(1, px * mpp / len) * (p.id === sel ? 1.35 : 1);
       // Shown height: real cruise height, but always clearly above the ground when zoomed out.
-      // Heights in the game are above the airports: from the departure field's ground to the arrival
-      // field's, stretched like the hills, and never below the terrain under the plane.
-      const under = map.queryTerrainElevation([pose.lon, pose.lat]) || 0;
-      let base = under;
-      if (pose.st && pose.altM > 0) {
-        const f = pose.st.airFrac;
-        base = fieldElevation(map, p.flight.from) * (1 - f) + fieldElevation(map, p.flight.to) * f;
-      }
-      const rise = shownAlt(pose.altM * TERRAIN_EXAG, len, exag);
-      const altM = Math.max(base + rise, under + Math.min(rise, 150 * TERRAIN_EXAG) + (pose.altM > 0 ? len * exag * 0.12 : 0));
+      const altM = drawnAlt(map, p, pose, len, exag);
       if (p.id === sel) this.drawTrack(p, len, exag, globe);
       const unit = frameAt(pose.lat, pose.lon, altM, globe);
       // Ease heading, bank and pitch towards the target, so the plane turns, rolls and pitches
@@ -894,6 +902,7 @@ const planeLayer = {
       e.lngLat = [pose.lon, pose.lat];
       e.heading = e.att.heading;
       e.altM = altM;
+      e.exag = exag;
       e.pose = pose;
       e.pxLen = len * exag / mpp; // on-screen length, for clicking
       // Hide planes behind the globe.
@@ -1099,8 +1108,13 @@ function followTick() {
   if (!p || !e) { setFollow(false); return; }
   const map = v.map;
   // Centre on where the plane will be in the next frame, and draw it there (render uses v.nextT):
-  // centring on the last frame's position left the plane running ahead of the camera.
-  v.nextT = smoothTime();
+  // centring on the last frame's position left the plane running ahead of the camera. The next frame is
+  // shown one frame interval after this one's timestamp: taking the clock whenever this code ran instead
+  // made the steps uneven (one short, the next long), which shows as stutter.
+  const at = frameNow();
+  if (v.lastFrameAt != null) v.frameMs = 0.9 * (v.frameMs || 16.7) + 0.1 * Math.min(100, Math.max(4, at - v.lastFrameAt));
+  v.lastFrameAt = at;
+  v.nextT = smoothTime(at + (v.frameMs || 16.7));
   v.nextAt = performance.now();
   const pose = planePose(p, v.nextT);
   // (a plane that was out of view has no drawn heading and height yet)
@@ -1114,7 +1128,8 @@ function followTick() {
   } else {
     opts.zoom = Math.max(map.getZoom(), 6.5);
   }
-  if (map.setCenterClampedToGround) opts.elevation = drawn ? e.altM : pose.altM * TERRAIN_EXAG;
+  // (at the height it is drawn at in that frame, not the last one: else a climbing plane bobs up and down)
+  if (map.setCenterClampedToGround) opts.elevation = drawn ? drawnAlt(map, p, pose, e.obj.userData.len, e.exag) : pose.altM * TERRAIN_EXAG;
   map.jumpTo(opts);
 }
 
