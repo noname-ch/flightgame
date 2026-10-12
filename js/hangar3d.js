@@ -92,20 +92,23 @@ function sync() {
   if (!stage || !FG.hangar.model(type) || document.getElementById('market').hidden) { v.stage = null; return; }
   if (!v.renderer) setup();
   const canvas = v.renderer.domElement;
-  if (v.stage === stage && v.type === type && canvas.parentElement === stage) return;
-  if (v.type !== type) { v.table.clear(); v.spin = true; v.yaw = START.yaw; v.tilt = START.tilt; }
+  const livery = FG.livery().id;
+  if (v.stage === stage && v.type === type && v.livery === livery && canvas.parentElement === stage) return;
+  if (v.type !== type) { v.spin = true; v.yaw = START.yaw; v.tilt = START.tilt; }
+  if (v.type !== type || v.livery !== livery) v.table.clear();
   v.stage = stage;
   v.type = type;
+  v.livery = livery;
   stage.appendChild(canvas);
   const ready = () => {
-    if (v.stage !== stage || v.type !== type) return;
+    if (v.stage !== stage || v.type !== type || v.livery !== livery) return;
     stage.classList.add('live3d');
     v.last = performance.now();
     if (!v.frame) v.frame = requestAnimationFrame(frame);
   };
   if (v.table.children.length) { ready(); return; }
   loadModel(type).then((scene) => {
-    if (v.stage !== stage || v.type !== type) return;
+    if (v.stage !== stage || v.type !== type || v.livery !== livery) return;
     show(type, scene);
     ready();
   }, () => {});

@@ -112,7 +112,9 @@
     const h = shot.h * L * s;
     // Models without landing gear hover where the gear would hold them.
     const y = GROUND + (shot.ground - liftOf(file)) * L * s - h;
-    return { svg: `<image href="models/hangar/${FG.data.typeSlug(type)}.webp" x="${f1((W - w) / 2)}" y="${f1(y)}" width="${f1(w)}" height="${f1(h)}"/>`, s, L };
+    // (in another livery than the first: the picture js/shots3d.js renders, once it is there)
+    const live = FG.planeShots && FG.planeShots.get(type);
+    return { svg: `<image href="${live || `models/hangar/${FG.data.typeSlug(type)}.webp`}" x="${f1((W - w) / 2)}" y="${f1(y)}" width="${f1(w)}" height="${f1(h)}"/>`, s, L };
   }
 
   // ---------- plane drawing (returns SVG in screen units) ----------
@@ -384,7 +386,8 @@
   }
 
   function svg(type, variant = 'tile') {
-    const key = `${type}|${variant}`;
+    const live = FG.planeShots && FG.planeShots.get(type);
+    const key = `${type}|${variant}|${live || ''}`;
     if (cache[key]) return cache[key];
     const look = FG.data.looks[type] || { len: 37, dia: 4, eng: 'uw2' };
     const uid = `hg-${variant}-${type}`.replace(/[^a-zA-Z0-9-]/g, '_');

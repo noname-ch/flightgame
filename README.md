@@ -234,5 +234,9 @@ All content is plain data:
 `js/game.js` is the simulation (no DOM), `js/ui.js` the map and sidebar, `js/view3d.js` the 3D view,
 `js/hangar3d.js` the turnable 3D aircraft in the marketplace. `js/models3d.js` loads the 3D models
 (`js/planebuilder.js` builds the ones without a file) and
-`js/livery.js` paints them: white with a red fin, a white cross and the title, after the livery of SWISS
-(change `LIVERY` there for another title or colour, then make the hangar pictures again).
+`js/livery.js` paints them in the airline's livery, chosen in the settings (⚙ → Livery, kept in the saved game):
+SWISS, Lufthansa, KLM, Delta, Ryanair, Eurowings and easyJet (`js/data/liveries.js`), simplified after photographs of the real
+ones: the fuselage in one or two colours, coloured engines (found as the round pieces beside the fuselage), a
+coloured fin with a mark or a simple logo (crown, crane, harp), the title on the
+forward fuselage, coloured wing tips. The first livery has its hangar pictures in `models/hangar/`; in the
+others `js/shots3d.js` renders them in the browser. `tools/liveries.html` shows all of them on a few types.

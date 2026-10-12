@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>The liveries</title>
+<style>
+  body { margin: 16px; background: #0c1118; color: #e5e7eb; font: 14px/1.5 system-ui, sans-serif; }
+  #grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 10px; }
+  figure { margin: 0; background: #2b3646; border-radius: 8px; overflow: hidden; }
+  figure img { display: block; width: 100%; }
+  figcaption { padding: 4px 10px; }
+</style>
+<script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/"
+    }
+  }
+</script>
+<script>window.FG = { data: {} };</script>
+<script src="../js/data/looks.js"></script>
+<script src="../js/data/models.js"></script>
+<script src="../js/data/liveries.js"></script>
+</head>
+<body>
+<h1>The liveries</h1>
+<p>Every livery of <code>js/data/liveries.js</code> on a few aircraft types (<code>?types=A220-300,A350-1000</code> picks others,
+  <code>&amp;liveries=klm,delta</code> only some liveries),
+  in the view of the hangar pictures. Needs a local web server.</p>
+<p id="status">Loading…</p>
+<div id="grid"></div>
+
+<script type="module">
+import * as THREE from 'three';
+import { loadModel, modelSize } from '../js/models3d.js';
+
+const SHOT = FG.data.modelShot;
+const PX = 900;
+const AZ = 18 * Math.PI / 180;
+const EL = 6 * Math.PI / 180;
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+renderer.setClearColor(0x000000, 0);
+renderer.setSize(Math.round(SHOT.w * PX), Math.round(SHOT.h * PX));
+const back = new THREE.Vector3(-Math.cos(AZ) * Math.cos(EL), Math.sin(AZ) * Math.cos(EL), Math.sin(EL));
+const right = new THREE.Vector3(0, 0, 1).cross(back).normalize();
+const up = back.clone().cross(right);
+
+async function shot(type, livery) {
+  const model = (await loadModel(type, livery)).clone();
+  const size = modelSize(type);
+  model.scale.set(size.wide / size.len, 1, size.wide / size.len);
+  const scene = new THREE.Scene();
+  scene.add(model);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x3a4250, 2.2));
+  const key = new THREE.DirectionalLight(0xfff4dc, 2.4);
+  key.position.set(-0.6, 0.8, 1.5);
+  const fill = new THREE.DirectionalLight(0xcfe0ff, 0.9);
+  fill.position.set(-1, -0.6, 0.3);
+  scene.add(key, fill);
+  let r0 = Infinity, r1 = -Infinity, u0 = Infinity;
+  const p = new THREE.Vector3();
+  model.updateMatrixWorld(true);
+  model.traverse((o) => {
+    if (!o.isMesh) return;
+    const pos = o.geometry.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      p.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld);
+      const r = p.dot(right), u = p.dot(up);
+      if (r < r0) r0 = r;
+      if (r > r1) r1 = r;
+      if (u < u0) u0 = u;
+    }
+  });
+  const cam = new THREE.OrthographicCamera(-SHOT.w / 2, SHOT.w / 2, SHOT.h / 2, -SHOT.h / 2, 0.1, 10);
+  cam.up.copy(up);
+  const target = right.clone().multiplyScalar((r0 + r1) / 2).addScaledVector(up, u0 - SHOT.ground + SHOT.h / 2);
+  cam.position.copy(target).addScaledVector(back, 4);
+  cam.lookAt(target);
+  renderer.render(scene, cam);
+  return renderer.domElement.toDataURL('image/webp', 0.9);
+}
+
+const grid = document.getElementById('grid');
+const status = document.getElementById('status');
+const types = (new URLSearchParams(location.search).get('types') || 'A220-300,A350-1000').split(',').filter((t) => FG.data.models[t]);
+const only = new URLSearchParams(location.search).get('liveries');
+const liveries = FG.data.liveries.filter((l) => !only || only.split(',').includes(l.id));
+for (const livery of liveries) {
+  for (const type of types) {
+    status.textContent = `Rendering ${livery.name} on ${type}…`;
+    grid.insertAdjacentHTML('beforeend', `<figure><img src="${await shot(type, livery)}" alt=""><figcaption>${livery.name} · ${type}</figcaption></figure>`);
+  }
+}
+status.textContent = `${liveries.length} liveries on ${types.join(', ')}.`;
+window.liveriesDone = true;
+</script>
+</body>
+</html>
