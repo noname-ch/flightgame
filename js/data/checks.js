@@ -18,7 +18,7 @@ FG.data.checks = {
 "LUG": {"s":"checked","by":"agent","at":"2026-10-12","note":"Tidied: 2 taxiways straightened, 8 buildings/aprons squared. Earlier: real terminal, no grass taxiways, stand pushbacks."},
 "SBA": {"s":"checked","by":"agent","at":"2026-10-12","note":"Runways 7/25, 15L/33R and 15R/33L, terminal with its jet bridges, RON and south aprons match the satellite picture; nothing to fix."},
 "SEN": {"s":"checked","by":"agent","at":"2026-10-12","note":"No jet bridges (Southend has none). Runways, aprons, terminal, tower and 12 stands match the satellite picture."},
-"SIR": {"s":"checked","by":"agent","at":"2026-10-12","note":"Runways (paved + grass), aprons, terminal and 6 stands match the satellite picture; nothing to fix."},
-"SOU": {"s":"checked","by":"agent","at":"2026-10-12","note":"Multi-storey car park was a hangar: now a plain building. Terminal, aprons, runway and stands match. Still open: the game draws jet bridges at 3 stands, but SOU has none (needs a 'bridges' fix op)."},
+"SIR": {"s":"checked","by":"agent","at":"2026-10-12","note":"Tidied: 29 taxiways straightened, 1 bend made a 90° turn, 15 buildings/aprons squared. Earlier: matched the satellite picture."},
+"SOU": {"s":"checked","by":"agent","at":"2026-10-12","note":"Tidied: 4 buildings/aprons squared (its taxiways were straight already). Earlier: car park no hangar, no jet bridges."},
 "YTZ": {"s":"checked","by":"agent","at":"2026-10-12","note":"No jet bridges (Billy Bishop boards on foot): bridges off. Terminal, stands, aprons and both runways match."}
 };
