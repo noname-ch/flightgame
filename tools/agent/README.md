@@ -32,6 +32,10 @@ Screenshots and logs go to `tools/agent/shots/` (not committed).
      noses stop. Then run nosein.mjs to aim them.
    - `python3 tools/agent/hull.py CODE i j ...` replaces raw aprons i, j, ... (numbers from raw.sh) by one solid
      apron over them (their convex hull): for aprons mapped as jagged pieces cut round every gate.
+   - `python3 tools/agent/ring.py CODE VIEW KIND x y x y ... [--arc cx cy r a0 a1 n] [--set FROMJSON]` adds a ring
+     (apron, terminal...) drawn in a shot's pixels, or replaces the ring FROMJSON with it.
+   - `python3 tools/agent/delbox.py CODE VIEW x1 y1 x2 y2` deletes every stand in a pixel box of a shot;
+     `delstand.py CODE NAME...` deletes stands by name (needs `raw.sh` first for both).
    - `node tools/agent/nosein.mjs CODE` turns every stand within 70 m of a terminal nose-in to its nearest face
      (mapped stands often have odd headings, which shows as lead-in lines fanning out at angles).
 5. Tidy: `node tools/agent/tidy.mjs CODE` straightens wobbly taxiways (ends kept, so junctions stay joined),
