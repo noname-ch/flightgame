@@ -7,3 +7,6 @@ bilder/
 
 # 3D models as downloaded, before tools/convert_model.html makes the game's .glb of them
 downloads/
+
+# Claude Code agent worktrees and settings
+.claude/
