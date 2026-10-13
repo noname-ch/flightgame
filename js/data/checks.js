@@ -3,6 +3,7 @@
 // from the game: commit this file to give everyone the checks.
 FG.data.checks = {
 "ACK": {"s":"checked","by":"agent","at":"2026-10-12","note":"Tidied: 6 taxiways straightened, 7 buildings/aprons squared; removed 2 stands that stood in other stands' way. Earlier: no jet bridges."},
+"AMS": {"s":"checked","by":"agent","at":"2026-10-13","note":"Runways, piers B-H, aprons and taxiways match the satellite. Stands at piers B-H turned nose-in (72), taxiway bends tidied into curves, stands in each other's way removed."},
 "ANR": {"s":"checked","by":"agent","at":"2026-10-12","note":"Tidied: 12 taxiways straightened, 18 buildings/aprons squared. Earlier: terminal/hangar swap, 5 real stands."},
 "ATL": {"s":"checked","by":"agent","at":"2026-10-12","note":"Runways (5), the domestic terminal, concourses T, A-E and F and the aprons match the satellite; the stands the game uses (40 of 174 mapped) are all at the concourses, none on the cargo or Delta TechOps aprons. Deleted 9 mapped stands whose lead-ins ran diagonally across the apron or along a concourse (T2, T18, A1, A18, A19, E3, F5, F7, F12; the game then takes side gates instead) and A34, which stood in A32's way. Kept the gates at the concourse tips. Tidied: 24 taxiways straightened, 16 bends made 90° turns, 13 buildings/aprons squared. Jet bridges on."},
 "AVN": {"s":"checked","by":"agent","at":"2026-10-12","note":"Tidied: 14 taxiways straightened, 15 buildings/aprons squared. Earlier: no grass apron, stands where airliners park."},
