@@ -43,6 +43,10 @@ Screenshots and logs go to `tools/agent/shots/` (not committed).
      `delstand.py CODE NAME...` deletes stands by name (needs `raw.sh` first for both).
    - `python3 tools/agent/sethdg.py CODE HEADING NAME...` gives added stands a fixed heading and drops later ops on
      them: where nosein.mjs aims a stand beside a jet-bridge stub along the pier instead of at it.
+   - `python3 tools/agent/faces.py CODE TERMINAL PREFIX [--sp 42] [--off 14] [--min 40] [--box VIEW x1 y1 x2 y2]`
+     puts stands along every straight face (MIN m+) of raw terminal ring TERMINAL, OFF m out and nose-in: for
+     satellites and piers with gates all round (`--box` keeps faces whose middle lies in a pixel box, to leave the
+     landside out). RELOAD=1 shoot, then fixover.mjs (twice) clears the corners.
    - `python3 tools/agent/arc.py CODE VIEW cx cy r a0 a1 n PREFIX` puts n stands round a circle (round satellites).
    - `python3 tools/agent/rekind.py CODE hangar terminal i j ...` turns raw rings into another kind (e.g. a
      passenger terminal mapped as hangars). `row.py ... PREFIX START HEADING` gives a row a fixed heading.
