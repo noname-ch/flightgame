@@ -36,6 +36,8 @@ Screenshots and logs go to `tools/agent/shots/` (not committed).
      (apron, terminal...) drawn in a shot's pixels, or replaces the ring FROMJSON with it.
    - `python3 tools/agent/delbox.py CODE VIEW x1 y1 x2 y2` deletes every stand in a pixel box of a shot;
      `delstand.py CODE NAME...` deletes stands by name (needs `raw.sh` first for both).
+   - `python3 tools/agent/sethdg.py CODE HEADING NAME...` gives added stands a fixed heading and drops later ops on
+     them: where nosein.mjs aims a stand beside a jet-bridge stub along the pier instead of at it.
    - `python3 tools/agent/arc.py CODE VIEW cx cy r a0 a1 n PREFIX` puts n stands round a circle (round satellites).
    - `python3 tools/agent/rekind.py CODE hangar terminal i j ...` turns raw rings into another kind (e.g. a
      passenger terminal mapped as hangars). `row.py ... PREFIX START HEADING` gives a row a fixed heading.
