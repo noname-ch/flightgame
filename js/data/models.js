@@ -15,6 +15,19 @@ FG.data.models = {
   'B787-8': 'b788', 'B787-9': 'b789', 'B787-10': 'b789', 'A340-600': 'a346', 'A350-900': 'a359', 'A350-1000': 'a359',
   'B777-200ER': 'b772', 'B777-300ER': 'b773', 'B777-9': 'b773', 'B747-400': 'b744', 'B747-8': 'b748', 'A380-800': 'a380',
   'JU52': 'ju52', 'DC-3': 'dc3', 'CONCORDE': 'concorde',
+  // story-mode types: none has its own model yet, each borrows a relative's
+  'DC-4': 'dc3', 'CV-340': 'dc3', 'DC-6B': 'dc3', 'L-1049G': 'dc3', 'DC-7C': 'dc3', 'VC-700': 'saab2000',
+  'BRIT-310': 'saab2000', 'L-188': 'saab2000', 'IL-18': 'saab2000', 'TU-114': 'saab2000', 'HS748': 'saab340',
+  'YS-11': 'saab340', 'EMB110': 'b1900d', 'EMB120': 'b1900d', 'DHC6': 'dhc6', 'DHC7': 'q400', 'DASH8-100': 'q400',
+  'F27': 'atr42', 'ATR42-300': 'atr42', 'F50': 'atr42', 'ATR72-500': 'atr42', 'YAK-40': 'crj700', 'CRJ100': 'crj700',
+  'CRJ700': 'crj700', 'VFW614': 'e170', 'E170': 'e170', 'BAE146': 'bae146', 'BAC111': 'crj900', 'TU-134': 'crj900',
+  'F28': 'crj900', 'F70': 'crj900', 'CARAVELLE': 'crj900', 'B727-100': 'crj900', 'VC10': 'crj900',
+  'TRIDENT': 'crj900', 'DC-9-30': 'crj900', 'B727-200': 'crj900', 'IL-62': 'crj900', 'TU-154': 'crj900',
+  'DC-9-50': 'crj900', 'MD-81': 'crj900', 'B717': 'crj900', 'TU-104': 'b752', 'COMET4': 'a346', 'B707-120': 'a346',
+  'CV-880': 'a346', 'B720': 'a346', 'DC-8-50': 'a346', 'B707-320B': 'a346', 'DC-8-63': 'a346', 'IL-86': 'a346',
+  'A340-300': 'a346', 'B737-200': 'b737', 'B737-300': 'b737', 'B747-100': 'b744', 'B747-200B': 'b744',
+  'B747SP': 'b744', 'DC-10-10': 'b772', 'L-1011': 'b772', 'DC-10-30': 'b772', 'MD-11': 'b772', 'A300': 'a332',
+  'A310': 'a332', 'B767-200': 'b763', 'TU-144': 'concorde',
 };
 
 // The aircraft each model shows: its length (m) and fuselage height (m, as `dia` in looks.js). A type that

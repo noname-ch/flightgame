@@ -1443,21 +1443,54 @@
 
   function crewFor(type) {
     const seats = D.aircraft[type].seats;
-    const pilots = D.aircraft[type].category === 'widebody' ? 3 : 2;
+    const pilots = D.aircraft[type].pilots || (D.aircraft[type].category === 'widebody' ? 3 : 2);
     const cabin = seats < 20 ? 0 : Math.ceil(seats / 50);
     return { pilots, cabin, weeklySalary: pilots * M.pilotSalary + cabin * M.cabinSalary };
   }
 
   function randomUsedListing(n) {
-    const types = Object.keys(D.aircraft).filter((t) => D.aircraft[t].category !== 'classic' || Math.random() < 0.3);
+    // (in story mode: types that have flown for at least a year and are still around, no older than the type)
+    const y = yearNow();
+    const types = Object.keys(D.aircraft).filter((t) => (y === null
+      ? D.aircraft[t].category !== 'classic' || Math.random() < 0.3
+      : D.aircraft[t].year < y && inService(t, y)));
     const type = types[Math.floor(Math.random() * types.length)];
-    const age = M.usedAge[0] + Math.floor(Math.random() * (M.usedAge[1] - M.usedAge[0] + 1));
+    const maxAge = y === null ? M.usedAge[1] : Math.min(M.usedAge[1], y - D.aircraft[type].year);
+    const minAge = Math.min(M.usedAge[0], maxAge);
+    const age = minAge + Math.floor(Math.random() * (maxAge - minAge + 1));
     const homes = D.airports.filter((a) => !a.minor && fitsAirport(type, a.code));
     const at = homes[Math.floor(Math.random() * homes.length)].code; // seller's base
     return { id: `U${n}`, type, age, price: usedPrice(type, age), at };
   }
 
+  // ---------- story mode: the calendar and which aircraft exist ----------
+  // A story game starts in a past year (state.story.start). Day 0 is that year's first Monday, so weeks still
+  // start on Mondays (day % 7 === 0). Without a story there is no calendar and every type is on sale.
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  function firstMonday(year) {
+    const jan1 = new Date(Date.UTC(year, 0, 1));
+    return Date.UTC(year, 0, 1 + ((8 - jan1.getUTCDay()) % 7));
+  }
+  // Calendar date (a UTC Date) of game time t, or null without a story.
+  function dateOf(t) {
+    const st = Game.state && Game.state.story;
+    return st ? new Date(firstMonday(st.start) + Math.floor(t / DAY) * 86400000) : null;
+  }
+  const yearNow = () => (Game.state && Game.state.story ? dateOf(Game.state.time).getUTCFullYear() : null);
+  // Built new in year y (default: now)?
+  function onSale(type, y = yearNow()) {
+    const ac = D.aircraft[type];
+    return y === null || (ac.year <= y && y <= (ac.endYear || Infinity));
+  }
+  // Still flying with airlines in year y (pre-owned ones for sale)?
+  const inService = (type, y) => D.aircraft[type].year <= y && y <= (D.aircraft[type].endYear || Infinity) + C.story.serviceYears;
+
   // ---------- formatting ----------
+  // Type names as a list: 'A, B and C'.
+  const nameList = (types) => {
+    const n = types.map((t) => D.aircraft[t].name);
+    return n.length < 2 ? n.join('') : `${n.slice(0, -1).join(', ')} and ${n[n.length - 1]}`;
+  };
   function fmtMoney(n) {
     const v = Math.round(n);
     return `${v < 0 ? '-' : ''}${C.currency} ${Math.abs(v).toLocaleString('de-CH')}`;
@@ -1466,6 +1499,8 @@
   const fmtClock = (t) => `${pad(Math.floor((t % DAY) / 60))}:${pad(t % 60)}`;
   function fmtTime(t) {
     const day = Math.floor(t / DAY);
+    const d = dateOf(t);
+    if (d) return `${WEEKDAYS[day % 7]} ${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()} ${fmtClock(t)}`;
     return `Day ${day + 1} (${WEEKDAYS[day % 7]}) ${fmtClock(t)}`;
   }
   const fmtDuration = (m) => `${Math.floor(m / 60)}h${pad(Math.round(m % 60))}`;
@@ -1477,12 +1512,13 @@
 
     airportByCode, distanceKm, dist, bearing, interpolate, catchment, dailyDemand,
     ticketPrice, routeKey, blockMinutes, landingFee, slotUpfront, slotWeekly,
-    priceNew, fitsAirport, fitsReason, crewFor, factoryOf,
+    priceNew, fitsAirport, fitsReason, crewFor, factoryOf, onSale, dateOf,
     airportSize, airportRunways, runwayLength, longestRunway, runwayNeed, attraction,
     flightTrack, flightState, legTrack, cruiseFt, windFrom, gateOf, apronOf, taxiwaysOf, drawnTaxiways, expansionPreview, terminalPiece,
     fmtMoney, fmtTime, fmtClock, fmtDuration,
 
-    // opts: { mode, difficulty, airport, aircraft, company } from the start screen; all optional.
+    // opts: { mode, difficulty, airport, aircraft, company, story } from the start screen; all optional.
+    // story = the year a story game starts in (C.story.years); without it the game plays today.
     newGame(opts = {}) {
       if (typeof opts === 'string') opts = { mode: opts };
       const mode = C.modes[opts.mode] ? opts.mode : C.defaultMode;
@@ -1491,10 +1527,12 @@
       const type = D.aircraft[opts.aircraft] ? opts.aircraft : C.startAircraft;
       const home = airportByCode[homeCode];
       const crewT = crewFor(type);
+      const story = opts.story ? { start: Number(opts.story), year: Number(opts.story) } : null;
       this.state = {
         version: 1,
         mode,
         difficulty,
+        story,
         home: homeCode,
         company: (opts.company || '').trim().slice(0, 40) || C.companyName,
         time: C.curfew.start,
@@ -1548,6 +1586,118 @@
       this.log(`Welcome to ${this.state.company}! You start with a slot at ${home.name}, ` +
         `the ${D.aircraft[type].name} ${C.startRegistration} and a base crew. ` +
         `Mode: ${C.modes[mode].name} – ${C.modes[mode].desc} Difficulty: ${C.difficulties[difficulty].name}.`);
+      if (story) {
+        const next = this.nextArrival();
+        this.log(`Story mode: it is ${story.start}. New aircraft reach the market in the year they first flew with ` +
+          `airlines${next ? ` – next: the ${nameList(next.types)} in ${next.year}` : ''}.`, 'good');
+      }
+      this.dirty = true;
+    },
+
+    // ---------- story mode ----------
+    year: () => yearNow(),
+    isStory() { return !!(this.state && this.state.story); },
+    // Types a story game starting in `year` can begin with: leased ones that were flying then, smallest first.
+    starterTypes(year) {
+      if (!year) return C.starterAircraft.filter((t) => D.aircraft[t]);
+      const all = Object.keys(D.aircraft).filter((t) => inService(t, year) && year - D.aircraft[t].year <= C.story.starterAge
+        && D.aircraft[t].seats <= C.story.starterSeats)
+        .sort((a, b) => D.aircraft[a].seats - D.aircraft[b].seats);
+      const n = Math.min(8, all.length); // (spread over the sizes)
+      return [...new Set(Array.from({ length: n }, (_, i) => all[Math.round(i * (all.length - 1) / Math.max(1, n - 1))]))];
+    },
+    // The next year that brings new types, and those types (null if none comes any more).
+    nextArrival() {
+      const y = yearNow();
+      if (y === null) return null;
+      const later = Object.keys(D.aircraft).filter((t) => D.aircraft[t].year > y);
+      if (!later.length) return null;
+      const year = Math.min(...later.map((t) => D.aircraft[t].year));
+      return { year, types: later.filter((t) => D.aircraft[t].year === year) };
+    },
+    // A new rival airline (story mode, when one went bust): one of the templates not flying yet, near home if
+    // possible, with its first routes. Returns it, or null when none can start.
+    foundRival() {
+      const s = this.state;
+      const home = airportByCode[this.home()];
+      const flying = new Set(s.rivals.map((r) => r.name));
+      const free = D.rivalTemplates.filter((t) => !flying.has(t.name) && t.hubs.every((h) => airportByCode[h]))
+        .map((t) => ({ t, d: Math.min(...t.hubs.map((h) => distanceKm(home, airportByCode[h]))) }))
+        .sort((x, y) => x.d - y.d).slice(0, 8);
+      if (!free.length) return null;
+      const t = free[Math.floor(Math.random() * free.length)].t;
+      const r = { id: `r${s.time}`, name: t.name, kind: t.kind, hubs: t.hubs.slice(),
+        color: D.rivalColors[s.rivals.length % D.rivalColors.length], routes: [], since: s.time };
+      for (const plan of this.rivalCandidates(r)) {
+        if (r.routes.length >= C.rivals.routes[r.kind]) break;
+        r.routes.push(plan);
+      }
+      if (!r.routes.length) return null;
+      s.rivals.push(r);
+      this.indexRivals();
+      this.log(`${r.name} starts flying from ${r.hubs.join(', ')} (${r.routes.length} routes).`, 'bad');
+      return r;
+    },
+
+    // Rival airlines' aircraft (C.rivals; in story mode the ones of the time, D.story.rivalFleets).
+    rivalFleet() {
+      const R = C.rivals;
+      const y = yearNow();
+      const era = y === null ? null : D.story.rivalFleets.filter((e) => e.from <= y).pop();
+      if (era && era.flag) return era;
+      return { ...R.fleet, longHaul: R.longHaul.type, shortProp: R.shortProp.type };
+    },
+    // New Year in a story game: this year's new types make the newspaper, types no longer built leave the
+    // new-aircraft market, and rivals move their routes to the aircraft of the time.
+    newYear(y) {
+      const arrivals = Object.keys(D.aircraft).filter((t) => D.aircraft[t].year === y);
+      const ended = Object.keys(D.aircraft).filter((t) => D.aircraft[t].endYear === y - 1);
+      if (arrivals.length) {
+        const names = arrivals.map((t) => D.aircraft[t].name);
+        const lines = arrivals.map((t) => {
+          const ac = D.aircraft[t];
+          return `<b>${ac.name}</b> (${ac.maker}, ${ac.seats} seats, ${ac.rangeKm.toLocaleString('de-CH')} km). ` +
+            `${D.story.news[t] || ''} New ${fmtMoney(priceNew(t))}, or leased for ${fmtMoney(ac.leasePerWeek)} a week.`;
+        });
+        this.news({
+          kind: 'good', picture: 'plane',
+          headline: (arrivals.length === 1 ? `The ${names[0]} enters service` : `${arrivals.length} new airliners for ${y}`).toUpperCase(),
+          sub: arrivals.length === 1 ? `${D.aircraft[arrivals[0]].maker} delivers the first aircraft to the airlines`
+            : `The ${nameList(arrivals)} reach the airlines`,
+          body: `${lines.join('<br><br>')}<br><br>Now in the Aircraft Marketplace.`,
+        });
+      }
+      for (const t of ended) {
+        this.log(`The last ${D.aircraft[t].name} has left the factory – from now on it is only sold pre-owned.`);
+      }
+      // Rivals fly the types of the new year where they can.
+      for (const r of this.state.rivals || []) {
+        for (const rt of r.routes) {
+          const plan = this.rivalPlan(r, rt.a, rt.b);
+          if (!plan || plan.type === rt.type) continue;
+          rt.perDay = Math.max(1, Math.min(C.rivals.maxPerDay, Math.round(rt.perDay * rt.seats / plan.seats)));
+          rt.type = plan.type;
+          rt.seats = plan.seats;
+        }
+      }
+      this.indexRivals();
+      // Decades go by: airlines that went bust make room for new ones.
+      const founded = [];
+      while (this.state.rivals && this.state.rivals.length < C.rivals.near + C.rivals.far) {
+        const r = this.foundRival();
+        if (!r) break;
+        founded.push(r);
+      }
+      if (founded.length) {
+        const kinds = { flag: 'flag carrier', low: 'low-fare airline', regional: 'regional airline' };
+        this.news({ kind: 'bad', picture: 'plane',
+          headline: (founded.length === 1 ? `New airline ${founded[0].name} takes off` : `${founded.length} new airlines take off`).toUpperCase(),
+          sub: 'Competition for the passengers of the airlines that went bust',
+          body: founded.map((r) => `<b>${r.name}</b>, a new ${kinds[r.kind]} at ${r.hubs.map((h) => airportByCode[h].city).join(' and ')}, ` +
+            `starts ${r.routes.length} routes with the ${nameList([...new Set(r.routes.map((x) => x.type))])}.`).join('<br><br>') });
+      }
+      const next = this.nextArrival();
+      this.log(`Happy New Year ${y}!${next ? ` Next new aircraft: the ${nameList(next.types)} in ${next.year}.` : ''}`, 'summary');
       this.dirty = true;
     },
 
@@ -1770,9 +1920,10 @@
     rivalPlan(r, a, b) {
       const R = C.rivals;
       const d = dist(a, b);
-      let type = R.fleet[r.kind];
-      if (r.kind === 'flag' && d > R.longHaul.km) type = R.longHaul.type;
-      if (r.kind === 'regional' && d < R.shortProp.km) type = R.shortProp.type;
+      const fleet = this.rivalFleet();
+      let type = fleet[r.kind];
+      if (r.kind === 'flag' && d > R.longHaul.km) type = fleet.longHaul;
+      if (r.kind === 'regional' && d < R.shortProp.km) type = fleet.shortProp;
       const ac = D.aircraft[type];
       if (!ac || d > ac.rangeKm || !fitsAirport(type, a) || !fitsAirport(type, b)) return null;
       const fare = R.fare[r.kind];
@@ -2084,6 +2235,10 @@
         this.payDividends();
         this.refreshMarket();
         this.rivalsWeek();
+      }
+      if (s.story && this.year() !== s.story.year) {
+        s.story.year = this.year();
+        this.newYear(s.story.year);
       }
       this.rollWorldEvent();
       this.finishProjects();
@@ -2672,6 +2827,14 @@
       return `${M.registrationPrefix}${Date.now()}`;
     },
 
+    // Why a type can't be ordered new now (story mode), or null.
+    notOnSale(type) {
+      if (onSale(type)) return null;
+      const ac = D.aircraft[type];
+      return ac.year > this.year() ? `The ${ac.name} won't reach the airlines before ${ac.year}.`
+        : `The ${ac.name} is no longer built – look for a pre-owned one.`;
+    },
+
     // Shared checks for a delivery; returns an error string or null.
     checkDelivery(type, code, cost) {
       if (!this.ownsSlot(code)) return `You need a slot at ${code} for the delivery.`;
@@ -2722,7 +2885,7 @@
 
     buyNew(type, code) {
       const cost = priceNew(type);
-      const err = this.checkDelivery(type, code, cost);
+      const err = this.notOnSale(type) || this.checkDelivery(type, code, cost);
       if (err) return err;
       this.state.money -= cost;
       const from = this.deliveryFrom(type, code);
@@ -2734,7 +2897,7 @@
 
     leaseNew(type, code) {
       const cost = this.leaseDeposit(type);
-      const err = this.checkDelivery(type, code, cost);
+      const err = this.notOnSale(type) || this.checkDelivery(type, code, cost);
       if (err) return err;
       this.state.money -= cost;
       const from = this.deliveryFrom(type, code);

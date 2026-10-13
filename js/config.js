@@ -147,6 +147,13 @@ FG.config = {
   // Aircraft offered as the first (leased) plane on the start screen.
   starterAircraft: ['ATR72-600', 'Q400', 'E190', 'A220-300', 'A320neo', 'B737-800'],
 
+  // Story mode (start screen): the game starts on the first Monday of one of these years, and each aircraft
+  // type reaches the market in its real first year of airline service (js/data/aircraft.js, js/data/story.js).
+  // A type is built new from its year to its endYear and flies on, sold pre-owned, for serviceYears more.
+  // First aircraft: types flying in the start year that are at most starterAge years old and seat starterSeats.
+  story: { years: [1955, 1960, 1965, 1970, 1975, 1980, 1985, 1990, 2000, 2010], defaultYear: 1955,
+    serviceYears: 25, starterAge: 25, starterSeats: 200 },
+
   // Random events (catalogue in js/data/events.js). Real accident rates (~1 per 5M flights)
   // would never show up in a game, so they are scaled up here.
   events: {

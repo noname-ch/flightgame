@@ -579,6 +579,8 @@ i.s-net { background: var(--muted); }
 .mk-top h1 { margin: 0; font-size: 20px; letter-spacing: 0.04em; text-transform: uppercase; font-weight: 800; }
 .mk-money { font-variant-numeric: tabular-nums; color: #a7f3d0; font-weight: 600; }
 .mk-top .spacer { flex: 1; }
+.mk-year { font-size: 13px; color: #fcd34d; }
+.mk-year b { font-variant-numeric: tabular-nums; }
 .mk-close { background: transparent; border: 1px solid #334155; font-size: 22px; line-height: 1; width: 36px; height: 36px; border-radius: 50%; }
 .mk-close:hover { background: #1e293b; }
 .mk-bar { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; padding: 6px 20px 12px; border-bottom: 1px solid #1e293b; }
@@ -1156,6 +1158,7 @@ body { height: 100dvh; } /* the visible height, also while the phone's address b
   #devtools { top: calc(52px + env(safe-area-inset-top)); left: 8px; max-height: calc(100dvh - 150px); }
   .mk-top { gap: 10px; padding: 10px 12px 4px; }
   .mk-top h1 { font-size: 16px; }
+  .mk-next { display: none; }
   .mk-money { white-space: nowrap; }
   .leaflet-control-scale { display: none; }
   .leaflet-control-attribution { font-size: 9px; }

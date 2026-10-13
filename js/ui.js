@@ -1184,10 +1184,11 @@
   };
   const mk = { open: false, cond: 'new', cat: 'all', sort: 'price', at: null, sel: null, version: null };
 
-  // Offers shown in the marketplace: every type new, or this week's used planes.
+  // Offers shown in the marketplace: every type built new this year (all of them outside story mode), or this
+  // week's used planes.
   function mkOffers() {
     const list = mk.cond === 'new'
-      ? Object.keys(D.aircraft).map((type) => ({ key: `new:${type}`, type, price: G.priceNew(type) }))
+      ? Object.keys(D.aircraft).filter((type) => G.onSale(type)).map((type) => ({ key: `new:${type}`, type, price: G.priceNew(type) }))
       : G.state.market.listings.map((l) => ({ key: `used:${l.id}`, type: l.type, price: l.price, used: l }));
     return list.filter((o) => mk.cat === 'all' || D.aircraft[o.type].category === mk.cat).sort(MARKET_SORTS[mk.sort][1]);
   }
@@ -1243,6 +1244,12 @@
     return h + `</div></div></section>`;
   }
 
+  // Story mode: the year, and which new types come next.
+  function mkYear() {
+    const next = G.nextArrival();
+    return `<div class="mk-year"><b>${G.year()}</b>${next ? `<span class="mk-next"> · next: ${next.types.map((t) => D.aircraft[t].name).join(', ')} in ${next.year}</span>` : ''}</div>`;
+  }
+
   function renderMarket() {
     const s = G.state;
     const at = mkDeliverTo();
@@ -1253,6 +1260,7 @@
     let h = `<div class="mk-top">
       <h1>Aircraft Marketplace</h1>
       <div class="mk-money" id="mk-money"></div>
+      ${G.isStory() ? mkYear() : ''}
       <div class="spacer"></div>
       <button class="mk-close" data-mk="close" title="Close (Esc)">×</button>
     </div>
@@ -1976,6 +1984,13 @@
       <path d="M20 78 V40 H140 V78" fill="#888"/><path d="M14 40 L80 14 L146 40Z" fill="#444"/>
       ${Array.from({ length: 30 }, (_, i) => `<rect x="${(i * 37) % 156}" y="${(i * 23) % 70}" width="4" height="4" fill="#${i % 2 ? '222' : 'eee'}" transform="rotate(${i * 25} ${(i * 37) % 156} ${(i * 23) % 70})"/>`).join('')}
       ${Array.from({ length: 12 }, (_, i) => `<circle cx="${8 + i * 13}" cy="${86 + (i % 3) * 3}" r="6" fill="#222"/>`).join('')}`,
+    plane: `<rect width="160" height="110" fill="#d4d4d4"/><rect y="84" width="160" height="26" fill="#777"/>
+      <path d="M0 96 H160" stroke="#ddd" stroke-dasharray="12 8" stroke-width="2"/>
+      <path d="M14 66 Q14 56 28 56 H120 L138 34 H148 L142 60 Q140 70 126 70 H26 Q14 70 14 66Z" fill="#333"/>
+      <path d="M62 66 L44 80 H58 L86 66Z" fill="#222"/><path d="M118 58 L132 50 H140 L130 60Z" fill="#222"/>
+      ${Array.from({ length: 12 }, (_, i) => `<circle cx="${36 + i * 7}" cy="61" r="1.6" fill="#ddd"/>`).join('')}
+      <path d="M20 84 L20 76 M70 84 L70 76" stroke="#222" stroke-width="3"/><circle cx="20" cy="84" r="3" fill="#111"/><circle cx="70" cy="84" r="3" fill="#111"/>
+      ${[16, 40, 128, 146].map((x) => `<path d="M${x} 84 l3 -12 l3 12" fill="#555"/>`).join('')}`,
     crowd: `<rect width="160" height="110" fill="#bbb"/><rect x="70" y="8" width="2" height="40" fill="#222"/><path d="M72 8 h30 l-6 8 l6 8 h-30Z" fill="#333"/>
       ${Array.from({ length: 40 }, (_, i) => `<circle cx="${(i % 10) * 17 + (Math.floor(i / 10) % 2) * 8 + 4}" cy="${58 + Math.floor(i / 10) * 13}" r="7" fill="#${['222', '333', '444'][i % 3]}"/>`).join('')}`,
   };
@@ -2007,7 +2022,7 @@
           <figure><svg viewBox="0 0 160 110">${PICTURES[n.picture] || PICTURES.chart}</svg>
             <figcaption>${{ crash: 'The scene of the accident.', incident: 'The aircraft after landing.', strike: 'Picket line at the terminal.',
               storm: 'Dark skies over the region.', volcano: 'The ash plume seen from the coast.', fuel: 'Prices at the pump.',
-              party: 'Celebrations in the city.', crowd: 'Fans gather ahead of the match.' }[n.picture] || 'Markets react.'}</figcaption></figure>
+              party: 'Celebrations in the city.', crowd: 'Fans gather ahead of the match.', plane: 'The new airliner on its first visit.' }[n.picture] || 'Markets react.'}</figcaption></figure>
           <p>${n.body}</p>
         </div>
       </div>
@@ -2026,7 +2041,7 @@
   // ---------- start screen ----------
   // Shown on every page load and by "New game": continue the saved airline or set up a new one.
   const st = { open: false, hasGame: false, mode: C.defaultMode, difficulty: C.defaultDifficulty,
-    airport: C.startAirport, aircraft: C.startAircraft, quickOpen: true };
+    airport: C.startAirport, aircraft: C.startAircraft, quickOpen: true, story: '', year: String(C.story.defaultYear) };
 
   // Home airport choices, grouped by region (C.startAirports).
   function startAirportOptions() {
@@ -2042,8 +2057,20 @@
         <b>${m.name}</b><span>${m.desc}</span></button>`).join('')}</div>`;
   }
 
+  // Free play or story mode (and its start year).
+  function startStory() {
+    return `<div class="st-choices">
+      <button class="st-choice${st.story ? '' : ' on'}" data-st="story" data-id=""><b>Free play</b><span>Today's world, every aircraft on sale.</span></button>
+      <button class="st-choice${st.story ? ' on' : ''}" data-st="story" data-id="${st.year}"><b>Story mode</b>
+        <span>Start in the past. Every year new airliners arrive, in the year they really first flew with airlines.</span></button></div>
+      ${st.story ? `<label class="st-label" for="st-year">Start year</label><select id="st-year">${C.story.years.map((y) =>
+        `<option value="${y}"${String(y) === st.year ? ' selected' : ''}>${y}</option>`).join('')}</select>` : ''}`;
+  }
+
+  const startTypes = () => G.starterTypes(st.story ? Number(st.story) : null);
+
   function startPlanes() {
-    return C.starterAircraft.filter((t) => D.aircraft[t]).map((t) => {
+    return startTypes().map((t) => {
       const ac = D.aircraft[t];
       const why = G.fitsReason(t, st.airport);
       return `<button class="st-plane${t === st.aircraft ? ' on' : ''}" data-st="aircraft" data-id="${t}"${why ? ` disabled title="${why}"` : ''}>
@@ -2062,9 +2089,12 @@
 
   function renderStart() {
     const s = G.state;
-    // Keep the chosen plane valid for the chosen airport.
-    if (G.fitsReason(st.aircraft, st.airport)) {
-      st.aircraft = C.starterAircraft.find((t) => D.aircraft[t] && !G.fitsReason(t, st.airport)) || st.aircraft;
+    // Keep the chosen plane valid for the chosen airport and year.
+    const types = startTypes();
+    if (!types.includes(st.aircraft) || G.fitsReason(st.aircraft, st.airport)) {
+      const year = st.story ? Number(st.story) : undefined; // (rather one that is still built)
+      st.aircraft = types.find((t) => G.onSale(t, year) && !G.fitsReason(t, st.airport))
+        || types.find((t) => !G.fitsReason(t, st.airport)) || types[0];
     }
     const ap = G.airportByCode[st.airport];
     const el = $('start-screen');
@@ -2081,6 +2111,7 @@
       <input id="st-name" maxlength="40" value="${(st.name ?? C.companyName).replace(/"/g, '&quot;')}">
       <div class="st-label">Mode</div>${startChoices('mode', C.modes, st.mode)}
       <div class="st-label">Difficulty</div>${startChoices('difficulty', C.difficulties, st.difficulty)}
+      <div class="st-label">Game</div>${startStory()}
       <label class="st-label" for="st-airport">Home airport <span class="muted">${ap.name}, ${ap.city} · size ${G.airportSize(ap.code)}</span></label>
       <select id="st-airport">${startAirportOptions()}</select>
       <div class="st-label">First aircraft <span class="muted">leased, with crew</span></div>
@@ -2112,7 +2143,7 @@
     if (what === 'continue' || what === 'cancel') { closeStart(); return; }
     if (what === 'start') { startNewGame(); return; }
     if (what === 'preset') { startPreset(id); return; }
-    st[what] = id; // mode, difficulty or aircraft
+    st[what] = id; // mode, difficulty, aircraft or story ('' = free play, else the start year)
     renderStart();
   }
 
@@ -2120,6 +2151,7 @@
     const t = e.target;
     if (t.id === 'st-name') st.name = t.value;
     if (t.id === 'st-airport') { st.airport = t.value; refreshStartAirport(); }
+    if (t.id === 'st-year') { st.year = st.story = t.value; renderStart(); $('st-year').focus(); }
   }
 
   // Re-render, keeping the focus on the airport list.
@@ -2130,7 +2162,7 @@
 
   function startNewGame() {
     G.newGame({ mode: st.mode, difficulty: st.difficulty, airport: st.airport, aircraft: st.aircraft,
-      company: st.name ?? C.companyName });
+      company: st.name ?? C.companyName, story: st.story ? Number(st.story) : null });
     afterNewGame();
   }
 

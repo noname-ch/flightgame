@@ -74,8 +74,6 @@ realistic flight tracks in 2D and 3D, AI rival airlines, random events and a dev
 - [ ] **Scenarios** (M). Start conditions with a goal and a deadline: "connect 10 capitals from Bern in two
   years", "save a bankrupt regional airline", "the jet age in 1958" (only the types of that time: the
   catalogue already has the Ju 52 and the Concorde).
-- [ ] **Aircraft by year** (S/M). First flight and last delivery per type in `js/data/aircraft.js`, and a
-  start year for the game: new types appear in the market over time.
 - [ ] **Achievements and a score** (S). First long-haul flight, 1 million passengers, a year without an
   incident, ten airports owned. A score to compare games.
 
@@ -116,6 +114,8 @@ realistic flight tracks in 2D and 3D, AI rival airlines, random events and a dev
 
 Recent milestones, newest first (see `git log` for the rest):
 
+- Story mode: start in 1955 (or a later year); 65 more airliners from the 1940s to the 2000s reach the market
+  in their real first year of service, announced in the newspaper. Rivals fly the types of their time
 - Storage: the airport layout cache moved from localStorage to IndexedDB, so it can never push the save out
 - A smoke test on every push: `tools/smoke.mjs` plays the game in headless Chrome (GitHub Action)
 - Phones and tablets: bottom tab bar, the sidebar as a draggable sheet, installable as an app

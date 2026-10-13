@@ -350,6 +350,26 @@ try {
   await waitFor(() => window.FG && FG.ui && FG.game && G.state.planes.length >= 1, 60000, 'the game after a reload');
   await evaluate(() => document.querySelector('[data-st=continue]') && document.querySelector('[data-st=continue]').click());
   await sleep(2000);
+
+  step('story mode from 1955: the market, then New Year 1958 (Comet 4 and Boeing 707)');
+  await evaluate(() => document.getElementById('newgame').click());
+  const story = await evaluate(() => {
+    document.querySelector('[data-st=story][data-id="1955"]').click();
+    document.querySelector('[data-st=start]').click();
+    const out = { date: G.fmtTime(G.state.time), early: G.onSale('A320'), sale: G.onSale('DC-6B') };
+    G.state.money = 1e9;
+    while (G.dateOf(G.state.time).getUTCFullYear() < 1958) G.advance(24 * 60);
+    out.jets = G.onSale('B707-120') && G.onSale('COMET4');
+    out.news = G.state.news.filter((n) => n.picture === 'plane').length;
+    G.dirty = true;
+    return out;
+  });
+  step(`story: ${story.date}, ${story.news} newspaper stories about new aircraft by 1958`);
+  if (!/1955/.test(story.date)) errors.push(`story mode: the date should be in 1955, it is ${story.date}`);
+  if (story.early || !story.sale) errors.push('story mode: the 1955 market sells the wrong types');
+  if (!story.jets || !story.news) errors.push('story mode: no new types arrived by 1958');
+  await evaluate(() => document.querySelector('#rail [data-tab="market"]').click());
+  await sleep(1000);
 } catch (e) {
   errors.push(`test stopped: ${e.message}`);
 }

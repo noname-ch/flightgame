@@ -42,6 +42,14 @@ sheet's top edge to make it taller or shorter, pull it down to close it, or tap 
 height. Pinch to zoom the map; tap a plane card to select it, tap it twice to follow it. In the
 browser menu, *Add to Home screen* installs the game as an app without the address bar.
 
+**Story mode** (start screen → Game → Story mode): the airline starts in a past year (1955 by default,
+up to 2010) with a date in the top bar. Each New Year the newspaper announces the airliners that first flew
+with airlines that year, from the Super Constellation and the first jets (Tu-104, Comet 4, Boeing 707) to the
+747, Concorde, the A320 and the Dreamliner; they are then sold new in the Marketplace. A type stays on sale
+new until its real end of production and is offered pre-owned for 25 years more. Rival airlines fly the
+aircraft of their time, and new airlines take the place of those that went bust. At top speed a year takes
+about a quarter of an hour. Free play is today's world with every type on sale.
+
 **Timetables** (Schedule section): each plane gets a day plan that repeats every day. Pick the route,
 the first departure and how many loops, then move single flights with − / + or type a time. Each
 slot holds one plane on the ground at a time, from landing until departure; when it is empty any of
@@ -260,7 +268,9 @@ All content is plain data:
   [GeoNames](https://www.geonames.org/) cities15000 (CC BY 4.0). To rebuild, download
   `airports.csv`, `runways.csv` and `cities15000.txt` into `tools/cache/` and run
   `python3 tools/build_data.py`.
-- `js/data/aircraft.js` – aircraft types (market catalogue) and crew templates
+- `js/data/aircraft.js` – aircraft types (market catalogue) and crew templates; `year`/`endYear` = first
+  year in airline service and last year built (story mode)
+- `js/data/story.js` – story mode: a newspaper line for each new type, and the rival airlines' aircraft by era
 - `js/data/factories.js` – where each type is built (delivery flights start there)
 - `js/data/looks.js` – side-view shape of each type, drawn by `js/hangar.js`
 - `js/data/models.js` – 3D model of each type (a file, `models/*.glb`)
