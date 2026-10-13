@@ -2,7 +2,11 @@
 // points on a runway (within half its width + 8 m; runways from shots/CODE.json, so shoot first). A taxiway op
 // with 3+ points there is usually a curve the tidy step laid over the runway: check each one and undo it.
 import fs from 'node:fs';
+// --near M: points within M m of a runway centreline count instead; --from N: only ops from number N on.
 const code = (process.argv[2] || '').toUpperCase();
+const arg = (n) => { const i = process.argv.indexOf('--' + n); return i > 0 ? Number(process.argv[i + 1]) : null; };
+const near = arg('near');
+const from = arg('from') || 0;
 const root = new URL('../..', import.meta.url).pathname;
 globalThis.FG = { data: {} };
 eval(fs.readFileSync(root + 'js/data/fixes.js', 'utf8'));
@@ -18,10 +22,10 @@ function segM(p, a, b) {
 }
 let n = 0;
 ops.forEach((o, i) => {
-  if (o.kind !== 'taxiway' || o.op === 'del') return;
+  if (i < from || o.kind !== 'taxiway' || o.op === 'del') return;
   const g = o.geom;
   let on = 0;
-  for (const p of g) for (const r of rws) if (segM(p, [r[0], r[1]], [r[2], r[3]]) < r[4] / 2 + 8) { on++; break; }
+  for (const p of g) for (const r of rws) if (segM(p, [r[0], r[1]], [r[2], r[3]]) < (near ?? r[4] / 2 + 8)) { on++; break; }
   if (!on) return;
   n++;
   console.log(`op ${i} ${o.op} ${g.length} points, ${on} on a runway${g.length > 2 ? ' (curve)' : ''}`);
