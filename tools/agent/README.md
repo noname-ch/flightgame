@@ -41,6 +41,12 @@ Screenshots and logs go to `tools/agent/shots/` (not committed).
    - `python3 tools/agent/arc.py CODE VIEW cx cy r a0 a1 n PREFIX` puts n stands round a circle (round satellites).
    - `python3 tools/agent/rekind.py CODE hangar terminal i j ...` turns raw rings into another kind (e.g. a
      passenger terminal mapped as hangars). `row.py ... PREFIX START HEADING` gives a row a fixed heading.
+   - `python3 tools/agent/draw.py CODE VIEW aprons,terminals,...` draws the raw elements with their numbers over a
+     shot's satellite picture (`shots/CODE-draw.png`, after raw.sh), to see which number is which ring.
+   - `node tools/agent/pin.mjs CODE`: the game uses only 2×GATE_COUNT of the mapped stands (plus every stand a fix
+     added or moved). Where the mapped stands are already right, this pins all within 70 m of a terminal (a `set`
+     op that keeps them as they are), so the game uses them all. Reload, then run fixover.mjs.
+   - `sethdg.py` also takes names of mapped stands (from raw.sh): they get a `set` op with the heading.
    - `node tools/agent/nosein.mjs CODE` turns every stand within 70 m of a terminal nose-in to its nearest face
      (mapped stands often have odd headings, which shows as lead-in lines fanning out at angles).
 5. Tidy: `node tools/agent/tidy.mjs CODE` straightens wobbly taxiways (ends kept, so junctions stay joined),
