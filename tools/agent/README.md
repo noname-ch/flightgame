@@ -19,6 +19,8 @@ Screenshots and logs go to `tools/agent/shots/` (not committed).
    `--at lat,lon,zoom` takes `-detail.png` / `-detailsat.png` there instead.
    The map goes no closer than zoom 17; `python3 tools/agent/crop.py CODE VIEW x1 y1 x2 y2 [SCALE]` cuts a box out
    of a shot and its satellite twin, scaled up side by side with a grid in the shot's pixels (`shots/CODE-crop.png`).
+   The map draws a layout only when the airport's reference point lies within about one screen of the view, so a
+   zoom 17 `--at` shot far (2 km+) from it shows the satellite alone: use zoom 16 there.
    Stands added with fix ops show (and nosein.mjs sees them) only after a `RELOAD=1` shoot.
 3. Compare the game and the satellite shots. Usual faults: grass mapped as apron, taxiway or stands; terminal,
    hangar and car park mixed up; runway ends off; jet bridges at small airports that have none; too few stands;
@@ -59,7 +61,7 @@ Screenshots and logs go to `tools/agent/shots/` (not committed).
    tidy.js makes no turn or curve where a taxiway has a point on a runway or a leg along one. Still LOOK at every
    curve it made: a curve must never lie on a runway or turn a taxiway that runs along the runway.
    `python3 tools/agent/curves.py CODE game --from N` draws the taxiway ops with 3+ points from op N on (the ones
-   tidy just added) over the satellite shot with their numbers; `node tools/agent/onrw.mjs CODE` lists the airport's taxiway ops with points on a runway (after a shoot);
+   tidy just added) over the satellite shot with their numbers; `node tools/agent/onrw.mjs CODE` lists the airport's taxiway ops with points on a runway (after a shoot; `--near M` within M m of one, `--from N`);
    `python3 tools/agent/uncurve.py CODE i j ...` straightens ops i, j (`--del` removes them: the original lines
    come back).
 6. Stands in each other's way: `node tools/agent/fixover.mjs CODE` deletes stands closer than 24 m, with crossing
