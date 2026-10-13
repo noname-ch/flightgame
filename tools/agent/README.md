@@ -53,11 +53,19 @@ Screenshots and logs go to `tools/agent/shots/` (not committed).
    makes one clean ~90° bend a "90° turn", one bend of another angle (exits, angled links) a Curve-tool curve
    with the radius that follows it best, and squares aprons and buildings, each only when that moves things
    a few metres (`--dry` only counts).
+   tidy.js makes no turn or curve where a taxiway has a point on a runway or a leg along one. Still LOOK at every
+   curve it made: a curve must never lie on a runway or turn a taxiway that runs along the runway.
+   `node tools/agent/onrw.mjs CODE` lists the airport's taxiway ops with points on a runway (after a shoot);
+   `python3 tools/agent/uncurve.py CODE i j ...` straightens ops i, j (`--del` removes them: the original lines
+   come back).
 6. Stands in each other's way: `node tools/agent/fixover.mjs CODE` deletes stands closer than 24 m, with crossing
    lead-in lines, or standing in another's lead-in. Deleting one can bring in another (the game uses at most
    2×GATE_COUNT), so check again.
 7. `RELOAD=1 node tools/agent/shoot.mjs CODE` again and look. `node tools/agent/ev.mjs "FG.fixes.missed('CODE')"`
-   must be `[]` (every op found its element).
+   must be `[]` (every op found its element). When the map data has moved since an op was made,
+   `python3 tools/agent/missed.py CODE` (after `raw.sh`) shows the nearest element for each missed op, and
+   `--fix [M]` points ops whose element is now 6-M m off (default 20) at it again. Ops whose element is gone
+   (far off) do nothing (a del) or add their shape anyway (a set): look, then remove or redo them.
 8. `node tools/checks.mjs mark CODE --note "what was checked and fixed"` (blue). Never mark green: only a person approves.
 9. After every 2 airports: `tools/agent/push.sh "Airport check: AAA (...), BBB (...)"` bumps `?v=`, commits
    `js/data/fixes.js`, `checks.js` and `layouts/`, rebases on origin/main and pushes.
