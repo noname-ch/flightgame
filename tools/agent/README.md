@@ -36,6 +36,8 @@ Screenshots and logs go to `tools/agent/shots/` (not committed).
      (apron, terminal...) drawn in a shot's pixels, or replaces the ring FROMJSON with it.
    - `python3 tools/agent/delbox.py CODE VIEW x1 y1 x2 y2` deletes every stand in a pixel box of a shot;
      `delstand.py CODE NAME...` deletes stands by name (needs `raw.sh` first for both).
+   - `python3 tools/agent/rekind.py CODE hangar terminal i j ...` turns raw rings into another kind (e.g. a
+     passenger terminal mapped as hangars). `row.py ... PREFIX START HEADING` gives a row a fixed heading.
    - `node tools/agent/nosein.mjs CODE` turns every stand within 70 m of a terminal nose-in to its nearest face
      (mapped stands often have odd headings, which shows as lead-in lines fanning out at angles).
 5. Tidy: `node tools/agent/tidy.mjs CODE` straightens wobbly taxiways (ends kept, so junctions stay joined),
