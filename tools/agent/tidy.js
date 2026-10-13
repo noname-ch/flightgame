@@ -9,7 +9,7 @@
 // - aprons and buildings get square corners (editor "Straighten") when that moves no point more than 2.5 m
 //   (aprons 4 m).
 // No turn or curve where the taxiway has a point on a runway (half its width + 10 m) or one of its legs runs along
-// a runway (within 20 degrees, 250 m of it): those are lead-ins and fillets on the runway or the parallel
+// a runway (within 20 degrees, 350 m of it): those are lead-ins and fillets on the runway or the parallel
 // taxiway, and a curve there lies over the runway. They are only straightened when they are just wobbly.
 window.tidy = async function (code) {
   FG.layouts.get(code);
@@ -49,7 +49,7 @@ window.tidy = async function (code) {
       if (p.some((q) => segM(q, A, B) < r[4] / 2 + 10)) return true;
       const tr = Math.atan2(B[1] - A[1], B[0] - A[0]);
       const par = (t) => { const d = Math.abs(((t - tr) / DEG + 360) % 180); return Math.min(d, 180 - d) < 20; };
-      if ((par(t1) && segM(p[0], A, B) < 250) || (par(t2) && segM(p[p.length - 1], A, B) < 250)) return true;
+      if ((par(t1) && segM(p[0], A, B) < 350) || (par(t2) && segM(p[p.length - 1], A, B) < 350)) return true;
     }
     return false;
   }
