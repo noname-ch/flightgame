@@ -36,8 +36,17 @@ parts (windows, propellers, tyres), turned and scaled like the others. The DC-3 
 propellers, because theirs are separate models. The Twin Otter and the Ju 52 stand on their fixed landing gear
 (`modelsOnGear` in `js/data/models.js`); the other models have none.
 
-Two types have no file here (Saab 340 and Saab 2000): `js/planebuilder.js` builds their models from
-`js/data/looks.js` and `builtModels` in `js/data/models.js`. Their pictures are in `hangar/` like the others.
+Two models come from 3D-print models on [Thingiverse](https://www.thingiverse.com/), both licensed under
+**CC BY-SA** (Creative Commons Attribution-ShareAlike):
+
+| File | Aircraft | Source | Model by |
+|---|---|---|---|
+| `saab340.glb` | Saab 340 | [SAAB-340](https://www.thingiverse.com/thing:7158020) (`SAAB_340_v2.stl`) | pershing1945 |
+| `saab2000.glb` | Saab 2000 | [Saab 2000](https://www.thingiverse.com/thing:7204950) (`Saab_2000.stl`), a remix of the SAAB-340 | Qwerty1998 |
+
+`tools/convert_model.html` converted them from STL: turned and scaled like the others and thinned out. The
+engraved windows became dark parts, and both got simple propellers (four and six blades), because the print
+models have none. They have no landing gear.
 
 `icons/` holds the top view of every aircraft type as a plain shape; the 2D map uses it as the aircraft's icon
 (`planeGlyph` in `js/ui.js`). `tools/hangar_shots.html` makes these too.

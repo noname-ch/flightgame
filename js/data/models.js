@@ -34,14 +34,6 @@ FG.data.modelSize = {
 // File name of a type's hangar picture and map icon: 'B737-8' -> 'b737-8'.
 FG.data.typeSlug = (type) => type.toLowerCase().replace(/[^a-z0-9]+/g, '-');
 
-// Models without a .glb file: js/planebuilder.js builds them from the looks of `type` (js/data/looks.js) and
-// these: span = wingspan (m), chord = root chord as a share of the span, taper = tip chord / root chord,
-// sweep = how much of the taper is on the leading edge (0 = straight leading edge, 1 = straight trailing edge).
-FG.data.builtModels = {
-  saab340: { type: 'SAAB340', span: 21.4, chord: 0.13, taper: 0.42, sweep: 0.3 },
-  saab2000: { type: 'SAAB2000', span: 24.8, chord: 0.125, taper: 0.42, sweep: 0.3 },
-};
-
 // Frame of the hangar pictures, in aircraft lengths: width, height, and how far the lowest point of the
 // aircraft sits above the lower edge. tools/hangar_shots.html renders with these, js/hangar.js places with them.
 FG.data.modelShot = { w: 1.1, h: 0.5, ground: 0.04 };

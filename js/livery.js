@@ -88,9 +88,14 @@ const LOGOS = {
 // The engines of a model, so that a livery can colour them: every vertex gets the attribute livPart
 // (1 = engine). The models are made of many separate pieces; an engine's cowling is a round piece beside
 // the fuselage, about as wide as it is high and longer than half its width, and with it go the pieces in it.
+// A model in one piece says so itself: the attribute _LIVPART of its file (tools/convert_model.html).
 function markEngines(scene, hw) {
   const d = 2 * hw;
   const meshes = [];
+  scene.traverse((o) => {
+    const own = o.isMesh && o.geometry.attributes._livpart;
+    if (own && !o.geometry.attributes.livPart) o.geometry.setAttribute('livPart', own);
+  });
   scene.traverse((o) => { if (o.isMesh && o.geometry.attributes.position && !o.geometry.attributes.livPart) meshes.push(o); });
   const pieces = []; // { box: [x0, x1, y0, y1, z0, z1], mesh, root }
   const roots = new Map();
@@ -167,14 +172,13 @@ export function measure(scene, file, stretch = 1, title = { aspect: 4.3 }, finMa
       for (let i = 0; i < pos.count; i++) fn(v.fromBufferAttribute(pos, i));
     }
   };
-  // Forward fuselage, between the cockpit and the wing: half width and top. A built model says so itself.
-  const known = scene.userData.fuselage;
-  let hw = known ? known.halfWidth : 0;
-  let top = known ? known.top : -Infinity;
+  // Forward fuselage, between the cockpit and the wing: half width and top.
+  let hw = 0;
+  let top = -Infinity;
   let span = 0;
   eachVertex((p) => {
     span = Math.max(span, Math.abs(p.x));
-    if (known || p.y < 0.27 || p.y > 0.36) return;
+    if (p.y < 0.27 || p.y > 0.36) return;
     hw = Math.max(hw, Math.abs(p.x));
     top = Math.max(top, p.z);
   });
@@ -218,7 +222,7 @@ export function measure(scene, file, stretch = 1, title = { aspect: 4.3 }, finMa
   // Title: from behind the first door, usually large across the window row and at most a third of the
   // aircraft's length; a livery can have it smaller above the windows, low on the belly, or longer.
   const [below, high] = TITLE_AT[title.at] || TITLE_AT.window;
-  const titleY = 0.5 - (TITLE_FROM[file] || (known && known.title) || 1.4 * d);
+  const titleY = 0.5 - (TITLE_FROM[file] || 1.4 * d);
   const titleLen = Math.max(0.6 * d, Math.min((title.length || 1.8) * d, titleY - (title.length ? 0.04 : 0.18)));
   const titleH = Math.min((title.height || high) * d, titleLen / title.aspect);
   // A text or logo on the fin: across the middle of its chord at the height of the mark, or up along the fin.

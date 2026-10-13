@@ -4,3 +4,6 @@ osm-raw/
 
 # pictures saved by the tool pages
 bilder/
+
+# 3D models as downloaded, before tools/convert_model.html makes the game's .glb of them
+downloads/

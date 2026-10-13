@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Convert a 3D model</title>
+<style>
+  body { margin: 16px; background: #0c1118; color: #e5e7eb; font: 14px/1.5 system-ui, sans-serif; }
+  canvas { display: block; margin-top: 10px; background: #2b3646; border-radius: 8px; }
+  code { color: #93c5fd; }
+</style>
+<script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/"
+    }
+  }
+</script>
+</head>
+<body>
+<h1>Convert a 3D model</h1>
+<p>Turns a downloaded glTF or STL model (<code>?file=downloads/model.glb&amp;name=saab340</code>) into one like the others in
+  <code>models/</code>: only the shell, no textures, white parts and dark parts (windows, tyres, propellers) as vertex
+  colours, turned to x = right wing, y = nose, z = up, centred, 1 unit long, and thinned out to about
+  <code>&amp;triangles=45000</code>. <code>&amp;nose=+z</code> and <code>&amp;up=+y</code> say how the file lies if the page guesses
+  wrong. In an STL print model the engraved windows become dark parts (<code>&amp;glass=0</code>: not), and
+  <code>&amp;props=4&amp;propsize=0.085</code> adds propellers with so many blades and that radius (in aircraft lengths) to
+  the tips of the two engines. The result is in <code>window.result</code> (a Blob) and offered as a download. Needs a
+  local web server.</p>
+<p id="status">Loading…</p>
+<a id="save" hidden>Save the .glb</a>
+<canvas id="view" width="1100" height="500"></canvas>
+
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
+
+const q = new URLSearchParams(location.search);
+const status = (s) => { document.getElementById('status').textContent = s; };
+const axis = (s) => { const v = new THREE.Vector3(); v[s[1]] = s[0] === '-' ? -1 : 1; return v; };
+
+// The colour of a material at a texture coordinate: its colour times its texture there.
+const pixels = new Map();
+function texel(mat, u, v) {
+  const c = mat.color ? mat.color.clone() : new THREE.Color(1, 1, 1);
+  const img = mat.map && mat.map.image;
+  if (!img || u === undefined) return c;
+  let px = pixels.get(img);
+  if (!px) {
+    const cv = document.createElement('canvas');
+    cv.width = Math.min(1024, img.width); cv.height = Math.min(1024, img.height);
+    const cx = cv.getContext('2d', { willReadFrequently: true });
+    cx.drawImage(img, 0, 0, cv.width, cv.height);
+    px = { w: cv.width, h: cv.height, data: cx.getImageData(0, 0, cv.width, cv.height).data };
+    pixels.set(img, px);
+  }
+  const x = Math.floor((((u % 1) + 1) % 1) * (px.w - 1));
+  const y = Math.floor((((v % 1) + 1) % 1) * (px.h - 1));   // glTF: v = 0 at the top of the picture
+  const i = (y * px.w + x) * 4;
+  const t = new THREE.Color().setRGB(px.data[i] / 255, px.data[i + 1] / 255, px.data[i + 2] / 255, THREE.SRGBColorSpace);
+  return c.multiply(t);
+}
+
+(async () => {
+  const file = q.get('file');
+  const name = q.get('name') || 'model';
+  const target = Number(q.get('triangles')) || 45000;
+  if (!file) { status('Give ?file=downloads/<file>.glb&name=<name>.'); return; }
+  status(`Loading ${file}…`);
+  const url = new URL(`../${file}`, location.href).href;
+  const stl = /\.stl$/i.test(file);  // a 3D-print model: one shell, no colours
+  const gltf = stl ? { scene: new THREE.Mesh(await new STLLoader().loadAsync(url), new THREE.MeshStandardMaterial({ color: 0xffffff })) }
+    : await new GLTFLoader().loadAsync(url);
+  gltf.scene.updateMatrixWorld(true);
+
+  // ---------- every triangle, in the file's own axes: corners and whether it is dark ----------
+  const tris = [];   // [ax, ay, az, bx, by, bz, cx, cy, cz, dark]
+  const v = new THREE.Vector3();
+  let source = 0;
+  gltf.scene.traverse((o) => {
+    if (!o.isMesh || !o.visible) return;
+    const mats = Array.isArray(o.material) ? o.material : [o.material];
+    const g = o.geometry;
+    const pos = g.attributes.position;
+    const uv = g.attributes.uv;
+    const idx = g.index;
+    const n = idx ? idx.count : pos.count;
+    const groups = g.groups.length ? g.groups : [{ start: 0, count: n, materialIndex: 0 }];
+    for (const grp of groups) {
+      const mat = mats[grp.materialIndex] || mats[0];
+      if (mat.transparent && mat.opacity < 0.2) continue;   // shadows, decals and the like
+      for (let i = grp.start; i + 2 < grp.start + grp.count; i += 3) {
+        const t = [];
+        let lum = 0, sat = 0;
+        for (let k = 0; k < 3; k++) {
+          const j = idx ? idx.getX(i + k) : i + k;
+          v.fromBufferAttribute(pos, j).applyMatrix4(o.matrixWorld);
+          t.push(v.x, v.y, v.z);
+          const c = texel(mat, uv && uv.getX(j), uv && uv.getY(j));
+          lum += (0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b) / 3;
+          sat += (Math.max(c.r, c.g, c.b) - Math.min(c.r, c.g, c.b)) / 3;
+        }
+        // dark and colourless: glass, tyres, propellers (the livery paints everything else)
+        t.push(lum < 0.06 && sat < 0.05 || (mat.transparent && mat.opacity < 0.9) ? 1 : 0);
+        tris.push(t);
+        source++;
+      }
+    }
+  });
+
+  // ---------- which way it lies ----------
+  const box = new THREE.Box3();
+  for (const t of tris) for (let k = 0; k < 9; k += 3) box.expandByPoint(v.set(t[k], t[k + 1], t[k + 2]));
+  const size = box.getSize(new THREE.Vector3());
+  const mid = box.getCenter(new THREE.Vector3());
+  let up = new THREE.Vector3(0, 1, 0);   // glTF: y is up
+  if (q.get('up')) up = axis(q.get('up'));
+  else if (stl) {
+    // A print model lies any way round: its thinnest side is its height, and most of it (fuselage, wing) is low.
+    const a = ['x', 'y', 'z'].sort((p, r) => size[p] - size[r])[0];
+    let s = 0;
+    for (const t of tris) for (let k = 0; k < 9; k += 3) s += t[k + 'xyz'.indexOf(a)];
+    up = new THREE.Vector3();
+    up[a] = s / (tris.length * 3) < mid[a] ? 1 : -1;
+  }
+  let nose;
+  if (q.get('nose')) nose = axis(q.get('nose'));
+  else {
+    // The fuselage axis is the one the model is the same on both sides of the other; the fin is at the tail.
+    const flat = ['x', 'y', 'z'].filter((a) => !up[a]);
+    const lopsided = (a) => { let s = 0; for (const t of tris) for (let k = 0; k < 9; k += 3) s += (t[k + 'xyz'.indexOf(a)] - mid[a]) ** 3; return Math.abs(s) / size[a] ** 3; };
+    const along = lopsided(flat[0]) > lopsided(flat[1]) ? flat[0] : flat[1];
+    const upA = ['x', 'y', 'z'].find((a) => up[a]);
+    let top = { h: -Infinity, at: 0 };
+    for (const t of tris) for (let k = 0; k < 9; k += 3) { const h = t[k + 'xyz'.indexOf(upA)] * up[upA]; if (h > top.h) top = { h, at: t[k + 'xyz'.indexOf(along)] }; }
+    nose = new THREE.Vector3();
+    nose[along] = top.at > mid[along] ? -1 : 1;
+  }
+  const right = new THREE.Vector3().crossVectors(nose, up);
+  const length = Math.abs(size.dot(new THREE.Vector3(Math.abs(nose.x), Math.abs(nose.y), Math.abs(nose.z))));
+  const M = new THREE.Matrix4().makeBasis(right, nose, up).invert()
+    .multiply(new THREE.Matrix4().makeTranslation(-mid.x, -mid.y, -mid.z));
+  M.premultiply(new THREE.Matrix4().makeScale(1 / length, 1 / length, 1 / length));
+  for (const t of tris) for (let k = 0; k < 9; k += 3) { v.set(t[k], t[k + 1], t[k + 2]).applyMatrix4(M); t[k] = v.x; t[k + 1] = v.y; t[k + 2] = v.z; }
+
+  // ---------- engraved windows of a print model ----------
+  // A window is a patch inside sharp edges, of a window's size, on the fuselage and facing sideways and up.
+  // Doors (bigger, facing level) and the panels on wings and fin (facing up or level) are left white.
+  if (stl && q.get('glass') !== '0') {
+    const n = tris.length;
+    const ids = new Map();
+    const corner = new Int32Array(n * 3);
+    const normal = new Float32Array(n * 3);
+    const area = new Float32Array(n);
+    tris.forEach((t, i) => {
+      for (let k = 0; k < 3; k++) {
+        const key = `${Math.round(t[k * 3] * 2e5)},${Math.round(t[k * 3 + 1] * 2e5)},${Math.round(t[k * 3 + 2] * 2e5)}`;
+        let id = ids.get(key);
+        if (id === undefined) { id = ids.size; ids.set(key, id); }
+        corner[i * 3 + k] = id;
+      }
+      const a = new THREE.Vector3(t[3] - t[0], t[4] - t[1], t[5] - t[2])
+        .cross(new THREE.Vector3(t[6] - t[0], t[7] - t[1], t[8] - t[2]));
+      area[i] = a.length() / 2;
+      a.normalize();
+      normal.set([a.x, a.y, a.z], i * 3);
+    });
+    const group = Int32Array.from({ length: n }, (_, i) => i);
+    const root = (a) => { while (group[a] !== a) { group[a] = group[group[a]]; a = group[a]; } return a; };
+    const edges = new Map();
+    for (let i = 0; i < n; i++) {
+      for (let k = 0; k < 3; k++) {
+        const a = corner[i * 3 + k], b = corner[i * 3 + (k + 1) % 3];
+        if (a === b) continue;
+        const key = a < b ? a * ids.size + b : b * ids.size + a;
+        const o = edges.get(key);
+        if (o === undefined) { edges.set(key, i); continue; }
+        const smooth = normal[i * 3] * normal[o * 3] + normal[i * 3 + 1] * normal[o * 3 + 1] + normal[i * 3 + 2] * normal[o * 3 + 2] > 0.82;
+        if (smooth && root(i) !== root(o)) group[root(i)] = root(o);
+      }
+    }
+    const patches = new Map();
+    for (let i = 0; i < n; i++) {
+      let p = patches.get(root(i));
+      if (!p) { p = { area: 0, x: 0, nx: 0, nz: 0, tris: [] }; patches.set(root(i), p); }
+      p.area += area[i];
+      p.x += area[i] * (tris[i][0] + tris[i][3] + tris[i][6]) / 3;
+      p.nx += area[i] * normal[i * 3];
+      p.nz += area[i] * normal[i * 3 + 2];
+      p.tris.push(i);
+    }
+    for (const p of patches.values()) {
+      const pane = p.area > 0.6e-4 && p.area < 2e-3 && Math.abs(p.x / p.area) < 0.07
+        && Math.abs(p.nx / p.area) > 0.3 && p.nz / p.area > 0.2;
+      if (pane) for (const i of p.tris) tris[i][9] = 1;
+    }
+  }
+
+  // ---------- propellers a print model lacks: &props=<blades>&propsize=<radius, in lengths> ----------
+  const added = [];   // their triangles: not thinned out, the blades are too thin for that
+  const hubs = [];    // where they sit: x, z and the tip of the spinner
+  const blades = Number(q.get('props')) || 0;
+  if (blades) {
+    const R = Number(q.get('propsize')) || 0.085;
+    const along = [0.12, 0.3, 0.6, 0.85, 1];          // stations along a blade, of its length
+    const chord = [0.1, 0.17, 0.2, 0.16, 0.07];       // its width there
+    const thick = [0.04, 0.032, 0.022, 0.014, 0.006];
+    const pitch = [62, 46, 33, 26, 21];               // degrees off the disc
+    for (const side of [-1, 1]) {
+      // the tip of the engine: the foremost point beside the fuselage, and the middle of what is just behind it
+      let front = -Infinity;
+      for (const t of tris) for (let k = 0; k < 9; k += 3) if (t[k] * side > 0.08 && t[k] * side < 0.35) front = Math.max(front, t[k + 1]);
+      let cx = 0, cz = 0, cn = 0;
+      for (const t of tris) for (let k = 0; k < 9; k += 3) if (t[k] * side > 0.08 && t[k] * side < 0.35 && t[k + 1] > front - 0.004) { cx += t[k]; cz += t[k + 2]; cn++; }
+      const hub = new THREE.Vector3(cx / cn, front - (Number(q.get('propback')) || 0.012), cz / cn);
+      hubs.push({ x: hub.x, z: hub.z, front });
+      for (let b = 0; b < blades; b++) {
+        const a = (b + 0.5) * 2 * Math.PI / blades;
+        const out = new THREE.Vector3(Math.cos(a), 0, Math.sin(a));
+        const round = new THREE.Vector3(-Math.sin(a), 0, Math.cos(a));
+        const rings = along.map((s, i) => {
+          const p = pitch[i] * Math.PI / 180;
+          const mid = hub.clone().addScaledVector(out, s * R);
+          const wide = round.clone().multiplyScalar(Math.cos(p)).add(new THREE.Vector3(0, Math.sin(p), 0)).multiplyScalar(chord[i] * R / 2);
+          const deep = round.clone().multiplyScalar(-Math.sin(p)).add(new THREE.Vector3(0, Math.cos(p), 0)).multiplyScalar(thick[i] * R / 2);
+          return [mid.clone().add(wide), mid.clone().add(deep), mid.clone().sub(wide), mid.clone().sub(deep)];
+        });
+        const tri = (p, r, s) => added.push([p.x, p.y, p.z, r.x, r.y, r.z, s.x, s.y, s.z, 1]);
+        for (let i = 0; i + 1 < rings.length; i++) {
+          for (let k = 0; k < 4; k++) {
+            const m = (k + 1) % 4;
+            tri(rings[i][k], rings[i + 1][k], rings[i + 1][m]);
+            tri(rings[i][k], rings[i + 1][m], rings[i][m]);
+          }
+        }
+        for (const r of [rings[0], rings[rings.length - 1]]) { tri(r[0], r[1], r[2]); tri(r[0], r[2], r[3]); }
+      }
+    }
+  }
+
+  // ---------- thinned out: the corners snap to a grid, as coarse as it takes ----------
+  let out = null;
+  for (let cell = 0.0015; ; cell *= 1.18) {
+    const at = new Map();     // grid cell + colour -> vertex number
+    const sum = [];           // per vertex: x, y, z added up, count, dark
+    const faces = new Set();
+    for (const t of tris) {
+      const ids = [];
+      for (let k = 0; k < 9; k += 3) {
+        const key = `${Math.round(t[k] / cell)},${Math.round(t[k + 1] / cell)},${Math.round(t[k + 2] / cell)},${t[9]}`;
+        let id = at.get(key);
+        if (id === undefined) { id = sum.length; at.set(key, id); sum.push([0, 0, 0, 0, t[9]]); }
+        const s = sum[id];
+        s[0] += t[k]; s[1] += t[k + 1]; s[2] += t[k + 2]; s[3]++;
+        ids.push(id);
+      }
+      if (ids[0] !== ids[1] && ids[1] !== ids[2] && ids[0] !== ids[2]) {
+        const lo = Math.min(...ids);
+        const r = ids[0] === lo ? ids : ids[1] === lo ? [ids[1], ids[2], ids[0]] : [ids[2], ids[0], ids[1]];
+        faces.add(r.join(','));
+      }
+    }
+    if (faces.size <= target || cell > 0.02) { out = { sum, faces, cell }; break; }
+  }
+  const position = new Float32Array((out.sum.length + added.length * 3) * 3);
+  const color = new Float32Array((out.sum.length + added.length * 3) * 3);
+  out.sum.forEach((s, i) => {
+    position.set([s[0] / s[3], s[1] / s[3], s[2] / s[3]], i * 3);
+    color.set(s[4] ? [0.06, 0.07, 0.08] : [1, 1, 1], i * 3);
+  });
+  const index = [];
+  for (const f of out.faces) index.push(...f.split(',').map(Number));
+  added.forEach((t, i) => {
+    for (let k = 0; k < 3; k++) {
+      const j = out.sum.length + i * 3 + k;
+      position.set([t[k * 3], t[k * 3 + 1], t[k * 3 + 2]], j * 3);
+      color.set([0.06, 0.07, 0.08], j * 3);
+      index.push(j);
+    }
+  });
+
+  // ---------- the engines, for the livery (js/livery.js colours the corners with livPart = 1) ----------
+  // Behind each propeller: as wide and as high as the cowling is just behind the spinner, back to where
+  // nothing hangs below the wing.
+  const part = new Float32Array(position.length / 3);
+  for (const h of hubs) {
+    const at = (i, a) => position[i * 3 + a];
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    for (let i = 0; i < out.sum.length; i++) {
+      if (Math.abs(at(i, 0) - h.x) > 0.06 || at(i, 1) > h.front - 0.02 || at(i, 1) < h.front - 0.045) continue;
+      x0 = Math.min(x0, at(i, 0)); x1 = Math.max(x1, at(i, 0));
+      z0 = Math.min(z0, at(i, 2)); z1 = Math.max(z1, at(i, 2));
+    }
+    const m = 0.15 * (x1 - x0);
+    let end = h.front;   // the rearmost point of what hangs below the wing
+    for (let i = 0; i < out.sum.length; i++) {
+      if (at(i, 0) > x0 && at(i, 0) < x1 && at(i, 2) < z0 + 0.4 * (z1 - z0) && at(i, 1) > h.front - 0.45) end = Math.min(end, at(i, 1));
+    }
+    for (let i = 0; i < out.sum.length; i++) {
+      if (at(i, 0) > x0 - m && at(i, 0) < x1 + m && at(i, 1) > end - m && at(i, 2) < z1 + m) part[i] = 1;   // whatever is below is engine too
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(position, 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(color, 3));
+  if (hubs.length) geo.setAttribute('livPart', new THREE.BufferAttribute(part, 1));   // in the file: _LIVPART
+  geo.setIndex(index);
+  geo.computeVertexNormals();
+  const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, metalness: 0, roughness: 0.6, side: THREE.DoubleSide }));
+  mesh.name = name;
+  const scene = new THREE.Scene();
+  scene.add(mesh);
+
+  // ---------- a look at it, and the file ----------
+  const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('view'), antialias: true, preserveDrawingBuffer: true });
+  renderer.setClearColor(0x2b3646);
+  const show = new THREE.Scene();
+  show.add(mesh.clone(), new THREE.HemisphereLight(0xffffff, 0x3a4250, 2.2));
+  const key = new THREE.DirectionalLight(0xfff4dc, 2.4);
+  key.position.set(-0.6, 0.8, 1.5);
+  show.add(key);
+  const cam = new THREE.OrthographicCamera(-0.66, 0.66, 0.3, -0.3, 0.1, 10);
+  cam.up.set(0, 0, 1);
+  cam.position.set(-2.2, 1.1, 0.7);
+  cam.lookAt(0, 0, 0);
+  renderer.render(show, cam);
+  window.preview = { renderer, scene: show, camera: cam };   // for a look from elsewhere
+
+  const glb = await new GLTFExporter().parseAsync(scene, { binary: true });
+  window.result = new Blob([glb], { type: 'model/gltf-binary' });
+  const bounds = new THREE.Box3().setFromObject(mesh);
+  window.info = { source, triangles: out.faces.size, vertices: out.sum.length, cell: out.cell, bytes: glb.byteLength,
+    nose: nose.toArray(), up: up.toArray(), span: bounds.max.x - bounds.min.x, height: bounds.max.z - bounds.min.z,
+    dark: out.sum.filter((s) => s[4]).length, engine: part.reduce((a, b) => a + b, 0) };
+  const a = document.getElementById('save');
+  a.href = URL.createObjectURL(window.result);
+  a.download = `${name}.glb`;
+  a.hidden = false;
+  status(`${source} triangles in the file, ${out.faces.size} kept (${out.sum.length} corners, ${Math.round(glb.byteLength / 1024)} kB). ` +
+    `Span ${(window.info.span).toFixed(2)}, height ${(window.info.height).toFixed(2)} of the length.`);
+  window.convertDone = true;
+})().catch((e) => { status(`Failed: ${e.message}`); window.convertError = String(e.stack || e); });
+</script>
+</body>
+</html>

@@ -1,9 +1,8 @@
 // Loads the 3D aircraft models for the 3D view and the hangar, painted in the airline livery: glTF files
-// (models/*.glb, see models/README.md) or, for the types in FG.data.builtModels, built by js/planebuilder.js.
+// (models/*.glb, see models/README.md).
 // FG.data.models says which aircraft type uses which model.
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { paintLivery } from './livery.js';
-import { buildPlane } from './planebuilder.js';
 
 const MODELS = new URL('../models/', import.meta.url);
 const raws = {};    // file -> Promise of the unpainted scene
@@ -38,9 +37,7 @@ export function modelSize(type) {
 
 function raw(file) {
   if (!raws[file]) {
-    raws[file] = FG.data.builtModels && FG.data.builtModels[file]
-      ? Promise.resolve().then(() => buildPlane(file))
-      : new GLTFLoader().loadAsync(new URL(`${file}.glb`, MODELS).href).then((gltf) => gltf.scene);
+    raws[file] = new GLTFLoader().loadAsync(new URL(`${file}.glb`, MODELS).href).then((gltf) => gltf.scene);
   }
   return raws[file];
 }
