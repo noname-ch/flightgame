@@ -84,10 +84,22 @@
     return Math.max(reach(p, q, ring), reach(q, p, ring));
   }
   // The element of `list` with this shape (or -1).
+  // (shapes whose boxes differ by more than TOL can't match: skipped before the slow point-by-point gap)
+  function box(pts) {
+    const b = [Infinity, Infinity, -Infinity, -Infinity];
+    for (const p of pts) { b[0] = Math.min(b[0], p[0]); b[1] = Math.min(b[1], p[1]); b[2] = Math.max(b[2], p[0]); b[3] = Math.max(b[3], p[1]); }
+    return b;
+  }
   function find(list, kind, g) {
     let best = -1;
     let bestGap = TOL;
+    const bg = box(shape(kind, g));
+    const tLat = (TOL * 1.1) / M;
+    const tLon = Number.isFinite(bg[0]) ? (TOL * 1.1) / (M * Math.cos(bg[0] * DEG)) : Infinity;
     list.forEach((e, i) => {
+      const be = box(shape(kind, e));
+      if (Number.isFinite(be[0]) && (Math.abs(be[0] - bg[0]) > tLat || Math.abs(be[2] - bg[2]) > tLat
+        || Math.abs(be[1] - bg[1]) > tLon || Math.abs(be[3] - bg[3]) > tLon)) return;
       const d = gap(kind, e, g);
       if (d < bestGap) { bestGap = d; best = i; }
     });

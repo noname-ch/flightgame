@@ -152,7 +152,24 @@ function segDist(p, a, b) {
   const t = Math.max(0, Math.min(1, (px * bx + py * by) / (bx * bx + by * by || 1)));
   return { d: Math.hypot(px - t * bx, py - t * by), q: [a[0] + t * bx, a[1] + t * by] };
 }
-const ringDist = (p, r) => r.reduce((d, q, i) => Math.min(d, segDist(p, q, r[(i + 1) % r.length]).d), Infinity);
+// (just the distance, without making objects: it runs millions of times at big airports)
+function segD(p, a, b) {
+  const bx = b[0] - a[0], by = b[1] - a[1], px = p[0] - a[0], py = p[1] - a[1];
+  const t = Math.max(0, Math.min(1, (px * bx + py * by) / (bx * bx + by * by || 1)));
+  return Math.hypot(px - t * bx, py - t * by);
+}
+function ringDist(p, r) {
+  let d = Infinity;
+  for (let i = 0; i < r.length; i++) d = Math.min(d, segD(p, r[i], r[(i + 1) % r.length]));
+  return d;
+}
+// [minX, minY, maxX, maxY], and whether two boxes lie within d of each other
+function box(r) {
+  const b = [Infinity, Infinity, -Infinity, -Infinity];
+  for (const p of r) { b[0] = Math.min(b[0], p[0]); b[1] = Math.min(b[1], p[1]); b[2] = Math.max(b[2], p[0]); b[3] = Math.max(b[3], p[1]); }
+  return b;
+}
+const boxesNear = (a, b, d) => a[0] <= b[2] + d && b[0] <= a[2] + d && a[1] <= b[3] + d && b[1] <= a[3] + d;
 const linesDist = (p, lines) => {
   let best = { d: Infinity, q: null };
   for (const l of lines) for (let i = 1; i < l.length; i++) { const s = segDist(p, l[i - 1], l[i]); if (s.d < best.d) best = s; }
@@ -179,7 +196,11 @@ function build(code, parts, base) {
     .filter((l) => l.length > 1 && l.some((p) => nearAirport(p)));
   const gates = parts.flatMap((t) => t.gates).map(([p, ref]) => [F.xy(p), ref]).filter(([p]) => nearAirport(p));
   const pois = parts.flatMap((t) => t.pois).map(F.xy).filter(nearAirport);
-  const near = (r, d) => aprons.some((ap) => r.some((p) => inRing(p, ap) || ringDist(p, ap) < d));
+  const apronBoxes = aprons.map(box);
+  const near = (r, d) => {
+    const b = box(r);
+    return aprons.some((ap, i) => boxesNear(b, apronBoxes[i], d) && r.some((p) => inRing(p, ap) || ringDist(p, ap) < d));
+  };
   let buildings = parts.flatMap((t) => t.buildings).map((b) => ({ ring: b.ring.map(F.xy), h: b.h }))
     .filter((b) => area(b.ring) > 60 && near(b.ring, 45));
 

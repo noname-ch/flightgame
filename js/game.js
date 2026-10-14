@@ -754,10 +754,31 @@
     // Buildings the nose points at, and the taxiways the plane is pushed back onto.
     const bldPts = [...lay.terminals, ...lay.hangars].flat();
     const toBuilding = (p) => bldPts.reduce((d, q) => Math.min(d, metres(p, q)), Infinity);
-    const toTaxiway = (p) => lay.taxiways.reduce((d, line) => {
-      for (let k = 1; k < line.length; k++) d = Math.min(d, segMetres(p, line[k - 1], line[k]).d);
+    // Every taxiway segment with its box. The pushback search below asks for the distance ~30 times per stand,
+    // so it only looks at the segments within NEAR m of the stand (farther ones can't change its result).
+    const NEAR = 200;
+    const taxiSegs = [];
+    for (const line of lay.taxiways) {
+      for (let k = 1; k < line.length; k++) {
+        const a0 = line[k - 1], a1 = line[k];
+        taxiSegs.push([a0, a1, Math.min(a0[0], a1[0]), Math.max(a0[0], a1[0]), Math.min(a0[1], a1[1]), Math.max(a0[1], a1[1])]);
+      }
+    }
+    const segsNear = (p) => {
+      const dLat = NEAR / 111320, dLon = NEAR / (111320 * Math.cos(toRad(p[0])));
+      return taxiSegs.filter((s) => s[2] <= p[0] + dLat && s[3] >= p[0] - dLat && s[4] <= p[1] + dLon && s[5] >= p[1] - dLon);
+    };
+    const toTaxiway = (p, segs = taxiSegs) => {
+      const kx = 111320 * Math.cos(toRad(p[0]));
+      let d = Infinity;
+      for (const [a0, a1] of segs) { // (segMetres without the objects)
+        const ax = (a0[1] - p[1]) * kx, ay = (a0[0] - p[0]) * 111320;
+        const dx = (a1[1] - p[1]) * kx - ax, dy = (a1[0] - p[0]) * 111320 - ay;
+        const t = Math.max(0, Math.min(1, -(ax * dx + ay * dy) / (dx * dx + dy * dy || 1)));
+        d = Math.min(d, Math.hypot(ax + t * dx, ay + t * dy));
+      }
       return d;
-    }, Infinity);
+    };
     // Nearest point on any taxiway centreline.
     const footOnTaxiway = (p) => {
       let best = { d: Infinity, pt: null };
@@ -811,8 +832,9 @@
         if (length > 0) push = length; // (set with the airport editor)
         else if (lay.taxiways.length) {
           let best = Infinity;
+          const segs = segsNear([lat, lon]);
           for (let m = 20; m <= 90; m += 2.5) {
-            const d = toTaxiway(ahead(-m));
+            const d = toTaxiway(ahead(-m), segs);
             if (d < best - 0.5) { best = d; push = m; }
           }
           if (best > 40) push = TAXI_LANE; // no taxiway behind the stand
@@ -1021,7 +1043,16 @@
     // Join loose ends: a line that ends on another line (within 8 m) without sharing a point with it, as
     // happens where the data was cut into map tiles. The end is linked to both ends of that stretch.
     const segs = [];
-    for (let u = 0; u < g.adj.length; u++) for (const [w] of g.adj[u]) if (u < w) segs.push([u, w]);
+    // (each with its box grown by a bit more than the 8 m, so only segments that can be that near get measured)
+    const GROW = 0.0001; // degrees of latitude, ~11 m
+    for (let u = 0; u < g.adj.length; u++) {
+      for (const [w] of g.adj[u]) {
+        if (u >= w) continue;
+        const a = g.pts[u], b = g.pts[w];
+        const gl = GROW / Math.max(0.05, Math.cos(toRad(a[0])));
+        segs.push([u, w, Math.min(a[0], b[0]) - GROW, Math.max(a[0], b[0]) + GROW, Math.min(a[1], b[1]) - gl, Math.max(a[1], b[1]) + gl]);
+      }
+    }
     const toSegment = (p, a, b) => {
       const kx = 111320 * Math.cos(toRad(a[0]));
       const bx = (b[1] - a[1]) * kx, by = (b[0] - a[0]) * 111320, px = (p[1] - a[1]) * kx, py = (p[0] - a[0]) * 111320;
@@ -1035,11 +1066,12 @@
       let near = 8;
       for (const s of segs) {
         const a = g.pts[s[0]];
+        if (p[0] < s[2] || p[0] > s[3] || p[1] < s[4] || p[1] > s[5]) continue;
         if (s[0] === u || s[1] === u || Math.abs(a[0] - p[0]) > 0.02 || Math.abs(a[1] - p[1]) > 0.03) continue;
         const d = toSegment(p, a, g.pts[s[1]]);
         if (d < near) { near = d; best = s; }
       }
-      if (best) for (const w of best) { const d = metres(p, g.pts[w]); g.adj[u].push([w, d]); g.adj[w].push([u, d]); }
+      if (best) for (const w of [best[0], best[1]]) { const d = metres(p, g.pts[w]); g.adj[u].push([w, d]); g.adj[w].push([u, d]); }
     }
     // Pads (airport fixes): open concrete where planes go straight from where they come onto it to their
     // stand. Every point on a pad (taxiway points, where the stands' lead-in lines start) is joined to every
@@ -1106,7 +1138,19 @@
   function realTaxiPath(code, lay, from, to) {
     const g = taxiGraph(code, lay);
     // (only among the points of the biggest connected piece: stubs that join nothing lead nowhere)
-    const nearest = (p) => g.pts.reduce((b, q, i) => { const d = g.main[i] ? metres(p, q) : Infinity; return d < b[1] ? [i, d] : b; }, [-1, Infinity])[0];
+    // (flat squared distance: the same order as metres() over an airport, without its cost)
+    const nearest = (p) => {
+      const kx = Math.cos(toRad(p[0]));
+      let best = -1, bd = Infinity;
+      for (let i = 0; i < g.pts.length; i++) {
+        if (!g.main[i]) continue;
+        const q = g.pts[i];
+        const dx = (q[1] - p[1]) * kx, dy = q[0] - p[0];
+        const d = dx * dx + dy * dy;
+        if (d < bd) { bd = d; best = i; }
+      }
+      return best;
+    };
     const s = nearest(from);
     const t = nearest(to);
     if (s < 0 || t < 0) return [];
