@@ -387,6 +387,14 @@
         try { localStorage.removeItem(GH_KEY); } catch (e) { /* not kept */ }
       },
       commitFile, // (the airport checklist, js/airportcheck.js, saves its file this way too)
+      // A new issue of the repo (the bug report, js/bugreport.js): resolves to GitHub's answer ({ number, html_url }).
+      async createIssue(title, body) {
+        if (!gh) throw new Error('Sign in to GitHub first.');
+        const r = await ghFetch(`/repos/${GH.repo}/issues`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title, body }) });
+        if (r.status === 401) throw new Error('GitHub no longer takes this token (expired?): sign in again.');
+        if (!r.ok) throw new Error(`GitHub answered ${r.status}.`);
+        return r.json();
+      },
     },
     // js/data/fixes.js with every fix in it (for when there is no dev server to write it).
     fileText: () => {

@@ -123,7 +123,7 @@ handlers.push((msg) => {
     case 'Network.requestWillBeSent': requests.set(p.requestId, p.request.url); break;
     case 'Network.responseReceived':
       // (the airport editor asks whether ./play.sh's server is there: not on a plain server)
-      if (ours(p.response.url) && p.response.status >= 400 && !p.response.url.includes('/__fixes')) errors.push(`HTTP ${p.response.status}: ${p.response.url.replace(ORIGIN, '')}`);
+      if (ours(p.response.url) && p.response.status >= 400 && !/\/__(fixes|checks|bugs)\b/.test(p.response.url)) errors.push(`HTTP ${p.response.status}: ${p.response.url.replace(ORIGIN, '')}`);
       break;
     case 'Network.loadingFailed': {
       const url = requests.get(p.requestId) || '?';
@@ -364,6 +364,21 @@ try {
     await key('v');
     await sleep(1000);
   }
+
+  step('bug report (F5): the panel opens instead of a reload, with the game details');
+  for (const type of ['rawKeyDown', 'keyUp']) await cmd('Input.dispatchKeyEvent', { type, key: 'F5', code: 'F5', windowsVirtualKeyCode: 116 });
+  await sleep(500);
+  const bug = await evaluate(() => {
+    const el = document.getElementById('bugreport');
+    const out = { open: !el.hidden, form: !!document.getElementById('br-title'), details: FG.bugs.details() };
+    document.querySelector('#bugreport [data-br="kind"][data-k="idea"]').click();
+    out.kind = FG.bugs.state.kind;
+    out.stillForm = !!document.getElementById('br-text');
+    FG.bugs.toggle(false);
+    return out;
+  });
+  if (!bug.open || !bug.form || !bug.stillForm || bug.kind !== 'idea') errors.push(`bug report panel: ${JSON.stringify({ ...bug, details: undefined })}`);
+  if (!/Version: \d+/.test(bug.details) || !/Game: /.test(bug.details)) errors.push(`bug report details incomplete:\n${bug.details}`);
 
   step('save and reload');
   await evaluate(() => G.save());

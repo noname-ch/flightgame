@@ -6,7 +6,9 @@ puts that airport's fixes into js/data/fixes.js (no ops: the airport's fixes are
 give everyone the fixes. GET /__fixes tells the page that it can save here.
 The airport checklist (F8) does the same with POST /__checks {"code": "BRN", "check": {"s": "ok", ...} or null}
 into js/data/checks.js.
+Bug reports (F5) come as POST /__bugs {"title", "body", "kind"} and are added to the top of BUGS.md.
 """
+import datetime
 import http.server
 import json
 import os
@@ -24,6 +26,8 @@ CHECKS_HEADER = ('// Airport checklist (developer tools, F8), see js/airportchec
                  '// ok (green, a person approved it) or bad (red, needs work). Written by tools/serve.py, tools/checks.mjs or a commit\n'
                  '// from the game: commit this file to give everyone the checks.\n')
 CHECK_KEYS = ('s', 'by', 'at', 'note')
+BUGS = os.path.join(ROOT, 'BUGS.md')
+BUGS_HEADER = '# Bug reports\n\nSent from the game (F5) while it ran from ./play.sh, newest first. Delete one when it is fixed.\n'
 KINDS = {'runway', 'taxiway', 'apron', 'pad', 'terminal', 'hangar', 'building', 'stand', 'tower', 'airport', 'bridges'}
 lock = threading.Lock()
 
@@ -76,6 +80,24 @@ def write_checks(checks):
     os.replace(tmp, CHECKS)
 
 
+def add_bug(data):
+    title, body = data.get('title'), data.get('body')
+    if not (isinstance(title, str) and title.strip() and isinstance(body, str)) or len(title) > 300 or len(body) > 50_000:
+        raise ValueError('not a bug report')
+    try:
+        with open(BUGS, encoding='utf-8') as f:
+            old = f.read()
+    except FileNotFoundError:
+        old = BUGS_HEADER
+    rest = old[len(BUGS_HEADER):] if old.startswith(BUGS_HEADER) else '\n' + old
+    when = datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
+    entry = f'\n## {title.strip()}\n\n_{when}_\n\n{body.strip()}\n'
+    tmp = BUGS + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
+        f.write(BUGS_HEADER + entry + rest)
+    os.replace(tmp, BUGS)
+
+
 def valid(code, ops):
     return (isinstance(code, str) and re.fullmatch(r'[A-Z0-9]{2,5}', code) and isinstance(ops, list) and len(ops) < 5000
             and all(isinstance(o, dict) and o.get('op') in ('add', 'del', 'set') and o.get('kind') in KINDS for o in ops))
@@ -93,7 +115,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         pass
 
     def do_GET(self):
-        if self.path.split('?')[0] in ('/__fixes', '/__checks'):  # the page asks whether it can save here
+        if self.path.split('?')[0] in ('/__fixes', '/__checks', '/__bugs'):  # the page asks whether it can save here
             body = b'{"ok": true}'
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
@@ -105,7 +127,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def do_POST(self):
         path = self.path.split('?')[0]
-        if path not in ('/__fixes', '/__checks'):
+        if path not in ('/__fixes', '/__checks', '/__bugs'):
             self.send_error(404)
             return
         try:
@@ -113,6 +135,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             if n > 20_000_000:
                 raise ValueError('too big')
             data = json.loads(self.rfile.read(n))
+            if path == '/__bugs':
+                with lock:
+                    add_bug(data)
+                self.reply(200, {'ok': True})
+                return
             if path == '/__checks':
                 code, check = data.get('code'), data.get('check')
                 if not (isinstance(code, str) and re.fullmatch(r'[A-Z0-9]{2,5}', code)) or (check is not None and not clean_check(check)):

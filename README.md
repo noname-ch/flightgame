@@ -266,6 +266,12 @@ goes on down the list, and the filters show what is left to check or to approve.
 website when signed in to GitHub (in the airport editor), else only in that browser. Agents use
 `node tools/checks.mjs` (`next`, `mark CODE --note "…"`, `status`; same order as the game).
 
+Bug reports: F5 (or 🐞 "Report a bug" in the ⋯ menu) opens a short form: bug, idea or other, a title and what
+happened. The game's details (version, browser, game date, selected plane or airport, map position and the last
+script errors) go with it unless you untick them. Signed in to GitHub (airport editor, F3), it becomes an issue of
+the repo; from `./play.sh` it is written into `BUGS.md`; otherwise GitHub's new-issue page opens filled in (you
+need a GitHub account), or Copy puts it on the clipboard.
+
 Controls: Space = pause, 1/2/3 = speed. The game autosaves to the browser (localStorage; the airport layouts read off the map are kept apart, in IndexedDB).
 
 ## Extending

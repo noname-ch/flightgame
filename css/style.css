@@ -1167,6 +1167,7 @@ body { height: 100dvh; } /* the visible height, also while the phone's address b
   .pcard.add { width: 48px; }
   #toast { bottom: auto; top: calc(56px + env(safe-area-inset-top)); max-width: calc(100vw - 24px); text-align: center; }
   #devtools { top: calc(52px + env(safe-area-inset-top)); left: 8px; max-height: calc(100dvh - 150px); }
+  #bugreport { top: calc(52px + env(safe-area-inset-top)); right: 8px; width: calc(100vw - 16px); max-height: calc(100dvh - 150px); }
   .mk-top { gap: 10px; padding: 10px 12px 4px; }
   .mk-top h1 { font-size: 16px; }
   .mk-next { display: none; }
@@ -1214,6 +1215,38 @@ body { height: 100dvh; } /* the visible height, also while the phone's address b
 }
 #apcheck.beside { left: 384px; } /* the airport editor is open on the left */
 #apcheck[hidden] { display: none; }
+#bugreport {
+  position: fixed;
+  top: 56px;
+  right: 12px;
+  z-index: 3600; /* above the start screen and the newspaper: bugs happen there too */
+  width: min(420px, calc(100vw - 24px));
+  max-height: calc(100vh - 70px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  background: var(--panel);
+  border: 2px solid #f87171;
+  border-radius: 10px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+  font-size: 13px;
+}
+#bugreport[hidden] { display: none; }
+#bugreport .dev-head { display: flex; justify-content: space-between; align-items: center; }
+#bugreport .dev-row { display: flex; flex-wrap: wrap; gap: 5px; }
+#bugreport input:not([type]), #bugreport textarea { font: inherit; padding: 4px 7px; border: 1px solid var(--input-border); border-radius: 6px; flex: 1; min-width: 0; width: 100%; box-sizing: border-box; resize: vertical; }
+#bugreport .muted { color: var(--muted); }
+#bugreport .small { font-size: 12px; }
+#bugreport .br-check { display: flex; gap: 6px; align-items: flex-start; }
+#bugreport pre { white-space: pre-wrap; word-break: break-word; font-size: 11px; max-height: 160px; overflow: auto; margin: 4px 0 0; }
+#bugreport .br-list { margin: 2px 0 0; padding-left: 18px; }
+#bugreport .br-list small { display: block; }
+#br-msg { color: var(--pos); font-size: 12px; }
+#br-msg:empty { display: none; }
+#br-msg.bad { color: var(--neg); }
 #apcheck .dev-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
 #apcheck .muted { color: var(--muted); }
 #apcheck .small { font-size: 12px; }

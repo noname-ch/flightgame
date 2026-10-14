@@ -83,6 +83,10 @@ Play online: https://noname-ch.github.io/flightgame/ (GitHub Pages, deployed fro
   checked or fixed"` (blue). Never mark an airport good (green): only a person approves.
   The tools for looking, fixing, tidying and pushing are in `tools/agent/` (see its README.md). Push after every
   2 airports (the user asked for that).
+- Bug reports (F5): `js/bugreport.js` (loaded right after config.js, so it catches script errors from the start;
+  `FG.bugs.details()` is the report's details block). Reports go to GitHub issues (`FG.fixes.github.createIssue`),
+  to `BUGS.md` via `tools/serve.py` POST /__bugs, or to GitHub's new-issue page. Look in `BUGS.md` and the repo's
+  issues for open bugs, and delete a `BUGS.md` entry once it is fixed.
 - Planning uses timetables only (`p.schedule.legs`). Slots are shared, and one slot equals one stand.
 
 ## What the user wants
