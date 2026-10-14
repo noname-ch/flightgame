@@ -270,6 +270,11 @@ All content is plain data:
   `python3 tools/build_data.py`.
 - `js/data/aircraft.js` – aircraft types (market catalogue) and crew templates; `year`/`endYear` = first
   year in airline service and last year built (story mode)
+  and optionally its flight performance (`climbFpm`, `vLofKmh`, `vAppKmh`, `bankDeg`; otherwise its
+  category's): every type climbs, turns and approaches at its own rates
+- `js/ground.js` – ground heights along a flight (the 3D view's terrain tiles): flights climb over the
+  mountains, circling over a valley airport such as Lugano when the ridges are too close to outclimb, and
+  fly a steeper glide path (up to 7°) where the final approach needs it
 - `js/data/story.js` – story mode: a newspaper line for each new type, and the rival airlines' aircraft by era
 - `js/data/factories.js` – where each type is built (delivery flights start there)
 - `js/data/looks.js` – side-view shape of each type, drawn by `js/hangar.js`

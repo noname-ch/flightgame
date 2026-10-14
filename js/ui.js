@@ -788,7 +788,7 @@
   function planePosition(p, t = nowMinutes()) {
     if (p.status === 'flying') {
       const st = G.flightState(p, t);
-      return { latlng: [st.lat, st.lon], heading: st.heading, alt: st.altFt, ground: st.altFt <= 0, st };
+      return { latlng: [st.lat, st.lon], heading: st.heading, alt: st.altFt - (st.fieldFt || 0), ground: st.ground, st };
     }
     const g = G.gateOf(p.location, p.id);
     return { latlng: [g.lat, g.lon], heading: g.heading, alt: 0, ground: true, gate: g.name };

@@ -65,18 +65,20 @@ function attitude(p, st, t) {
   let heading = st.heading || 0;
   if (st.phase !== 'pushback' && moved > 3) heading = G.bearing(a, b);
   const vMs = st.speedKmh / 3.6;
-  const ac = D.aircraft[p.type];
-  const vLift = ac.speedKmh * 0.35; // ground speed at lift-off in the track model
+  const pf = G.perf(p.type);
+  const vLift = pf.vLof; // the type's lift-off speed
+  const agl = (st.altFt || 0) - (st.fieldFt || 0); // above the runways
   let bank = 0;
   let pitch = 0;
-  if (AIRBORNE[st.phase] || (st.phase === 'takeoff' && st.altFt > 0)) {
+  if (AIRBORNE[st.phase] || (st.phase === 'takeoff' && !st.ground)) {
     if (G.distanceKm(a, st) * 1000 > 3 && G.distanceKm(st, b) * 1000 > 3) {
       const turn = wrap180(G.bearing(st, b) - G.bearing(a, st)) * DEG / (dt * 60); // rad/s
-      bank = Math.max(-30, Math.min(30, Math.atan(vMs * turn / 9.81) / DEG));
+      const most = pf.bank + 5;
+      bank = Math.max(-most, Math.min(most, Math.atan(vMs * turn / 9.81) / DEG));
     }
     const climbM = ((b.altFt || 0) - (a.altFt || 0)) * 0.3048;
     pitch = Math.atan2(climbM, Math.max(1, moved)) / DEG + 2.5;
-    if (st.phase === 'approach' && st.altFt < 150) pitch += 4 * (1 - st.altFt / 150); // flare
+    if (st.phase === 'approach' && agl < 150) pitch += 4 * (1 - agl / 150); // flare
   } else if (st.phase === 'takeoff') {
     pitch = 9 * Math.max(0, Math.min(1, (st.speedKmh - vLift * 0.75) / (vLift * 0.25))); // rotation
   } else if (st.phase === 'landing') {
@@ -92,7 +94,8 @@ function planePose(p, t, st0) {
     const st = st0 || G.flightState(p, t);
     if (st) {
       const att = attitude(p, st, t);
-      return { lat: st.lat, lon: st.lon, altM: (st.altFt || 0) * 0.3048, flying: true, st, ...att };
+      // (altM: above the runways, as the 3D heights are drawn from their ground)
+      return { lat: st.lat, lon: st.lon, altM: Math.max(0, (st.altFt || 0) - (st.fieldFt || 0)) * 0.3048, flying: true, st, ...att };
     }
   }
   if (p.status === 'flying' && p.flight) {
@@ -971,7 +974,7 @@ planeLayer.drawTrack = function (p, len, exag, globe) {
   const map = v.map;
   const e0 = fieldElevation(map, p.flight.from);
   const e1 = fieldElevation(map, p.flight.to);
-  const key = `${p.id}|${p.flight.dep}|${Math.round(Math.log2(exag) * 4)}|${globe}|${Math.round(e0)}|${Math.round(e1)}`;
+  const key = `${p.id}|${p.flight.dep}|${Math.round(Math.log2(exag) * 4)}|${globe}|${Math.round(e0)}|${Math.round(e1)}|${tr.pts.length}|${tr.cruiseAlt}`;
   this.track.visible = true;
   if (this.track.userData.key === key) return;
   this.track.userData.key = key;
@@ -981,11 +984,12 @@ planeLayer.drawTrack = function (p, len, exag, globe) {
   const pts = [];
   for (let i = 0; i < tr.pts.length; i++) {
     const [lat, lon] = tr.pts[i];
-    const altM = tr.altAt(tr.cum[i]) * 0.3048;
+    const air = tr.cum[i] > sLift && tr.cum[i] < sTouch;
+    const altM = air ? Math.max(0, tr.altAt(tr.cum[i]) - (tr.fieldAt ? tr.fieldAt(tr.cum[i]) : 0)) * 0.3048 : 0;
     const under = map.queryTerrainElevation([lon, lat]) || 0;
     const f = Math.min(1, Math.max(0, (tr.cum[i] - sLift) / Math.max(0.001, sTouch - sLift)));
     const rise = shownAlt(altM * TERRAIN_EXAG, len, exag);
-    const base = altM > 0 ? e0 * (1 - f) + e1 * f : under;
+    const base = air ? e0 * (1 - f) + e1 * f : under;
     frameAt(lat, lon, Math.max(base + rise, under + Math.min(rise, 150 * TERRAIN_EXAG)), globe);
     pts.push(tmp.pos.clone());
   }
@@ -1036,7 +1040,7 @@ function hoverText(id) {
   if (p.status === 'flying' && st) {
     const f = p.flight;
     line = `${PHASE_TEXT[st.phase] || 'Flying'} · ${f.from} → ${f.to}<br>` +
-      `${st.altFt > 0 ? `${Math.round(st.altFt / 100) * 100} ft · ` : ''}${st.speedKmh} km/h`;
+      `${st.ground ? '' : `${Math.round(st.altFt / 100) * 100} ft · `}${st.speedKmh} km/h`;
   } else {
     line = `${p.status === 'turnaround' ? 'Turnaround' : 'At the gate'} · ${p.location}`;
   }

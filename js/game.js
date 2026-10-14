@@ -157,12 +157,8 @@
   // Only for showing flights: planes take off into the wind, turn onto the great circle, cruise
   // at a typical flight level for their type and join a straight-in final to the landing runway.
   // The simulation itself still only uses the departure and arrival times.
-  const TAXI_OUT = 10;   // minutes of the block time spent taxiing to the runway
-  const TAXI_IN = 5;
-  const PUSHBACK = 2;    // of TAXI_OUT: pushed back from the gate, tail first
-  const DOCK = 1.5;      // of TAXI_IN: turning onto the stand and pulling up to the gate
-  const ROLL_OUT = 0.7;  // takeoff roll, minutes
-  const ROLL_IN = 0.9;   // landing roll
+  const PUSHBACK = 2;    // minutes: pushed back from the gate, tail first
+  const DOCK = 1.5;      // minutes: turning onto the stand and pulling up to the gate
   const FINAL_KM = 15;   // final approach fix before the threshold (~2700 ft on a 3° glide)
   const DESCENT_KM_PER_KFT = 5.6; // 3° descent path
   const CRUISE_FT = { JU52: 6000, 'DC-3': 9000, CONCORDE: 58000, 'DHC6-400': 10000, DO228NG: 12000 };
@@ -1210,22 +1206,76 @@
     return { lat: st.lat, lon: st.lon, heading: st.heading, name: st.name, bridge: st.bridge, push: st.push || TAXI_LANE };
   }
 
+  // Flight performance of a type: climb rate near the ground (ft/min), lift-off and approach speeds (km/h) and
+  // the bank angle in turns. By category, unless the type has its own (climbFpm, vLofKmh, vAppKmh, bankDeg).
+  const PERF = {
+    turboprop: { climbFpm: 1800, vLof: 200, vApp: 210, bank: 25 },
+    regional: { climbFpm: 3000, vLof: 265, vApp: 245, bank: 25 },
+    narrowbody: { climbFpm: 2600, vLof: 285, vApp: 255, bank: 25 },
+    widebody: { climbFpm: 2300, vLof: 315, vApp: 275, bank: 25 },
+    classic: { climbFpm: 1000, vLof: 180, vApp: 195, bank: 20 },
+  };
+  const perfCache = {};
+  function perf(type) {
+    if (perfCache[type]) return perfCache[type];
+    const ac = D.aircraft[type];
+    const base = PERF[ac.category] || PERF.narrowbody;
+    const small = ac.category === 'turboprop' && ac.seats <= 20; // (commuters: slower and steeper)
+    return (perfCache[type] = {
+      climbFpm: ac.climbFpm || (small ? 1600 : base.climbFpm),
+      vLof: ac.vLofKmh || (small ? 160 : base.vLof),
+      vApp: ac.vAppKmh || (small ? 170 : base.vApp),
+      bank: ac.bankDeg || base.bank,
+    });
+  }
+
+  // Ground under a flight (FG.ground, js/ground.js): metres, or null while it is loading.
+  const groundAt = (lat, lon) => (FG.ground ? FG.ground.at(lat, lon) : 0);
+  const groundMax = (lat, lon) => (FG.ground ? FG.ground.maxNear(lat, lon, 300) : 0);
+  const TERRAIN_CLEAR_FT = 1500;  // en route: at least this high above the ground within 300 m of the track
+  const TERRAIN_SKIP_FT = 26000;  // where the plane would fly higher than this, the ground isn't looked at
+  const TAXI_KMH = 25;
+  const HOLD_KM = 0.25;           // planes wait for their departure this far before the runway threshold
+
+  // n full circles (side 1 = right turns, -1 = left) starting and ending at p, flying heading hdg there.
+  function circles(p, hdg, r, n, side) {
+    const c = offsetPoint(p[0], p[1], hdg + 90 * side, r);
+    const a0 = hdg - 90 * side;
+    const pts = [];
+    for (let k = 1; k <= 36 * n; k++) pts.push(offsetPoint(c[0], c[1], a0 + side * 10 * k, r));
+    return pts;
+  }
+
+  // A flight's track: pushback, taxi, takeoff roll, climb, cruise, descent, landing roll, taxi in, all with the
+  // type's own performance (perf). Heights are feet above sea level: the plane climbs from its runway, stays
+  // well clear of the ground on the way (circling over the airport first where mountains are too close to
+  // outclimb, and before the final approach where they are too close to descend after) and comes down a 3°
+  // glide path. The flight takes as long as such a flight takes; what is left of the game's block time it
+  // waits before the runway.
   function buildTrack(type, f, planeId) {
     const day = Math.floor(f.dep / DAY);
     const A0 = airportByCode[f.from];
     const B0 = airportByCode[f.to];
     const ac = D.aircraft[type];
+    const pf = perf(type);
     const need = runwayNeed(type).m;
     const dep = pickRunway(f.from, day, need);
     const arr = pickRunway(f.to, day, need);
-    const radius = ac.speedKmh < 450 ? 1800 : 3500; // turn radius at climb/approach speed
+    // Turn radius from the bank angle at about 1.35 × the approach speed: r = v² / (g tan φ).
+    const vTurn = pf.vApp * 1.35 / 3.6;
+    const radius = vTurn * vTurn / (9.81 * Math.tan(toRad(pf.bank)));
     const P = (ll) => ({ lat: ll[0], lon: ll[1] });
 
-    const lift = offsetPoint(dep.thr[0], dep.thr[1], dep.hdg, Math.min(dep.len * 0.6, 2500));
+    // Takeoff run to lift-off at ~1.8 m/s², landing run at ~1.6 m/s², within the runway.
+    const vLofMs = pf.vLof / 3.6;
+    const vAppMs = pf.vApp / 3.6;
+    const rollM = Math.min(dep.len * 0.85, Math.max(250, vLofMs * vLofMs / 3.6));
+    const stopM = Math.min(arr.len * 0.85, Math.max(400 + 300, 400 + vAppMs * vAppMs / 3.2));
+    const lift = offsetPoint(dep.thr[0], dep.thr[1], dep.hdg, rollM);
     const climbOut = offsetPoint(dep.end[0], dep.end[1], dep.hdg, ac.speedKmh < 450 ? 2500 : 5000);
     const faf = offsetPoint(arr.thr[0], arr.thr[1], arr.hdg + 180, FINAL_KM * 1000);
     const touch = offsetPoint(arr.thr[0], arr.thr[1], arr.hdg, 400);
-    const stop = offsetPoint(arr.thr[0], arr.thr[1], arr.hdg, Math.min(arr.len * 0.65, 2200)); // where it leaves the runway
+    const stop = offsetPoint(arr.thr[0], arr.thr[1], arr.hdg, stopM); // where it leaves the runway
 
     const outTurn = turnToward(climbOut, dep.hdg, P(faf), radius);
     const turnEnd = outTurn.length ? outTurn[outTurn.length - 1] : climbOut;
@@ -1242,90 +1292,220 @@
     const leadB = offsetPoint(gB.lat, gB.lon, gB.heading + 180, gB.push);
     // Taxi out along the taxiways to the threshold, and in from where the plane leaves the runway.
     const outPath = taxiPath(f.from, dep, pushA, 0);
-    const stopM = Math.min(arr.len * 0.65, 2200);
     const inPath = taxiPath(f.to, arr, leadB, stopM).reverse();
-    const pts = [standA, pushA, ...outPath, dep.thr, lift, dep.end, climbOut, ...outTurn];
-    const iThr = 2 + outPath.length;
+    const cruisePts = [];
     const cruise = distanceKm(P(turnEnd), P(turnStart));
     const n = Math.max(1, Math.ceil(cruise / 25));
-    for (let i = 1; i < n; i++) pts.push(interpolate(P(turnEnd), P(turnStart), i / n));
-    pts.push(...inTurn, faf, arr.thr, touch, stop, ...inPath, leadB, standB);
-    const idx = { push: 1, thr: iThr, lift: iThr + 1, touch: pts.length - 4 - inPath.length, stop: pts.length - 3 - inPath.length, lead: pts.length - 2 };
+    for (let i = 1; i < n; i++) cruisePts.push(interpolate(P(turnEnd), P(turnStart), i / n));
 
-    // Cumulative distance (km).
-    const cum = [0];
-    for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + distanceKm(P(pts[i - 1]), P(pts[i])));
-    const sLift = cum[idx.lift];
-    const sTouch = cum[idx.touch];
-    const airborne = sTouch - sLift;
+    // Circles to the side with the lower ground (where it is known).
+    const lowSide = (p, hdg) => {
+      const top = (side) => Math.max(...circles(p, hdg, radius, 1, side).filter((_, k) => k % 3 === 0)
+        .map((q) => groundMax(q[0], q[1]) ?? 0));
+      return top(-1) < top(1) ? -1 : 1;
+    };
+    const sideOut = lowSide(climbOut, dep.hdg);
+    const sideIn = lowSide(faf, arr.hdg);
 
-    // Cruise level: type typical, lower on short hops; odd thousands eastbound, even westbound.
-    const climbRate = ac.category === 'turboprop' || ac.category === 'classic' ? 4.5 : 4; // km per 1000 ft
-    let cruiseAlt = cruiseFt(type);
-    const fit = airborne / ((climbRate + DESCENT_KM_PER_KFT) * cruiseAlt / 1000);
-    if (fit < 1) cruiseAlt *= fit;
-    let fl = Math.floor(cruiseAlt / 1000);
-    if (fl >= 5) {
-      const east = bearing(A0, B0) < 180;
-      if (fl % 2 !== (east ? 1 : 0)) fl -= 1;
+    // The track with `orbits` = [circles climbing after takeoff, circles descending before the final].
+    function geometry(orbits) {
+      const up = orbits[0] ? circles(climbOut, dep.hdg, radius, orbits[0], sideOut) : [];
+      const down = orbits[1] ? [faf, ...circles(faf, arr.hdg, radius, orbits[1], sideIn).slice(0, -1)] : [];
+      const pts = [standA, pushA, ...outPath, dep.thr, lift, dep.end, climbOut, ...up, ...outTurn, ...cruisePts,
+        ...inTurn, ...down, faf, arr.thr, touch, stop, ...inPath, leadB, standB];
+      const iThr = 2 + outPath.length;
+      const iClimb = iThr + 3; // climbOut
+      const idx = { push: 1, thr: iThr, lift: iThr + 1, touch: pts.length - 4 - inPath.length, stop: pts.length - 3 - inPath.length, lead: pts.length - 2 };
+      const cum = [0];
+      for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + distanceKm(P(pts[i - 1]), P(pts[i])));
+      // Where the circles are (the procedure keeps them clear of the ground, so the ground isn't asked there).
+      const iFaf = idx.touch - 2;
+      const skip = [[cum[iClimb], cum[iClimb + up.length]], [cum[iFaf - down.length], cum[iFaf]]];
+      return { pts, cum, idx, skip };
     }
-    cruiseAlt = Math.max(1000, fl * 1000);
-    const climbKm = climbRate * cruiseAlt / 1000;
 
-    const altAt = (sv) => {
-      const x = sv - sLift;
-      const y = sTouch - sv;
-      if (x <= 0 || y <= 0) return 0;
-      const climb = cruiseAlt * (1 - Math.pow(1 - Math.min(1, x / climbKm), 1.7));
-      return Math.max(0, Math.min(cruiseAlt, climb, (y / DESCENT_KM_PER_KFT) * 1000));
+    // Position at distance s along the track.
+    const posOn = (g, s) => {
+      let i = 1;
+      let hi = g.cum.length - 1;
+      while (i < hi) { const m = (i + hi) >> 1; if (g.cum[m] < s) i = m + 1; else hi = m; }
+      const a = g.pts[i - 1];
+      const b = g.pts[i];
+      const fr = g.cum[i] > g.cum[i - 1] ? Math.min(1, Math.max(0, (s - g.cum[i - 1]) / (g.cum[i] - g.cum[i - 1]))) : 1;
+      return [a[0] + (b[0] - a[0]) * fr, a[1] + (b[1] - a[1]) * fr];
     };
 
-    // Time table: taxi, roll, airborne (slow low, fast high), roll, taxi; scaled to the block time.
-    const total = f.arr - f.dep;
-    const ground = Math.min(total * 0.5, TAXI_OUT + TAXI_IN + ROLL_OUT + ROLL_IN);
-    const k = ground / (TAXI_OUT + TAXI_IN + ROLL_OUT + ROLL_IN);
-    const air = total - ground;
-    // Speed: lift-off at about the approach speed, 250 kt (463 km/h) below 10,000 ft, cruise speed above.
-    // Coming in, the plane slows down to its approach speed by the final approach fix and holds it on the
-    // glide path, touching down a little slower.
+    const FT = 3.28084;
+    let e0 = groundAt(dep.thr[0], dep.thr[1]);
+    let e1 = groundAt(arr.thr[0], arr.thr[1]);
+    let terrainMissing = e0 === null || e1 === null;
+    e0 = (e0 || 0) * FT;
+    e1 = (e1 || 0) * FT;
+    const typeCruise = cruiseFt(type);
     const vCruise = ac.speedKmh;
-    const vApp = Math.min(vCruise * 0.6, ac.speedKmh < 450 ? 210 : ac.speedKmh < 700 ? 230 : 260);
+    const vApp = pf.vApp;
     const v250 = Math.min(vCruise, 463);
-    const speedAt = (sm) => {
-      const alt = altAt(sm);
-      let v = alt < 10000
-        ? vApp * 1.05 + (v250 - vApp * 1.05) * Math.sqrt(alt / 10000)
-        : v250 + (vCruise - v250) * Math.min(1, (alt - 10000) / 20000); // full cruise speed from FL300
-      const toTouch = sTouch - sm;
-      if (toTouch < FINAL_KM) v = vApp * (0.93 + 0.07 * toTouch / FINAL_KM); // on final
-      else if (toTouch < FINAL_KM + 25) v = Math.min(v, vApp + (v250 - vApp) * (toTouch - FINAL_KM) / 25); // slowing down
-      return Math.max(vApp * 0.9, v);
+    const climbRate = (alt) => pf.climbFpm * Math.max(0.3, 1 - 0.65 * alt / typeCruise); // ft/min
+    const gradLow = pf.climbFpm * 0.8 / (Math.min(v250, pf.vLof * 1.5) / 60); // ft per km, low down
+
+    // Heights along the track (feet above sea level) on a grid between lift-off and touchdown.
+    function profile(g) {
+      const sLift = g.cum[g.idx.lift];
+      const sTouch = g.cum[g.idx.touch];
+      const airborne = sTouch - sLift;
+      const N = Math.min(4000, Math.max(200, Math.ceil(airborne / 0.4)));
+      const ds = airborne / N;
+      const S = (i) => sLift + i * ds;
+      const fieldAt = (s) => e0 + (e1 - e0) * Math.min(1, Math.max(0, (s - sLift) / airborne));
+      // Speed (km/h) at a height: from lift-off speed to 250 kt by 3000 ft above the field, to cruise speed
+      // above 10,000 ft, slowing to the approach speed for the last 25 km before the final approach fix.
+      const speedAt = (s, alt, cruiseAlt) => {
+        const h = alt - fieldAt(s);
+        let v = h < 3000 ? pf.vLof * 1.15 + (v250 - pf.vLof * 1.15) * Math.sqrt(Math.max(0, h) / 3000)
+          : alt < 10000 ? v250 : v250 + (vCruise - v250) * Math.min(1, (alt - 10000) / Math.max(5000, cruiseAlt - 10000));
+        const toTouch = sTouch - s;
+        if (toTouch < FINAL_KM) v = vApp * (0.93 + 0.07 * toTouch / FINAL_KM); // on final
+        else if (toTouch < FINAL_KM + 25) v = Math.min(v, vApp + (v250 - vApp) * (toTouch - FINAL_KM) / 25);
+        return Math.max(Math.min(pf.vLof, vApp) * 0.9, v);
+      };
+      // Highest the plane can be: climbing at its rate from the runway (C), and still able to come down a 3°
+      // glide path to the other runway (Dn).
+      const Cl = new Float64Array(N + 1);
+      const Dn = new Float64Array(N + 1);
+      Cl[0] = e0;
+      for (let i = 0; i < N; i++) {
+        const v = speedAt(S(i), Cl[i], typeCruise) / 60; // km/min
+        Cl[i + 1] = Math.min(typeCruise, Cl[i] + climbRate(Cl[i]) * ds / v);
+      }
+      // Glide path: 3°, steeper (up to 7°, as at Lugano or London City) where the ground on the final needs it.
+      const sFaf = sTouch - FINAL_KM;
+      let glide = 1000 / DESCENT_KM_PER_KFT; // ft per km
+      for (let k = 0; k < 60; k++) {
+        const s = sFaf + (FINAL_KM - 0.6) * k / 60;
+        const h = groundMax(...posOn(g, s));
+        if (h === null) { terrainMissing = true; continue; }
+        const dKm = sTouch - s;
+        glide = Math.max(glide, (h * FT + Math.min(500, 50 + dKm * 30) - e1) / dKm);
+      }
+      glide = Math.min(glide, Math.tan(toRad(7)) * 3280.84);
+      for (let i = 0; i <= N; i++) {
+        const d = sTouch - S(i);
+        Dn[i] = e1 + Math.min(d, FINAL_KM) * glide + Math.max(0, d - FINAL_KM) / DESCENT_KM_PER_KFT * 1000;
+      }
+      // Cruise level: the type's, lower on short hops; odd thousands eastbound, even westbound.
+      let peak = 0;
+      for (let i = 0; i <= N; i++) peak = Math.max(peak, Math.min(Cl[i], Dn[i]));
+      // The ground: what the plane must clear (R), with less margin close to the runways.
+      const R = new Float64Array(N + 1).fill(-Infinity);
+      let maxR = -Infinity;
+      for (let i = 0; i <= N; i++) {
+        const s = S(i);
+        if (Math.min(Cl[i], Dn[i]) > TERRAIN_SKIP_FT) continue;
+        if (s > sTouch - FINAL_KM || g.skip.some(([a, b]) => s >= a && s <= b)) continue; // (the final: see glide)
+        const [lat, lon] = posOn(g, s);
+        const h = groundMax(lat, lon);
+        if (h === null) { terrainMissing = true; continue; }
+        const near = Math.min(s - sLift, sTouch - s) * 1000; // metres from lift-off or touchdown
+        R[i] = h * FT + Math.min(TERRAIN_CLEAR_FT, 50 + near * 0.12);
+        maxR = Math.max(maxR, R[i]);
+      }
+      let cruiseAlt = Math.min(typeCruise, peak);
+      let fl = Math.floor(cruiseAlt / 1000);
+      const east = bearing(A0, B0) < 180;
+      const parity = (x) => x >= 5 && x % 2 !== (east ? 1 : 0);
+      if (parity(fl)) fl -= 1;
+      // (never below the ground on the way)
+      if (fl * 1000 < maxR) { fl = Math.ceil(maxR / 1000); if (parity(fl)) fl += 1; }
+      cruiseAlt = Math.max(1000 + Math.max(e0, e1), fl * 1000);
+      // Envelope over the ground: climb early enough for the hills ahead, don't descend too soon after them.
+      const E = Float64Array.from(R);
+      for (let i = N - 1; i >= 0; i--) E[i] = Math.max(E[i], E[i + 1] - gradLow * ds);
+      const gDown = 1000 / DESCENT_KM_PER_KFT;
+      for (let i = 1; i <= N; i++) E[i] = Math.max(E[i], E[i - 1] - gDown * ds);
+      const A = new Float64Array(N + 1);
+      let shortOut = 0;
+      let shortIn = 0;
+      for (let i = 0; i <= N; i++) {
+        A[i] = Math.max(Math.min(Cl[i], Dn[i], cruiseAlt), Math.min(E[i], cruiseAlt));
+        // can't climb that fast / can't descend that fast afterwards
+        if (Cl[i] < typeCruise && E[i] > Cl[i]) shortOut = Math.max(shortOut, E[i] - Cl[i]);
+        if (E[i] > Dn[i]) shortIn = Math.max(shortIn, E[i] - Dn[i]);
+      }
+      A[0] = e0;
+      A[N] = e1;
+      const lap = 2 * Math.PI * radius / 1000; // km per circle
+      return {
+        sLift, sTouch, airborne, N, ds, A, cruiseAlt, fieldAt, glide,
+        speedAt: (s, alt) => speedAt(s, alt, cruiseAlt),
+        needOut: shortOut > 200 ? Math.min(8, Math.ceil(shortOut / (gradLow * 0.8 * lap))) : 0,
+        needIn: shortIn > 200 ? Math.min(8, Math.ceil(shortIn / (gDown * lap))) : 0,
+      };
+    }
+
+    let orbits = [0, 0];
+    let g = geometry(orbits);
+    let pr = profile(g);
+    for (let pass = 0; pass < 3 && (pr.needOut || pr.needIn); pass++) {
+      orbits = [orbits[0] + pr.needOut, orbits[1] + pr.needIn];
+      g = geometry(orbits);
+      pr = profile(g);
+    }
+    const { pts, cum, idx } = g;
+    const { sLift, sTouch, airborne, N, ds, A, cruiseAlt } = pr;
+    const altAt = (sv) => {
+      if (sv <= sLift) return e0;
+      if (sv >= sTouch) return e1;
+      const x = (sv - sLift) / ds;
+      const i = Math.min(N - 1, Math.floor(x));
+      return A[i] + (A[i + 1] - A[i]) * (x - i);
     };
-    const steps = 200;
+
+    // Times: every part as long as it takes; the rest of the block time the plane waits before the runway.
+    const steps = Math.min(N, 600);
     const raw = [0];
     for (let i = 1; i <= steps; i++) {
       const sm = sLift + airborne * (i - 0.5) / steps;
-      raw.push(raw[i - 1] + (airborne / steps) / speedAt(sm));
+      raw.push(raw[i - 1] + (airborne / steps) / (pr.speedAt(sm, altAt(sm)) / 60));
     }
-    const scale = air / raw[steps];
-    const segs = [ // [t0, t1, s0, s1, ease]; 'both' starts and ends at standstill
-      [0, PUSHBACK * k, 0, cum[idx.push], 'both'],
-      [PUSHBACK * k, TAXI_OUT * k, cum[idx.push], cum[idx.thr], 'both'],
-      [TAXI_OUT * k, (TAXI_OUT + ROLL_OUT) * k, cum[idx.thr], sLift, 'in'],
-    ];
-    const t0 = (TAXI_OUT + ROLL_OUT) * k;
-    const t1 = t0 + air;
-    segs.push([t1, t1 + ROLL_IN * k, sTouch, cum[idx.stop], 'out']);
-    segs.push([t1 + ROLL_IN * k, total - DOCK * k, cum[idx.stop], cum[idx.lead], 'both']);
-    segs.push([total - DOCK * k, total, cum[idx.lead], cum[cum.length - 1], 'both']);
+    const sHold = Math.max(cum[idx.push], cum[idx.thr] - HOLD_KM);
+    const taxi = (km) => km / TAXI_KMH * 60;
+    const tPush = PUSHBACK;
+    const tTaxiOut = taxi(sHold - cum[idx.push]);
+    const tLineUp = taxi(cum[idx.thr] - sHold) + 0.5;
+    const tRoll = 2 * (rollM / 1000) / (pf.vLof / 60);
+    const tLand = 2 * ((cum[idx.stop] - sTouch)) / ((vApp * 0.93 + 30) / 60);
+    const tTaxiIn = taxi(cum[idx.lead] - cum[idx.stop]);
+    const natural = tPush + tTaxiOut + tLineUp + tRoll + raw[steps] + tLand + tTaxiIn + DOCK;
+    const total = f.arr - f.dep;
+    // Too little time (a long way round): everything goes a little faster.
+    const k = Math.min(1, total / natural);
+    const wait = Math.max(0, total - natural);
+    const segs = []; // [t0, t1, s0, s1, ease]; 'both' starts and ends at standstill
+    let t = 0;
+    const seg = (dt, s0, s1, ease) => { segs.push([t, t + dt, s0, s1, ease]); t += dt; };
+    seg(tPush * k, 0, cum[idx.push], 'both');
+    seg(tTaxiOut * k, cum[idx.push], sHold, 'both');
+    seg(wait, sHold, sHold, 'both');
+    seg(tLineUp * k, sHold, cum[idx.thr], 'both');
+    seg(tRoll * k, cum[idx.thr], sLift, 'in');
+    const t0 = t;
+    const t1 = t0 + raw[steps] * k;
+    const scale = (raw[steps] * k) / raw[steps];
+    t = t1;
+    seg(tLand * k, sTouch, cum[idx.stop], 'out');
+    seg(tTaxiIn * k, cum[idx.stop], cum[idx.lead], 'both');
+    seg(Math.max(0, total - t), cum[idx.lead], cum[cum.length - 1], 'both');
 
     return {
-      pts, cum, idx, cruiseAlt, depRunway: dep, arrRunway: arr, total,
+      pts, cum, idx, cruiseAlt, depRunway: dep, arrRunway: arr, total, orbits, terrainMissing,
+      glideDeg: Math.round(Math.atan(pr.glide / 3280.84) / Math.PI * 1800) / 10,
       altAt,
+      // Ground height (ft) the heights are measured from in the 3D view: between the two runways.
+      fieldAt: pr.fieldAt,
       // Distance along the track (km) at minutes since departure.
-      sAt(t) {
-        if (t >= t0 && t <= t1) {
-          const u = (t - t0) / scale; // unscaled time
+      sAt(tm) {
+        if (tm >= t0 && tm <= t1) {
+          const u = (tm - t0) / scale; // unscaled time
           let lo = 0;
           let hi = steps;
           while (hi - lo > 1) { const m = (lo + hi) >> 1; if (raw[m] <= u) lo = m; else hi = m; }
@@ -1333,14 +1513,14 @@
           return sLift + airborne * (lo + Math.min(1, Math.max(0, fr))) / steps;
         }
         for (const [a, b, s0, s1, ease] of segs) {
-          if (t < a || t > b) continue;
-          let u = b > a ? (t - a) / (b - a) : 1;
+          if (tm < a || tm > b) continue;
+          let u = b > a ? (tm - a) / (b - a) : 1;
           if (ease === 'in') u *= u;
           if (ease === 'out') u = 1 - (1 - u) * (1 - u);
           if (ease === 'both') u = u * u * (3 - 2 * u);
           return s0 + (s1 - s0) * u;
         }
-        return t < 0 ? 0 : cum[cum.length - 1];
+        return tm < 0 ? 0 : cum[cum.length - 1];
       },
       // Position and heading at distance sv.
       at(sv) {
@@ -1362,6 +1542,12 @@
   }
 
   const trackCache = new Map();
+  // Tracks planned before the ground under them had loaded are planned again when it arrives.
+  if (FG.ground) {
+    FG.ground.onChange(() => {
+      for (const [key, t] of trackCache) if (t.terrainMissing) trackCache.delete(key);
+    });
+  }
   function flightTrack(p) {
     const f = p.flight;
     if (!f) return null;
@@ -1412,10 +1598,12 @@
     else if (sv >= sTouch) phase = 'landing';
     else if (sTouch - sv < FINAL_KM + 1) phase = 'approach';
     else if (alt >= tr.cruiseAlt - 50) phase = 'cruise';
-    else phase = sv - sLift < (sTouch - sLift) / 2 ? 'climb' : 'descent';
+    else phase = tr.altAt(sv + 0.5) >= alt ? 'climb' : 'descent';
     // airFrac: how far between lift-off (0) and touchdown (1) the plane is, for blending the two field elevations.
     const airFrac = Math.min(1, Math.max(0, (sv - sLift) / Math.max(0.001, sTouch - sLift)));
-    return { lat: pos.lat, lon: pos.lon, heading: pos.heading, altFt: alt, speedKmh: speed, phase, airFrac,
+    // altFt: above sea level; fieldFt: the runways' height at this point (altFt - fieldFt = height above them).
+    return { lat: pos.lat, lon: pos.lon, heading: pos.heading, altFt: alt, fieldFt: Math.round(tr.fieldAt(sv)),
+      ground: sv <= sLift || sv >= sTouch, speedKmh: speed, phase, airFrac,
       cruiseFt: tr.cruiseAlt, depRunway: designatorOf(tr.depRunway.hdg), arrRunway: designatorOf(tr.arrRunway.hdg) };
   }
   const designatorOf = (h) => String(Math.round((((h % 360) + 360) % 360) / 10) || 36).padStart(2, '0');
@@ -1514,7 +1702,7 @@
     ticketPrice, routeKey, blockMinutes, landingFee, slotUpfront, slotWeekly,
     priceNew, fitsAirport, fitsReason, crewFor, factoryOf, onSale, dateOf,
     airportSize, airportRunways, runwayLength, longestRunway, runwayNeed, attraction,
-    flightTrack, flightState, legTrack, cruiseFt, windFrom, gateOf, apronOf, taxiwaysOf, drawnTaxiways, expansionPreview, terminalPiece,
+    flightTrack, flightState, legTrack, cruiseFt, perf, windFrom, gateOf, apronOf, taxiwaysOf, drawnTaxiways, expansionPreview, terminalPiece,
     fmtMoney, fmtTime, fmtClock, fmtDuration,
 
     // opts: { mode, difficulty, airport, aircraft, company, story } from the start screen; all optional.
