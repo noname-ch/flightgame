@@ -56,6 +56,8 @@ Screenshots and logs go to `tools/agent/shots/` (not committed).
    - `python3 tools/agent/arc.py CODE VIEW cx cy r a0 a1 n PREFIX` puts n stands round a circle (round satellites).
    - `python3 tools/agent/rekind.py CODE hangar terminal i j ...` turns raw rings into another kind (e.g. a
      passenger terminal mapped as hangars). `row.py ... PREFIX START HEADING` gives a row a fixed heading.
+   - `python3 tools/agent/rawops.py CODE > shots/a.txt` then `plotops.py CODE VIEW shots/a.txt` shows every mapped
+     stand, also those the game leaves out: where they are already right, pin.mjs them instead of redrawing.
    - `python3 tools/agent/draw.py CODE VIEW aprons,terminals,...` draws the raw elements with their numbers over a
      shot's satellite picture (`shots/CODE-draw.png`, after raw.sh), to see which number is which ring.
    - `node tools/agent/pin.mjs CODE`: the game uses only 2×GATE_COUNT of the mapped stands (plus every stand a fix
