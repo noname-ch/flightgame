@@ -5,6 +5,8 @@
 # out from it (where the noses stop) and nose-in (heading at the face). --box keeps only faces whose middle lies
 # in that pixel box of a shot (to leave the landside out). Stands that land inside the ring or within OFF-2 m of
 # another face (inner corners) are left out. Run fixover.mjs afterwards (corners), after a RELOAD=1 shoot.
+# --others also leaves out stands inside (or within OFF-2 m of) the other raw terminal rings: for terminals cut
+# into pieces at map-tile edges, whose cut faces lie inside the building.
 import json, math, os, subprocess, sys
 D = os.path.dirname(os.path.abspath(__file__))
 args = sys.argv[1:]
@@ -17,7 +19,8 @@ def opt(name, default, n=1):
 sp, off, mn = float(opt('sp', 42)), float(opt('off', 14)), float(opt('min', 40))
 box = opt('box', None, 5)
 dry = '--dry' in args
-args = [a for a in args if a != '--dry']
+others = '--others' in args
+args = [a for a in args if a not in ('--dry', '--others')]
 code, ti, prefix = args[0].upper(), int(args[1]), args[2]
 raw = json.load(open(f'{D}/shots/{code}-raw.json'))
 ring = raw['terminals'][ti]
@@ -58,6 +61,14 @@ if box:
         x = (lon + 180) / 360 * scale - v['x']
         y = (1 - math.log(math.tan(math.radians(lat)) + 1 / math.cos(math.radians(lat))) / math.pi) / 2 * scale - v['y']
         return bx1 <= x <= bx2 and by1 <= y <= by2
+O = []
+if others:
+    for k, r in enumerate(raw['terminals']):
+        if k != ti: O.append([((p[1] - o[1]) * kx, (p[0] - o[0]) * M) for p in r])
+def nearother(q):
+    for R in O:
+        if inside(q, R) or any(segd(q, R[m], R[(m + 1) % len(R)]) < off - 2 for m in range(len(R))): return True
+    return False
 ops, n = [], 0
 for i in range(len(S)):
     a, b = S[i], S[(i + 1) % len(S)]
@@ -72,7 +83,7 @@ for i in range(len(S)):
     for j in range(k):
         t = 10 + j * step if k > 1 else L / 2
         q = (a[0] + ux * t + nx * off, a[1] + uy * t + ny * off)
-        if inside(q, P) or any(segd(q, S[m], S[(m + 1) % len(S)]) < off - 2 for m in range(len(S)) if m != i): continue
+        if inside(q, P) or any(segd(q, S[m], S[(m + 1) % len(S)]) < off - 2 for m in range(len(S)) if m != i) or nearother(q): continue
         n += 1
         lat, lon = ll(q)
         ops.append(json.dumps({'op': 'add', 'kind': 'stand', 'geom': [lat, lon, hdg, f'{prefix}{n}', 1]}))
