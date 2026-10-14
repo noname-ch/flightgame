@@ -571,7 +571,7 @@
       ops.forEach((o, k) => { if (o.kind === op.kind && o.op !== 'del' && JSON.stringify(o.geom) === target) i = k; });
       if (i >= 0) {
         const o = ops[i];
-        if (op.op === 'set') ops[i] = Object.assign({}, o, { geom: op.geom });
+        if (op.op === 'set') ops[i] = Object.assign({}, o, { geom: op.geom }, op.w != null ? { w: op.w } : {});
         else if (o.op === 'add') ops.splice(i, 1);
         else ops[i] = { op: 'del', kind: o.kind, geom: o.from };
         return;
@@ -762,6 +762,47 @@
     if (JSON.stringify(geom) === JSON.stringify(e.geom)) return;
     commit(e.code, { op: 'set', kind: 'runway', from: e.geom, geom }, `Runway ${runwayName(geom)}: ${w} m, ${geom[5] ? 'paved' : 'grass'}.`);
   }
+  // ---------- taxiway widths ----------
+  // A taxiway's width (m): the one its fixes give it (fitted to the satellite picture or set here), else none.
+  function widthOf(e) {
+    if (e.geom.w) return e.geom.w;
+    const lay = layoutOf(e.code);
+    const line = lay && lay.taxiways.find((l) => FG.fixes.gap('taxiway', l, e.geom) < 1);
+    return line && line.w ? line.w : null;
+  }
+  function setWidth() {
+    const e = selection();
+    if (!e || e.kind !== 'taxiway') return;
+    const w = Math.round(Number($('ae-twwidth').value) * 2) / 2;
+    if (!(w >= 5 && w <= 80)) { note('Width: 5 to 80 m.', true); return; }
+    commit(e.code, { op: 'set', kind: 'taxiway', from: e.geom, geom: e.geom, w }, `Taxiway ${w} m wide (Ctrl+Z to undo).`);
+  }
+  // The taxiway moved into the middle of the real one in the satellite picture, as wide as that is
+  // (js/taxifit.js). Its ends stay where they join another taxiway or a runway.
+  async function fitTaxiway(e, drawn) {
+    const lay = layoutOf(e.code);
+    const others = (lay ? lay.taxiways : []).filter((l) => FG.fixes.gap('taxiway', l, e.geom) > 1)
+      .concat(G.airportRunways(e.code).map((r) => [[r[0], r[1]], [r[2], r[3]]]));
+    const keep = (p) => others.some((l) => l.some((q, i) => i && segM(p, l[i - 1], q) < 3));
+    const busy = (on) => { ed.busy = on; if (ed.sel && ed.at) showPopup(); };
+    busy(true);
+    note('Looking at the satellite picture…');
+    let f = null;
+    try { f = await FG.taxiFit.fit(e.geom, { keep }); } catch (err) { note(`Not fitted: ${err.message}.`, true); }
+    busy(false);
+    if (!f) return;
+    commit(e.code, { op: 'set', kind: 'taxiway', from: e.geom, geom: f.geom, w: f.w },
+      `Fitted to the satellite picture: ${f.w} m wide, moved up to ${Math.round(f.moved)} m into its middle (${f.used} of ${f.sections} cross sections). Ctrl+Z ${drawn ? 'keeps it as you drew it' : 'undoes it'}.`);
+  }
+  // metres from p to the segment a-b
+  function segM(p, a, b) {
+    const kx = 111320 * Math.cos((p[0] * Math.PI) / 180);
+    const ax = (a[1] - p[1]) * kx, ay = (a[0] - p[0]) * 111320;
+    const dx = (b[1] - p[1]) * kx - ax, dy = (b[0] - p[0]) * 111320 - ay;
+    const t = Math.max(0, Math.min(1, -(ax * dx + ay * dy) / (dx * dx + dy * dy || 1)));
+    return Math.hypot(ax + t * dx, ay + t * dy);
+  }
+
   // A stand's name and length (of its lead-in line and the pushback; empty: the game finds it).
   function rename() {
     const e = selection();
@@ -1150,6 +1191,8 @@
     ed.at = d.kind === 'runway' ? [(geom[0] + geom[2]) / 2, (geom[1] + geom[3]) / 2] : geom[geom.length - 1];
     stopDraw();
     commit(code, op, `${cap(NAMES[d.kind])} ${d.replace ? 'redrawn' : 'added'}.`);
+    // a taxiway is drawn along its middle: the satellite picture gives its real middle and width
+    if (d.kind === 'taxiway' && FG.taxiFit) fitTaxiway({ code, kind: 'taxiway', geom }, true);
   }
   function cancel() {
     if (ed.draw) { stopDraw(); note('Drawing cancelled.'); drawLayer(); return true; }
@@ -1335,6 +1378,12 @@
         <button data-ae="points">${point ? 'Move' : 'Move points'}</button>
         ${e.kind === 'stand' ? '<button data-ae="turn">Turn</button>' : ''}
         <button class="danger" data-ae="del">Delete</button></div>`);
+      if (e.kind === 'taxiway') {
+        const tw = widthOf(e);
+        parts.push(`<div class="ae-row ae-form">Width <input id="ae-twwidth" type="number" min="5" max="80" step="0.5" value="${tw || ''}" placeholder="${G.airportSize(e.code) >= 3 ? 23 : 15}"> m
+          <button data-ae="setWidth">Apply</button>
+          <button data-ae="fit"${ed.busy ? ' disabled' : ''} title="Find the real taxiway in the satellite picture: its line goes into the middle and gets its width">Fit to satellite</button></div>`);
+      }
       if (e.kind === 'runway') {
         parts.push(`<div class="ae-row ae-form">Width <input id="ae-width" type="number" min="5" max="120" value="${e.geom[4]}"> m
           <label><input id="ae-paved" type="checkbox"${e.geom[5] ? ' checked' : ''}> paved</label><button data-ae="setRunway">Apply</button></div>`);
@@ -1512,6 +1561,8 @@
       case 'turn': if (selection()) startDraw('turn', ed.sel); break;
       case 'del': del(); break;
       case 'setRunway': setRunway(); break;
+      case 'setWidth': setWidth(); break;
+      case 'fit': if (selection() && ed.sel.kind === 'taxiway') fitTaxiway(ed.sel); break;
       case 'rename': rename(); break;
       case 'flipRow': if (ed.row) { ed.row.flip = !ed.row.flip; drawLayer(); } break;
       case 'placeRow': if (ed.row) placeRow(); break;

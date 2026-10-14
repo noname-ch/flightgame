@@ -4,6 +4,8 @@
 //   { op: 'add', kind, geom }        a new element
 //   { op: 'del', kind, geom }        the element with this shape goes
 //   { op: 'set', kind, from, geom }  the element with the shape `from` becomes `geom`
+// A taxiway op may carry `w`: its width in metres (fitted to the satellite picture, js/taxifit.js). The line
+// gets it as a property (`line.w`); a later change of that line keeps it.
 // Kinds: runway ([lat1, lon1, lat2, lon2, width m, paved 0/1], in FG.data.runways), taxiway (line [[lat, lon]..]),
 // apron, pad (open concrete where planes go straight to their stand), terminal, hangar, building (rings), stand ([lat, lon, heading, name, 1, length m of its lead-in line and
 // pushback, if set]), tower ([lat, lon]) and
@@ -93,8 +95,14 @@
   }
   // One operation on a list (and the heights that go with it). False when it found nothing to change.
   function apply(list, op, heights) {
+    const geom = (old) => {
+      const g = copy(op.geom);
+      const w = op.w != null ? op.w : old && old.w;
+      if (w) g.w = w;
+      return g;
+    };
     if (op.op === 'add') {
-      list.push(copy(op.geom));
+      list.push(geom());
       if (heights) heights.push(0);
       return true;
     }
@@ -105,8 +113,8 @@
       if (heights) heights.splice(i, 1);
       return true;
     }
-    if (i >= 0) list[i] = copy(op.geom);
-    else { list.push(copy(op.geom)); if (heights) heights.push(0); }
+    if (i >= 0) list[i] = geom(list[i]);
+    else { list.push(geom()); if (heights) heights.push(0); }
     return i >= 0;
   }
 

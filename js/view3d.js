@@ -393,10 +393,12 @@ function gateFeatures(list, gates, hide = []) {
     const tww = metresWidth(width, a.lat);
     const edge = metresWidth(width + (big ? 14 : 7), a.lat); // with its shoulders
     for (const tw of G.drawnTaxiways(a.code)) { // (not across the aprons and pads: planes cross the open slab)
-      path(tw, { kind: 'taxiway', ...tww, e10: edge.w10, e22: edge.w22 });
+      // fitted to the satellite picture (`w`): that is the whole paved width, without shoulders round it
+      const own = tw.w && metresWidth(tw.w, a.lat);
+      path(tw, own ? { kind: 'taxiway', ...own, e10: own.w10, e22: own.w22 } : { kind: 'taxiway', ...tww, e10: edge.w10, e22: edge.w22 });
       path(tw, { kind: 'twline' });
       for (const f of paved) {
-        for (let i = 1; i < tw.length; i++) for (const bar of holdBars(f, tw[i - 1], tw[i], width * 0.85)) poly(bar, { kind: 'hold' });
+        for (let i = 1; i < tw.length; i++) for (const bar of holdBars(f, tw[i - 1], tw[i], (tw.w || width) * 0.85)) poly(bar, { kind: 'hold' });
       }
     }
     const ap = G.apronOf(a.code);

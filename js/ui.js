@@ -522,19 +522,21 @@
       if (FG.layouts && FG.layouts.pending(a.code)) continue;
       // taxiways, aprons and buildings (the real ones where the airport has a layout from OpenStreetMap)
       const taxiways = G.drawnTaxiways(a.code); // (not across the aprons and pads)
-      for (const tw of taxiways) L.polyline(tw, { ...quiet, color: '#4a515c', weight: z >= 16 ? 9 : 4, opacity: 1 }).addTo(ui.gateLayer);
+      // as wide as they are (`w`: fitted to the satellite picture, else 23 m at big airports and 15 m at small ones)
+      const twWidth = G.airportSize(a.code) >= 3 ? 23 : 15;
+      const mpp = metresPerPixel(a.lat);
+      for (const tw of taxiways) L.polyline(tw, { ...quiet, color: '#4a515c', weight: Math.max(2, (tw.w || twWidth) / mpp), opacity: 1 }).addTo(ui.gateLayer);
       // (solid: the satellite's own planes and paint must not show through)
       for (const r of ap.aprons || [ap.apron]) L.polygon(r, { ...quiet, stroke: false, fillColor: '#3a4049', fillOpacity: 1 }).addTo(ui.gateLayer);
       // pads (airport fixes): open concrete, planes go straight across them to their stands
       for (const r of ap.pads || []) L.polygon(r, { ...quiet, color: '#cbd5e1', weight: 1, dashArray: '5 4', fillColor: '#6b7280', fillOpacity: 1 }).addTo(ui.gateLayer);
       // yellow centre lines, and the holding positions where a taxiway comes up to a paved runway
       const paved = z >= 15 ? G.airportRunways(a.code).filter((r) => r[5]) : [];
-      const holdWidth = (G.airportSize(a.code) >= 3 ? 23 : 15) * 0.85; // (as wide as the taxiway in 3D)
       for (const tw of taxiways) {
         L.polyline(tw, { ...quiet, color: '#e3b70f', weight: z >= 18 ? 2 : 1, opacity: 1 }).addTo(ui.gateLayer);
         for (const r of paved) {
           for (let i = 1; i < tw.length; i++) {
-            for (const bar of holdBars(r, tw[i - 1], tw[i], holdWidth)) L.polygon(bar, { ...quiet, stroke: false, fillColor: '#f2c40f', fillOpacity: 1 }).addTo(ui.gateLayer);
+            for (const bar of holdBars(r, tw[i - 1], tw[i], (tw.w || twWidth) * 0.85)) L.polygon(bar, { ...quiet, stroke: false, fillColor: '#f2c40f', fillOpacity: 1 }).addTo(ui.gateLayer);
           }
         }
       }

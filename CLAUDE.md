@@ -73,6 +73,11 @@ Play online: https://noname-ch.github.io/flightgame/ (GitHub Pages, deployed fro
   mapped, game.js `apronOf` makes a layout up. The editor lists those parts too (`madeUp(code)`): the first
   change turns them all into fix ops, so a made-up apron can be deleted. Never let an airport lose its last
   stand: the game would make it up again.
+- Taxiway widths: a taxiway fix op may carry `w` (metres). fixes.js puts it on the line (`line.w`), and
+  `G.taxiwaysOf` / `G.drawnTaxiways` pass it on, so 2D and 3D draw that width (default 23 m at size ≥3, else
+  15 m). `js/taxifit.js` (`FG.taxiFit.fit(line, { keep })`) reads the Esri satellite picture across the line,
+  recentres it and measures the paved width. The editor runs it on every taxiway drawn there and with "Fit to
+  satellite"; there is also a width field.
 - Airport checklist (F8): `js/airportcheck.js`, marks in `js/data/checks.js`. When you check airports, take
   them from `node tools/checks.mjs next` and mark each with `node tools/checks.mjs mark CODE --note "what you
   checked or fixed"` (blue). Never mark an airport good (green): only a person approves.

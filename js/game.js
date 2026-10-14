@@ -269,7 +269,8 @@
   // All taxiway centre lines of an airport, for drawing: [[lat, lon], [lat, lon]] each.
   function taxiwaysOf(code) {
     const ap = apronOf(code);
-    if (ap.real) return ap.real.taxiways.flatMap((l) => l.slice(1).map((p, i) => [l[i], p]));
+    // (each stretch keeps its taxiway's width, where the fixes give one: `w`, m)
+    if (ap.real) return ap.real.taxiways.flatMap((l) => l.slice(1).map((p, i) => Object.assign([l[i], p], l.w ? { w: l.w } : {})));
     const lines = [...(ap.lanes || [ap.lane])];
     for (const r of airportRunways(code)) {
       const len = runwayLength(r);
@@ -307,7 +308,7 @@
     const out = [];
     for (const line of lines) {
       let cur = [];
-      const end = () => { if (cur.length > 1) out.push(cur); cur = []; };
+      const end = () => { if (cur.length > 1) { if (line.w) cur.w = line.w; out.push(cur); } cur = []; };
       for (let i = 0; i < line.length; i++) {
         if (i === 0) { if (!onConcrete(line[0])) cur.push(line[0]); continue; }
         const a = line[i - 1], b = line[i];

@@ -29,7 +29,16 @@ const TERMINAL_POI = new Set(['shop', 'clothing_store', 'grocery', 'bakery', 'al
   'fast_food', 'cafe', 'bar', 'beer', 'ice_cream', 'bank', 'atm', 'border_control']);
 
 let template = null; // tile URL of the current OpenFreeMap planet build
-const tileUrl = () => (template = template || fetch('https://tiles.openfreemap.org/planet').then((r) => r.json()).then((j) => j.tiles[0]));
+// A fetch that gives up after `ms`: one tile that never answers would hold up the lookups of every airport
+// after it (two run at a time), and those count as pending, so the maps and the editor would leave them out.
+function fetchT(url, ms = 20000) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), ms);
+  return fetch(url, { signal: ctl.signal }).finally(() => clearTimeout(timer));
+}
+// (asked again after a failure: not offline for the rest of the session after one bad answer)
+const tileUrl = () => (template = template || fetchT('https://tiles.openfreemap.org/planet').then((r) => r.json()).then((j) => j.tiles[0])
+  .catch((e) => { template = null; throw e; }));
 
 const lon2tx = (lon) => ((lon + 180) / 360) * 2 ** Z;
 const lat2ty = (lat) => ((1 - Math.log(Math.tan(lat * DEG) + 1 / Math.cos(lat * DEG)) / Math.PI) / 2) * 2 ** Z;
@@ -229,8 +238,8 @@ function build(code, parts, base) {
   const focus = mainTerm ? centre(mainTerm) : aprons.length ? centre(aprons.reduce((x, y) => (area(y) > area(x) ? y : x))) : [0, 0];
   const onApron = (p) => aprons.some((r) => inRing(p, r));
   const fits = (p, rad) => onApron(p) && [0, 45, 90, 135, 180, 225, 270, 315].every((h) => onApron(move(p, h, rad)));
-  const step = Math.min(sp, 60);  // mid-size airliners
-  const rad = step * 0.32;        // room a plane needs round its stand point on the apron
+  let step = Math.min(sp, 60);    // mid-size airliners
+  let rad = step * 0.32;          // room a plane needs round its stand point on the apron
   const clear = (p) => linesDist(p, taxiways).d > rad * 0.9;
   const otherBuildings = hangars.map((b) => b.ring);
   const noseTo = (p) => {
@@ -244,88 +253,110 @@ function build(code, parts, base) {
     if (rws.length) return bearingXY(rws.map(([u, w]) => segDist(p, u, w)).sort((x, y) => x.d - y.d)[0].q, p);
     return bearingXY(focus, p);
   };
-  const cands = [];
-  if (stands.length < target) {
-    // along each terminal's sides that face an apron
-    for (const t of termRings) {
-      for (let i = 0; i < t.length; i++) {
-        const u = t[i];
-        const w = t[(i + 1) % t.length];
-        const len = Math.hypot(w[0] - u[0], w[1] - u[1]);
-        if (len < 12) continue;
-        const along = bearingXY(u, w);
-        const mid = [(u[0] + w[0]) / 2, (u[1] + w[1]) / 2];
-        const c = centre(t);
-        const right = (bearingXY(c, mid) - along + 360) % 360 < 180; // the side lies right of the way round
-        const out = (along + (right ? 90 : -90) + 360) % 360;         // away from the building
-        // the first row where a plane fits in front of this side (there may be a strip between them)
-        let d0 = rad + 8;
-        while (d0 < rad + 80 && !fits(move(mid, out, d0), rad)) d0 += 4;
-        if (d0 >= rad + 80) continue; // this side doesn't face an apron
-        for (let k = 0; k < 4; k++) {
-          const row = move(mid, out, d0 + k * step * 1.3);
-          for (let j = 0; ; j++) {
-            const x = (j % 2 ? 1 : -1) * Math.ceil(j / 2) * step;
-            if (Math.abs(x) > len / 2 + step * 2) break;
-            const p = move(row, along, x);
-            if (fits(p, rad) && clear(p)) cands.push({ p, hdg: (out + 180) % 360, rank: k * 1e4 + Math.abs(x) });
-          }
-        }
-      }
-    }
-    // beside the taxi lanes that cross the aprons, nose away from the lane
-    const off = step * 0.8;
-    for (const l of taxiways) {
-      for (let i = 1; i < l.length; i++) {
-        const u = l[i - 1];
-        const w = l[i];
-        const len = Math.hypot(w[0] - u[0], w[1] - u[1]);
-        const hdg = bearingXY(u, w);
-        for (let t = step / 2; t < len; t += step) {
-          const q = move(u, hdg, t);
-          for (const sd of [-90, 90]) {
-            const p = move(q, hdg + sd, off);
-            if (fits(p, rad) && linesDist(p, taxiways).d > off * 0.85) {
-              cands.push({ p, hdg: (hdg + sd + 360) % 360, rank: 5e5 + Math.hypot(p[0] - focus[0], p[1] - focus[1]) });
+  // Where no airliner fits (the narrow aprons of small airfields), stands for smaller planes: a real apron
+  // with a stand is a layout of its own, else the game would make one up beside it.
+  for (const scale of [1, 0.7, 0.5]) {
+    if (scale < 1 && (stands.length || !aprons.length)) break;
+    step = Math.min(sp, 60) * scale;
+    rad = step * 0.32;
+    const cands = [];
+    if (stands.length < target) {
+      // along each terminal's sides that face an apron
+      for (const t of termRings) {
+        for (let i = 0; i < t.length; i++) {
+          const u = t[i];
+          const w = t[(i + 1) % t.length];
+          const len = Math.hypot(w[0] - u[0], w[1] - u[1]);
+          if (len < 12) continue;
+          const along = bearingXY(u, w);
+          const mid = [(u[0] + w[0]) / 2, (u[1] + w[1]) / 2];
+          const c = centre(t);
+          const right = (bearingXY(c, mid) - along + 360) % 360 < 180; // the side lies right of the way round
+          const out = (along + (right ? 90 : -90) + 360) % 360;         // away from the building
+          // the first row where a plane fits in front of this side (there may be a strip between them)
+          let d0 = rad + 8;
+          while (d0 < rad + 80 && !fits(move(mid, out, d0), rad)) d0 += 4;
+          if (d0 >= rad + 80) continue; // this side doesn't face an apron
+          for (let k = 0; k < 4; k++) {
+            const row = move(mid, out, d0 + k * step * 1.3);
+            for (let j = 0; ; j++) {
+              const x = (j % 2 ? 1 : -1) * Math.ceil(j / 2) * step;
+              if (Math.abs(x) > len / 2 + step * 2) break;
+              const p = move(row, along, x);
+              if (fits(p, rad) && clear(p)) cands.push({ p, hdg: (out + 180) % 360, rank: k * 1e4 + Math.abs(x) });
             }
           }
         }
       }
-    }
-    // rows on every apron
-    for (const ap of aprons) {
-      let axis = 0;
-      let longest = 0;
-      for (let i = 0; i < ap.length; i++) {
-        const u = ap[i];
-        const w = ap[(i + 1) % ap.length];
-        const l = Math.hypot(w[0] - u[0], w[1] - u[1]);
-        if (l > longest) { longest = l; axis = bearingXY(u, w); }
-      }
-      // the apron measured along and across that side; rows centred in it
-      const o = ap[0];
-      const U = (p) => (p[0] - o[0]) * Math.sin(axis * DEG) + (p[1] - o[1]) * Math.cos(axis * DEG);
-      const V = (p) => (p[0] - o[0]) * Math.sin((axis + 90) * DEG) + (p[1] - o[1]) * Math.cos((axis + 90) * DEG);
-      const u0 = Math.min(...ap.map(U)), u1 = Math.max(...ap.map(U));
-      const v0 = Math.min(...ap.map(V)), v1 = Math.max(...ap.map(V));
-      const at = (u, v) => move(move(o, axis, u), axis + 90, v);
-      const rowsN = Math.floor((v1 - v0 - 2 * rad) / (step * 1.3)) + 1;
-      const colsN = Math.floor((u1 - u0 - 2 * rad) / step) + 1;
-      const vs = (v0 + v1) / 2 - ((rowsN - 1) * step * 1.3) / 2;
-      const us = (u0 + u1) / 2 - ((colsN - 1) * step) / 2;
-      for (let i = 0; i < rowsN; i++) {
-        for (let j = 0; j < colsN; j++) {
-          const p = at(us + j * step, vs + i * step * 1.3);
-          if (fits(p, rad) && clear(p)) cands.push({ p, hdg: null, rank: 1e6 + Math.hypot(p[0] - focus[0], p[1] - focus[1]) });
+      // beside the taxi lanes that cross the aprons, nose away from the lane
+      const off = step * 0.8;
+      for (const l of taxiways) {
+        for (let i = 1; i < l.length; i++) {
+          const u = l[i - 1];
+          const w = l[i];
+          const len = Math.hypot(w[0] - u[0], w[1] - u[1]);
+          const hdg = bearingXY(u, w);
+          for (let t = step / 2; t < len; t += step) {
+            const q = move(u, hdg, t);
+            for (const sd of [-90, 90]) {
+              const p = move(q, hdg + sd, off);
+              if (fits(p, rad) && linesDist(p, taxiways).d > off * 0.85) {
+                cands.push({ p, hdg: (hdg + sd + 360) % 360, rank: 5e5 + Math.hypot(p[0] - focus[0], p[1] - focus[1]) });
+              }
+            }
+          }
         }
       }
+      // rows on every apron
+      for (const ap of aprons) {
+        let axis = 0;
+        let longest = 0;
+        for (let i = 0; i < ap.length; i++) {
+          const u = ap[i];
+          const w = ap[(i + 1) % ap.length];
+          const l = Math.hypot(w[0] - u[0], w[1] - u[1]);
+          if (l > longest) { longest = l; axis = bearingXY(u, w); }
+        }
+        // the apron measured along and across that side; rows centred in it
+        const o = ap[0];
+        const U = (p) => (p[0] - o[0]) * Math.sin(axis * DEG) + (p[1] - o[1]) * Math.cos(axis * DEG);
+        const V = (p) => (p[0] - o[0]) * Math.sin((axis + 90) * DEG) + (p[1] - o[1]) * Math.cos((axis + 90) * DEG);
+        const u0 = Math.min(...ap.map(U)), u1 = Math.max(...ap.map(U));
+        const v0 = Math.min(...ap.map(V)), v1 = Math.max(...ap.map(V));
+        const at = (u, v) => move(move(o, axis, u), axis + 90, v);
+        const rowsN = Math.floor((v1 - v0 - 2 * rad) / (step * 1.3)) + 1;
+        const colsN = Math.floor((u1 - u0 - 2 * rad) / step) + 1;
+        const vs = (v0 + v1) / 2 - ((rowsN - 1) * step * 1.3) / 2;
+        const us = (u0 + u1) / 2 - ((colsN - 1) * step) / 2;
+        for (let i = 0; i < rowsN; i++) {
+          for (let j = 0; j < colsN; j++) {
+            const p = at(us + j * step, vs + i * step * 1.3);
+            if (fits(p, rad) && clear(p)) cands.push({ p, hdg: null, rank: 1e6 + Math.hypot(p[0] - focus[0], p[1] - focus[1]) });
+          }
+        }
+      }
+      cands.sort((x, y) => x.rank - y.rank);
+      for (const c of cands) {
+        if (stands.length >= target) break;
+        if (!free(c.p, step * 0.9)) continue;
+        stands.push({ p: c.p, hdg: c.hdg != null ? c.hdg : noseTo(c.p), name: '' });
+      }
     }
-    cands.sort((x, y) => x.rank - y.rank);
-    for (const c of cands) {
-      if (stands.length >= target) break;
-      if (!free(c.p, step * 0.9)) continue;
-      stands.push({ p: c.p, hdg: c.hdg != null ? c.hdg : noseTo(c.p), name: '' });
+  }
+  // Still none: one stand on the spot of the biggest apron furthest from its edges.
+  if (!stands.length && aprons.length) {
+    const ap = aprons.reduce((x, y) => (area(y) > area(x) ? y : x));
+    const xs = ap.map((p) => p[0]), ys = ap.map((p) => p[1]);
+    let best = null;
+    let bestD = 0;
+    for (let i = 1; i < 20; i++) {
+      for (let j = 1; j < 20; j++) {
+        const p = [Math.min(...xs) + ((Math.max(...xs) - Math.min(...xs)) * i) / 20, Math.min(...ys) + ((Math.max(...ys) - Math.min(...ys)) * j) / 20];
+        const d = inRing(p, ap) ? ringDist(p, ap) : 0;
+        if (d > bestD) { bestD = d; best = p; }
+      }
     }
+    if (best) stands.push({ p: best, hdg: noseTo(best), name: '' });
   }
   stands.sort((x, y) => Math.hypot(x.p[0] - focus[0], x.p[1] - focus[1]) - Math.hypot(y.p[0] - focus[0], y.p[1] - focus[1]));
 
@@ -375,7 +406,7 @@ const tiles = new Map();
 function tileAt(x, y) {
   const k = `${x}/${y}`;
   if (!tiles.has(k)) {
-    tiles.set(k, tileUrl().then((url) => fetch(url.replace('{z}', Z).replace('{x}', x).replace('{y}', y))).then(async (r) => {
+    tiles.set(k, tileUrl().then((url) => fetchT(url.replace('{z}', Z).replace('{x}', x).replace('{y}', y))).then(async (r) => {
       if (r.status === 204 || r.status === 404) return emptyTile();
       if (!r.ok) throw new Error(`tile ${x}/${y}: ${r.status}`);
       return readTile(new Uint8Array(await r.arrayBuffer()), x, y);
@@ -422,7 +453,7 @@ async function read(code, base) {
   const url = await tileUrl();
   const used = tiles.slice(0, 16);
   const parts = await Promise.all(used.map(async ([x, y]) => {
-    const r = await fetch(url.replace('{z}', Z).replace('{x}', x).replace('{y}', y));
+    const r = await fetchT(url.replace('{z}', Z).replace('{x}', x).replace('{y}', y));
     if (r.status === 204 || r.status === 404) return emptyTile();
     if (!r.ok) throw new Error(`tile ${x}/${y}: ${r.status}`);
     return readTile(new Uint8Array(await r.arrayBuffer()), x, y);

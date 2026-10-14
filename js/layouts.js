@@ -17,7 +17,7 @@
 
   // ---------- kept in the browser (IndexedDB: js/idb.js) ----------
   const KEY = 'flightgame.osm.';         // + code: { v, t, lay, obstacles } (lay null or without stands: too little is mapped)
-  const FORMAT = 3;                      // bump when the reader changes, so old results are read again
+  const FORMAT = 4;                      // bump when the reader changes, so old results are read again
   const KEEP = 300;                      // airports kept (the oldest read go first)
   const RETRY = 7 * 864e5;               // an airport without a usable layout is asked again after a week
   const usable = (lay) => !!(lay && lay.stands.length && (lay.aprons.length || lay.fixed));

@@ -271,13 +271,23 @@ try {
     const dir = (q, r) => Math.atan2(r[0] - q[0], (r[1] - q[1]) * Math.cos(q[0] * Math.PI / 180));
     const turn = g ? Math.abs((((dir(g[g.length - 2], g[g.length - 1]) - dir(g[0], g[1])) * 180) / Math.PI + 540) % 360 - 180) : 0;
     const out = { kind: op && op.op + ' ' + op.kind, points: g ? g.length : 0, turn: Math.round(turn), left: !!st.curve };
+    // its width (as "Fit to satellite" sets it, without the satellite): the maps draw it that wide
+    const wIn = document.getElementById('ae-twwidth');
+    if (!wIn) out.width = 'no width field for the taxiway';
+    else {
+      wIn.value = '19';
+      document.querySelector('[data-ae="setWidth"]').click();
+      const last = FG.fixes.ops(code).slice(-1)[0];
+      out.width = last && last.w === 19 && G.drawnTaxiways(code).some((l) => l.w === 19) ? 19 : `not drawn 19 m wide (${JSON.stringify(last && last.w)})`;
+    }
     FG.fixes.discard(code);
     FG.airportEdit.toggle(false);
     return out;
   }, home);
   if (cu.err) errors.push(`airport editor, curve: ${cu.err}`);
   else {
-    step(`curve: ${cu.kind}, ${cu.points} points, turns ${cu.turn}°`);
+    step(`curve: ${cu.kind}, ${cu.points} points, turns ${cu.turn}°, width ${cu.width}`);
+    if (cu.width !== 19) errors.push(`airport editor: taxiway width: ${cu.width}`);
     if (cu.kind !== 'add taxiway' || cu.points < 10 || Math.abs(cu.turn - 60) > 1 || cu.left) errors.push(`airport editor: the curve went wrong (${JSON.stringify(cu)})`);
   }
 
