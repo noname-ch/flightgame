@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 # plotops.py CODE VIEW OPSFILE: draws stand ops (one JSON op per line, e.g. from faces.py --dry -v) over a shot's
 # satellite picture, each as a red circle (the nose) with a yellow line back along the plane and its name:
-# shots/CODE-plot.png. For checking stands before adding them.
+# shots/CODE-plot.png. For checking stands before adding them. --game draws over the game shot instead.
 import json, math, os, sys
 from PIL import Image, ImageDraw
 D = os.path.dirname(os.path.abspath(__file__))
-code, view, opsf = sys.argv[1].upper(), sys.argv[2], sys.argv[3]
+game = '--game' in sys.argv
+argv = [a for a in sys.argv if a != '--game']
+code, view, opsf = argv[1].upper(), argv[2], argv[3]
 v = json.load(open(f'{D}/shots/{code}.json'))['views'][view]
 s = 256 * 2 ** v['zoom']
-sat = {'detail': 'detailsat', 'apron': 'apronsat', 'game': 'sat'}.get(view, view)
+sat = view if game else {'detail': 'detailsat', 'apron': 'apronsat', 'game': 'sat'}.get(view, view)
 im = Image.open(f'{D}/shots/{code}-{sat}.png').convert('RGB')
 d = ImageDraw.Draw(im)
 def px(lat, lon):
