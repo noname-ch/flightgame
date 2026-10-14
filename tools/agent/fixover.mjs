@@ -1,8 +1,10 @@
-// node fixover.mjs CODE...: delete stands that block others (fixover.js), via fixop.py; prints why
+// node fixover.mjs CODE... [--dry]: delete stands that block others (fixover.js), via fixop.py; prints why.
+// --dry only prints.
 import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
 const dir = new URL('.', import.meta.url).pathname;
-const codes = process.argv.slice(2).map((c) => c.toUpperCase());
+const dry = process.argv.includes('--dry');
+const codes = process.argv.slice(2).filter((a) => !a.startsWith('--')).map((c) => c.toUpperCase());
 const tabs = await (await fetch(`http://127.0.0.1:${process.env.CDP_PORT || 9447}/json`)).json();
 const ws = new WebSocket(tabs.find((t) => t.type === 'page').webSocketDebuggerUrl);
 await new Promise((r) => ws.addEventListener('open', r));
@@ -16,6 +18,7 @@ for (const code of codes) {
   await ev(`(async()=>{FG.layouts.get('${code}'); for(let i=0;i<80&&!(FG.layouts.settled('${code}')&&!FG.layouts.pending('${code}'));i++) await new Promise(r=>setTimeout(r,500)); return 1})()`);
   const { ops, why } = await ev(`fixOverlaps('${code}')`);
   console.log(code, why.join('; ') || 'no overlaps');
-  if (ops.length) execFileSync('python3', [dir + 'fixop.py', code, ...ops.map((o) => JSON.stringify(o))], { stdio: 'inherit' });
+  if (dry) ops.forEach((o) => console.log(JSON.stringify(o)));
+  else if (ops.length) execFileSync('python3', [dir + 'fixop.py', code, ...ops.map((o) => JSON.stringify(o))], { stdio: 'inherit' });
 }
 process.exit(0);

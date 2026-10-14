@@ -75,9 +75,13 @@ Screenshots and logs go to `tools/agent/shots/` (not committed).
    `python3 tools/agent/curves.py CODE game --from N` draws the taxiway ops with 3+ points from op N on (the ones
    tidy just added) over the satellite shot with their numbers; `node tools/agent/onrw.mjs CODE` lists the airport's taxiway ops with points on a runway (after a shoot; `--near M` within M m of one, `--from N`);
    `python3 tools/agent/curvelist.py CODE N [M]` lists tidy's curves from op N on with their length and distance to a
-   runway, marking those within M m (default 250) "near" (likely on a parallel taxiway or an exit: look, or undo them);
+   runway, marking those within M m (default 250) "near" and those with an end leg along a runway within 2M m "along"
+   (curves on a parallel taxiway or an exit: undo them with `uncurve.py --del`);
    `python3 tools/agent/uncurve.py CODE i j ...` straightens ops i, j (`--del` removes them: the original lines
    come back).
+   Where a person has fixed part of an airport by hand, `nosein.mjs CODE --box VIEW x1 y1 x2 y2` aims only stands in
+   a pixel box, `fixover.mjs CODE --dry` shows what it would delete, and `dropbox.py CODE VIEW x1 y1 x2 y2 --from N`
+   takes back this session's stand ops (from op N on) in a box.
 6. Stands in each other's way: `node tools/agent/fixover.mjs CODE` deletes stands closer than 24 m, with crossing
    lead-in lines, or standing in another's lead-in. Deleting one can bring in another (the game uses at most
    2×GATE_COUNT), so check again.
