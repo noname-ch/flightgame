@@ -51,6 +51,8 @@ Screenshots and logs go to `tools/agent/shots/` (not committed).
      `--dry -v` prints the ops, and `python3 tools/agent/plotops.py CODE VIEW FILE` draws such ops over a shot's
      satellite picture (`shots/CODE-plot.png`) to check them before adding. Rings mapped with every jet bridge in
      their outline break into short faces: use row.py there.
+   - `python3 tools/agent/rename.py CODE OLD=NEW ...` renames added stands with prefix OLD to NEW1, NEW2, ... (for
+     prefixes that turned out wrong or clash).
    - `python3 tools/agent/arc.py CODE VIEW cx cy r a0 a1 n PREFIX` puts n stands round a circle (round satellites).
    - `python3 tools/agent/rekind.py CODE hangar terminal i j ...` turns raw rings into another kind (e.g. a
      passenger terminal mapped as hangars). `row.py ... PREFIX START HEADING` gives a row a fixed heading.
