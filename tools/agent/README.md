@@ -47,6 +47,10 @@ Screenshots and logs go to `tools/agent/shots/` (not committed).
      puts stands along every straight face (MIN m+) of raw terminal ring TERMINAL, OFF m out and nose-in: for
      satellites and piers with gates all round (`--box` keeps faces whose middle lies in a pixel box, to leave the
      landside out). RELOAD=1 shoot, then fixover.mjs (twice) clears the corners.
+     `--others` leaves out stands inside or next to the other raw terminal rings (terminals cut at map-tile edges);
+     `--dry -v` prints the ops, and `python3 tools/agent/plotops.py CODE VIEW FILE` draws such ops over a shot's
+     satellite picture (`shots/CODE-plot.png`) to check them before adding. Rings mapped with every jet bridge in
+     their outline break into short faces: use row.py there.
    - `python3 tools/agent/arc.py CODE VIEW cx cy r a0 a1 n PREFIX` puts n stands round a circle (round satellites).
    - `python3 tools/agent/rekind.py CODE hangar terminal i j ...` turns raw rings into another kind (e.g. a
      passenger terminal mapped as hangars). `row.py ... PREFIX START HEADING` gives a row a fixed heading.
@@ -66,6 +70,8 @@ Screenshots and logs go to `tools/agent/shots/` (not committed).
    curve it made: a curve must never lie on a runway or turn a taxiway that runs along the runway.
    `python3 tools/agent/curves.py CODE game --from N` draws the taxiway ops with 3+ points from op N on (the ones
    tidy just added) over the satellite shot with their numbers; `node tools/agent/onrw.mjs CODE` lists the airport's taxiway ops with points on a runway (after a shoot; `--near M` within M m of one, `--from N`);
+   `python3 tools/agent/curvelist.py CODE N [M]` lists tidy's curves from op N on with their length and distance to a
+   runway, marking those within M m (default 250) "near" (likely on a parallel taxiway or an exit: look, or undo them);
    `python3 tools/agent/uncurve.py CODE i j ...` straightens ops i, j (`--del` removes them: the original lines
    come back).
 6. Stands in each other's way: `node tools/agent/fixover.mjs CODE` deletes stands closer than 24 m, with crossing

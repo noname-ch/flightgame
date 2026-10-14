@@ -5,7 +5,7 @@
 # out from it (where the noses stop) and nose-in (heading at the face). --box keeps only faces whose middle lies
 # in that pixel box of a shot (to leave the landside out). Stands that land inside the ring or within OFF-2 m of
 # another face (inner corners) are left out. Run fixover.mjs afterwards (corners), after a RELOAD=1 shoot.
-# --others also leaves out stands inside (or within OFF-2 m of) the other raw terminal rings: for terminals cut
+# --dry -v prints the ops instead of adding them. --others also leaves out stands inside (or within OFF-2 m of) the other raw terminal rings: for terminals cut
 # into pieces at map-tile edges, whose cut faces lie inside the building.
 import json, math, os, subprocess, sys
 D = os.path.dirname(os.path.abspath(__file__))
@@ -20,7 +20,7 @@ sp, off, mn = float(opt('sp', 42)), float(opt('off', 14)), float(opt('min', 40))
 box = opt('box', None, 5)
 dry = '--dry' in args
 others = '--others' in args
-args = [a for a in args if a not in ('--dry', '--others')]
+args = [a for a in args if a not in ('--dry', '--others', '-v')]
 code, ti, prefix = args[0].upper(), int(args[1]), args[2]
 raw = json.load(open(f'{D}/shots/{code}-raw.json'))
 ring = raw['terminals'][ti]
@@ -88,4 +88,5 @@ for i in range(len(S)):
         lat, lon = ll(q)
         ops.append(json.dumps({'op': 'add', 'kind': 'stand', 'geom': [lat, lon, hdg, f'{prefix}{n}', 1]}))
 print(f'{len(S)} faces, {n} stands')
+if dry and '-v' in sys.argv: print('\n'.join(ops))
 if not dry and ops: subprocess.run(['python3', os.path.join(D, 'fixop.py'), code, *ops], check=True)
