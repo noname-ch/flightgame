@@ -27,10 +27,11 @@ html, body {
 
 body { display: flex; flex-direction: column; }
 
-/* ---------- top bar: menu + speed (left), money + time (middle), airline (right) ---------- */
+/* ---------- top bar: menu + speed (left), the section tabs (middle, on a desktop screen), airline, money
+   and time (right) ---------- */
 #topbar {
   display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  grid-template-columns: auto 1fr auto;
   align-items: center;
   gap: 12px;
   padding: 6px 12px;
@@ -41,8 +42,9 @@ body { display: flex; flex-direction: column; }
   z-index: 2100;
 }
 .tb-left { display: flex; align-items: center; gap: 6px; }
-.tb-center { display: flex; align-items: center; gap: 18px; }
-.tb-right { display: flex; justify-content: flex-end; min-width: 0; }
+.tb-tabs { display: flex; justify-content: center; min-width: 0; }
+.tb-right { display: flex; align-items: center; justify-content: flex-end; gap: 16px; min-width: 0; }
+.tb-status { display: flex; align-items: center; gap: 14px; }
 .brand { font-weight: 700; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #money { font-weight: 700; font-size: 18px; font-variant-numeric: tabular-nums; }
 #money.negative { color: #fca5a5; }
@@ -110,6 +112,14 @@ label.check { display: flex; align-items: center; gap: 8px; padding: 3px 0; curs
 #rail button.active { background: var(--accent); }
 #rail button.active small { color: #fff; }
 #rail button:hover:not(.active) { background: var(--panel-2); filter: none; }
+
+/* The tabs in the top bar (desktop screens, js/ui.js placeTabs): a row of icon buttons with their names. */
+#topbar #rail {
+  width: auto; flex-direction: row; gap: 2px; padding: 0; background: none; border: none; overflow: visible;
+}
+#topbar #rail button { padding: 3px 6px 2px; min-width: 60px; }
+#topbar #rail button span { font-size: 17px; }
+body.tabs-top #sidebar { right: 0; max-width: 100%; }
 
 /* ---------- bottom: one card per plane ---------- */
 #strip { flex: none; background: var(--header); border-top: 1px solid var(--border); }
@@ -517,10 +527,11 @@ tr.click:hover { background: var(--panel-2); }
   z-index: 2000;
 }
 
+@media (max-width: 1250px) {
+  .brand { display: none; }
+}
 @media (max-width: 800px) {
-  #topbar { grid-template-columns: auto 1fr; }
-  .tb-right { display: none; }
-  .tb-center { justify-content: flex-end; gap: 10px; }
+  .tb-status { gap: 10px; }
   #money, #clock-time { font-size: 15px; }
   #sidebar { width: calc(100% - 64px); }
 }
@@ -1118,7 +1129,7 @@ body { height: 100dvh; } /* the visible height, also while the phone's address b
   .icon-btn { height: 36px; min-width: 36px; }
   #speed-label { min-width: 0; max-width: 58px; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #speed-pop { width: min(280px, calc(100vw - 60px)); }
-  .tb-center { gap: 8px; min-width: 0; }
+  .tb-status { gap: 8px; min-width: 0; }
   #money { font-size: 15px; white-space: nowrap; }
   #clock-time { font-size: 15px; }
   #clock-day { font-size: 10px; white-space: nowrap; }

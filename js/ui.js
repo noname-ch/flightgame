@@ -1890,6 +1890,18 @@
     return `<div class="theme-picks">${FG.themes.list.map((t) => `<button class="theme-pick${t.id === FG.themes.current() ? ' on' : ''}" ${attr}="theme" data-${attr === 'data-st' ? 'id' : 'v'}="${t.id}">
       <div class="sw">${t.swatch.map((c) => `<i style="background:${c}"></i>`).join('')}</div><b>${t.name}</b><span>${t.desc}</span></button>`).join('')}</div>`;
   }
+  // The section tabs sit in the top bar on a desktop screen, and in their own bar (at the bottom on phones,
+  // a slim column on short screens) otherwise; css/style.css lays out both.
+  const wideScreen = window.matchMedia('(min-width: 641px) and (min-height: 501px)');
+  function placeTabs() {
+    const rail = $('rail');
+    const top = wideScreen.matches;
+    if (top && rail.parentNode !== $('tb-tabs')) $('tb-tabs').appendChild(rail);
+    if (!top && rail.parentNode === $('tb-tabs')) document.querySelector('main').insertBefore(rail, $('market'));
+    document.body.classList.toggle('tabs-top', top);
+    if (ui.map) ui.map.invalidateSize();
+  }
+
   // A new style can move the section bar: the maps must measure themselves again.
   function setTheme(id) {
     set.theme = FG.themes.apply(id);
@@ -2600,6 +2612,8 @@
     const saved = G.load();
     if (!saved) G.newGame(); // placeholder game behind the start screen
     loadSettings();
+    placeTabs();
+    wideScreen.addEventListener('change', placeTabs);
     initMap();
     applySettings();
     FG.planner.init({ ui, toast, planeGlyph, setTab, bestRoutes, legacyAirports: airportsTab,

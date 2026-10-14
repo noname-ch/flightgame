@@ -31,9 +31,9 @@ Run it before you push.
 ## How to play
 
 **Screen**: top left ⋯ opens the menu (save, load, new game, settings with map style and layers,
-developer tools, exit) and the ✈ button next to it sets the game speed. Money, time and day are in
-the middle of the top bar. The icons on the right open the sections (Fleet, Airports, Slots,
-Schedule, Marketplace, Finance, Rivals, Log). Every plane has a card at the bottom: hover it for
+developer tools, exit) and the ✈ button next to it sets the game speed. The tabs in the middle of the
+top bar open the sections (Fleet, Airports, Slots, Schedule, Marketplace, Finance, Rivals, Log; icons only on
+narrower screens), and the airline, money, time and day are on its right. Every plane has a card at the bottom: hover it for
 where it comes from and goes to, the time left and its fuel; click to select, double-click to
 follow it (2D or 3D).
 
