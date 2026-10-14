@@ -1885,9 +1885,25 @@
     ui.map.fire('baselayerchange', { name, layer: ui.base[name] });
   }
 
+  // Interface styles (js/themes.js) as picks with their colours; `attr` = data-set or data-st.
+  function themePicks(attr) {
+    return `<div class="theme-picks">${FG.themes.list.map((t) => `<button class="theme-pick${t.id === FG.themes.current() ? ' on' : ''}" ${attr}="theme" data-${attr === 'data-st' ? 'id' : 'v'}="${t.id}">
+      <div class="sw">${t.swatch.map((c) => `<i style="background:${c}"></i>`).join('')}</div><b>${t.name}</b><span>${t.desc}</span></button>`).join('')}</div>`;
+  }
+  // A new style can move the section bar: the maps must measure themselves again.
+  function setTheme(id) {
+    set.theme = FG.themes.apply(id);
+    saveSettings();
+    setTimeout(() => {
+      ui.map.invalidateSize();
+      if (FG.view3d && FG.view3d.map) FG.view3d.map.resize();
+    }, 60);
+  }
+
   function renderSettings() {
     const el = $('settings');
     el.innerHTML = `<div class="set-card"><div class="side-head"><h2>Settings</h2><button class="close" data-set="close">×</button></div>
+      <h4>Style</h4>${themePicks('data-set')}
       <h4>Map style</h4><div class="chips">${Object.keys(ui.base).map((n) =>
         `<button class="${n === ui.baseName ? 'on' : ''}" data-set="base" data-v="${n}">${{ Standard: '🗺', Dark: '🌑', Satellite: '🛰' }[n]} ${n}</button>`).join('')}</div>
       <h4>On the map</h4>${Object.keys(ui.overlays).map((n) =>
@@ -1905,6 +1921,7 @@
     if (!t) { if (e.target === $('settings')) $('settings').hidden = true; return; }
     const k = t.dataset.set;
     if (k === 'close') { $('settings').hidden = true; return; }
+    if (k === 'theme') setTheme(t.dataset.v);
     if (k === 'base') setBasemap(t.dataset.v);
     if (k === 'overlay') { set.overlays[t.dataset.v] = t.checked; applySettings(); }
     if (k === 'legend') { set.legend = t.checked; applySettings(); }
@@ -2168,6 +2185,8 @@
       <select id="st-airport">${startAirportOptions()}</select>
       <div class="st-label">First aircraft <span class="muted">leased, with crew</span></div>
       <div class="st-planes">${startPlanes()}</div>
+      <details class="st-quick st-style"><summary>Style <span class="muted">${FG.themes.list.find((t) => t.id === FG.themes.current()).name} – change the look of the game</span></summary>
+        ${themePicks('data-st')}</details>
       <div class="st-actions">
         ${st.hasGame ? '<button data-st="cancel">Back to my airline</button>' : ''}
         <button class="primary big" data-st="start">${st.hasGame ? 'Start new airline' : 'Start airline'} ✈</button>
@@ -2195,6 +2214,7 @@
     if (what === 'continue' || what === 'cancel') { closeStart(); return; }
     if (what === 'start') { startNewGame(); return; }
     if (what === 'preset') { startPreset(id); return; }
+    if (what === 'theme') { setTheme(id); renderStart(); return; }
     st[what] = id; // mode, difficulty, aircraft or story ('' = free play, else the start year)
     renderStart();
   }

@@ -361,6 +361,19 @@ try {
   await evaluate(() => document.querySelector('[data-st=continue]') && document.querySelector('[data-st=continue]').click());
   await sleep(2000);
 
+  step('styles: each one picked in Settings, the section bar still there');
+  for (const id of await evaluate(() => FG.themes.list.map((t) => t.id))) {
+    const bar = await evaluate((id) => {
+      if (document.getElementById('settings').hidden) document.getElementById('settings-btn').click();
+      document.querySelector(`[data-set="theme"][data-v="${id}"]`).click();
+      const r = document.getElementById('rail').getBoundingClientRect();
+      return { on: document.documentElement.dataset.theme, w: r.width, h: r.height };
+    }, id);
+    if (bar.on !== id || !bar.w || !bar.h) errors.push(`style ${id}: not applied or no section bar (${JSON.stringify(bar)})`);
+    await sleep(400);
+  }
+  await evaluate(() => { document.querySelector('[data-set="theme"][data-v="night"]').click(); document.getElementById('settings').hidden = true; });
+
   step('story mode from 1955: the market, then New Year 1958 (Comet 4 and Boeing 707)');
   await evaluate(() => document.getElementById('newgame').click());
   const story = await evaluate(() => {

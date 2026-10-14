@@ -1,0 +1,480 @@
+/* Interface styles (js/themes.js): html[data-theme=<id>]. Night is css/style.css as it is.
+   Each style sets the colours (the :root variables), then the parts style.css colours directly, then where
+   the section bar (#rail) sits on a desktop screen (phones keep their bottom tab bar, in the style's colours). */
+
+/* The section bar's icon sets (added by js/themes.js); a style shows one instead of the emoji. */
+#rail .ic { display: none; }
+#rail .ic { width: 22px; height: 22px; }
+#rail .ic svg { display: block; width: 100%; height: 100%; }
+#rail .ic-pixel .k { fill: var(--px-k, #181425); }
+#rail .ic-pixel .w { fill: var(--px-w, #f4f4f4); }
+:root[data-theme="tycoon"] #rail .ic-pixel, :root[data-theme="pixel"] #rail .ic-pixel,
+:root[data-theme="metropolis"] #rail .ic-picto, :root[data-theme="board"] #rail .ic-picto { display: block; }
+:root:not([data-theme="night"]) #rail button > span { display: none; }
+
+/* ======================================================================================================
+   TYCOON: bevelled grey windows, brown title bars, a toolbar along the top (a 90s transport tycoon).
+   ====================================================================================================== */
+:root[data-theme="tycoon"] {
+  color-scheme: light;
+  --bg: #6b675e;
+  --panel: #a8a49c;
+  --panel-2: #bdb9b0;
+  --text: #1c1a16;
+  --muted: #4a463e;
+  --border: #5c5850;
+  --input-border: #5c5850;
+  --accent: #e8b020;
+  --header: #8c887e;
+  --pos: #1f7a1f;
+  --neg: #b01818;
+  --warn: #8a5a00;
+  --hi: #e4e0d6;        /* bevel light */
+  --lo: #4a463e;        /* bevel shadow */
+  --title: #5c4630;     /* window title bar */
+  --px-k: #1c1a16;
+  --px-w: #f0ece0;
+}
+:root[data-theme="tycoon"] body { font: 600 13px/1.35 "Pixelify Sans", Verdana, Tahoma, sans-serif; }
+:root[data-theme="tycoon"] button,
+:root[data-theme="tycoon"] .icon-btn,
+:root[data-theme="tycoon"] .chips button,
+:root[data-theme="tycoon"] .mk-buy button.big,
+:root[data-theme="tycoon"] .st-choice,
+:root[data-theme="tycoon"] .st-plane {
+  background: var(--panel); color: var(--text);
+  border: 2px solid; border-color: var(--hi) var(--lo) var(--lo) var(--hi);
+  border-radius: 0; box-shadow: none;
+}
+:root[data-theme="tycoon"] button:active:not(:disabled),
+:root[data-theme="tycoon"] button.on, :root[data-theme="tycoon"] .chips button.on,
+:root[data-theme="tycoon"] #market .chips button.on,
+:root[data-theme="tycoon"] .st-choice.on, :root[data-theme="tycoon"] .st-plane.on {
+  border-color: var(--lo) var(--hi) var(--hi) var(--lo); background: #96928a; color: var(--text); box-shadow: none;
+}
+:root[data-theme="tycoon"] button.primary, :root[data-theme="tycoon"] .mk-buy button.big.primary {
+  background: var(--accent); color: #1c1a16; border-color: #fff0b0 #8a6400 #8a6400 #fff0b0;
+}
+:root[data-theme="tycoon"] button:hover:not(:disabled) { filter: brightness(1.06); }
+:root[data-theme="tycoon"] select, :root[data-theme="tycoon"] input,
+:root[data-theme="tycoon"] #start-screen input, :root[data-theme="tycoon"] #start-screen select,
+:root[data-theme="tycoon"] .mk-bar select {
+  background: #1c1a16; color: #f0d070; border: 2px solid; border-color: var(--lo) var(--hi) var(--hi) var(--lo); border-radius: 0;
+}
+/* Top: the status bar of a tycoon game. */
+:root[data-theme="tycoon"] #topbar { background: var(--panel); color: var(--text); border-bottom: 2px solid var(--lo); box-shadow: inset 0 2px 0 var(--hi); }
+:root[data-theme="tycoon"] #money, :root[data-theme="tycoon"] #clock-time {
+  background: #1c1a16; color: #f0d070; padding: 1px 8px; border: 2px solid; border-color: var(--lo) var(--hi) var(--hi) var(--lo);
+}
+:root[data-theme="tycoon"] #clock-day, :root[data-theme="tycoon"] .muted { color: var(--muted); }
+:root[data-theme="tycoon"] #speed-btn svg { fill: var(--text); }
+:root[data-theme="tycoon"] #mode-badge { background: var(--title); color: #f0ece0; border-radius: 0; }
+/* Windows with a title bar. */
+:root[data-theme="tycoon"] .pop, :root[data-theme="tycoon"] .set-card, :root[data-theme="tycoon"] #sidebar,
+:root[data-theme="tycoon"] .st-card, :root[data-theme="tycoon"] #strip-tip {
+  background: var(--panel); color: var(--text); border: 2px solid; border-color: var(--hi) var(--lo) var(--lo) var(--hi);
+  border-radius: 0; box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.35);
+}
+:root[data-theme="tycoon"] .side-head {
+  background: var(--title); color: #f0ece0; margin: -12px -12px 8px; padding: 4px 6px 4px 10px;
+  border-bottom: 2px solid #2c2014;
+}
+:root[data-theme="tycoon"] .set-card .side-head { margin: -16px -16px 8px; }
+:root[data-theme="tycoon"] .side-head h2 { font-size: 14px; }
+:root[data-theme="tycoon"] .side-head .close {
+  color: #f0ece0; background: #8c3020; border: 2px solid; border-color: #d06040 #401008 #401008 #d06040; padding: 0 6px; line-height: 1.1;
+}
+:root[data-theme="tycoon"] .panel {
+  background: var(--panel-2); border: 2px solid; border-color: var(--lo) var(--hi) var(--hi) var(--lo); border-radius: 0;
+}
+:root[data-theme="tycoon"] .panel.airport { border-color: var(--lo) var(--hi) var(--hi) var(--lo); }
+:root[data-theme="tycoon"] table.small th, :root[data-theme="tycoon"] table.small td { border-bottom-color: #8c887e; }
+:root[data-theme="tycoon"] .tag, :root[data-theme="tycoon"] .route span { border-radius: 0; background: #8c887e; color: #f0ece0; }
+:root[data-theme="tycoon"] .tag.slot { background: #2f6a3a; }
+:root[data-theme="tycoon"] .tag.stake { background: #5a3a7a; }
+:root[data-theme="tycoon"] .tl-bar { background: #1c1a16; border-radius: 0; }
+:root[data-theme="tycoon"] a { color: #1c3c8c; }
+:root[data-theme="tycoon"] .set-card h4 { color: var(--title); }
+/* Plane cards: little windows. */
+:root[data-theme="tycoon"] #strip { background: var(--panel); border-top: 2px solid var(--hi); }
+:root[data-theme="tycoon"] .pcard {
+  background: #6b8a5a; border: 2px solid; border-color: var(--hi) var(--lo) var(--lo) var(--hi); border-radius: 0;
+}
+:root[data-theme="tycoon"] .pcard.sel { border-color: var(--accent); box-shadow: none; outline: 2px solid #1c1a16; }
+:root[data-theme="tycoon"] .pc-type { color: #f0ece0; text-shadow: 1px 1px 0 #1c1a16; }
+/* The toolbar. */
+:root[data-theme="tycoon"] #rail { background: var(--panel); border: none; }
+:root[data-theme="tycoon"] #rail button {
+  border: 2px solid; border-color: var(--hi) var(--lo) var(--lo) var(--hi); border-radius: 0; background: var(--panel);
+}
+:root[data-theme="tycoon"] #rail button.active { border-color: var(--lo) var(--hi) var(--hi) var(--lo); background: #96928a; }
+:root[data-theme="tycoon"] #rail button:hover:not(.active) { background: #b4b0a6; }
+:root[data-theme="tycoon"] #rail button small, :root[data-theme="tycoon"] #rail button.active small { color: var(--text); }
+:root[data-theme="tycoon"] #rail .ic { width: 24px; height: 24px; }
+/* Marketplace, start screen. */
+:root[data-theme="tycoon"] #market { background: var(--panel); color: var(--text); }
+:root[data-theme="tycoon"] .mk-top { background: var(--title); color: #f0ece0; padding-bottom: 8px; }
+:root[data-theme="tycoon"] .mk-bar { border-bottom: 2px solid var(--lo); }
+:root[data-theme="tycoon"] .mk-bar label, :root[data-theme="tycoon"] .mk-maker, :root[data-theme="tycoon"] .mk-specs dt,
+:root[data-theme="tycoon"] .mk-tile .t-sub, :root[data-theme="tycoon"] .mk-empty { color: var(--muted); }
+:root[data-theme="tycoon"] .mk-tile { background: var(--panel-2); border: 2px solid; border-color: var(--hi) var(--lo) var(--lo) var(--hi); border-radius: 0; }
+:root[data-theme="tycoon"] .mk-tile.sel { outline: 2px solid var(--accent); box-shadow: none; }
+:root[data-theme="tycoon"] .mk-tile .t-price { color: var(--text); }
+:root[data-theme="tycoon"] .mk-stage { border-radius: 0; border: 2px solid; border-color: var(--lo) var(--hi) var(--hi) var(--lo); }
+:root[data-theme="tycoon"] .mk-delivery { background: var(--panel-2); color: var(--text); border-radius: 0; }
+:root[data-theme="tycoon"] .mk-specs div { border-top-color: #8c887e; }
+:root[data-theme="tycoon"] .mk-close { border-radius: 0; color: var(--text); }
+:root[data-theme="tycoon"] #start-screen { background: #4a6e8c repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.04) 0 8px, transparent 8px 16px); }
+:root[data-theme="tycoon"] .st-logo { border-radius: 0; background: var(--title); box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.35); transform: none; }
+:root[data-theme="tycoon"] .st-continue { background: var(--panel-2); border-radius: 0; }
+:root[data-theme="tycoon"] #map, :root[data-theme="tycoon"] #map.map-dark { --m-panel: #a8a49c; --m-ink: #1c1a16; --m-hairline: #4a463e; }
+:root[data-theme="tycoon"] #map .leaflet-bar, :root[data-theme="tycoon"] #map .leaflet-control-layers {
+  border-radius: 0; box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.35); -webkit-backdrop-filter: none; backdrop-filter: none;
+}
+:root[data-theme="tycoon"] #map .leaflet-bar a { border: 2px solid; border-color: var(--hi) var(--lo) var(--lo) var(--hi); }
+
+/* ======================================================================================================
+   METROPOLIS: light frosted panels, soft shadows, a round dock at the bottom (a modern city builder).
+   ====================================================================================================== */
+:root[data-theme="metropolis"] {
+  color-scheme: light;
+  --bg: #e9eef4;
+  --panel: rgba(255, 255, 255, 0.92);
+  --panel-2: #eef3f8;
+  --text: #1d2733;
+  --muted: #6b7a8c;
+  --border: #d7e0ea;
+  --input-border: #c6d2df;
+  --accent: #2f8fe8;
+  --header: rgba(255, 255, 255, 0.9);
+  --pos: #16a34a;
+  --neg: #dc2626;
+  --warn: #b45309;
+}
+:root[data-theme="metropolis"] body { font: 14px/1.45 Nunito, "Segoe UI", system-ui, sans-serif; }
+:root[data-theme="metropolis"] button, :root[data-theme="metropolis"] .chips button { border-radius: 999px; background: #fff; border-color: var(--input-border); color: var(--text); }
+:root[data-theme="metropolis"] button.primary, :root[data-theme="metropolis"] .mk-buy button.big.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+:root[data-theme="metropolis"] .chips button.on, :root[data-theme="metropolis"] #market .chips button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+:root[data-theme="metropolis"] select, :root[data-theme="metropolis"] input, :root[data-theme="metropolis"] .mk-bar select { background: #fff; color: var(--text); border-radius: 10px; border-color: var(--input-border); }
+:root[data-theme="metropolis"] #topbar {
+  background: rgba(255, 255, 255, 0.86); color: var(--text); border-bottom: none;
+  box-shadow: 0 2px 18px rgba(30, 60, 90, 0.12); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+}
+:root[data-theme="metropolis"] .icon-btn { background: #fff; border: 1px solid var(--input-border); color: var(--text); border-radius: 12px; }
+:root[data-theme="metropolis"] #speed-btn svg { fill: var(--accent); }
+:root[data-theme="metropolis"] #money { color: #0f7a3a; }
+:root[data-theme="metropolis"] #money.negative { color: var(--neg); }
+:root[data-theme="metropolis"] #mode-badge { background: #e3edf8; color: #2b5d8f; }
+:root[data-theme="metropolis"] .pop, :root[data-theme="metropolis"] .set-card, :root[data-theme="metropolis"] #strip-tip,
+:root[data-theme="metropolis"] .st-card {
+  background: rgba(255, 255, 255, 0.95); border: 1px solid rgba(255, 255, 255, 0.8); border-radius: 18px;
+  box-shadow: 0 16px 50px rgba(30, 60, 90, 0.22); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+}
+:root[data-theme="metropolis"] #sidebar {
+  background: rgba(247, 250, 253, 0.94); border: 1px solid rgba(255, 255, 255, 0.9);
+  box-shadow: 0 16px 50px rgba(30, 60, 90, 0.25); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+}
+:root[data-theme="metropolis"] .side-head h2 { font-weight: 800; letter-spacing: 0.01em; }
+:root[data-theme="metropolis"] .panel { background: #fff; border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 2px 10px rgba(30, 60, 90, 0.06); }
+:root[data-theme="metropolis"] .panel.airport { border-color: #9cc8f2; }
+:root[data-theme="metropolis"] .tag { background: #e3edf8; color: #2b5d8f; }
+:root[data-theme="metropolis"] .tag.slot { background: #d6f2e4; color: #11663a; }
+:root[data-theme="metropolis"] .tag.stake { background: #ece3fb; color: #5b2ea6; }
+:root[data-theme="metropolis"] .tl-bar { background: #e3eaf2; }
+:root[data-theme="metropolis"] .tl-ground, :root[data-theme="metropolis"] .tl-use.idle { background: #94a3b8; }
+:root[data-theme="metropolis"] a { color: #1f6fc0; }
+:root[data-theme="metropolis"] #strip { background: rgba(255, 255, 255, 0.86); border-top: none; box-shadow: 0 -2px 18px rgba(30, 60, 90, 0.12); }
+:root[data-theme="metropolis"] .pcard { background: linear-gradient(180deg, #ffffff, #e8f0f8); border-color: var(--border); border-radius: 14px; }
+:root[data-theme="metropolis"] .pcard.sel { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+:root[data-theme="metropolis"] #rail button small { color: var(--muted); }
+:root[data-theme="metropolis"] #market { background: linear-gradient(180deg, #f4f8fc, #e3ebf4); color: var(--text); }
+:root[data-theme="metropolis"] .mk-money { color: #0f7a3a; }
+:root[data-theme="metropolis"] .mk-year { color: #b45309; }
+:root[data-theme="metropolis"] .mk-bar { border-bottom-color: var(--border); }
+:root[data-theme="metropolis"] .mk-bar label, :root[data-theme="metropolis"] .mk-maker, :root[data-theme="metropolis"] .mk-specs dt,
+:root[data-theme="metropolis"] .mk-tile .t-sub, :root[data-theme="metropolis"] .mk-empty { color: var(--muted); }
+:root[data-theme="metropolis"] .mk-tile { background: #fff; border-color: var(--border); border-radius: 16px; box-shadow: 0 2px 10px rgba(30, 60, 90, 0.06); }
+:root[data-theme="metropolis"] .mk-tile .t-price { color: var(--text); }
+:root[data-theme="metropolis"] .mk-stage { border-color: var(--border); border-radius: 18px; box-shadow: 0 10px 40px rgba(30, 60, 90, 0.18); }
+:root[data-theme="metropolis"] .mk-specs div { border-top-color: var(--border); }
+:root[data-theme="metropolis"] .mk-delivery { background: #fff; color: var(--text); border-radius: 10px; }
+:root[data-theme="metropolis"] .mk-buy button.big { background: #fff; border-color: var(--input-border); border-radius: 14px; }
+:root[data-theme="metropolis"] .mk-close { border-color: var(--input-border); }
+:root[data-theme="metropolis"] .mk-close:hover { background: #e3edf8; }
+:root[data-theme="metropolis"] #start-screen {
+  background: radial-gradient(ellipse at 15% 0%, rgba(47, 143, 232, 0.28), transparent 55%),
+    radial-gradient(ellipse at 90% 100%, rgba(22, 163, 74, 0.2), transparent 55%), rgba(233, 238, 244, 0.86);
+}
+:root[data-theme="metropolis"] .st-logo { background: linear-gradient(135deg, #4aa8ff, #2f6fe8); box-shadow: 0 8px 24px rgba(47, 143, 232, 0.35); border-radius: 50%; transform: none; }
+:root[data-theme="metropolis"] .st-choice, :root[data-theme="metropolis"] .st-plane { background: #fff; border-radius: 16px; }
+:root[data-theme="metropolis"] .st-choice.on, :root[data-theme="metropolis"] .st-plane.on { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent), 0 8px 24px rgba(47, 143, 232, 0.2); }
+:root[data-theme="metropolis"] #start-screen input, :root[data-theme="metropolis"] #start-screen select { background: #fff; }
+:root[data-theme="metropolis"] .st-continue { background: #fff; border-radius: 16px; }
+:root[data-theme="metropolis"] #map, :root[data-theme="metropolis"] #map.map-dark { --m-panel: rgba(255, 255, 255, 0.9); --m-ink: #1d2733; --m-hairline: rgba(30, 60, 90, 0.14); }
+:root[data-theme="metropolis"] #map .leaflet-bar, :root[data-theme="metropolis"] #map .leaflet-control-layers { border-radius: 14px; box-shadow: 0 4px 16px rgba(30, 60, 90, 0.22); }
+
+/* ======================================================================================================
+   PIXEL: a dark pixel-art palette, hard black outlines, pixel fonts, a tool palette (a sprite editor).
+   ====================================================================================================== */
+:root[data-theme="pixel"] {
+  color-scheme: dark;
+  --bg: #181425;
+  --panel: #262b44;
+  --panel-2: #3a4466;
+  --text: #f4f4f4;
+  --muted: #8b9bb4;
+  --border: #000;
+  --input-border: #000;
+  --accent: #feae34;
+  --header: #262b44;
+  --pos: #63c74d;
+  --neg: #e43b44;
+  --warn: #fee761;
+  --px-k: #000;
+  --px-w: #f4f4f4;
+}
+:root[data-theme="pixel"] body { font: 14px/1.35 "Pixelify Sans", monospace; -webkit-font-smoothing: none; }
+:root[data-theme="pixel"] h1, :root[data-theme="pixel"] h2, :root[data-theme="pixel"] h3, :root[data-theme="pixel"] h4,
+:root[data-theme="pixel"] #money, :root[data-theme="pixel"] #clock-time, :root[data-theme="pixel"] #rail small,
+:root[data-theme="pixel"] .mk-top h1, :root[data-theme="pixel"] .pc-type {
+  font-family: Silkscreen, "Pixelify Sans", monospace; font-weight: 400; letter-spacing: 0.02em;
+}
+:root[data-theme="pixel"] button, :root[data-theme="pixel"] .icon-btn, :root[data-theme="pixel"] .chips button,
+:root[data-theme="pixel"] .mk-buy button.big, :root[data-theme="pixel"] .st-choice, :root[data-theme="pixel"] .st-plane {
+  background: var(--panel-2); color: var(--text); border: 2px solid #000; border-radius: 0;
+  box-shadow: inset 0 2px 0 #5a6988, inset 0 -2px 0 #262b44;
+}
+:root[data-theme="pixel"] button:hover:not(:disabled) { filter: none; background: #5a6988; }
+:root[data-theme="pixel"] button.primary, :root[data-theme="pixel"] .mk-buy button.big.primary,
+:root[data-theme="pixel"] .chips button.on, :root[data-theme="pixel"] #market .chips button.on,
+:root[data-theme="pixel"] .st-choice.on, :root[data-theme="pixel"] .st-plane.on {
+  background: var(--accent); color: #181425; border-color: #000; box-shadow: inset 0 2px 0 #fee761, inset 0 -2px 0 #f77622;
+}
+:root[data-theme="pixel"] select, :root[data-theme="pixel"] input, :root[data-theme="pixel"] .mk-bar select,
+:root[data-theme="pixel"] #start-screen input, :root[data-theme="pixel"] #start-screen select {
+  background: #181425; color: var(--text); border: 2px solid #000; border-radius: 0; box-shadow: inset 2px 2px 0 #0b0911;
+}
+:root[data-theme="pixel"] #topbar { background: var(--panel); border-bottom: 2px solid #000; box-shadow: inset 0 -2px 0 #3a4466; }
+:root[data-theme="pixel"] #money { color: var(--warn); }
+:root[data-theme="pixel"] #speed-btn svg { fill: var(--accent); }
+:root[data-theme="pixel"] #mode-badge { background: #b55088; color: #f4f4f4; border-radius: 0; border: 2px solid #000; }
+:root[data-theme="pixel"] .pop, :root[data-theme="pixel"] .set-card, :root[data-theme="pixel"] #sidebar,
+:root[data-theme="pixel"] .st-card, :root[data-theme="pixel"] #strip-tip {
+  background: var(--panel); border: 2px solid #000; border-radius: 0; box-shadow: 4px 4px 0 #000, inset 0 0 0 2px #3a4466;
+}
+:root[data-theme="pixel"] .side-head {
+  background: #3a4466; margin: -12px -12px 8px; padding: 6px 8px 6px 12px; border-bottom: 2px solid #000;
+  box-shadow: inset 0 2px 0 #5a6988;
+}
+:root[data-theme="pixel"] .set-card .side-head { margin: -16px -16px 8px; }
+:root[data-theme="pixel"] .side-head h2 { font-size: 13px; color: var(--warn); }
+:root[data-theme="pixel"] .side-head .close { color: var(--text); background: #e43b44; border: 2px solid #000; box-shadow: none; padding: 0 6px; }
+:root[data-theme="pixel"] .panel { background: #181425; border: 2px solid #000; border-radius: 0; box-shadow: inset 0 0 0 2px #262b44; }
+:root[data-theme="pixel"] .panel.airport { box-shadow: inset 0 0 0 2px #0099db; }
+:root[data-theme="pixel"] .set-card h4 { color: var(--accent); }
+:root[data-theme="pixel"] .tag, :root[data-theme="pixel"] .route span { border-radius: 0; border: 1px solid #000; background: #3a4466; }
+:root[data-theme="pixel"] .tag.slot { background: #265c42; }
+:root[data-theme="pixel"] .tag.stake { background: #68386c; }
+:root[data-theme="pixel"] .tl-bar { background: #0b0911; border-radius: 0; }
+:root[data-theme="pixel"] .tl-flight { background: #0099db; border-radius: 0; }
+:root[data-theme="pixel"] .tl-use { background: #3e8948; border-radius: 0; }
+:root[data-theme="pixel"] a { color: #2ce8f5; }
+:root[data-theme="pixel"] table.small th, :root[data-theme="pixel"] table.small td { border-bottom: 1px dashed #3a4466; }
+:root[data-theme="pixel"] #strip { background: var(--panel); border-top: 2px solid #000; }
+:root[data-theme="pixel"] .pcard { background: #3a4466; border: 2px solid #000; border-radius: 0; box-shadow: inset 0 2px 0 #5a6988; image-rendering: pixelated; }
+:root[data-theme="pixel"] .pcard.sel { background: #5a6988; box-shadow: 0 0 0 2px var(--accent); }
+:root[data-theme="pixel"] .pcard img { image-rendering: pixelated; }
+:root[data-theme="pixel"] .pc-type { font-size: 9px; }
+:root[data-theme="pixel"] #rail { background: var(--panel); border: none; }
+:root[data-theme="pixel"] #rail button {
+  background: var(--panel-2); border: 2px solid #000; border-radius: 0; box-shadow: inset 0 2px 0 #5a6988, inset 0 -2px 0 #262b44;
+}
+:root[data-theme="pixel"] #rail button.active { background: var(--accent); box-shadow: inset 0 2px 0 #fee761, inset 0 -2px 0 #f77622; }
+:root[data-theme="pixel"] #rail button.active small { color: #181425; }
+:root[data-theme="pixel"] #rail button small { font-size: 8px; color: var(--muted); }
+:root[data-theme="pixel"] #rail .ic { width: 24px; height: 24px; image-rendering: pixelated; }
+:root[data-theme="pixel"] #market { background: var(--bg); }
+:root[data-theme="pixel"] .mk-top { background: var(--panel); border-bottom: 2px solid #000; padding-bottom: 8px; }
+:root[data-theme="pixel"] .mk-money { color: var(--pos); }
+:root[data-theme="pixel"] .mk-bar { border-bottom: 2px solid #000; background: #262b44; }
+:root[data-theme="pixel"] .mk-tile, :root[data-theme="pixel"] .mk-stage, :root[data-theme="pixel"] .mk-delivery {
+  border: 2px solid #000; border-radius: 0; background: var(--panel); box-shadow: 4px 4px 0 #000;
+}
+:root[data-theme="pixel"] .mk-tile.sel { background: #3a4466; box-shadow: 4px 4px 0 var(--accent); border-color: #000; }
+:root[data-theme="pixel"] .mk-specs div { border-top: 2px dotted #3a4466; }
+:root[data-theme="pixel"] .mk-close { border-radius: 0; }
+:root[data-theme="pixel"] #start-screen {
+  background: #181425; background-image: linear-gradient(#262b44 2px, transparent 2px), linear-gradient(90deg, #262b44 2px, transparent 2px);
+  background-size: 32px 32px;
+}
+:root[data-theme="pixel"] .st-logo { border-radius: 0; background: #e43b44; border: 3px solid #000; box-shadow: 4px 4px 0 #000; transform: none; }
+:root[data-theme="pixel"] .st-continue { background: #3a4466; border: 2px solid #000; border-radius: 0; }
+:root[data-theme="pixel"] #map, :root[data-theme="pixel"] #map.map-dark { --m-panel: #3a4466; --m-ink: #f4f4f4; --m-hairline: #000; }
+:root[data-theme="pixel"] #map .leaflet-bar, :root[data-theme="pixel"] #map .leaflet-control-layers {
+  border: 2px solid #000; border-radius: 0; box-shadow: 4px 4px 0 #000; -webkit-backdrop-filter: none; backdrop-filter: none;
+}
+:root[data-theme="pixel"] #map .leaflet-bar a { border-bottom: 2px solid #000; }
+:root[data-theme="pixel"] .st-choice.on span, :root[data-theme="pixel"] .st-plane.on span, :root[data-theme="pixel"] .theme-pick.on span { color: #3a2410; }
+
+/* ======================================================================================================
+   DEPARTURE BOARD: black and airport-sign yellow, B612 (the Airbus cockpit font), flip-board numbers,
+   the sections as a wayfinding sign.
+   ====================================================================================================== */
+:root[data-theme="board"] {
+  color-scheme: dark;
+  --bg: #0a0a0a;
+  --panel: #141414;
+  --panel-2: #222222;
+  --text: #f2f2f2;
+  --muted: #9a9a9a;
+  --border: #2e2e2e;
+  --input-border: #3a3a3a;
+  --accent: #ffcc00;
+  --header: #0a0a0a;
+  --pos: #3ddc84;
+  --neg: #ff5a4f;
+  --warn: #ffcc00;
+}
+:root[data-theme="board"] body { font: 13px/1.45 B612, "Segoe UI", sans-serif; }
+:root[data-theme="board"] #money, :root[data-theme="board"] #clock-time, :root[data-theme="board"] .mk-money,
+:root[data-theme="board"] table.small td, :root[data-theme="board"] .mk-specs dd, :root[data-theme="board"] .tl-axis {
+  font-family: "B612 Mono", ui-monospace, monospace;
+}
+:root[data-theme="board"] button, :root[data-theme="board"] .chips button { border-radius: 2px; background: #1c1c1c; border-color: #3a3a3a; }
+:root[data-theme="board"] button.primary, :root[data-theme="board"] .mk-buy button.big.primary,
+:root[data-theme="board"] .chips button.on, :root[data-theme="board"] #market .chips button.on {
+  background: var(--accent); border-color: var(--accent); color: #000; font-weight: 700;
+}
+:root[data-theme="board"] .st-choice.on, :root[data-theme="board"] .st-plane.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+/* Flip-board money and clock: each character on its own split tile. */
+:root[data-theme="board"] #topbar { background: #000; border-bottom: 3px solid var(--accent); }
+:root[data-theme="board"] #money, :root[data-theme="board"] #clock-time {
+  color: var(--accent); letter-spacing: 0.12em; padding: 2px 8px; border-radius: 3px;
+  background: linear-gradient(180deg, #232323 0 49%, #000 49% 51%, #1a1a1a 51% 100%);
+  box-shadow: inset 0 0 0 1px #333;
+}
+:root[data-theme="board"] #money.negative { color: var(--neg); }
+:root[data-theme="board"] .icon-btn { background: #1c1c1c; border-color: #3a3a3a; border-radius: 2px; }
+:root[data-theme="board"] #speed-btn svg { fill: var(--accent); }
+:root[data-theme="board"] #mode-badge { background: var(--accent); color: #000; border-radius: 2px; }
+:root[data-theme="board"] .pop, :root[data-theme="board"] .set-card, :root[data-theme="board"] #strip-tip, :root[data-theme="board"] .st-card {
+  background: #111; border: 1px solid #333; border-radius: 4px;
+}
+:root[data-theme="board"] #sidebar { background: rgba(10, 10, 10, 0.97); border-left: 3px solid var(--accent); }
+/* Headers are yellow signs. */
+:root[data-theme="board"] .side-head { background: var(--accent); color: #000; margin: -12px -12px 10px; padding: 7px 8px 7px 12px; }
+:root[data-theme="board"] .set-card .side-head { margin: -16px -16px 10px; }
+:root[data-theme="board"] .side-head h2 { font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; }
+:root[data-theme="board"] .side-head h2::before { content: "→ "; }
+:root[data-theme="board"] .side-head .close { color: #000; font-weight: 700; }
+:root[data-theme="board"] .set-card h4 { color: var(--accent); }
+:root[data-theme="board"] .panel { background: #111; border: 1px solid #2a2a2a; border-left: 3px solid #444; border-radius: 2px; }
+:root[data-theme="board"] .panel.airport { border-left-color: var(--accent); }
+:root[data-theme="board"] .panel h3 { text-transform: uppercase; letter-spacing: 0.04em; }
+:root[data-theme="board"] table.small th { color: var(--accent); text-transform: uppercase; font-size: 10px; letter-spacing: 0.08em; }
+:root[data-theme="board"] table.small td, :root[data-theme="board"] table.small th { border-bottom-color: #222; }
+:root[data-theme="board"] table.small tr:nth-child(even) td { background: #0f0f0f; }
+:root[data-theme="board"] .tag, :root[data-theme="board"] .route span { border-radius: 2px; background: #2a2a2a; }
+:root[data-theme="board"] .route span.here { background: var(--accent); color: #000; }
+:root[data-theme="board"] .tag.slot { background: #1d4d2c; }
+:root[data-theme="board"] .tag.stake { background: #3d2d55; }
+:root[data-theme="board"] .tl-bar { background: #050505; border-radius: 1px; }
+:root[data-theme="board"] .tl-flight { background: #ffcc00; color: #000; }
+:root[data-theme="board"] a { color: var(--accent); }
+:root[data-theme="board"] #strip { background: #000; border-top: 1px solid #222; }
+:root[data-theme="board"] .pcard { background: #141414; border-color: #2a2a2a; border-radius: 3px; }
+:root[data-theme="board"] .pcard.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+:root[data-theme="board"] .pc-type { font-family: "B612 Mono", monospace; color: var(--accent); }
+/* The sign column. */
+:root[data-theme="board"] #rail { background: #000; border: none; }
+:root[data-theme="board"] #rail button { color: #f2f2f2; border-radius: 0; }
+:root[data-theme="board"] #rail .ic {
+  width: 30px; height: 30px; padding: 4px; flex: none; background: var(--accent); color: #000; border-radius: 3px;
+}
+:root[data-theme="board"] #rail button.active { background: var(--accent); }
+:root[data-theme="board"] #rail button.active .ic { background: #000; color: var(--accent); }
+:root[data-theme="board"] #rail button.active small { color: #000; }
+:root[data-theme="board"] #rail button:hover:not(.active) { background: #1a1a1a; }
+:root[data-theme="board"] #market { background: #0a0a0a; }
+:root[data-theme="board"] .mk-top { border-bottom: 3px solid var(--accent); padding-bottom: 8px; }
+:root[data-theme="board"] .mk-money { color: var(--accent); }
+:root[data-theme="board"] .mk-tile { background: #111; border-color: #2a2a2a; border-radius: 3px; }
+:root[data-theme="board"] .mk-stage { border-radius: 3px; border-color: #2a2a2a; }
+:root[data-theme="board"] .mk-delivery { background: #111; border-left-color: var(--accent); }
+:root[data-theme="board"] .mk-buy button.big { border-radius: 3px; background: #1c1c1c; }
+:root[data-theme="board"] .b.new { background: #1f4fbf; }
+:root[data-theme="board"] #start-screen {
+  background: rgba(0, 0, 0, 0.9) repeating-linear-gradient(-45deg, rgba(255, 204, 0, 0.05) 0 24px, transparent 24px 48px);
+}
+:root[data-theme="board"] .st-logo { background: var(--accent); color: #000; border-radius: 4px; box-shadow: none; transform: none; }
+:root[data-theme="board"] .st-hero h1 { text-transform: uppercase; letter-spacing: 0.08em; }
+:root[data-theme="board"] .st-choice, :root[data-theme="board"] .st-plane, :root[data-theme="board"] .st-continue { border-radius: 3px; }
+:root[data-theme="board"] #map, :root[data-theme="board"] #map.map-dark { --m-panel: rgba(10, 10, 10, 0.9); --m-ink: #ffcc00; --m-hairline: #333; }
+:root[data-theme="board"] #map .leaflet-bar, :root[data-theme="board"] #map .leaflet-control-layers { border-radius: 3px; }
+
+/* ======================================================================================================
+   Where the section bar sits, on a desktop screen.
+   ====================================================================================================== */
+@media (min-width: 641px) and (min-height: 501px) {
+  /* Tycoon: a toolbar of square buttons along the top; the sections open as a window below it. */
+  :root[data-theme="tycoon"] main { flex-direction: column; }
+  :root[data-theme="tycoon"] #rail {
+    order: -1; width: auto; flex-direction: row; justify-content: center; gap: 2px; padding: 3px 6px;
+    border-bottom: 2px solid var(--lo); box-shadow: inset 0 2px 0 var(--hi); overflow: visible;
+  }
+  :root[data-theme="tycoon"] #rail button { width: 76px; padding: 3px 0 2px; }
+  :root[data-theme="tycoon"] #sidebar { top: 58px; right: 8px; bottom: 8px; }
+
+  /* Metropolis: a dock of round buttons floating over the bottom of the map; the sections float above it. */
+  :root[data-theme="metropolis"] #rail {
+    position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); width: auto;
+    flex-direction: row; gap: 6px; padding: 8px 12px; overflow: visible;
+    background: rgba(255, 255, 255, 0.88); border: 1px solid rgba(255, 255, 255, 0.9); border-radius: 999px;
+    box-shadow: 0 12px 40px rgba(30, 60, 90, 0.28); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  }
+  :root[data-theme="metropolis"] #rail button { position: relative; width: 48px; height: 48px; padding: 0; justify-content: center; border-radius: 50%; background: #eef3f8; border: none; transition: transform 0.12s, background 0.12s; }
+  :root[data-theme="metropolis"] #rail button:hover:not(.active) { background: #dbe8f5; transform: translateY(-3px); }
+  :root[data-theme="metropolis"] #rail button.active { background: var(--accent); color: #fff; box-shadow: 0 6px 16px rgba(47, 143, 232, 0.45); }
+  :root[data-theme="metropolis"] #rail .ic { width: 24px; height: 24px; color: #3b5470; }
+  :root[data-theme="metropolis"] #rail button.active .ic { color: #fff; }
+  :root[data-theme="metropolis"] #rail button small {
+    position: absolute; bottom: calc(100% + 10px); left: 50%; transform: translateX(-50%); white-space: nowrap;
+    background: #1d2733; color: #fff !important; padding: 3px 9px; border-radius: 999px; font-size: 12px; font-weight: 700;
+    opacity: 0; pointer-events: none; transition: opacity 0.12s;
+  }
+  :root[data-theme="metropolis"] #rail button:hover small { opacity: 1; }
+  :root[data-theme="metropolis"] #sidebar { top: 14px; right: 14px; bottom: 96px; border-radius: 22px; }
+
+  /* Pixel: a two-column tool palette on the left. */
+  :root[data-theme="pixel"] #rail {
+    order: -1; width: 100px; display: grid; grid-template-columns: 42px 42px; grid-auto-rows: 42px; gap: 4px;
+    align-content: start; padding: 6px; border-right: 2px solid #000;
+  }
+  :root[data-theme="pixel"] #rail button { width: 42px; height: 42px; padding: 0; justify-content: center; }
+  :root[data-theme="pixel"] #rail button small { display: none; }
+  :root[data-theme="pixel"] #rail .ic { width: 28px; height: 28px; }
+  :root[data-theme="pixel"] #sidebar { right: 0; top: 6px; bottom: 6px; margin-right: 6px; }
+
+  /* Departure board: a sign column on the left, pictogram + name + arrow. */
+  :root[data-theme="board"] #rail { order: -1; width: 172px; padding: 8px 0; gap: 2px; border-right: 3px solid var(--accent); }
+  :root[data-theme="board"] #rail button { flex-direction: row; justify-content: flex-start; gap: 10px; padding: 7px 12px; }
+  :root[data-theme="board"] #rail button small { font-size: 14px; font-weight: 700; color: #f2f2f2; flex: 1; text-align: left; }
+  :root[data-theme="board"] #rail button::after { content: "→"; font-weight: 700; color: var(--accent); }
+  :root[data-theme="board"] #rail button.active::after { color: #000; }
+  :root[data-theme="board"] #sidebar { right: 0; }
+}
+
+/* ---------- the style picker (Settings, start screen) ---------- */
+.theme-picks { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+.theme-pick { display: flex; flex-direction: column; gap: 4px; padding: 8px; text-align: left; }
+.theme-pick .sw { display: flex; height: 18px; border: 1px solid rgba(0, 0, 0, 0.4); }
+.theme-pick .sw i { flex: 1; }
+.theme-pick b { font-size: 13px; }
+.theme-pick span { font-size: 11px; color: var(--muted); line-height: 1.3; }
+.theme-pick.on { border-color: var(--accent) !important; box-shadow: 0 0 0 2px var(--accent) !important; }
+
+/* Phones: the sheet's sticky header in the style's colours (the others colour it above). */
+@media (max-width: 640px) {
+  :root[data-theme="metropolis"] .side-head { background: #f7fafd; }
+  :root[data-theme="metropolis"] .sheet-grip { background: #b9c6d4; }
+}

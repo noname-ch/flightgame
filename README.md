@@ -37,6 +37,12 @@ Schedule, Marketplace, Finance, Rivals, Log). Every plane has a card at the bott
 where it comes from and goes to, the time left and its fuel; click to select, double-click to
 follow it (2D or 3D).
 
+**Styles** (⋯ → Settings → Style, or on the start screen): *Night* (the classic dark look), *Tycoon*
+(bevelled grey windows with a toolbar along the top, like a 90s transport tycoon), *Metropolis* (light
+frosted panels with a round dock at the bottom, like a modern city builder), *Pixel* (pixel art with a tool
+palette, like a sprite editor) and *Departure board* (black and airport-sign yellow with a sign column and
+flip-board numbers). Each style has its own section bar and icons; the choice is kept in the browser.
+
 **On a phone**: the sections are a tab bar at the bottom and open as a sheet over the map. Drag the
 sheet's top edge to make it taller or shorter, pull it down to close it, or tap it to switch to full
 height. Pinch to zoom the map; tap a plane card to select it, tap it twice to follow it. In the
@@ -283,6 +289,9 @@ All content is plain data:
   stretched to its own length. Each type's hangar picture (`models/hangar/*.webp`) and map icon
   (`models/icons/*.webp`) are made with `tools/hangar_shots.html`
 - `js/data/events.js` – random events, incidents and their newspaper stories
+- `css/themes.css`, `js/themes.js` – the interface styles: colours, fonts, the section bar's place and icons
+  (pixel art and pictograms). A new style is a block of `:root[data-theme=<id>]` rules plus an entry in
+  `js/themes.js`
 - `js/data/presets.js` – the Quick start airlines (home, money, planes and their routes)
 - `js/config.js` – starting conditions, map bounds, economy balance, game modes, event rates
 - `js/data/fixes.js` – airport fixes drawn with the airport editor (F3), written by `tools/serve.py`
