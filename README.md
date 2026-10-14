@@ -37,6 +37,11 @@ Schedule, Marketplace, Finance, Rivals, Log). Every plane has a card at the bott
 where it comes from and goes to, the time left and its fuel; click to select, double-click to
 follow it (2D or 3D).
 
+**Main menu**: the very first start asks for a style, then the main menu offers *Continue*, *New game*,
+*Load game* (the last save in this browser, or a `.json` save file; ⋯ → *Save to file* makes one) and
+*Quick start*. A loading screen stays up until the map has its tiles. The 3D view asks once whether the device
+is strong enough (it needs a fast graphics chip) and names the graphics chip the browser reports.
+
 **Styles** (⋯ → Settings → Style, or on the start screen): *Night* (the classic dark look), *Tycoon*
 (bevelled grey windows with a toolbar along the top, like a 90s transport tycoon), *Metropolis* (light
 frosted panels with a round dock at the bottom, like a modern city builder), *Pixel* (pixel art with a tool

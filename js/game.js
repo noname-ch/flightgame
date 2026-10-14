@@ -1938,6 +1938,36 @@
       }
     },
 
+    // The saved game in this browser, without loading it: { company, time, money, planes } or null.
+    savedSummary() {
+      try {
+        const s = JSON.parse(localStorage.getItem(SAVE_KEY));
+        return s && s.planes ? { company: s.company, time: s.time, money: s.money, planes: s.planes.length, story: s.story } : null;
+      } catch (e) {
+        return null;
+      }
+    },
+
+    // A game from a save file (its text); returns an error, or null when it is loaded (and saved).
+    loadFile(text) {
+      let s;
+      try { s = JSON.parse(text); } catch (e) { return 'That is not a Flightgame save file.'; }
+      if (!s || !Array.isArray(s.planes) || !s.slots || typeof s.time !== 'number') return 'That is not a Flightgame save file.';
+      const old = this.state;
+      try {
+        this.state = s;
+        this.migrate();
+      } catch (e) {
+        this.state = old;
+        return `The save file could not be read (${e.message}).`;
+      }
+      this.dirty = true;
+      this.save();
+      return null;
+    },
+    // The game as the text of a save file.
+    saveFile() { return JSON.stringify(this.state); },
+
     // Bring older save games up to date.
     migrate() {
       const s = this.state;

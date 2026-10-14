@@ -1913,7 +1913,7 @@
         `<button class="${l.id === FG.livery().id ? 'on' : ''}" data-set="livery" data-v="${l.id}">${l.name}</button>`).join('')}</div>
       <h4>Game</h4>
       <label class="check"><input type="checkbox" data-set="autosave" ${set.autosave ? 'checked' : ''}> Save automatically every 30 s</label>
-      <h4>3D view</h4><div class="row"><button data-set="3d">${FG.view3d && FG.view3d.on ? 'Back to 2D' : 'Open 3D view'} <span class="muted">V</span></button></div>
+      <h4>3D view</h4><p class="muted">Made for strong devices: a gaming PC, or a recent laptop or Mac.</p><div class="row"><button data-set="3d">${FG.view3d && FG.view3d.on ? 'Back to 2D' : 'Open 3D view'} <span class="muted">V</span></button></div>
       <h4 class="keys-help">Keys</h4><div class="muted keys-help">Space pause · ← → speed · V 3D · F2 developer tools · F3 airport editor · F8 airport checklist · Esc menu</div></div>`;
   }
   function onSettings(e) {
@@ -1974,7 +1974,7 @@
       resetView();
       toast('Saved game loaded.');
     });
-    $('exit').addEventListener('click', () => { G.save(); openStart(true); });
+    $('exit').addEventListener('click', () => { G.save(); openStart(true, 'menu'); });
     $('settings-btn').addEventListener('click', () => { renderSettings(); $('settings').hidden = false; });
     $('settings').addEventListener('click', onSettings);
     $('side-close').addEventListener('click', () => { ui.tab = null; ui.selectedAirport = null; G.dirty = true; });
@@ -2109,7 +2109,7 @@
 
   // ---------- start screen ----------
   // Shown on every page load and by "New game": continue the saved airline or set up a new one.
-  const st = { open: false, hasGame: false, mode: C.defaultMode, difficulty: C.defaultDifficulty,
+  const st = { open: false, hasGame: false, page: 'menu', mode: C.defaultMode, difficulty: C.defaultDifficulty,
     airport: C.startAirport, aircraft: C.startAircraft, quickOpen: true, story: '', year: String(C.story.defaultYear) };
 
   // Home airport choices, grouped by region (C.startAirports).
@@ -2156,8 +2156,71 @@
       `<button class="st-choice" data-st="preset" data-id="${id}"><b>${pr.name}</b><span>${pr.desc}</span></button>`).join('')}</div>`;
   }
 
+  // The start screen has pages: 'style' (first start: pick a look), 'menu' (the main menu), 'new' (a new
+  // airline), 'load' (a saved game or a save file) and 'quick' (ready-made airlines).
   function renderStart() {
+    const pages = { style: startStyle, menu: startMenu, new: startNew, load: startLoad, quick: startQuick };
+    $('start-screen').innerHTML = (pages[st.page] || startMenu)();
+    $('start-screen').dataset.page = st.page;
+  }
+
+  const back = '<button class="mm-back" data-st="page" data-id="menu">← Main menu</button>';
+  const gameLine = (s) => `${s.company} · ${G.fmtTime(s.time).replace(/ \d\d:\d\d$/, '')} · ${G.fmtMoney(s.money)} · ` +
+    `${s.planes.length ?? s.planes} plane${(s.planes.length ?? s.planes) === 1 ? '' : 's'}`;
+
+  function startStyle() {
+    const cur = FG.themes.list.find((t) => t.id === FG.themes.current());
+    return `<div class="st-card mm-page">
+      <div class="st-hero"><div class="st-logo">✈</div><div><h1>Welcome to Flightgame</h1>
+        <p>Pick a style for the game – click one to try it. You can change it any time in the settings.</p></div></div>
+      ${themePicks('data-st')}
+      <div class="st-actions"><button class="primary big" data-st="styleDone">Continue with ${cur.name} →</button></div>
+    </div>`;
+  }
+
+  function startMenu() {
     const s = G.state;
+    return `<div class="mm-sky" aria-hidden="true"><span class="mm-plane"><i>✈</i></span><span class="mm-plane two"><i>✈</i></span></div>
+      <div class="st-card mm-card">
+        <div class="mm-logo">✈</div>
+        <h1 class="mm-title">Flightgame</h1>
+        <p class="mm-tag">Build an airline from a single plane.</p>
+        <div class="mm-buttons">
+          ${st.hasGame ? `<button class="mm-btn primary" data-st="continue"><b>Continue</b><span>${gameLine(s)}</span></button>` : ''}
+          <button class="mm-btn" data-st="page" data-id="new"><b>New game</b><span>Found a new airline – today or in the past</span></button>
+          <button class="mm-btn" data-st="page" data-id="load"><b>Load game</b><span>The last save, or a save file</span></button>
+          <button class="mm-btn" data-st="page" data-id="quick"><b>Quick start</b><span>Ready-made airlines, already flying</span></button>
+        </div>
+        <div class="mm-small">
+          <button data-st="page" data-id="style">🎨 Style</button>
+          <button data-st="settings">⚙ Settings</button>
+        </div>
+        <p class="mm-foot">The 3D view (V) is made for strong devices: a gaming PC or a recent laptop.</p>
+      </div>`;
+  }
+
+  function startLoad() {
+    const saved = G.savedSummary();
+    return `<div class="st-card mm-page">${back}
+      <h2>Load game</h2>
+      <div class="st-label">Saved in this browser</div>
+      ${saved ? `<div class="st-continue"><div><b>${saved.company}</b><span>${gameLine(saved)}</span></div>
+        <button class="primary big" data-st="loadSaved">Load ▶</button></div>` : '<p class="muted">No saved game in this browser yet.</p>'}
+      <div class="st-label">From a file</div>
+      <label class="mm-file"><input type="file" id="st-file" accept=".json,application/json">
+        <b>📂 Open a save file…</b><span class="muted">a .json file saved with “Save to file”</span></label>
+      ${st.hasGame ? `<div class="st-label">Keep this game as a file</div>
+        <button data-st="export">💾 Download ${G.state.company} as a save file</button>` : ''}
+    </div>`;
+  }
+
+  function startQuick() {
+    return `<div class="st-card mm-page">${back}
+      <h2>Quick start</h2><p class="muted">Ready-made airlines, already flying – good for trying things out.${st.hasGame ? ' Starting one replaces your saved game.' : ''}</p>
+      ${startPresets()}</div>`;
+  }
+
+  function startNew() {
     // Keep the chosen plane valid for the chosen airport and year.
     const types = startTypes();
     if (!types.includes(st.aircraft) || G.fitsReason(st.aircraft, st.airport)) {
@@ -2166,16 +2229,8 @@
         || types.find((t) => !G.fitsReason(t, st.airport)) || types[0];
     }
     const ap = G.airportByCode[st.airport];
-    const el = $('start-screen');
-    el.innerHTML = `<div class="st-card">
-      <div class="st-hero"><div class="st-logo">✈</div><div><h1>Flightgame</h1>
-        <p>Build an airline from a single plane.</p></div></div>
-      ${st.hasGame ? `<div class="st-continue">
-        <div><b>${s.company}</b><span>${G.mode().name} · ${G.difficulty().name} · ${G.fmtTime(s.time)} · ${G.fmtMoney(s.money)} · ${s.planes.length} plane${s.planes.length === 1 ? '' : 's'}</span></div>
-        <button class="primary big" data-st="continue">Continue ▶</button></div>` : ''}
-      <details class="st-quick"${st.quickOpen ? ' open' : ''}><summary>Quick start <span class="muted">ready-made airlines, already flying – good for testing</span></summary>
-        ${startPresets()}</details>
-      <h2>${st.hasGame ? 'Or start a new airline' : 'New airline'}</h2>
+    return `<div class="st-card mm-page">${back}
+      <h2>New airline</h2>
       <label class="st-label" for="st-name">Airline name</label>
       <input id="st-name" maxlength="40" value="${(st.name ?? C.companyName).replace(/"/g, '&quot;')}">
       <div class="st-label">Mode</div>${startChoices('mode', C.modes, st.mode)}
@@ -2185,19 +2240,19 @@
       <select id="st-airport">${startAirportOptions()}</select>
       <div class="st-label">First aircraft <span class="muted">leased, with crew</span></div>
       <div class="st-planes">${startPlanes()}</div>
-      <details class="st-quick st-style"><summary>Style <span class="muted">${FG.themes.list.find((t) => t.id === FG.themes.current()).name} – change the look of the game</span></summary>
-        ${themePicks('data-st')}</details>
       <div class="st-actions">
-        ${st.hasGame ? '<button data-st="cancel">Back to my airline</button>' : ''}
-        <button class="primary big" data-st="start">${st.hasGame ? 'Start new airline' : 'Start airline'} ✈</button>
+        <button data-st="page" data-id="menu">Back</button>
+        <button class="primary big" data-st="start">Start airline ✈</button>
       </div>
       ${st.hasGame ? '<p class="muted st-warn">Starting a new airline replaces your saved game.</p>' : ''}
     </div>`;
   }
 
-  function openStart(hasGame) {
+  // page: which page to open; by default the main menu, or the style picker on the very first start.
+  function openStart(hasGame, page) {
     st.open = true;
     st.hasGame = hasGame;
+    st.page = page || (set.theme ? 'menu' : 'style');
     $('start-screen').hidden = false;
     renderStart();
   }
@@ -2211,9 +2266,17 @@
     const b = e.target.closest('[data-st]');
     if (!b || b.disabled) return;
     const { st: what, id } = b.dataset;
-    if (what === 'continue' || what === 'cancel') { closeStart(); return; }
-    if (what === 'start') { startNewGame(); return; }
-    if (what === 'preset') { startPreset(id); return; }
+    if (what === 'continue') { enterGame('Back to your airline…', () => {}); return; }
+    if (what === 'start') { enterGame('Founding your airline…', startNewGame); return; }
+    if (what === 'preset') { enterGame('Getting the planes ready…', () => startPreset(id)); return; }
+    if (what === 'loadSaved') {
+      enterGame('Loading your airline…', () => { if (!G.load()) toast('No saved game.', true); resetView(); centreHome(); });
+      return;
+    }
+    if (what === 'export') { downloadSave(); return; }
+    if (what === 'settings') { renderSettings(); $('settings').hidden = false; return; }
+    if (what === 'page') { st.page = id; renderStart(); $('start-screen').scrollTop = 0; return; }
+    if (what === 'styleDone') { setTheme(FG.themes.current()); st.page = 'menu'; renderStart(); return; }
     if (what === 'theme') { setTheme(id); renderStart(); return; }
     st[what] = id; // mode, difficulty, aircraft or story ('' = free play, else the start year)
     renderStart();
@@ -2224,12 +2287,33 @@
     if (t.id === 'st-name') st.name = t.value;
     if (t.id === 'st-airport') { st.airport = t.value; refreshStartAirport(); }
     if (t.id === 'st-year') { st.year = st.story = t.value; renderStart(); $('st-year').focus(); }
+    if (t.id === 'st-file' && e.type === 'change' && t.files[0]) {
+      t.files[0].text().then((text) => {
+        enterGame('Loading the save file…', () => {
+          const err = G.loadFile(text);
+          if (err) toast(err, true);
+          else toast(`${G.state.company} loaded.`);
+          resetView();
+          centreHome();
+        });
+      });
+    }
   }
 
   // Re-render, keeping the focus on the airport list.
   function refreshStartAirport() {
     renderStart();
     $('st-airport').focus();
+  }
+
+  // The game as a .json file to download.
+  function downloadSave() {
+    const blob = new Blob([G.saveFile()], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${(G.state.company || 'airline').replace(/[^\w-]+/g, '_')}-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
 
   function startNewGame() {
@@ -2245,12 +2329,74 @@
     toast(errors.length ? `Started with ${errors.length} problem(s) – see the log.` : `Quick start: ${G.state.company}`);
   }
 
+  function centreHome() {
+    const home = G.airportByCode[G.home()];
+    ui.map.setView([home.lat, home.lon], 6);
+  }
+
   function afterNewGame() {
     closeStart();
     resetView();
-    const home = G.airportByCode[G.home()];
-    ui.map.setView([home.lat, home.lon], 6);
+    centreHome();
     G.save();
+  }
+
+  // ---------- loading screen ----------
+  // Shown while the page loads (index.html) and when a game starts, until the map has its tiles.
+  function showLoading(text) {
+    const el = $('loading');
+    el.hidden = false;
+    el.classList.remove('done');
+    el.classList.add('det'); // (a real progress bar from now on)
+    $('ld-text').textContent = text;
+    setLoadProgress(0);
+  }
+  function setLoadProgress(f) { $('ld-bar').style.width = `${Math.round(Math.max(0.04, Math.min(1, f)) * 100)}%`; }
+  function hideLoading() {
+    const el = $('loading');
+    el.classList.add('done');
+    setTimeout(() => { if (el.classList.contains('done')) el.hidden = true; }, 450);
+  }
+  // Resolves when the map's tiles are in (and the 3D map's, when 3D is on), at most after 15 s.
+  function untilMapLoaded() {
+    const layer = ui.base[ui.baseName];
+    let started = 0;
+    let done = 0;
+    const onStart = () => { started++; };
+    const onDone = () => { done++; };
+    layer.on('tileloadstart', onStart);
+    layer.on('tileload tileerror', onDone);
+    const t0 = performance.now();
+    return new Promise((resolve) => {
+      let quiet = 0;
+      const tick = () => {
+        const t = performance.now() - t0;
+        const busy2d = layer.isLoading ? layer.isLoading() : false;
+        const busy3d = !!(FG.view3d && FG.view3d.on && (!FG.view3d.map || !FG.view3d.map.loaded()));
+        setLoadProgress(started ? (done / started) * 0.9 + (busy3d ? 0 : 0.1) : Math.min(0.9, t / 2500));
+        quiet = busy2d || busy3d ? 0 : quiet + 1;
+        if ((quiet >= 3 && t > 700) || t > 15000) {
+          layer.off('tileloadstart', onStart);
+          layer.off('tileload tileerror', onDone);
+          setLoadProgress(1);
+          resolve();
+          return;
+        }
+        setTimeout(tick, 100);
+      };
+      setTimeout(tick, 120);
+    });
+  }
+  // Close the menus, run `start` (which sets up the game) and show the loading screen until the map is in.
+  function enterGame(text, start) {
+    showLoading(text);
+    closeStart();
+    // (a frame first, so the loading screen is up before the work starts)
+    requestAnimationFrame(() => setTimeout(() => {
+      start();
+      G.dirty = true;
+      untilMapLoaded().then(hideLoading);
+    }, 30));
   }
 
   // ---------- input ----------
@@ -2371,7 +2517,8 @@
     // Typing a time or choosing from a list must not be interrupted by a re-render.
     $('sidebar').addEventListener('focusin', (e) => { if (e.target.matches('select, input')) ui.selectOpen = true; });
     $('sidebar').addEventListener('focusout', (e) => { if (e.target.matches('select, input')) { ui.selectOpen = false; G.dirty = true; } });
-    $('newgame').addEventListener('click', () => openStart(true));
+    $('newgame').addEventListener('click', () => openStart(true, 'new'));
+    $('savefile').addEventListener('click', downloadSave);
     $('start-screen').addEventListener('click', onStartClick);
     $('start-screen').addEventListener('input', onStartInput);
     $('start-screen').addEventListener('change', onStartInput);
@@ -2459,10 +2606,14 @@
       selectAirport(code) { const a = G.airportByCode[code]; ui.selectedAirport = code; panIntoView([a.lat, a.lon]); G.dirty = true; } });
     bindControls();
     renderAll();
-    openStart(saved && !G.state.gameOver);
-    // index.html?preset=<id> starts that ready-made airline straight away (on every reload).
+    // index.html?preset=<id> starts that ready-made airline straight away (on every reload); otherwise the
+    // loading screen of the page load makes way for the main menu.
     const preset = new URLSearchParams(location.search).get('preset');
-    if (preset && D.presets && D.presets[preset]) startPreset(preset);
+    if (preset && D.presets && D.presets[preset]) enterGame('Getting the planes ready…', () => startPreset(preset));
+    else {
+      openStart(saved && !G.state.gameOver);
+      hideLoading();
+    }
     setInterval(loop, TICK_MS);
     requestAnimationFrame(frame);
     setInterval(() => { if (set.autosave) G.save(); }, 30000);

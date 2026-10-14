@@ -1342,16 +1342,71 @@ function setOn(on) {
   savePrefs();
 }
 
+// The 3D view is made for strong devices: the first time it opens (in every session, until "don't ask again")
+// a warning says so, with the graphics chip the browser reports.
+const OK3D_KEY = 'flightgame.3d-ok';
+let ok3dSession = false;
+const ok3d = () => { try { return ok3dSession || !!localStorage.getItem(OK3D_KEY); } catch (e) { return ok3dSession; } };
+function gpuName() {
+  try {
+    const gl = document.createElement('canvas').getContext('webgl');
+    if (!gl) return null;
+    const ext = gl.getExtension('WEBGL_debug_renderer_info');
+    const name = gl.getParameter(ext ? ext.UNMASKED_RENDERER_WEBGL : gl.RENDERER);
+    const lose = gl.getExtension('WEBGL_lose_context');
+    if (lose) lose.loseContext();
+    return name;
+  } catch (e) {
+    return null;
+  }
+}
+function confirm3d(then) {
+  if (ok3d()) { then(); return; }
+  if (document.getElementById('warn3d')) return;
+  const gpu = gpuName();
+  const soft = !gpu || /swiftshader|llvmpipe|software|basic render/i.test(gpu);
+  const touch = window.matchMedia('(pointer: coarse)').matches;
+  const el = document.createElement('div');
+  el.id = 'warn3d';
+  el.innerHTML = `<div class="w3-card" role="dialog" aria-modal="true" aria-labelledby="w3-title">
+    <h2 id="w3-title"><span>⚠</span>3D view: for strong devices</h2>
+    <p>The 3D view draws the terrain, satellite pictures, airports and every aircraft in 3D. It needs a fast graphics
+      chip – a gaming PC, or a recent laptop or Mac.</p>
+    <p>On phones, tablets and older computers it can be slow, make the device hot and drain the battery. The 2D map
+      shows everything too.</p>
+    <div class="w3-gpu${soft ? ' slow' : ''}">${!gpu ? 'Your browser has no 3D graphics (WebGL): the 3D view will not work here.'
+      : soft ? `Your browser draws 3D without a graphics chip (${gpu}): the 3D view will be very slow.`
+        : `Graphics chip: ${gpu}`}${touch ? '<br>This looks like a phone or tablet.' : ''}</div>
+    <label class="check"><input type="checkbox" id="w3-again"> Don't ask again on this device</label>
+    <div class="row"><button data-w3="no">Stay in 2D</button><button class="primary" data-w3="yes">Open 3D view</button></div>
+  </div>`;
+  document.body.appendChild(el);
+  el.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-w3]');
+    if (!b && e.target !== el) return;
+    const yes = !!b && b.dataset.w3 === 'yes';
+    if (yes) {
+      ok3dSession = true;
+      try { if (el.querySelector('#w3-again').checked) localStorage.setItem(OK3D_KEY, '1'); } catch (err) { /* private mode */ }
+    }
+    el.remove();
+    if (yes) then();
+  });
+}
+const toggle3d = () => (v.on ? setOn(false) : confirm3d(() => setOn(true)));
+
 function init() {
   const prefs = loadPrefs();
   v.satellite = prefs.satellite !== false; // satellite imagery unless switched off
-  document.getElementById('view3d-toggle').addEventListener('click', () => setOn(!v.on));
+  document.getElementById('view3d-toggle').addEventListener('click', toggle3d);
   document.addEventListener('keydown', (e) => {
     if (e.target.matches('input, select, textarea') || e.ctrlKey || e.metaKey || e.altKey) return;
     if (!document.getElementById('start-screen').hidden) return;
-    if (e.key === 'v' || e.key === 'V') setOn(!v.on);
+    if (e.key === 'v' || e.key === 'V') toggle3d();
+    if (e.key === 'Escape' && document.getElementById('warn3d')) document.getElementById('warn3d').remove();
   });
-  if (prefs.on) setOn(true);
+  // (back in 3D as last time only on a device where the warning was answered for good)
+  if (prefs.on && ok3d()) setOn(true);
 }
 
 if (FG.ui) init();

@@ -78,7 +78,7 @@ body { display: flex; flex-direction: column; }
 .menu button { text-align: left; border: none; background: none; padding: 8px 10px; display: flex; justify-content: space-between; }
 .menu button:hover { background: var(--panel-2); filter: none; }
 #settings {
-  position: fixed; inset: 0; z-index: 3200; background: rgba(0, 0, 0, 0.55);
+  position: fixed; inset: 0; z-index: 3600; /* (over the start screen too) */ background: rgba(0, 0, 0, 0.55);
   display: flex; align-items: center; justify-content: center;
 }
 #settings[hidden], .pop[hidden] { display: none; }
@@ -1237,3 +1237,91 @@ body { height: 100dvh; } /* the visible height, also while the phone's address b
 #ck-msg { min-height: 1.4em; color: var(--pos); font-size: 12px; }
 #ck-msg.bad { color: var(--neg); }
 @media (max-width: 1100px) { #apcheck.beside { left: auto; right: 12px; } }
+
+/* ---------- loading screen (index.html; js/ui.js showLoading / hideLoading) ---------- */
+#loading {
+  position: fixed; inset: 0; z-index: 4000;
+  display: flex; align-items: center; justify-content: center;
+  background: radial-gradient(ellipse at 50% 30%, color-mix(in srgb, var(--accent) 16%, var(--bg)), var(--bg) 70%);
+  color: var(--text);
+  transition: opacity 0.4s;
+}
+#loading[hidden] { display: none; }
+#loading.done { opacity: 0; pointer-events: none; }
+.ld-card { width: min(420px, calc(100vw - 48px)); text-align: center; }
+.ld-card h1 { margin: 6px 0 18px; font-size: 30px; letter-spacing: 0.04em; }
+.ld-sky { position: relative; height: 70px; overflow: hidden; }
+.ld-sky::before { /* the runway */
+  content: ""; position: absolute; left: 0; right: 0; bottom: 8px; height: 2px;
+  background: repeating-linear-gradient(90deg, var(--muted) 0 14px, transparent 14px 26px); opacity: 0.5;
+}
+.ld-plane {
+  position: absolute; left: -40px; bottom: 10px; font-size: 30px; color: var(--accent);
+  animation: ld-takeoff 2.4s cubic-bezier(0.5, 0, 0.6, 1) infinite;
+}
+@keyframes ld-takeoff { /* (the ✈ glyph points up and to the right: turned 45° it faces right) */
+  0% { transform: translate(0, 0) rotate(45deg); opacity: 0; }
+  10% { opacity: 1; }
+  45% { transform: translate(190px, 0) rotate(45deg); }
+  100% { transform: translate(480px, -70px) rotate(31deg); opacity: 0.2; }
+}
+.ld-track { height: 8px; border-radius: 4px; background: var(--panel-2); overflow: hidden; border: 1px solid var(--border); }
+#ld-bar { display: block; height: 100%; width: 35%; background: var(--accent); border-radius: 4px; transition: width 0.2s; }
+#loading:not(.det) #ld-bar { animation: ld-indet 1.3s ease-in-out infinite; }
+@keyframes ld-indet { 0% { transform: translateX(-100%); } 100% { transform: translateX(290%); } }
+#ld-text { margin: 12px 0 0; color: var(--muted); font-size: 13px; }
+
+/* ---------- main menu and its pages (js/ui.js start screen) ---------- */
+#start-screen[data-page="menu"] { display: flex; align-items: center; justify-content: center; overflow: hidden; }
+#start-screen[data-page="menu"][hidden] { display: none; }
+.mm-card { width: min(440px, 100%); text-align: center; padding: 30px 30px 22px; position: relative; z-index: 1; }
+.mm-logo {
+  width: 74px; height: 74px; margin: 0 auto 10px; display: grid; place-items: center; font-size: 38px; color: #fff;
+  border-radius: 20px; background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 60%, #000));
+  box-shadow: 0 10px 30px color-mix(in srgb, var(--accent) 40%, transparent); transform: rotate(-8deg);
+}
+.mm-title { margin: 0; font-size: 44px; letter-spacing: 0.03em; line-height: 1.1; }
+.mm-tag { margin: 4px 0 22px; color: var(--muted); }
+.mm-buttons { display: flex; flex-direction: column; gap: 10px; }
+.mm-btn { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 12px 16px; text-align: left; border-radius: 12px; }
+.mm-btn b { font-size: 17px; }
+.mm-btn span { font-size: 12px; color: var(--muted); }
+.mm-btn.primary span { color: inherit; opacity: 0.85; }
+.mm-btn:hover:not(:disabled) { transform: translateX(3px); }
+.mm-small { display: flex; justify-content: center; gap: 8px; margin-top: 16px; }
+.mm-foot { margin: 16px 0 0; font-size: 11px; color: var(--muted); }
+.mm-back { margin-bottom: 8px; }
+.mm-page h2 { margin: 6px 0 4px; }
+.mm-file {
+  display: flex; flex-direction: column; gap: 2px; padding: 14px 16px; cursor: pointer;
+  border: 2px dashed var(--input-border); border-radius: 12px; background: var(--panel-2);
+}
+.mm-file:hover { border-color: var(--accent); }
+.mm-file input { display: none; }
+/* Planes crossing the sky behind the menu. */
+.mm-sky { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.mm-plane {
+  position: absolute; top: 18%; left: -10%; font-size: 26px; color: var(--accent); opacity: 0.7;
+  animation: mm-cross 26s linear infinite;
+}
+.mm-plane::after { /* contrail */
+  content: ""; position: absolute; right: 100%; top: 50%; width: 260px; height: 3px; margin-top: -1px;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--text) 45%, transparent)); border-radius: 2px;
+}
+.mm-plane i { display: inline-block; font-style: normal; transform: rotate(45deg); } /* (facing right) */
+.mm-plane.two { top: 72%; font-size: 18px; opacity: 0.45; animation-duration: 38s; animation-delay: -17s; }
+@keyframes mm-cross { from { transform: translateX(0); } to { transform: translateX(125vw); } }
+@media (prefers-reduced-motion: reduce) { .mm-plane, .ld-plane { animation: none; } }
+
+/* ---------- 3D warning (js/view3d.js) ---------- */
+#warn3d {
+  position: fixed; inset: 0; z-index: 3700; display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, 0.55); padding: 16px;
+}
+.w3-card { width: min(460px, 100%); padding: 20px 22px; background: var(--panel); border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5); }
+.w3-card h2 { margin: 0 0 8px; font-size: 19px; display: flex; gap: 10px; align-items: center; }
+.w3-card h2 span { font-size: 26px; }
+.w3-card p { margin: 8px 0; }
+.w3-gpu { font-size: 12px; padding: 8px 10px; border-radius: 8px; background: var(--panel-2); }
+.w3-gpu.slow { color: var(--neg); }
+.w3-card .row { justify-content: flex-end; margin-top: 14px; }

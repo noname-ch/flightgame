@@ -163,8 +163,15 @@ try {
   await cmd('Page.navigate', { url: `${ORIGIN}/` });
   await waitFor(() => window.FG && FG.ui && FG.game && !document.getElementById('start-screen').hidden, 60000, 'the start screen');
 
-  step('new game from the start screen');
-  await evaluate(() => document.querySelector('[data-st=start]').click());
+  step('first start: pick a style, main menu → New game → Start, the loading screen until the map is in');
+  await evaluate(() => {
+    const first = document.querySelector('[data-st=styleDone]');
+    if (!first) throw new Error('no style picker on the first start');
+    first.click();
+    document.querySelector('[data-st=page][data-id=new]').click();
+    document.querySelector('[data-st=start]').click();
+  });
+  await waitFor(() => document.getElementById('start-screen').hidden && document.getElementById('loading').hidden, 30000, 'the loading screen to finish');
   const home = await evaluate(() => G.home());
 
   step(`lease a slot, plan a timetable from ${home}, add a second plane`);
@@ -346,6 +353,10 @@ try {
   if (!has3d) warnings.push('3D module did not load in 90 s (CDN?): 3D not tested');
   else {
     await key('v');
+    // (the first time: the warning that 3D is for strong devices)
+    const warned = await waitFor(() => !!document.querySelector('#warn3d [data-w3=yes]'), 5000);
+    if (!warned) errors.push('3D view: no warning before it opened the first time');
+    else await evaluate(() => document.querySelector('#warn3d [data-w3=yes]').click());
     const loaded = await waitFor(() => FG.view3d.map && FG.view3d.map.loaded(), 60000);
     if (!loaded) warnings.push('3D map did not finish loading in 60 s (tiles?)');
     await evaluate(() => FG.ui.follow && FG.ui.follow(G.state.planes[0].id));
@@ -376,9 +387,13 @@ try {
 
   step('story mode from 1955: the market, then New Year 1958 (Comet 4 and Boeing 707)');
   await evaluate(() => document.getElementById('newgame').click());
-  const story = await evaluate(() => {
+  await evaluate(() => {
     document.querySelector('[data-st=story][data-id="1955"]').click();
     document.querySelector('[data-st=start]').click();
+  });
+  // (the airline is founded behind the loading screen)
+  await waitFor(() => !!G.state.story && document.getElementById('loading').hidden, 30000, 'the story game to start');
+  const story = await evaluate(() => {
     const out = { date: G.fmtTime(G.state.time), early: G.onSale('A320'), sale: G.onSale('DC-6B') };
     G.state.money = 1e9;
     while (G.dateOf(G.state.time).getUTCFullYear() < 1958) G.advance(24 * 60);

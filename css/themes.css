@@ -153,6 +153,7 @@
 }
 :root[data-theme="metropolis"] body { font: 14px/1.45 Nunito, "Segoe UI", system-ui, sans-serif; }
 :root[data-theme="metropolis"] button, :root[data-theme="metropolis"] .chips button { border-radius: 999px; background: #fff; border-color: var(--input-border); color: var(--text); }
+:root[data-theme="metropolis"] .theme-pick, :root[data-theme="metropolis"] .mm-btn { border-radius: 16px; }
 :root[data-theme="metropolis"] button.primary, :root[data-theme="metropolis"] .mk-buy button.big.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 :root[data-theme="metropolis"] .chips button.on, :root[data-theme="metropolis"] #market .chips button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
 :root[data-theme="metropolis"] select, :root[data-theme="metropolis"] input, :root[data-theme="metropolis"] .mk-bar select { background: #fff; color: var(--text); border-radius: 10px; border-color: var(--input-border); }
