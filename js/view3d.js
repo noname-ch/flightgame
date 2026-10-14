@@ -663,9 +663,9 @@ function transformStyle(_prev, style) {
     { id: 'fg-runways', type: 'fill', source: 'fg-gates', minzoom: RUNWAY_MINZOOM, filter: kind('runway'),
       paint: { 'fill-color': ['case', ['==', ['get', 'paved'], 1], '#2b2f36', '#6f9a55'] } },
     { id: 'fg-apron', type: 'fill', source: 'fg-gates', minzoom: GATE_MINZOOM, filter: kind('apron'),
-      paint: { 'fill-color': '#3a4049', 'fill-opacity': 0.92 } },
+      paint: { 'fill-color': '#3a4049', 'fill-opacity': 1 } }, // (solid: the satellite's planes must not show through)
     { id: 'fg-pad', type: 'fill', source: 'fg-gates', minzoom: GATE_MINZOOM, filter: kind('pad'),
-      paint: { 'fill-color': '#6b7280', 'fill-opacity': 0.95, 'fill-outline-color': '#cbd5e1' } },
+      paint: { 'fill-color': '#6b7280', 'fill-opacity': 1, 'fill-outline-color': '#cbd5e1' } },
     { id: 'fg-taxi-lines', type: 'line', source: 'fg-gates', minzoom: 14, filter: kind('twline'),
       layout: { 'line-join': 'round', 'line-cap': 'round' },
       paint: { 'line-color': '#e3b70f', 'line-width': ['interpolate', ['linear'], ['zoom'], 14, 0.8, 17, 1.6, 19, 3] } },

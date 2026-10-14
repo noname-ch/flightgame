@@ -419,6 +419,16 @@
   }
 
   // ---------- runways ----------
+  // The airports for the runways and gates in `view`, padded by ~8 km (as in 3D): zoomed in on a far corner of
+  // a big airport, its reference point is off screen, but its runways and aprons must stay.
+  function airportsNear(view) {
+    const pad = 0.075;
+    const s = view.getSouth() - pad, n = view.getNorth() + pad;
+    const kLon = pad / Math.max(0.2, Math.cos((Math.max(Math.abs(s), Math.abs(n)) * Math.PI) / 180));
+    const w = view.getWest() - kLon, e = view.getEast() + kLon;
+    return D.airports.filter((a) => a.lat >= s && a.lat <= n && a.lon >= w && a.lon <= e);
+  }
+
   // Metres per screen pixel at a latitude, so thin runways stay visible.
   const metresPerPixel = (lat) => (40075016 * Math.cos((lat * Math.PI) / 180)) / 2 ** (ui.map.getZoom() + 8);
 
@@ -460,6 +470,35 @@
   }
 
   // ---------- gates ----------
+  // Holding positions (as in view3d.js): where the taxiway stretch p -> q comes up to runway r, two yellow bars
+  // across it, `width` metres long, 40-90 m from the runway's centre line by its width.
+  function holdBars(r, p, q, width) {
+    const W = Math.max(18, r[4] || 30);
+    const hold = W >= 45 ? 90 : W >= 30 ? 60 : 40;
+    const kx = 111320 * Math.cos((r[0] * Math.PI) / 180);
+    const dx = (r[3] - r[1]) * kx, dy = (r[2] - r[0]) * 111320;
+    const len = Math.hypot(dx, dy) || 1;
+    const ux = dx / len, uy = dy / len;
+    const of = (pt) => { const x = (pt[1] - r[1]) * kx, y = (pt[0] - r[0]) * 111320; return [x * ux + y * uy, x * uy - y * ux]; };
+    const c = of(p), d = of(q);
+    const bars = [];
+    for (const s of [-1, 1]) {
+      if ((c[1] - s * hold) * (d[1] - s * hold) >= 0) continue; // does not cross the line
+      const t = (s * hold - c[1]) / (d[1] - c[1]);
+      const along = c[0] + t * (d[0] - c[0]);
+      if (along < -30 || along > len + 30) continue;
+      const m = [p[0] + t * (q[0] - p[0]), p[1] + t * (q[1] - p[1])];
+      const away = c[1] * s > d[1] * s ? p : q; // the end of the stretch that is further from the runway
+      const mx = 111320 * Math.cos((m[0] * Math.PI) / 180);
+      const ax = (away[1] - m[1]) * mx, ay = (away[0] - m[0]) * 111320;
+      const dist = Math.hypot(ax, ay) || 1;
+      const vx = ax / dist, vy = ay / dist; // metres, east and north, away from the runway
+      const at = (along2, across) => [m[0] + (vy * along2 + vx * across) / 111320, m[1] + (vx * along2 - vy * across) / mx];
+      for (const [k0, k1] of [[0, 0.9], [2.2, 3.1]]) bars.push([at(k0, -width / 2), at(k1, -width / 2), at(k1, width / 2), at(k0, width / 2)]);
+    }
+    return bars;
+  }
+
   // Aprons: terminal, jet bridges, stand lead-in lines and stop bars (planes park and push back here).
   const GATE_ZOOM = 14;
   function drawGates() {
@@ -471,7 +510,7 @@
     // (padded a lot: an apron can lie up to 3 km from the airport's reference point)
     const view = drawnArea('gates', `${z}|${FG.layouts ? `${FG.layouts.version}.${FG.layouts.looked}` : 0}|${FG.devPreview ? ui.selectedAirport : ''}|${D.airports.length}|${G.state.projects.length}`, 1);
     if (!view) return;
-    const list = D.airports.filter((a) => !a.factory && view.contains([a.lat, a.lon]));
+    const list = airportsNear(view).filter((a) => !a.factory);
     const sig = `${z}|${FG.layouts ? `${FG.layouts.version}.${FG.layouts.looked}` : 0}|${FG.devPreview ? ui.selectedAirport : ''}|${list.map((a) => `${a.code}:${G.airportSize(a.code)}:${G.airportRunways(a.code).length}`).join(',')}`;
     if (sig === ui.gateSig) return; // redrawn only when the view or an airport changes
     ui.gateSig = sig;
@@ -482,12 +521,23 @@
       // Its real layout is on the way: not the one the game makes up meanwhile (it would stand somewhere else).
       if (FG.layouts && FG.layouts.pending(a.code)) continue;
       // taxiways, aprons and buildings (the real ones where the airport has a layout from OpenStreetMap)
-      for (const tw of G.drawnTaxiways(a.code)) { // (not across the aprons and pads)
-        L.polyline(tw, { ...quiet, color: '#4a515c', weight: z >= 16 ? 9 : 4, opacity: 1 }).addTo(ui.gateLayer);
-      }
-      for (const r of ap.aprons || [ap.apron]) L.polygon(r, { ...quiet, stroke: false, fillColor: '#3a4049', fillOpacity: 0.92 }).addTo(ui.gateLayer);
+      const taxiways = G.drawnTaxiways(a.code); // (not across the aprons and pads)
+      for (const tw of taxiways) L.polyline(tw, { ...quiet, color: '#4a515c', weight: z >= 16 ? 9 : 4, opacity: 1 }).addTo(ui.gateLayer);
+      // (solid: the satellite's own planes and paint must not show through)
+      for (const r of ap.aprons || [ap.apron]) L.polygon(r, { ...quiet, stroke: false, fillColor: '#3a4049', fillOpacity: 1 }).addTo(ui.gateLayer);
       // pads (airport fixes): open concrete, planes go straight across them to their stands
-      for (const r of ap.pads || []) L.polygon(r, { ...quiet, color: '#cbd5e1', weight: 1, dashArray: '5 4', fillColor: '#6b7280', fillOpacity: 0.95 }).addTo(ui.gateLayer);
+      for (const r of ap.pads || []) L.polygon(r, { ...quiet, color: '#cbd5e1', weight: 1, dashArray: '5 4', fillColor: '#6b7280', fillOpacity: 1 }).addTo(ui.gateLayer);
+      // yellow centre lines, and the holding positions where a taxiway comes up to a paved runway
+      const paved = z >= 15 ? G.airportRunways(a.code).filter((r) => r[5]) : [];
+      const holdWidth = (G.airportSize(a.code) >= 3 ? 23 : 15) * 0.85; // (as wide as the taxiway in 3D)
+      for (const tw of taxiways) {
+        L.polyline(tw, { ...quiet, color: '#e3b70f', weight: z >= 18 ? 2 : 1, opacity: 1 }).addTo(ui.gateLayer);
+        for (const r of paved) {
+          for (let i = 1; i < tw.length; i++) {
+            for (const bar of holdBars(r, tw[i - 1], tw[i], holdWidth)) L.polygon(bar, { ...quiet, stroke: false, fillColor: '#f2c40f', fillOpacity: 1 }).addTo(ui.gateLayer);
+          }
+        }
+      }
       for (const b of ap.buildings) {
         const fill = { terminal: '#64748b', hall: '#6b7a90', roof: '#94a3b8', tower: '#cbd5e1', bridge: '#cbd5e1', road: '#3b4048', carpark: '#57606c', hangar: '#57606c', other: '#5b6470' }[b.kind];
         if (!fill) continue; // glazing, roof plant, masts and the like are too small to show from above
@@ -534,7 +584,7 @@
     const projects = G.state.projects.map((p) => p.code + p.kind).join();
     const view = drawnArea('runways', `${z}|${projects}|${D.airports.length}`, 0.4);
     if (!view) return;
-    const list = z < C.map.runwayZoom ? [] : D.airports.filter((a) => view.contains([a.lat, a.lon]));
+    const list = z < C.map.runwayZoom ? [] : airportsNear(view);
     // Redrawn only when the zoom, the airports in view or a construction site changes.
     const sig = `${z}|${list.map((a) => `${a.code}:${G.airportRunways(a.code).length}`).join()}|${projects}`;
     if (sig === ui.runwaySig) return;
