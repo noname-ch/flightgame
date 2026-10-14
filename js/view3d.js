@@ -11,7 +11,7 @@ const D = FG.data;
 const PREF_KEY = 'flightgame.view3d';
 const EARTH_R = 6371008.8;
 const EARTH_CIRC = 40075016.686;
-const PLANE_PX = 48;            // on-screen length of an aircraft when zoomed out
+const PLANE_PX = 30;            // on-screen length of an aircraft when zoomed out
 const COLORS = { own: '#007aff', other: '#8e8e93', home: '#34c759', selected: '#ff9500', route: '#007aff', ferry: '#af52de' };
 
 const v = {
@@ -736,7 +736,7 @@ function transformStyle(_prev, style) {
 }
 
 // ---------- three.js layer ----------
-const TERRAIN_EXAG = 1.5; // hills are drawn this much taller; flight heights are stretched the same
+const TERRAIN_EXAG = 1; // real hill heights (1.5 made the mountains look far too high); flight heights are stretched the same
 
 // Shown ground height (already exaggerated) at an airport, remembered once the terrain there has loaded.
 function fieldElevation(map, code) {
@@ -831,7 +831,7 @@ const planeLayer = {
     const zoom = map.getZoom();
     const center = map.getCenter();
     const mpp = EARTH_CIRC * Math.cos(center.lat * Math.PI / 180) / (512 * 2 ** zoom); // metres per pixel
-    const px = PLANE_PX * 2 ** (-Math.max(0, zoom - 11) * 0.5); // shrink towards real size when close
+    const px = PLANE_PX * 2 ** (-Math.max(0, zoom - 8) * 0.5); // shrink towards real size when close
     const sel = FG.ui && FG.ui.selectedPlane;
 
     // Light from above-left of the view centre.
@@ -1028,7 +1028,7 @@ function planeAt(point) {
 }
 
 const PHASE_TEXT = {
-  pushback: 'Pushing back', 'taxi-out': 'Taxiing to the runway', takeoff: 'Taking off', climb: 'Climbing',
+  boarding: 'Boarding', pushback: 'Pushing back', 'taxi-out': 'Taxiing to the runway', takeoff: 'Taking off', climb: 'Climbing',
   cruise: 'Cruising', descent: 'Descending', approach: 'On final', landing: 'Landing', 'taxi-in': 'Taxiing to the gate',
 };
 

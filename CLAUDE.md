@@ -56,7 +56,7 @@ Play online: https://noname-ch.github.io/flightgame/ (GitHub Pages, deployed fro
 - Flight heights: `G.flightState` returns `altFt` above sea level, `fieldFt` (the runways' height there; the 3D
   view draws `altFt - fieldFt` above them) and `ground`. Tracks follow the ground from `js/ground.js`
   (`FG.ground`; `FG.terrain` is the 3D view's airport-site check) and the type's `G.perf(type)`; a flight takes
-  as long as it really takes and waits before the runway for the rest of its block time.
+  as long as it really takes and waits at the gate (phase `boarding`) for the rest of its block time.
 - `js/devtools.js` (F2) only uses public `G` methods (addPlane, crash, incident, infraOf,
   finishProjects, eventContext, refreshMarket). Keep those working.
 - Use `G.home()` and `G.bankruptcyLimit()`, not `C.startAirport` or `C.bankruptcyLimit`.

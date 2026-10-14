@@ -1252,7 +1252,7 @@
   // well clear of the ground on the way (circling over the airport first where mountains are too close to
   // outclimb, and before the final approach where they are too close to descend after) and comes down a 3°
   // glide path. The flight takes as long as such a flight takes; what is left of the game's block time it
-  // waits before the runway.
+  // waits at the gate (boarding) before pushback.
   function buildTrack(type, f, planeId) {
     const day = Math.floor(f.dep / DAY);
     const A0 = airportByCode[f.from];
@@ -1461,7 +1461,8 @@
       return A[i] + (A[i + 1] - A[i]) * (x - i);
     };
 
-    // Times: every part as long as it takes; the rest of the block time the plane waits before the runway.
+    // Times: every part as long as it takes; the rest of the block time the plane waits at the gate, boarding
+    // (it used to wait at the holding point, which looked like it stood on the runway for ages).
     const steps = Math.min(N, 600);
     const raw = [0];
     for (let i = 1; i <= steps; i++) {
@@ -1484,9 +1485,9 @@
     const segs = []; // [t0, t1, s0, s1, ease]; 'both' starts and ends at standstill
     let t = 0;
     const seg = (dt, s0, s1, ease) => { segs.push([t, t + dt, s0, s1, ease]); t += dt; };
+    seg(wait, 0, 0, 'both');
     seg(tPush * k, 0, cum[idx.push], 'both');
     seg(tTaxiOut * k, cum[idx.push], sHold, 'both');
-    seg(wait, sHold, sHold, 'both');
     seg(tLineUp * k, sHold, cum[idx.thr], 'both');
     seg(tRoll * k, cum[idx.thr], sLift, 'in');
     const t0 = t;
@@ -1498,7 +1499,7 @@
     seg(Math.max(0, total - t), cum[idx.lead], cum[cum.length - 1], 'both');
 
     return {
-      pts, cum, idx, cruiseAlt, depRunway: dep, arrRunway: arr, total, orbits, terrainMissing,
+      pts, cum, idx, cruiseAlt, depRunway: dep, arrRunway: arr, total, orbits, terrainMissing, boarding: wait,
       glideDeg: Math.round(Math.atan(pr.glide / 3280.84) / Math.PI * 1800) / 10,
       altAt,
       // Ground height (ft) the heights are measured from in the 3D view: between the two runways.
@@ -1592,7 +1593,8 @@
     const sLift = tr.cum[tr.idx.lift];
     const sTouch = tr.cum[tr.idx.touch];
     let phase;
-    if (sv < tr.cum[tr.idx.push]) phase = 'pushback';
+    if (m < tr.boarding) phase = 'boarding';
+    else if (sv < tr.cum[tr.idx.push]) phase = 'pushback';
     else if (sv < tr.cum[tr.idx.thr]) phase = 'taxi-out';
     else if (sv < sLift) phase = 'takeoff';
     else if (sv >= tr.cum[tr.idx.stop]) phase = 'taxi-in';

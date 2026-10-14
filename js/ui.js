@@ -804,7 +804,7 @@
   }
 
   const PHASES = {
-    pushback: 'pushing back', 'taxi-out': 'taxiing to runway', takeoff: 'taking off', climb: 'climbing', cruise: 'cruising',
+    boarding: 'boarding', pushback: 'pushing back', 'taxi-out': 'taxiing to runway', takeoff: 'taking off', climb: 'climbing', cruise: 'cruising',
     descent: 'descending', approach: 'on final', landing: 'landing', 'taxi-in': 'taxiing to the gate',
   };
   const fmtAlt = (ft) => (ft >= 10000 ? `FL${Math.round(ft / 100)}` : `${Math.round(ft / 100) * 100} ft`);
@@ -813,6 +813,7 @@
   function flightText(p) {
     const st = G.flightState(p, nowMinutes());
     if (!st) return '';
+    if (st.phase === 'boarding') return `boarding · runway ${st.depRunway}`;
     if (st.phase === 'pushback') return `pushing back · runway ${st.depRunway}`;
     if (st.phase === 'taxi-out') return `taxiing to runway ${st.depRunway}`;
     if (st.phase === 'taxi-in' || st.phase === 'landing') return `${PHASES[st.phase]} · runway ${st.arrRunway}`;
