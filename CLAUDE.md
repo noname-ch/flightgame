@@ -146,6 +146,10 @@ Play online: https://noname-ch.github.io/flightgame/ (GitHub Pages, deployed fro
   `FG.bugs.details()` is the report's details block). Reports go to GitHub issues (`FG.fixes.github.createIssue`),
   to `BUGS.md` via `tools/serve.py` POST /__bugs, or to GitHub's new-issue page. Look in `BUGS.md` and the repo's
   issues for open bugs, and delete a `BUGS.md` entry once it is fixed.
+- Parking: a stand's point is where the middle of the plane parks. `gateOf(code, planeId, type)` moves the plane back
+  along the stand line (`parkBack`, kept per apron and type) until its nose is `NOSE_GAP` (4 m) short of the nearest
+  wall ahead (terminal, hangar, other buildings on the ground; not jet bridges, roads, roofs), and shortens its
+  pushback by as much (never under 15 m), so flights still start and end there. The smoke test checks Zurich.
 - Planning uses timetables only (`p.schedule.legs`). Slots are shared, and one slot equals one stand.
 - Stand classes (game.js): `typeClass(type)` from `FG.data.looks[type].span`; `classifyStands` sets `st.cls`/`st.room`
   on every apron once (apronOf wraps layApron). Slots by class: `G.mySlotClasses(code)` (`state.slots[code].byClass`,

@@ -281,7 +281,8 @@ buildings (MapLibre). Switching keeps the place: 3D opens where the 2D map is, a
 back where you were in 3D. Aircraft are drawn as 3D models at their real altitude, stretched when zoomed out
 so you can see them. Planes really fly: they push back from their gate tail first, taxi
 (speeding up and slowing down), accelerate down the runway, rotate and lift off, bank into turns, pitch up
-to climb and down to descend, flare, brake after touchdown and taxi nose-in onto their stand. Hover a
+to climb and down to descend, flare, brake after touchdown and taxi nose-in onto their stand, stopping about 4 m
+short of the terminal or hangar in front of them (big planes further back on the stand than small ones). Hover a
 plane for its status, click it to select it. Drag with the right mouse button (or Ctrl + drag) to tilt and rotate.
 Cameras, as in DCS (on phones the buttons show only their icons):
 - 🎥 Follow (V): the chase camera behind the selected plane. Drag (or one finger) to turn it round the plane and

@@ -343,6 +343,41 @@ try {
   if (!wx.canvas || !wx.line || !wx.sane || !wx.placed || !wx.gone || (wx.crab != null && !Number.isFinite(wx.crab))) errors.push(`weather: ${JSON.stringify(wx)}`);
   else step(`weather at home: ${wx.line}; ${wx.puffs} cloud puffs in view${wx.crab != null ? `; a plane in the air crabs ${wx.crab}° in ${wx.wind} kt` : ''}`);
 
+  step('parking: at Zurich an A320neo and a 777 (where it fits) stop short of the buildings (before: 31 of 42 noses of 777s were in one)');
+  await evaluate(() => { FG.layouts.get('ZRH'); });
+  await waitFor(() => !!FG.layouts.get('ZRH'), 30000, 'the Zurich layout');
+  const park = await evaluate(() => {
+    const walls = { terminal: 1, hangar: 1, other: 1, hall: 1, tower: 1, glass: 1, plant: 1 };
+    const ap = G.apronOf('ZRH');
+    const into = [];
+    let n = 0;
+    for (const type of ['A320neo', 'B777-300ER']) {
+      const look = FG.data.looks[type];
+      ap.stands.forEach((st, k) => {
+        if (st.cls < G.typeClass(type)) return; // (the game gives that type a stand big enough for it)
+        n++;
+        const g = G.standSpot('ZRH', k, type);
+        // free metres ahead of the middle of the plane, along its nose
+        const kx = 111320 * Math.cos(g.lat * Math.PI / 180), h = g.heading * Math.PI / 180, d = [Math.sin(h), Math.cos(h)];
+        let clear = Infinity;
+        for (const b of ap.buildings) {
+          if (!walls[b.kind] || (b.base || 0) > 3) continue;
+          const ring = b.ring.map((q) => [(q[1] - g.lon) * kx, (q[0] - g.lat) * 111320]);
+          for (let i = 0; i < ring.length; i++) {
+            const [px, py] = ring[i], [qx, qy] = ring[(i + 1) % ring.length], ex = qx - px, ey = qy - py, den = d[0] * ey - d[1] * ex;
+            if (Math.abs(den) < 1e-9) continue;
+            const t = (ex * -py - ey * -px) / den, u = (d[0] * -py - d[1] * -px) / den;
+            if (t > 0 && u >= 0 && u <= 1) clear = Math.min(clear, t);
+          }
+        }
+        if (clear < look.len / 2 + 2.5) into.push(`${type} at ${st.name} (${(clear - look.len / 2).toFixed(1)} m)`);
+      });
+    }
+    return { n, into };
+  });
+  step(`parking: ${park.n} planes on stands, ${park.into.length} with the nose closer than 2.5 m to a wall`);
+  if (park.into.length) errors.push(`parking: noses into or right at buildings at Zurich: ${park.into.join(', ')}`);
+
   step('Fleet: Ferry there (to the other slot airport) says when the plane leaves');
   const ferry = await evaluate(async () => {
     const p = G.state.planes[0];

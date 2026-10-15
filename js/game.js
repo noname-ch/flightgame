@@ -1929,13 +1929,103 @@
     return Math.max(0, ids.indexOf(planeId)) % apronOf(code).stands.length;
   }
 
-  // A plane's stand at an airport: where it parks nose-in (heading = towards the terminal).
-  function gateOf(code, planeId) {
+  // A plane's stand at an airport: where it parks nose-in (heading = towards the terminal). `type`: the plane's,
+  // where planeId is no plane of the fleet (route lines).
+  function gateOf(code, planeId, type) {
+    const p = !type && Game.state && Game.state.planes.find((q) => q.id === planeId);
+    return standSpot(code, standIndex(code, planeId), type || (p && p.type));
+  }
+  // Where a plane of that type parks on stand k (see parkBack), and how far it is pushed back from there.
+  function standSpot(code, k, type) {
     const ap = apronOf(code);
     const a = airportByCode[code];
     if (!ap.stands.length) return { lat: a.lat, lon: a.lon, heading: 0, name: '', push: TAXI_LANE };
-    const st = ap.stands[Math.min(standIndex(code, planeId), ap.stands.length - 1)];
-    return { lat: st.lat, lon: st.lon, heading: st.heading, name: st.name, bridge: st.bridge, push: st.push || TAXI_LANE };
+    const st = ap.stands[Math.min(k, ap.stands.length - 1)];
+    const push = st.push || TAXI_LANE;
+    const back = parkBack(ap, st, type, push);
+    const [lat, lon] = back ? offsetPoint(st.lat, st.lon, st.heading + 180, back) : [st.lat, st.lon];
+    return { lat, lon, heading: st.heading, name: st.name, bridge: st.bridge, push: push - back };
+  }
+
+  // Planes stop short of buildings. A stand's point is where the middle of the plane parks, so a long plane's nose
+  // reached into the terminal or a hangar where the stand lies close to it. The plane parks further back along the
+  // stand's line until its nose is NOSE_GAP m short of the nearest wall ahead (looked for along its nose, a little
+  // either side); its pushback is that much shorter, so it still ends where it did. Kept per apron and type.
+  const NOSE_GAP = 4;
+  const WALLS = { terminal: 1, hangar: 1, other: 1, hall: 1, tower: 1, glass: 1, plant: 1 }; // (standing on the ground)
+  const parkCache = new WeakMap();
+  function parkBack(ap, st, type, push) {
+    const look = type && D.looks && D.looks[type];
+    if (!look || !ap.buildings) return 0;
+    let byStand = parkCache.get(ap);
+    if (!byStand) parkCache.set(ap, (byStand = new Map()));
+    const key = `${st.lat},${st.lon},${st.heading}|${type}`;
+    if (byStand.has(key)) return byStand.get(key);
+    // Metres east and north of the stand point; d = along the nose, r = to its right.
+    const kx = 111320 * Math.cos(st.lat * Math.PI / 180);
+    const loc = (q) => [(q[1] - st.lon) * kx, (q[0] - st.lat) * 111320];
+    const h = st.heading * Math.PI / 180;
+    const d = [Math.sin(h), Math.cos(h)];
+    const r = [Math.cos(h), -Math.sin(h)];
+    const reach = look.len / 2 + NOSE_GAP;
+    const near = (ring) => { // (its box within reach, whatever the corners: a long wall can pass close by)
+      const xs = ring.map((q) => q[0]), ys = ring.map((q) => q[1]);
+      const dx = Math.max(Math.min(...xs), 0, -Math.max(...xs)), dy = Math.max(Math.min(...ys), 0, -Math.max(...ys));
+      return Math.hypot(dx, dy) < reach + push;
+    };
+    const rings = ap.buildings.filter((b) => WALLS[b.kind] && (b.base || 0) <= 3).map((b) => b.ring.map(loc)).filter(near);
+    // Free metres ahead of the plane parked `back` m behind the stand point.
+    const clearAt = (back) => {
+      let clear = Infinity;
+      for (const ring of rings) {
+        for (let i = 0; i < ring.length; i++) {
+          const [px, py] = ring[i];
+          const [qx, qy] = ring[(i + 1) % ring.length];
+          const ex = qx - px, ey = qy - py;
+          const den = d[0] * ey - d[1] * ex;
+          if (Math.abs(den) < 1e-9) continue; // (a wall along the nose)
+          for (const o of [-(look.dia || 3) / 2, 0, (look.dia || 3) / 2]) {
+            const ox = r[0] * o - d[0] * back - px, oy = r[1] * o - d[1] * back - py; // ray start from the wall's corner
+            const t = (ex * oy - ey * ox) / den;      // along the nose
+            const u = (d[0] * oy - d[1] * ox) / den;  // along the wall
+            if (t > 0 && u >= 0 && u <= 1 && t < clear) clear = t;
+          }
+        }
+      }
+      return clear;
+    };
+    // (again from there: further back, another wall may come in the way; never so far back that the pushback would
+    // be shorter than 15 m)
+    const most = Math.max(0, push - 15);
+    let back = 0;
+    // (a stand point the map data has inside a building: out of it backwards first, the nose short of its wall)
+    const within = (ring) => {
+      let c = false;
+      for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+        const [xi, yi] = ring[i], [xj, yj] = ring[j];
+        if ((yi > 0) !== (yj > 0) && 0 < ((xj - xi) * -yi) / (yj - yi) + xi) c = !c;
+      }
+      return c;
+    };
+    for (const ring of rings.filter(within)) {
+      for (let i = 0; i < ring.length; i++) {
+        const [px, py] = ring[i];
+        const [qx, qy] = ring[(i + 1) % ring.length];
+        const ex = qx - px, ey = qy - py;
+        const den = -d[0] * ey + d[1] * ex;
+        if (Math.abs(den) < 1e-9) continue;
+        const t = (ex * -py - ey * -px) / den;       // backwards along the stand line
+        const u = (-d[0] * -py + d[1] * -px) / den;
+        if (t > 0 && u >= 0 && u <= 1) back = Math.max(back, Math.min(most, t + reach));
+      }
+    }
+    for (let k = 0; k < 4 && back < most; k++) {
+      const clear = clearAt(back);
+      if (clear >= reach) break;
+      back = Math.min(most, back + reach - clear);
+    }
+    byStand.set(key, back);
+    return back;
   }
 
   // Flight performance of a type: climb rate near the ground (ft/min), lift-off and approach speeds (km/h) and
@@ -2018,8 +2108,8 @@
     const turnStart = inTurn.length ? inTurn[0] : faf;
 
     // Gates: pushed back out of the stand at the start, nose-in onto the stand at the end.
-    const gA = gateOf(f.from, planeId);
-    const gB = gateOf(f.to, planeId);
+    const gA = gateOf(f.from, planeId, type);
+    const gB = gateOf(f.to, planeId, type);
     const standA = [gA.lat, gA.lon];
     const standB = [gB.lat, gB.lon];
     const pushA = offsetPoint(gA.lat, gA.lon, gA.heading + 180, gA.push);
@@ -2503,7 +2593,7 @@
     priceNew, fitsAirport, fitsReason, crewFor, factoryOf, onSale, dateOf,
     airportSize, baseSize, airportCategory, airportRunways, runwayLength, runwayTaxiways, runwayCover, roundLine,
     CLASSES, CLASS_ROOM, typeClass, standClassAt, maxClass, slotsFit, longestRunway, runwayNeed, attraction,
-    flightTrack, flightState, legTrack, cruiseFt, perf, windFrom, weatherAt, windAt, WX_DRIFT, gateOf, apronOf, taxiwaysOf, drawnTaxiways, expansionPreview, terminalPiece,
+    flightTrack, flightState, legTrack, cruiseFt, perf, windFrom, weatherAt, windAt, WX_DRIFT, gateOf, standSpot, apronOf, taxiwaysOf, drawnTaxiways, expansionPreview, terminalPiece,
     fmtMoney, fmtTime, fmtClock, fmtDuration,
 
     // opts: { mode, difficulty, airport, aircraft, company, story } from the start screen; all optional.
