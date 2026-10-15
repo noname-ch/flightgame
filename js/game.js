@@ -3565,6 +3565,79 @@
       return out;
     },
 
+    // How a timetable fits into the slots, airport by airport: when this plane stands there (mine), when your
+    // other planes do (others) and when they need more slots than you have (over: the red parts). over is
+    // only counted while this plane is there.
+    slotFit(planeId, legs) {
+      const p = this.plane(planeId);
+      const mine = this.groundTimes(p.type, legs);
+      const out = [];
+      let total = 0;
+      for (const code of new Set(legs.map((l) => l.from))) {
+        const { busy, uses: others } = this.slotBusy(code, planeId);
+        const have = this.slotCount(code);
+        const at = mine.filter((g) => g.code === code);
+        const over = this.overSpans(busy, at, have);
+        const minutes = over.reduce((n, x) => n + x.to - x.from, 0);
+        total += minutes;
+        out.push({ code, have, mine: at, others, over, minutes });
+      }
+      return { airports: out, minutes: total };
+    },
+    // Your other planes on the ground at an airport: { uses (slotUsage), busy: how many, minute by minute }.
+    slotBusy(code, planeId) {
+      const busy = new Uint8Array(DAY);
+      const p = this.plane(planeId);
+      const uses = this.slotUsage(code, { planeId, type: p.type, legs: [] }).uses;
+      for (const u of uses) for (let m = Math.floor(u.from); m < Math.min(DAY, Math.ceil(u.to)); m++) busy[m]++;
+      return { busy, uses };
+    },
+    // Spans of the stays `at` where the other planes already fill all `have` slots.
+    overSpans(busy, at, have) {
+      const over = [];
+      for (const g of at) {
+        let start = -1;
+        for (let m = Math.floor(g.from); m <= Math.min(DAY, Math.ceil(g.to)); m++) {
+          const full = m < Math.min(DAY, Math.ceil(g.to)) && busy[m] + 1 > have;
+          if (full && start < 0) start = m;
+          if (!full && start >= 0) { over.push({ from: start, to: m }); start = -1; }
+        }
+      }
+      return over;
+    },
+
+    // The best day for a plane on a loop of stops: tries every first departure (5-minute steps), every
+    // airport of the loop as the place it spends the night and (rounds 0 = as many as fit) fewer loops, and
+    // keeps the one with the fewest minutes without a free slot, then the most flights, then the one closest
+    // to `around`. Returns { stops, first, rounds, legs, over } or null.
+    fitTimetable(planeId, stops, rounds, around) {
+      const p = this.plane(planeId);
+      const busy = {};
+      for (const c of new Set(stops)) busy[c] = this.slotBusy(c, planeId).busy;
+      let best = null;
+      for (let r = 0; r < stops.length; r++) {
+        const rot = stops.slice(r).concat(stops.slice(0, r));
+        for (let first = C.curfew.start; first <= C.curfew.end; first += 5) {
+          const full = this.buildTimetable(p.type, rot, first, rounds);
+          const loops = full.length / rot.length;
+          for (let n = rounds ? loops : 1; n <= loops; n++) {
+            const legs = full.slice(0, n * rot.length);
+            if (!legs.length) continue;
+            let over = 0;
+            for (const g of this.groundTimes(p.type, legs)) {
+              for (const x of this.overSpans(busy[g.code], [g], this.slotCount(g.code))) over += x.to - x.from;
+            }
+            const away = Math.abs(first - around) + (r ? 1 : 0);
+            if (!best || over < best.over || (over === best.over && (legs.length > best.legs.length ||
+              (legs.length === best.legs.length && away < best.away)))) {
+              best = { stops: rot, first, rounds: rounds || (n < loops ? n : 0), legs, over, away };
+            }
+          }
+        }
+      }
+      return best;
+    },
+
     // Take a plane off its timetable: it stays where it is.
     clearTimetable(planeId) {
       const p = this.plane(planeId);

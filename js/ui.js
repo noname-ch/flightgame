@@ -2549,6 +2549,7 @@
       onAction(e);
     });
     $('sidebar').addEventListener('change', (e) => { if (FG.planner.change(e.target)) ui.selectOpen = false; });
+    $('sidebar').addEventListener('input', (e) => FG.planner.input(e.target));
     bindStrip();
     bindTopbar();
     bindSheet();

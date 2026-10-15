@@ -198,6 +198,28 @@ try {
   if (plan.err) warnings.push(`second plane: ${plan.err}`);
   step(`flying ${plan.route}`);
 
+  step('planner: drag the start time of the second plane, then ✨ find a time that fits the slots');
+  const fit = await evaluate(async () => {
+    const p2 = G.state.planes[G.state.planes.length - 1];
+    FG.planner.openPlane(p2.id);
+    document.querySelector('#rail [data-tab="schedule"]').click();
+    await new Promise((r) => setTimeout(r, 300));
+    const range = document.getElementById('pl-first-range');
+    if (!range) return { err: 'no start-time slider in the planner' };
+    range.value = Number(range.min) + 120;
+    range.dispatchEvent(new Event('input', { bubbles: true }));
+    const bars = document.querySelectorAll('#pl-fit .tl-bar.fit').length;
+    const fitBtn = document.querySelector('[data-pl="fit"]');
+    if (!fitBtn) return { err: 'no ✨ fit button' };
+    fitBtn.click();
+    await new Promise((r) => setTimeout(r, 300));
+    const ok = !!document.querySelector('#pl-fit');
+    document.querySelector('[data-pl="close"]').click();
+    return { bars, ok };
+  });
+  if (fit.err || !fit.bars || !fit.ok) errors.push(`planner fit: ${fit.err || `${fit.bars} slot bars`}`);
+  else step(`fit: ${fit.bars} airport slot bars`);
+
   step('full speed for 20 s with the 2D map, every section opened');
   await evaluate(() => document.querySelector('#speed-pop [data-speed]:last-child').click());
   const t0 = await evaluate(() => G.state.time);

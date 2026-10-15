@@ -79,7 +79,10 @@ be made again the next day; a rival that gives up a slot flies one daily flight 
 1. Click an airport on the map to see its catchment, demand from your slots and its slots.
 2. **Lease one** of its free slots (upfront fee + weekly fee), or make an offer when none is free.
 3. In the **Schedule** tab: click the plane, pick its airports (e.g. `BRN → BCN → BRN → LHR`),
-   **Fill the day** and **Save & fly**.
+   drag the **start time** and **Save & fly**. Below the slider, one bar per airport shows when this plane
+   stands there (orange), when your other planes do (grey) and where all your slots there are taken (red).
+   Planes share a slot as long as they aren't on the ground at the same time. **✨ Find a time that fits**
+   tries every start time and every stop as the place the plane spends the night.
 4. Watch revenue in the **Log** and **Finance** tabs. Weekly costs (aircraft lease, crew, slots)
    are charged every Monday 00:00. Below CHF -500k you're bankrupt.
 5. Set the **ticket price** of each route with − / + (in the plane's card or the airport panel),

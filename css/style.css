@@ -211,6 +211,17 @@ main { flex: 1; display: flex; min-height: 0; position: relative; }
 .plan select#pl-add { flex: none; }
 .plan input[type=time] { padding: 2px 4px; border: 1px solid var(--input-border); border-radius: 6px; }
 table.legs td { vertical-align: middle; }
+.plan .pl-when input[type=range] { flex: 1; min-width: 120px; accent-color: #f59e0b; }
+.pl-fit { margin: 4px 0 6px; }
+.pl-fit .tl-label[data-pl] { cursor: pointer; }
+.tl-bar.fit { height: 32px; }
+.tl-bar.fit > .fit-other, .tl-bar.fit > .fit-mine { border-radius: 3px; font-size: 9px; font-weight: 700; overflow: hidden; white-space: nowrap;
+  text-align: center; z-index: 2; }
+.tl-bar.fit > .fit-other { top: 2px; bottom: 50%; background: #64748b; color: #e2e8f0; line-height: 14px; opacity: 0.85; }
+.tl-bar.fit > .fit-mine { top: 50%; bottom: 2px; background: #f59e0b; color: #111; line-height: 14px; }
+.tl-bar.fit > .fit-over { top: 0; bottom: 0; background: rgba(239, 68, 68, 0.55); z-index: 3; pointer-events: auto; }
+.fit-legend .key { display: inline-block; width: 10px; height: 8px; border-radius: 2px; vertical-align: middle; }
+.fit-legend .key.mine { background: #f59e0b; } .fit-legend .key.other { background: #64748b; } .fit-legend .key.over { background: rgba(239, 68, 68, 0.8); }
 table.legs input[type=time] { width: 78px; }
 .nowrap { white-space: nowrap; }
 ul.errors { margin: 6px 0; padding-left: 18px; color: var(--neg); font-size: 12px; }
