@@ -3589,9 +3589,45 @@
       if (p.location === code && p.status !== 'flying') return `${nameOf(p)} is already at ${code}.`;
       if (!fitsAirport(p.type, code)) return fitsReason(p.type, code);
       if (dist(p.location, code) > D.aircraft[p.type].rangeKm) return 'Out of range.';
+      // It must be able to stand there: a slot of its class or bigger, not filled by planes that stay for good
+      // (else it would wait at its gate for ever).
+      const need = typeClass(p.type);
+      const mine = this.mySlotClasses(code);
+      if (!slotsFit(mine, [need])) {
+        const have = mine.map((n, c) => (n ? `${n}× class ${CLASSES[c]}` : '')).filter(Boolean).join(', ');
+        return `Your slot at ${code} is too small (${have}): the ${D.aircraft[p.type].name} needs a class ${CLASSES[need]} ` +
+          'stand or bigger. Lease one there first.';
+      }
+      const stay = this.state.planes.filter((q) => q !== p && (q.status === 'flying' && q.flight && q.flight.to === code
+        ? !(q.schedule.active && q.schedule.legs && q.schedule.legs.length) && (!q.pendingFerry || q.pendingFerry === code)
+        : this.staysUntil(q, code, Infinity)));
+      if (!slotsFit(mine, [...stay.map((q) => typeClass(q.type)), need])) {
+        return `Every slot at ${code} it fits in is taken by ${stay.map(nameOf).join(', ')}, parked there with no running ` +
+          'timetable. Move one of them away or lease another slot first.';
+      }
       p.schedule.active = false;
       p.pendingFerry = code;
       this.log(`${nameOf(p)} will ferry to ${code}${p.status === 'idle' ? '' : ' when ready'}.`);
+      return null;
+    },
+
+    // Why a plane that has somewhere to go (a ferry or its timetable) isn't leaving right now, in a few words
+    // ("at 06:00 (night curfew)"), or null when nothing holds it.
+    departNote(p) {
+      const t = this.state.time;
+      if (p.status === 'flying' && p.flight) return `after it lands at ${p.flight.to}`;
+      if (p.status === 'turnaround') return p.repair ? 'after its repairs' : `after its turnaround (${fmtClock(Math.ceil(p.readyAt % DAY))})`;
+      const leg = this.nextLeg(p);
+      if (!leg) return null;
+      const hold = this.holdReason(p, leg.to);
+      if (hold) return `when this ends: ${hold}`;
+      const tod = t % DAY;
+      if (tod < C.curfew.start || tod > C.curfew.end) return `at ${fmtClock(C.curfew.start)} (night curfew)`;
+      const crew = this.crewOf(p);
+      if (!crew) return 'once it has a crew';
+      if (crew.dutyToday + blockMinutes(p.type, dist(p.location, leg.to)) > C.crewMaxDutyMin) return 'tomorrow (the crew has flown its hours today)';
+      if (!this.slotFreeAt(leg.to, t + blockMinutes(p.type, dist(p.location, leg.to)), p.id)) return `as soon as a slot at ${leg.to} is free`;
+      if (leg.kind === 'scheduled' && t < p.schedule.due) return `at ${fmtClock(p.schedule.due % DAY)}`;
       return null;
     },
 

@@ -1251,7 +1251,11 @@
       const l = sch.legs[sch.index % sch.legs.length];
       if (l.from === p.location) return `At ${p.location} ${gate} · next ${G.fmtClock(l.dep)} to ${l.to}`;
     }
-    if (leg) return `At ${p.location} ${gate} · waiting (curfew / crew duty)`;
+    if (leg) {
+      const when = G.departNote(p);
+      const where = p.pendingFerry ? `ferries to ${p.pendingFerry}` : 'leaves';
+      return `At ${p.location} ${gate} · ${when ? `${where} ${when}` : `${where} now`}`;
+    }
     return `Parked at ${p.location} ${gate}${sch.legs ? ' · timetable paused' : ' · no timetable'}`;
   }
 
@@ -2547,7 +2551,17 @@
         break;
       }
       case 'sendPlane': act(G.sendPlane(plane, code)); break;
-      case 'sendSelect': act(G.sendPlane(plane, $(`send-${plane}`).value)); break;
+      case 'sendSelect': {
+        const to = $(`send-${plane}`).value;
+        const err = G.sendPlane(plane, to);
+        if (!err) {
+          const p = G.plane(plane);
+          const when = G.departNote(p);
+          toast(`${G.planeName(p)} ferries to ${to} ${when || 'now'}.`);
+        }
+        act(err);
+        break;
+      }
       case 'fare': G.changeFare(el.dataset.from, el.dataset.to, Number(el.dataset.dir)); break;
       case 'selectRival': {
         const id = el.dataset.id;

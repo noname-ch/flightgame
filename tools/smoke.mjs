@@ -285,6 +285,27 @@ try {
   if (!result.flights) errors.push('no flight landed in 30 game days');
   if (result.gameOver) warnings.push('the airline went bankrupt during the test');
 
+  step('Fleet: Ferry there (to the other slot airport) says when the plane leaves');
+  const ferry = await evaluate(async () => {
+    const p = G.state.planes[0];
+    document.querySelector('#rail [data-tab="fleet"]').click();
+    await new Promise((r) => setTimeout(r, 300));
+    const sel = document.getElementById(`send-${p.id}`);
+    const btn = document.querySelector(`[data-action="sendSelect"][data-plane="${p.id}"]`);
+    if (!sel || !btn) return { err: 'no ferry select or button on the plane card' };
+    const at = p.status === 'flying' && p.flight ? p.flight.to : p.location;
+    const to = [...sel.options].map((o) => o.value).find((c) => c !== at);
+    sel.value = to;
+    btn.click();
+    await new Promise((r) => setTimeout(r, 200));
+    const text = document.getElementById('toast').textContent;
+    const ok = p.pendingFerry === to && text.includes(`ferries to ${to}`);
+    G.setScheduleActive(p.id, true); // back on its timetable for the rest of the test
+    return ok ? { text } : { err: `no ferry (${p.pendingFerry}, toast "${text}")` };
+  });
+  if (ferry.err) errors.push(`ferry: ${ferry.err}`);
+  else step(`ferry: "${ferry.text}"`);
+
   step(`airport editor (F3): add a stand at ${home}, then drop it`);
   await waitFor((h) => FG.layouts.settled(h), 60000, null, home);
   const ed = await evaluate(async (code) => {
