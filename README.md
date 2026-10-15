@@ -68,8 +68,8 @@ Settings → On the map → *Clouds and weather* turns it all off.
 
 **Sound**: the aircraft are heard, made up as they play (no sound files): jets whine up on the starter during the
 pushback, the igniters tick, the engines light and settle to idle; a burst of thrust gets them rolling on the
-taxiway, take-off power roars (rumbling from behind, buzzing ahead of a big fan), then climb and cruise power, near
-silence on the descent, power again on the approach, reverse thrust after the tyres chirp, and the whine running
+taxiway, take-off power roars (deep, rumbling from behind, buzzing ahead of a big fan), then climb and cruise power
+with the air rushing past, a whoosh on the descent, power again on the approach, reverse thrust after the tyres chirp, and the whine running
 down at the gate. Turboprops buzz (two propellers a little out of tune), old ones whistle; piston radials crank,
 cough, catch and run rough until warm. APUs hum at the gates. You hear what you look at: zoomed in on an airport its
 planes, zoomed out nothing; the plane you follow (2D or 3D, or the plane window's camera) from close behind, the

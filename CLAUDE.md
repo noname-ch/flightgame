@@ -96,8 +96,10 @@ Play online: https://noname-ch.github.io/flightgame/ (GitHub Pages, deployed fro
   3D camera (`cameraAt`: back from the centre by the tilt, up from `map.getCenterElevation()`; MapLibre 6 has no
   getFreeCameraOptions), the fly-by spot, or above the 2D map's centre (`mpp * 60`); the followed plane
   (`v3.follow`, `FG.ui.following`, `FG.planeWin.id`) is heard as from close by. `pick` gives the `VOICES` loudest
-  planes a voice (4×/s), `play` sets them (20×/s). The smoke test runs Chrome with
-  `--autoplay-policy=no-user-gesture-required` and reads `FG.sound.meter()`.
+  planes a voice (4×/s), `play` sets them (20×/s). Roar and air are pink noise, rumble brown (white noise filtered
+  sounded like static to the user); whines stay within about an octave (high pitches while throttling bothered
+  them); a low shelf adds bass. `FG.sound.spectrum()` measures centroid, flatness, hiss (hf) and bass. The smoke
+  test runs Chrome with `--autoplay-policy=no-user-gesture-required`, reads `FG.sound.meter()` and fails on hiss.
 - 3D cameras (view3d.js): following, `v.cam` is 'chase' (`chaseTick`; a drag turns it round the plane through
   `v.orbit`, MapLibre's own dragging is off while following), 'flyby' (`flybyTick`, spot in `v.flyby`) or 'wing'
   (`wingTick`, spot in `WING_CAM`). Keys V/B/N and `camera(mode)`. Fly-by and wing place the camera with

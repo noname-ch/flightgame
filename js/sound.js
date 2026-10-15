@@ -56,12 +56,13 @@
       pr = { kind: 'piston', crank: 40 * j, prop: 72 * j, apu: false };
     } else if (eng === 'prop2') {
       const old = (ac.year || 2000) < 1975; // (the Dart's whistle)
-      pr = { kind: 'turboprop', prop: (old ? 80 : 104) * j, whine: (old ? 2300 : 3600) * j, whineGain: old ? 2.2 : 1, apu: !old };
+      pr = { kind: 'turboprop', prop: (old ? 80 : 104) * j, whine: (old ? 2000 : 2200) * j, whineGain: old ? 2 : 1, apu: !old };
     } else {
       // Early jets (turbojets, low bypass) roar and scream; big modern fans hum lower.
       const old = eng === 'concorde' || ((ac.year || 2000) < 1970 && !look.bigFan);
       const fan = (look.bigFan ? 1300 : ac.category === 'widebody' ? 1700 : ac.category === 'regional' ? 3100 : 2500) * j;
-      pr = { kind: 'jet', old, fan, shaft: fan / (look.bigFan ? 20 : 30), core: (old ? 5200 : 6400) * j, apu: true, afterburner: eng === 'concorde' };
+      // (the whines: fan from fanLo at idle to fanHi at full power, about an octave; the core lower still)
+      pr = { kind: 'jet', old, fan, fanLo: fan * 0.26, fanHi: fan * 0.5, shaft: fan / (look.bigFan ? 20 : 30), core: (old ? 2600 : 2200) * j, apu: true, afterburner: eng === 'concorde' };
     }
     pr.size = Math.min(1.25, 0.5 + Math.sqrt(ac.seats || 100) / 25) * (four ? 1.1 : 1);
     return (profiles[type] = pr);
@@ -236,14 +237,19 @@
     s.master.gain.value = 0;
     s.master.connect(comp);
     comp.connect(ctx.destination);
-    s.meter = ctx.createAnalyser(); // (FG.sound.meter)
-    s.meter.fftSize = 2048;
+    s.meter = ctx.createAnalyser(); // (FG.sound.meter, spectrum)
+    s.meter.fftSize = 8192;
+    s.meter.smoothingTimeConstant = 0; // (else each reading is mostly the one before)
     s.master.connect(s.meter);
-    // White noise, and a slow random wobble (the uneven beat of a piston engine, the crackle of a jet at full power).
+    // Noise: white (the short bursts), pink and brown (the roar and the rumble: their weight is low down, white
+    // noise filtered sounds like static), and a slow random wobble (the uneven beat of a piston engine, the crackle
+    // of a jet at full power).
     const n = ctx.sampleRate * 3;
     s.noise = ctx.createBuffer(1, n, ctx.sampleRate);
     const nd = s.noise.getChannelData(0);
     for (let i = 0; i < n; i++) nd[i] = Math.random() * 2 - 1;
+    s.pink = colouredNoise(ctx, n, 'pink');
+    s.brown = colouredNoise(ctx, n, 'brown');
     s.wobble = ctx.createBuffer(1, n, ctx.sampleRate);
     const wd = s.wobble.getChannelData(0);
     const step = Math.round(ctx.sampleRate / 22);
@@ -263,6 +269,40 @@
     clearInterval(s.timer);
     s.timer = setInterval(update, TICK);
     return true;
+  }
+
+  // Pink (-3 dB an octave, Paul Kellet's filter) or brown (-6 dB) noise, n samples at rms 0.3, looping without a
+  // click (its end faded into its start).
+  function colouredNoise(ctx, n, kind) {
+    const F = Math.round(ctx.sampleRate * 0.05);
+    const raw = new Float32Array(n + F);
+    let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0, y = 0;
+    for (let i = 0; i < n + F; i++) {
+      const w = Math.random() * 2 - 1;
+      if (kind === 'pink') {
+        b0 = 0.99886 * b0 + w * 0.0555179; b1 = 0.99332 * b1 + w * 0.0750759; b2 = 0.969 * b2 + w * 0.153852;
+        b3 = 0.8665 * b3 + w * 0.3104856; b4 = 0.55 * b4 + w * 0.5329522; b5 = -0.7616 * b5 - w * 0.016898;
+        raw[i] = b0 + b1 + b2 + b3 + b4 + b5 + b6 + w * 0.5362;
+        b6 = w * 0.115926;
+      } else {
+        y = (y + 0.02 * w) / 1.02;
+        raw[i] = y;
+      }
+    }
+    let mean = 0;
+    for (let i = 0; i < n + F; i++) mean += raw[i];
+    mean /= n + F;
+    const buf = ctx.createBuffer(1, n, ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) {
+      const k = i < F ? i / F : 1;
+      d[i] = (i < F ? raw[i] * k + raw[n + i] * (1 - k) : raw[i]) - mean;
+    }
+    let sq = 0;
+    for (let i = 0; i < n; i++) sq += d[i] * d[i];
+    const g = 0.3 / Math.sqrt(sq / n);
+    for (let i = 0; i < n; i++) d[i] *= g;
+    return buf;
   }
 
   function makeVoice(pr) {
@@ -291,19 +331,32 @@
     v.pan = ctx.createStereoPanner();
     v.air = filter('lowpass', 16000, 0.5); // the air takes the highs out with distance
     v.mix = ctx.createGain();
-    v.mix.connect(v.air).connect(v.pan).connect(v.out).connect(s.master);
+    v.bass = filter('lowshelf', 220, 0.7); // (more weight low down)
+    v.bass.gain.value = 6;
+    v.mix.connect(v.bass).connect(v.air).connect(v.pan).connect(v.out).connect(s.master);
     const gain = (to = v.mix) => { const g = ctx.createGain(); g.gain.value = 0; g.connect(to); return g; };
     const L = v.L;
-    L.noise = src(s.noise);
+    L.noise = src(s.pink); // (roar, APU, wind)
+    L.deep = src(s.brown); // (rumble)
+    const lp2 = (f, q = 0.7) => { const a = filter('lowpass', f, q); const b = filter('lowpass', f, q); a.connect(b); return [a, b]; };
     if (pr.kind === 'jet') {
-      L.roarF = filter('lowpass', 400, 0.4);
+      [L.roarF, L.roarF2] = lp2(400);
       L.roar = gain();
-      L.noise.connect(L.roarF).connect(L.roar);
-      L.rumbleF = filter('lowpass', 150, 0.9);
+      L.noise.connect(L.roarF);
+      L.roarF2.connect(L.roar);
+      L.rumbleF = filter('lowpass', 180, 0.8);
       L.rumble = gain();
-      L.noise.connect(L.rumbleF).connect(L.rumble);
-      L.crackle = gain(L.rumble.gain); // (crackle: the rumble's level jumps about)
-      src(s.wobble, 4).connect(L.crackle);
+      L.deep.connect(L.rumbleF).connect(L.rumble);
+      L.crackle = gain(L.rumble.gain); // (crackle at take-off power: the rumble's level jumps about)
+      src(s.wobble, 3).connect(L.crackle);
+      // The drone: the fan shaft's turn and its harmonics, both engines a little apart (they throb).
+      L.droneF = filter('lowpass', 300, 1.2);
+      L.drone = gain();
+      L.drone1 = osc('triangle', 50);
+      L.drone2 = osc('triangle', 50);
+      L.drone1.connect(L.droneF);
+      L.drone2.connect(L.droneF);
+      L.droneF.connect(L.drone);
       L.fan = gain();
       L.fan1 = osc('triangle', 100);
       L.fan2 = osc('triangle', 100); // the other engine, a little apart: they beat
@@ -357,13 +410,20 @@
     }
     if (pr.apu) {
       L.apu = gain();
-      L.apu1 = osc('sine', 2900 * (0.97 + 0.06 * Math.random()));
+      L.apu1 = osc('sine', 1900 * (0.97 + 0.06 * Math.random()));
       L.apu1.connect(L.apu);
-      L.apuF = filter('bandpass', 1500, 1.2);
+      L.apuF = filter('bandpass', 700, 1);
       L.noise.connect(L.apuF).connect(L.apu);
     }
+    // The air rushing past the plane (all kinds): stronger and brighter with speed, gusting a little.
+    [L.airF, L.airF2] = lp2(800, 0.6);
+    L.air = gain();
+    L.noise.connect(L.airF);
+    L.airF2.connect(L.air);
+    L.gust = gain(L.air.gain);
+    src(s.wobble, 0.2).connect(L.gust);
     // The wind past the wing camera (not muffled by distance).
-    L.windF = filter('bandpass', 650, 0.5);
+    L.windF = filter('bandpass', 500, 0.7);
     L.wind = ctx.createGain();
     L.wind.gain.value = 0;
     L.noise.connect(L.windF).connect(L.wind).connect(v.pan);
@@ -470,19 +530,29 @@
     T(v.air.frequency, g.near ? 16000 : Math.min(16000, 16000 / (1 + g.d / 300)));
     T(v.pan.pan, g.pan * 0.8);
     L2.noise.playbackRate.setTargetAtTime(dop, at, 0.06);
+    L2.deep.playbackRate.setTargetAtTime(dop, at, 0.06);
     if (pr.kind === 'jet') {
       const n1 = sm.pw;
       const n2 = sm.n2;
       const old = pr.old ? 1.5 : 1;
-      T(L2.roar.gain, run * sz * (0.12 + 2.7 * n1 ** 3) * (1 + 0.9 * behind) * (1 - 0.25 * front) * old * (1 + 0.5 * sm.rev));
-      T(L2.roarF.frequency, Math.min(9000, (250 + 3800 * n1 ** 1.6) * (1 + 0.4 * behind + 0.6 * sm.rev)));
-      const rumble = run * sz * 3 * n1 ** 4 * (0.4 + 1.3 * behind) * (pr.afterburner && e.phase === 'takeoff' ? 2 : 1);
+      // The roar: low and full (pink noise through two low-passes), brighter with power and from behind.
+      T(L2.roar.gain, run * sz * (0.1 + 1.6 * n1 ** 3) * (1 + 0.6 * behind) * (1 - 0.2 * front) * old * (1 + 0.5 * sm.rev));
+      const fc = (200 + 1900 * n1 ** 1.6) * (1 + 0.25 * behind + 0.4 * sm.rev) * (pr.old ? 1.2 : 1);
+      T(L2.roarF.frequency, fc);
+      T(L2.roarF2.frequency, fc * 2);
+      const rumble = run * sz * (0.08 + 1.2 * n1 ** 3) * (0.5 + 1.0 * behind) * (pr.afterburner && e.phase === 'takeoff' ? 2 : 1);
       T(L2.rumble.gain, rumble);
-      T(L2.crackle.gain, rumble * 0.6 * behind);
-      T(L2.fan.gain, sz * 0.16 * smooth(0.04, 0.18, n1) * (0.6 + 0.9 * front) * (pr.old ? 0.35 : 1) * (1 - 0.5 * smooth(0.7, 1, n1)));
-      T(L2.fan1.frequency, Math.max(20, pr.fan * n1 * dop));
-      T(L2.fan2.frequency, Math.max(20, pr.fan * n1 * dop * 1.006));
-      T(L2.core.gain, sz * 0.05 * smooth(0.02, 0.12, n2) * (pr.old ? 2 : 1) * (1 - 0.6 * n1));
+      T(L2.crackle.gain, rumble * 0.5 * behind * smooth(0.85, 0.92, n1));
+      T(L2.drone.gain, run * sz * 0.16 * smooth(0.25, 0.9, n1));
+      T(L2.drone1.frequency, Math.max(5, pr.shaft * n1 * dop));
+      T(L2.drone2.frequency, Math.max(5, pr.shaft * n1 * dop * 1.004));
+      T(L2.droneF.frequency, 150 + 350 * n1);
+      // The whine: clear at idle, it fades under the roar as the power comes up.
+      const fanHz = n1 < IDLE ? pr.fanLo * n1 / IDLE : pr.fanLo + (pr.fanHi - pr.fanLo) * (n1 - IDLE) / (1 - IDLE);
+      T(L2.fan.gain, sz * 0.16 * smooth(0.04, 0.18, n1) * (0.6 + 0.9 * front) * (pr.old ? 0.35 : 1) * (1 - 0.75 * smooth(0.3, 0.9, n1)));
+      T(L2.fan1.frequency, Math.max(20, fanHz * dop));
+      T(L2.fan2.frequency, Math.max(20, fanHz * dop * 1.006));
+      T(L2.core.gain, sz * 0.035 * smooth(0.02, 0.12, n2) * (pr.old ? 2 : 1) * (1 - 0.8 * n1));
       T(L2.core1.frequency, Math.max(20, pr.core * n2 * dop));
       T(L2.saw.gain, pr.old ? 0 : sz * 1.2 * smooth(0.82, 0.92, n1) * front ** 1.5);
       T(L2.saw1.frequency, Math.max(20, pr.shaft * n1 * dop));
@@ -515,8 +585,16 @@
       T(L2.starter1.frequency, 260 + 260 * clamp01((e.start || 0) / 0.4));
     }
     if (L2.apu) T(L2.apu.gain, sz * 0.02 * sm.apu, 0.4);
-    // The wind on the wing camera (a little on the chase camera too).
-    const wind = L.follow === p.id && (L.cam === 'wing' || L.cam === 'chase') ? (L.cam === 'wing' ? 0.16 : 0.03) * Math.min(1.4, (P.ms / 230) ** 2) : 0;
+    // The air past the plane: grows with speed; gear and flaps out on the approach add to it.
+    const ms = Math.min(P.ms, 270);
+    const dirty = (e.phase === 'approach' || (e.phase === 'landing' && ms > 40)) ? 0.12 : 0;
+    const air = sz * (0.45 * (ms / 200) ** 1.5 + dirty);
+    T(L2.air.gain, air, 0.15);
+    T(L2.gust.gain, air * 0.3, 0.15);
+    T(L2.airF.frequency, (350 + 4.5 * ms) * dop);
+    T(L2.airF2.frequency, (350 + 4.5 * ms) * dop * 1.6);
+    // The wind on the wing camera.
+    const wind = L.follow === p.id && L.cam === 'wing' ? 0.5 * Math.min(1.4, (P.ms / 230) ** 2) : 0;
     T(L2.wind.gain, wind * fade, 0.2);
     T(L2.windF.frequency, 400 + 1.2 * P.ms);
 
@@ -593,6 +671,31 @@
     get pickMs() { return s.pickMs || 0; }, // (time to find the loudest planes, 4 times a second)
     // The planes playing now: [{ id, kind, gain }] (smoke test).
     get playing() { return [...s.voices.values()].filter((v) => !v.kill).map((v) => ({ id: v.id, kind: v.pr.kind, gain: v.out.gain.value })); },
+    // What it sounds like now: centroid (Hz, how bright, 60 Hz-8 kHz), flat (80-1500 Hz: 0 tones … 1 noise),
+    // hf (share above 2.5 kHz: hiss, "static"), bass (share below 250 Hz). Smoke test.
+    spectrum() {
+      if (!s.ctx) return null;
+      const a = new Float32Array(s.meter.frequencyBinCount);
+      s.meter.getFloatFrequencyData(a);
+      const hz = s.ctx.sampleRate / s.meter.fftSize;
+      let sum = 0;
+      let sf = 0;
+      let hi = 0;
+      let lo = 0;
+      let logs = 0;
+      let band = 0;
+      let n = 0;
+      for (let i = Math.ceil(60 / hz); i < Math.min(a.length, 8000 / hz); i++) {
+        const pw = 10 ** (Math.max(-200, a[i]) / 10);
+        sum += pw;
+        sf += pw * i * hz;
+        if (i * hz > 2500) hi += pw;
+        if (i * hz < 250) lo += pw;
+        if (i * hz >= 80 && i * hz <= 1500) { logs += Math.log(pw); band += pw; n++; }
+      }
+      if (!sum) return null;
+      return { centroid: Math.round(sf / sum), flat: Math.round(100 * Math.exp(logs / n) / (band / n)) / 100, hf: Math.round(100 * hi / sum) / 100, bass: Math.round(100 * lo / sum) / 100 };
+    },
     // How loud it is coming out now, in dB (-Infinity: quiet; smoke test).
     meter() {
       if (!s.ctx) return -Infinity;

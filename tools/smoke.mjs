@@ -377,7 +377,7 @@ try {
       await sleep(1100);
       if (FG.ui.speed > 0 && FG.sound.playing.length) break;
     }
-    const out = { kind: pr.kind, state: FG.sound.state, playing: FG.sound.playing.some((v) => v.id === p.id), db: FG.sound.meter(), ...seen, bad: seen.bad.slice(0, 3) };
+    const out = { kind: pr.kind, state: FG.sound.state, playing: FG.sound.playing.some((v) => v.id === p.id), db: FG.sound.meter(), sp: FG.sound.spectrum(), ...seen, bad: seen.bad.slice(0, 3) };
     document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'm', bubbles: true }));
     out.mOff = !FG.sound.on && document.getElementById('sound-toggle').classList.contains('off');
     document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'm', bubbles: true }));
@@ -389,6 +389,8 @@ try {
   });
   if (snd.none) warnings.push('sound: no plane in the air to listen to');
   else {
+    const sp = snd.sp;
+    if (sp && sp.hf > 0.3) errors.push(`sound: hiss (static): ${JSON.stringify(sp)}`);
     if (!snd.starter || !snd.lit || !snd.apu || snd.takeoff < 0.9 || snd.cruise < 0.6 || !snd.rev || snd.bad.length) errors.push(`sound: engines through a flight: ${JSON.stringify(snd)}`);
     if (!snd.mOff || !snd.mOn) errors.push(`sound: M did not turn the sound off and on again: ${JSON.stringify(snd)}`);
     if (snd.state !== 'running') warnings.push(`sound: no audio in this browser (${snd.state}): not heard`);
