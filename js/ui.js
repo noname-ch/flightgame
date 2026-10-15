@@ -2475,6 +2475,7 @@
   function centreHome() {
     const home = G.airportByCode[G.home()];
     ui.map.setView([home.lat, home.lon], 6);
+    if (in3d()) FG.view3d.from2d();
   }
 
   function afterNewGame() {

@@ -266,7 +266,8 @@ at the selected airport would go, in 2D and 3D: each kind of new runway with its
 extension, and the apron, stands and buildings of the next terminal size (`G.expansionPreview(code)`).
 
 3D view: the **3D** button (or V) switches the map to a 3D globe with terrain, hill shading and 3D
-buildings (MapLibre). Aircraft are drawn as 3D models at their real altitude, stretched when zoomed out
+buildings (MapLibre). Switching keeps the place: 3D opens where the 2D map is, at the same scale, and 2D comes
+back where you were in 3D. Aircraft are drawn as 3D models at their real altitude, stretched when zoomed out
 so you can see them. Planes really fly: they push back from their gate tail first, taxi
 (speeding up and slowing down), accelerate down the runway, rotate and lift off, bank into turns, pitch up
 to climb and down to descend, flare, brake after touchdown and taxi nose-in onto their stand. Hover a

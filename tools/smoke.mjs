@@ -538,6 +538,7 @@ try {
   const has3d = await waitFor(() => window.FG && FG.view3d, 90000);
   if (!has3d) warnings.push('3D module did not load in 90 s (CDN?): 3D not tested');
   else {
+    await evaluate(() => { FG.ui.map.setView([40.64, -73.78], 11, { animate: false }); }); // JFK
     await key('v');
     // (the first time: the warning that 3D is for strong devices)
     const warned = await waitFor(() => !!document.querySelector('#warn3d [data-w3=yes]'), 5000);
@@ -545,6 +546,18 @@ try {
     else await evaluate(() => document.querySelector('#warn3d [data-w3=yes]').click());
     const loaded = await waitFor(() => FG.view3d.map && FG.view3d.map.loaded(), 60000);
     if (!loaded) warnings.push('3D map did not finish loading in 60 s (tiles?)');
+    // Switching keeps the place: 3D opens where the 2D map was, and 2D comes back where 3D was.
+    const near = (a, lat, lon) => Math.abs(a.lat - lat) < 0.05 && Math.abs(a.lng - lon) < 0.05;
+    const in3d = await evaluate(() => { const c = FG.view3d.map.getCenter(); return { lat: c.lat, lng: c.lng, z: FG.view3d.map.getZoom() }; });
+    if (!near(in3d, 40.64, -73.78) || Math.abs(in3d.z - 10) > 0.01) errors.push(`3D did not open where the 2D map was (${JSON.stringify(in3d)})`);
+    await evaluate(() => { FG.view3d.map.jumpTo({ center: [139.78, 35.55], zoom: 12 }); }); // HND
+    await key('v');
+    const in2d = await evaluate(() => { const c = FG.ui.map.getCenter(); return { lat: c.lat, lng: c.lng, z: FG.ui.map.getZoom() }; });
+    if (!near(in2d, 35.55, 139.78) || in2d.z !== 13) errors.push(`2D did not come back where 3D was (${JSON.stringify(in2d)})`);
+    await evaluate(() => { FG.ui.map.setView([46.91, 7.5], 14, { animate: false }); }); // BRN
+    await key('v');
+    const again = await evaluate(() => { const c = FG.view3d.map.getCenter(); return { lat: c.lat, lng: c.lng, z: FG.view3d.map.getZoom() }; });
+    if (!near(again, 46.91, 7.5) || Math.abs(again.z - 13) > 0.01) errors.push(`3D did not open again where the 2D map was (${JSON.stringify(again)})`);
     await evaluate(() => FG.ui.follow && FG.ui.follow(G.state.planes[0].id));
     await sleep(8000);
     await key('v');

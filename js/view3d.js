@@ -1318,15 +1318,17 @@ function controls() {
   return box;
 }
 
-function createMap() {
+function createMap(fit) {
   const el = document.getElementById('view3d');
   const home = G.airportByCode[G.home()];
   // Roof colours read off the satellite photo: draw the airport's buildings again.
   if (FG.facades) FG.facades.onChange = () => { v.gatesDirty = true; if (v.on && v.map) v.map.triggerRepaint(); };
+  // (where the 2D map is; back in 3D right at the page load, the whole network instead)
+  const at = fit ? null : view2d();
   const map = v.map = new maplibregl.Map({
     container: el,
-    center: [home.lon, home.lat],
-    zoom: 4.5,
+    center: at ? at.center : [home.lon, home.lat],
+    zoom: at ? at.zoom : 4.5,
     pitch: 45,
     maxPitch: 80,
     canvasContextAttributes: { antialias: true },
@@ -1347,7 +1349,7 @@ function createMap() {
     map.addLayer(planeLayer, 'fg-airport-labels');
     v.ready = true;
     refreshData();
-    fitNetwork();
+    if (!at) fitNetwork();
   });
   map.on('click', onClick);
   map.on('mousemove', onMove);
@@ -1487,15 +1489,37 @@ function chase(container, id) {
 }
 v.chase = chase;
 
-function setOn(on) {
+// 2D and 3D show the same place: switching keeps the centre and the scale (tilt and turn stay the 3D
+// view's own). Leaflet counts zoom in 256 px tiles, MapLibre in 512 px ones: the same scale is one level apart.
+function view2d() {
+  const m2 = FG.ui && FG.ui.map;
+  if (!m2) return null;
+  const c = m2.getCenter();
+  return { center: [c.lng, c.lat], zoom: m2.getZoom() - 1 };
+}
+function from2d() {
+  const at = view2d();
+  if (!at || !v.map) return;
+  setFollow(false);
+  v.map.jumpTo(at);
+}
+function to2d() {
+  const m2 = FG.ui && FG.ui.map;
+  if (!m2 || !v.map) return;
+  const c = v.map.getCenter();
+  m2.setView([c.lat, c.lng], Math.round(v.map.getZoom() + 1), { animate: false });
+}
+
+function setOn(on, atLoad) {
   v.on = on;
   document.getElementById('view3d').hidden = !on;
   document.getElementById('view3d-toggle').classList.toggle('active', on);
   document.body.classList.toggle('in-3d', on);
   if (on) {
-    if (!v.map) createMap();
-    else { v.map.resize(); v.map.triggerRepaint(); }
+    if (!v.map) createMap(atLoad);
+    else { from2d(); v.map.resize(); v.map.triggerRepaint(); }
   } else {
+    to2d();
     setFollow(false);
   }
   savePrefs();
@@ -1565,7 +1589,7 @@ function init() {
     if (e.key === 'Escape' && document.getElementById('warn3d')) document.getElementById('warn3d').remove();
   });
   // (back in 3D as last time only on a device where the warning was answered for good)
-  if (prefs.on && ok3d()) setOn(true);
+  if (prefs.on && ok3d()) setOn(true, true);
 }
 
 if (FG.ui) init();
@@ -1574,4 +1598,5 @@ else window.addEventListener('fg-ui-ready', init, { once: true });
 // Used by the plane strip in ui.js: double-click a plane to follow it.
 v.setFollow = (on) => setFollow(on);
 v.setOn = (on) => setOn(on);
+v.from2d = () => from2d(); // the 2D map moved while 3D is open (a new game, a loaded save)
 FG.view3d = v; // for debugging
