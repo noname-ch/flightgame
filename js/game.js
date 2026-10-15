@@ -1142,8 +1142,11 @@
 
   // The taxiways of a layout as a graph: points, and for each point its neighbours with the distance.
   const taxiGraphs = new Map();
+  const RUNWAY_TAXI_COST = 3; // taxiing along a runway counts this many times its length: only where nothing else goes
   function taxiGraph(code, lay) {
-    const key = lay.key || code; // a copied terminal's layout changes with the airport
+    // (a copied terminal's layout changes with the airport; built runways change the graph too)
+    const rws = airportRunways(code);
+    const key = `${lay.key || code}|${rws.map((r) => r.slice(0, 4).map((v) => v.toFixed(5)).join(',')).join(';')}`;
     let g = taxiGraphs.get(key);
     if (g) return g;
     g = { pts: [], adj: [] };
@@ -1195,6 +1198,39 @@
         if (d < near) { near = d; best = s; }
       }
       if (best) for (const w of [best[0], best[1]]) { const d = metres(p, g.pts[w]); g.adj[u].push([w, d]); g.adj[w].push([u, d]); }
+    }
+    // The runways themselves: their centre line from end to end, joined to every taxiway point on or beside
+    // them. A plane taxis onto the runway where a taxiway meets it and, where no taxiway reaches the threshold,
+    // along the runway to it (backtracking, as on small fields); a landing plane rolls to the next taxiway. Before,
+    // it went straight from the nearest taxiway point to the threshold, across the grass.
+    const before = g.pts.length;
+    for (const r of rws) {
+      const rwy = { thr: [r[0], r[1]], hdg: bearing({ lat: r[0], lon: r[1] }, { lat: r[2], lon: r[3] }), len: runwayLength(r) };
+      const reach = Math.max(18, r[4] || 30) / 2 + 25;
+      const at = [0, rwy.len];
+      for (let x = 100; x < rwy.len; x += 100) at.push(x);
+      const touch = [];
+      for (let i = 0; i < before; i++) {
+        const c = rwyCoords(rwy, g.pts[i]);
+        if (c.along < -reach || c.along > rwy.len + reach || Math.abs(c.across) > reach) continue;
+        const x = Math.min(rwy.len, Math.max(0, c.along));
+        touch.push([i, x]);
+        at.push(x);
+      }
+      const xs = [...new Set(at.map((x) => Math.round(x)))].sort((p, q) => p - q);
+      const ids = xs.map((x) => node(rwyPoint(rwy, x, 0)));
+      for (let k = 1; k < ids.length; k++) {
+        const d = (xs[k] - xs[k - 1]) * RUNWAY_TAXI_COST;
+        g.adj[ids[k - 1]].push([ids[k], d]);
+        g.adj[ids[k]].push([ids[k - 1], d]);
+      }
+      for (const [i, x] of touch) {
+        const w = ids[xs.indexOf(Math.round(x))];
+        if (w === i) continue;
+        const d = metres(g.pts[i], g.pts[w]);
+        g.adj[i].push([w, d]);
+        g.adj[w].push([i, d]);
+      }
     }
     // Pads (airport fixes): open concrete where planes go straight from where they come onto it to their
     // stand. Every point on a pad (taxiway points, where the stands' lead-in lines start) is joined to every
@@ -1260,27 +1296,41 @@
   // the taxiways do not connect them.
   function realTaxiPath(code, lay, from, to) {
     const g = taxiGraph(code, lay);
-    // (only among the points of the biggest connected piece: stubs that join nothing lead nowhere)
-    // (flat squared distance: the same order as metres() over an airport, without its cost)
-    const nearest = (p) => {
-      const kx = Math.cos(toRad(p[0]));
-      let best = -1, bd = Infinity;
-      for (let i = 0; i < g.pts.length; i++) {
-        if (!g.main[i]) continue;
-        const q = g.pts[i];
-        const dx = (q[1] - p[1]) * kx, dy = q[0] - p[0];
-        const d = dx * dx + dy * dy;
-        if (d < bd) { bd = d; best = i; }
+    // Planes join and leave the taxiways at the nearest point along a line (not at its nearest corner point,
+    // which could be far down a long straight: they went across the grass to it), among the lines of the
+    // biggest connected piece (stubs that join nothing lead nowhere).
+    if (!g.segs) {
+      g.segs = [];
+      for (let u = 0; u < g.adj.length; u++) for (const [w] of g.adj[u]) if (u < w && g.main[u]) g.segs.push([u, w]);
+    }
+    const onto = (p) => {
+      let best = null;
+      for (const [u, w] of g.segs) {
+        const a = g.pts[u], b = g.pts[w];
+        if (Math.abs(a[0] - p[0]) > 0.05 && Math.abs(b[0] - p[0]) > 0.05) continue;
+        const r = segMetres(p, a, b);
+        if (!best || r.d < best.d) best = { d: r.d, pt: r.pt, u, w };
       }
       return best;
     };
-    const s = nearest(from);
-    const t = nearest(to);
-    if (s < 0 || t < 0) return [];
+    const S = onto(from);
+    const T = onto(to);
+    if (!S || !T) return [];
+    // (Dijkstra from both ends of the line it joins, to both ends of the line it leaves by)
     const best = new Float64Array(g.pts.length).fill(Infinity);
     const prev = new Int32Array(g.pts.length).fill(-1);
-    const heap = [[0, s]]; // binary heap of [distance, point]
-    best[s] = 0;
+    const heap = [];
+    const push = (d, u) => {
+      heap.push([d, u]);
+      for (let i = heap.length - 1; i > 0;) {
+        const up = (i - 1) >> 1;
+        if (heap[up][0] <= heap[i][0]) break;
+        [heap[i], heap[up]] = [heap[up], heap[i]];
+        i = up;
+      }
+    };
+    for (const u of [S.u, S.w]) { const d = metres(S.pt, g.pts[u]); if (d < best[u]) { best[u] = d; push(d, u); } }
+    const done = new Set();
     while (heap.length) {
       const [d, u] = heap[0];
       const last = heap.pop();
@@ -1296,26 +1346,28 @@
           i = m;
         }
       }
-      if (u === t) break;
       if (d > best[u]) continue;
+      if (u === T.u || u === T.w) done.add(u);
+      if (done.size === 2 || (done.size && T.u === T.w)) break;
       for (const [w, len] of g.adj[u]) {
         const nd = d + len;
         if (nd >= best[w]) continue;
         best[w] = nd;
         prev[w] = u;
-        heap.push([nd, w]);
-        for (let i = heap.length - 1; i > 0;) {
-          const up = (i - 1) >> 1;
-          if (heap[up][0] <= heap[i][0]) break;
-          [heap[i], heap[up]] = [heap[up], heap[i]];
-          i = up;
-        }
+        push(nd, w);
       }
     }
-    if (best[t] === Infinity) return [];
+    // Both on the same line: straight along it.
+    const same = (S.u === T.u && S.w === T.w) || (S.u === T.w && S.w === T.u);
+    const viaU = best[T.u] + metres(g.pts[T.u], T.pt);
+    const viaW = best[T.w] + metres(g.pts[T.w], T.pt);
+    if (same && metres(S.pt, T.pt) <= Math.min(viaU, viaW)) return [S.pt, T.pt];
+    const end = viaU <= viaW ? T.u : T.w;
+    if (best[end] === Infinity) return [];
     const path = [];
-    for (let u = t; u >= 0; u = prev[u]) path.push(g.pts[u]);
-    return path.reverse();
+    for (let u = end; u >= 0; u = prev[u]) path.push(g.pts[u]);
+    path.reverse();
+    return [S.pt, ...path, T.pt];
   }
 
   // ---------- expansion preview (developer tools) ----------
