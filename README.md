@@ -123,9 +123,10 @@ be made again the next day; a rival that gives up a slot flies one daily flight 
    paint lie on top. Taxiways are round at their bends: those the game lays out, and those drawn in the editor
    (unless "Sharp corners" is ticked while drawing; `G.roundLine`).
    **🏗 Build at the airport** (in its Construction section, at an airport you built or where you have 25%) opens
-   the build mode: the airport editor's tools on the satellite map, without runways. Build stands (also in rows),
-   taxiways and curves, aprons, pads, terminals, hangars, other buildings and towers, or click what is there to
-   move, reshape or pull it down. It costs your share (stand CHF 1.5M, apron CHF 150/m², terminal CHF 2'500/m²,
+   the build mode: a tool panel beside the satellite map, without runways. Pick a tool, then click the map:
+   **Select** (change what you click in the panel), **Move** (drag the ✥), **Points**, **Remove**, or one of the
+   things to build: stands (also in rows), taxiways and curves, aprons, pads, terminals, hangars, other buildings
+   and towers. Building only ever adds. It costs your share (stand CHF 1.5M, apron CHF 150/m², terminal CHF 2'500/m²,
    …; `C.airports.build`), Undo gives the money back, and it is kept in that save game only
    (`G.state.airportOps`, applied by `js/fixes.js` after the airport fixes).
 

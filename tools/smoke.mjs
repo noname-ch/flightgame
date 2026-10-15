@@ -280,7 +280,7 @@ try {
     if (ed.real && ed.n1 !== ed.n0 + 1) errors.push(`airport editor: the new stand did not reach the layout (${ed.n0} → ${ed.n1})`);
   }
 
-  step(`build mode at ${home} (own it, 🏗 Build at the airport → add a stand → it costs, undo gives it back)`);
+  step(`build mode at ${home} (own it, 🏗 Build at the airport → Stand tool, click → it costs, undo gives it back)`);
   const bm = await evaluate(async (code) => {
     G.infraOf(code).stake = 100;
     FG.ui.showAirport(code);
@@ -299,11 +299,12 @@ try {
     const charged = [];
     const pay = G.payForBuilding;
     G.payForBuilding = function (c, full, what) { const err = pay.call(this, c, full, what); if (!err) charged.push(full); return err; };
-    FG.airportEdit.click(p[0], p[1]);
-    if (document.querySelector('.ae-pop [data-ae="add"][data-kind="runway"]')) return { err: 'build mode offers to add a runway' };
-    const b = document.querySelector('.ae-pop [data-ae="add"][data-kind="stand"]');
-    if (!b) return { err: 'no "Stand" button in the build popup' };
+    if (document.querySelector('#apedit [data-ae="tool"][data-tool="runway"]')) return { err: 'build mode offers to build a runway' };
+    const b = document.querySelector('#apedit [data-ae="tool"][data-tool="stand"]');
+    if (!b) return { err: 'no "Stand" tool in the build panel' };
     b.click();
+    FG.airportEdit.click(p[0], p[1]);
+    if (document.querySelector('.ae-popup')) return { err: 'build mode opened a window on the map' };
     await new Promise((r) => setTimeout(r, 300));
     const out = { paid: charged[0] || 0, ops: FG.fixes.player.ops(code).length, stands0, stands1: G.apronOf(code).stands.length, devUnsaved: FG.fixes.unsaved().length };
     document.querySelector('#apedit [data-ae="undo"]').click();

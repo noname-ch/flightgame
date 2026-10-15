@@ -11,9 +11,11 @@
 // game runs from ./play.sh; on the website as a commit to the repo, for contributors signed in to GitHub;
 // else in this browser. Every game loads them, new or saved.
 // Build mode (FG.airportEdit.build(code), from an airport's Construction section): the player builds at an
-// airport they built or have the board's stake in. The same tools, but no runways (the game places those:
-// construction) and no saving anywhere: what they build is kept in their save game (FG.fixes.player) and costs
-// their share of C.airports.build.
+// airport they built or have the board's stake in. No windows on the map: a tool bar in the panel (Select,
+// Move, Points, Remove and the things to build), and a click on the map does what the tool says; what is
+// selected is changed in the panel. Building never looks in the map data and never replaces what is there.
+// No runways (the game places those: construction) and no saving anywhere: what they build is kept in their
+// save game (FG.fixes.player) and costs their share of C.airports.build.
 (function () {
   const G = FG.game;
   const D = FG.data;
@@ -35,6 +37,7 @@
     found: { color: '#22d3ee', weight: 3, dashArray: '8 5', fillColor: '#22d3ee', fillOpacity: 0.2 },
     draw: { color: '#f472b6', weight: 2.5, fillColor: '#f472b6', fillOpacity: 0.15 },
     stand: { color: '#e2e8f0', weight: 1, fillColor: '#e2e8f0', fillOpacity: 0.5 },
+    faint: { color: '#e2e8f0', weight: 1, opacity: 0.45, dashArray: '3 4', fill: false },
   };
 
   const ed = {
@@ -55,6 +58,8 @@
     undo: [],     // [{ code, ops, paid }] before each change (paid: in build mode, what it cost in full)
     player: null, // build mode: the airport the player builds at (the changes go into the save game)
     sharp: false, // a taxiway drawn by clicking keeps its corners (else they are rounded, RADIUS m)
+    tool: 'select', // build mode: what a click on the map does (TOOLS)
+    move: null,   // build mode: moving a whole thing: { e, c (its middle), d ([dLat, dLon]) }
     msg: '',
     bad: false,
   };
@@ -395,16 +400,26 @@
   }
   function hitsAt(p) {
     const k = mpp(p[0]);
-    const tol = { stand: Math.max(18, 9 * k), tower: Math.max(10, 8 * k), taxiway: Math.max(8, 7 * k), runway: 6 * k };
+    // (build mode: more forgiving; a stand is picked along the plane standing there, not only at its point)
+    const tol = ed.player ? { stand: Math.max(12, 10 * k), tower: Math.max(12, 12 * k), taxiway: Math.max(10, 10 * k) }
+      : { stand: Math.max(18, 9 * k), tower: Math.max(10, 8 * k), taxiway: Math.max(8, 7 * k), runway: 6 * k };
     const out = [];
     // (build mode: only that airport, and not its runways)
     for (const a of ed.player ? [G.airportByCode[ed.player]] : airportsNear(p, 8)) {
       for (const e of elements(a.code)) {
         if (ed.player && e.kind === 'runway') continue;
-        const d = distTo(e, p);
-        if (d <= (tol[e.kind] != null ? tol[e.kind] : 5 * k)) out.push(Object.assign(e, { d }));
+        const g = e.geom;
+        const d = ed.player && e.kind === 'stand' ? nearest(p, [offset([g[0], g[1]], g[2] + 180, 35), offset([g[0], g[1]], g[2], 4)]).d
+          : ed.player && e.kind === 'taxiway' ? Math.max(0, distTo(e, p) - (g.w || 15) / 2) : distTo(e, p);
+        const t = tol[e.kind] != null ? tol[e.kind] : 5 * k;
+        if (d > t) continue;
+        // build mode: the nearest for its kind first (by how near against how near it must be); a click inside a
+        // building or apron counts as fairly near it, so what is right under the click on it still comes first
+        const score = !RINGS.has(e.kind) ? d / t : (d === 0 ? (e.kind === 'apron' || e.kind === 'pad' ? 0.9 : 0.6) : 0.7 + (0.3 * d) / t);
+        out.push(Object.assign(e, { d, score }));
       }
     }
+    if (ed.player) return out.sort((x, y) => x.score - y.score || ORDER[x.kind] - ORDER[y.kind]);
     return out.sort((x, y) => ORDER[x.kind] - ORDER[y.kind] || x.d - y.d);
   }
   function describe(kind, g) {
@@ -906,7 +921,7 @@
     r.prefix = $('ae-prefix').value.trim().slice(0, 6);
     drawLayer();
     const n = rowStands(r).length;
-    const b = popEl.querySelector('[data-ae="placeRow"]');
+    const b = (ed.player ? $('apedit') : popEl).querySelector('[data-ae="placeRow"]');
     if (b) b.textContent = `Place ${n} stand${n > 1 ? 's' : ''}`;
   }
   // ---------- a curve between two points ----------
@@ -1020,11 +1035,12 @@
     cv.angle = Math.max(1, Math.min(MAX_ANGLE, cv.angle));
     drawLayer();
     if (cv.cm && !cv.dragging) cv.cm.setLatLng(curveGeom(cv).c);
-    if (!popEl) return;
-    const set = (id, v) => { const el = popEl.querySelector(`#${id}`); if (el && document.activeElement !== el) el.value = v; };
+    const box = ed.player ? $('apedit') : popEl;
+    if (!box) return;
+    const set = (id, v) => { const el = box.querySelector(`#${id}`); if (el && document.activeElement !== el) el.value = v; };
     if (fields) { set('ae-angle', Math.round(cv.angle)); set('ae-radius', Math.round(cv.radius)); }
     set('ae-bend', Math.round(cv.bend * 100));
-    const info = popEl.querySelector('#ae-curveinfo');
+    const info = box.querySelector('#ae-curveinfo');
     if (info) info.textContent = curveInfo(cv);
   }
   function curveInput() {
@@ -1247,12 +1263,14 @@
     if (d.kind === 'taxiway' && FG.taxiFit && !ed.player) fitTaxiway({ code, kind: 'taxiway', geom }, true);
   }
   function cancel() {
+    if (ed.move) { stopMove(); note('Not moved.'); drawLayer(); renderPanel(); return true; }
     if (ed.draw) { stopDraw(); note('Drawing cancelled.'); drawLayer(); return true; }
     if (ed.edit) { stopEdit(); note('Not moved.'); return true; }
     if (ed.found) { ed.found = null; drawLayer(); showPopup(); return true; }
     if (ed.row) { ed.row = null; closePopup(); drawLayer(); return true; }
     if (ed.curve) { stopCurve(); drawLayer(); if (ed.sel) showPopup(); note('No curve.'); return true; }
     if (pop && map.hasLayer(pop)) { closePopup(); ed.sel = null; drawLayer(); return true; }
+    if (ed.player && ed.sel) { ed.sel = null; ed.hits = []; drawLayer(); renderPanel(); return true; }
     return false;
   }
 
@@ -1333,7 +1351,10 @@
         for (const s of lay ? lay.stands : []) drawShape(layer, 'stand', s, STYLE.stand);
         for (const e of madeUp(code)) if (e.kind === 'stand') drawShape(layer, 'stand', e.geom, STYLE.stand);
       }
-      for (const op of opsOf(code)) {
+      // (build mode: everything that can be picked, faintly; else the fixes, green and red)
+      if (ed.player) {
+        if (map.getZoom() >= 15) for (const e of elements(code)) if (e.kind !== 'runway' && e.kind !== 'stand') drawShape(layer, e.kind, e.geom, STYLE.faint);
+      } else for (const op of opsOf(code)) {
         if (op.kind === 'airport' || op.kind === 'bridges') continue; // (no shape)
         if (op.op !== 'add') drawShape(layer, op.kind, op.op === 'del' ? op.geom : op.from, STYLE.del);
         if (op.op !== 'del') drawShape(layer, op.kind, op.geom, STYLE.add);
@@ -1357,6 +1378,10 @@
   }
   function drawDraft() {
     draftLayer.clearLayers();
+    if (ed.move) {
+      drawShape(draftLayer, ed.move.e.kind, movedGeom(), STYLE.draw);
+      return;
+    }
     if (ed.edit) {
       drawShape(draftLayer, ed.edit.e.kind, editedGeom(), STYLE.draw);
       return;
@@ -1473,6 +1498,7 @@
     return parts.join('');
   }
   function showPopup() {
+    if (ed.player) { renderPanel(); return; } // (build mode: no windows on the map, all is in the panel)
     if (!ed.at) return;
     if (!pop) {
       popEl = document.createElement('div');
@@ -1504,10 +1530,162 @@
     pop.getElement().style.pointerEvents = '';
   }
 
+  // ---------- build mode: the tools ----------
+  const TOOLS = [
+    ['select', '↖', 'Select', 'Click something to select it; change it below.'],
+    ['move', '✥', 'Move', 'Click something, then drag the ✥ to move it.'],
+    ['points', '⋯', 'Points', 'Click something to move its points: drag them, click a small dot to add one, right-click one to take it away.'],
+    ['remove', '🗑', 'Remove', 'Click something to pull it down (Undo brings it back).'],
+  ];
+  const BUILD = [
+    ['stand', 'Stand', 'Click where a plane stands: its nose points to the nearest building (Turn it if that is wrong).'],
+    ['row', 'Stand row', 'Click where the row of stands starts, then where it ends.'],
+    ['taxiway', 'Taxiway', 'Click points along its middle; click the last point again (or Enter) when done.'],
+    ['curve', 'Curve', 'A taxiway as one curve: click where it starts, then where it ends.'],
+    ['apron', 'Apron', 'Click its corners; click the first corner again (or Enter) when done.'],
+    ['pad', 'Pad', 'Open concrete where planes go straight to their stands: click its corners, the first again when done.'],
+    ['terminal', 'Terminal', 'Click its corners; click the first corner again (or Enter) when done.'],
+    ['hangar', 'Hangar', 'Click its corners; click the first corner again (or Enter) when done.'],
+    ['building', 'Building', 'Click its corners; click the first corner again (or Enter) when done.'],
+    ['tower', 'Tower', 'Click where the tower stands.'],
+  ];
+  function setTool(t) {
+    while (cancel()) { /* whatever was going on */ }
+    ed.tool = t;
+    ed.sel = null;
+    ed.hits = [];
+    note('');
+    drawLayer();
+    renderPanel();
+  }
+  // A click on the map in build mode: what the tool says.
+  function buildClick(p, ev) {
+    if (ed.edit) { if (JSON.stringify(editedGeom()) !== JSON.stringify(ed.edit.e.geom)) finishEdit(); else stopEdit(); }
+    if (ed.move) stopMove();
+    if (ed.row || ed.curve) { note('Place it or cancel it first (in the panel).', true); return; }
+    ed.at = p;
+    ed.found = null;
+    const t = ed.tool;
+    if (TOOLS.some(([k]) => k === t)) {
+      ed.hits = hitsAt(p);
+      ed.sel = ed.hits[0] || null;
+      if (!ed.sel) note(t === 'select' ? '' : 'Nothing there: click right on it.');
+      else if (t === 'move') startMove(ed.sel);
+      else if (t === 'points') startEdit();
+      else if (t === 'remove') del();
+      drawLayer();
+      renderPanel();
+      return;
+    }
+    ed.sel = null;
+    ed.hits = [];
+    if (t === 'stand') { addStand(); return; }
+    if (t === 'tower') { commit(ed.code, { op: 'add', kind: 'tower', geom: [r5(p[0]), r5(p[1])] }, 'Tower built.'); return; }
+    startDraw(t, null);
+    drawClick(p, ev);
+  }
+  // Moving a whole thing: drag the ✥ in its middle (a stand keeps its heading).
+  function startMove(e) {
+    const pts = shape(e.kind, e.geom);
+    const c = [pts.reduce((s, q) => s + q[0], 0) / pts.length, pts.reduce((s, q) => s + q[1], 0) / pts.length];
+    ed.move = { e, c, d: [0, 0] };
+    handleLayer.clearLayers();
+    const m = L.marker(c, { pane: 'apedit', draggable: true, keyboard: false, title: 'Drag to move it',
+      icon: L.divIcon({ className: 'ae-handle ae-move', html: '✥', iconSize: [24, 24] }) }).addTo(handleLayer);
+    m.on('drag', () => { const ll = m.getLatLng(); ed.move.d = [ll.lat - c[0], ll.lng - c[1]]; drawDraft(); });
+    m.on('dragend', finishMove);
+    drawDraft();
+  }
+  function movedGeom() {
+    const { e, d } = ed.move;
+    const t = (q) => [r6(q[0] + d[0]), r6(q[1] + d[1])];
+    const g = e.geom;
+    if (e.kind === 'stand') return [...t(g), ...g.slice(2)];
+    if (e.kind === 'tower') return t(g);
+    return g.map(t);
+  }
+  function finishMove() {
+    const e = ed.move.e;
+    const geom = movedGeom();
+    const moved = Math.abs(ed.move.d[0]) + Math.abs(ed.move.d[1]) > 1e-7;
+    stopMove();
+    if (moved) commit(e.code, { op: 'set', kind: e.kind, from: e.geom, geom }, `${cap(NAMES[e.kind])} moved.`);
+    if (ed.tool === 'move' && ed.sel) startMove(ed.sel); // (and again, from where it is now)
+  }
+  function stopMove() {
+    ed.move = null;
+    handleLayer.clearLayers();
+    draftLayer.clearLayers();
+  }
+  // What is going on, or what is selected, and what can be done with it (in the panel).
+  function buildContext() {
+    const e = ed.sel;
+    const parts = [];
+    const d = ed.draw;
+    if (d) {
+      const name = d.kind === 'turn' ? 'Turning the stand' : d.kind === 'curve' ? (d.replace ? 'Curve on the taxiway' : 'New taxiway as a curve') : `Building the ${NAMES[d.kind]}`;
+      let hint = d.kind === 'turn' ? HINT.turn : RINGS.has(d.kind) ? HINT.ring : HINT[d.kind];
+      if (d.kind === 'curve' && d.replace) hint += ' on the yellow taxiway (the part between becomes the curve)';
+      parts.push(`<div class="ae-ctx-title">${name}</div><div class="muted small">${hint}. Shift: no snapping.</div>
+        ${d.kind === 'taxiway' ? `<label class="small"><input type="checkbox" data-ae="sharp"${ed.sharp ? ' checked' : ''}> Sharp corners (else its bends are round)</label>` : ''}
+        <div class="dev-row">${d.kind !== 'turn' && d.kind !== 'curve' && d.kind !== 'row' ? '<button class="primary" data-ae="finish">Done</button>' : ''}
+        ${d.pts.length ? '<button data-ae="back">Remove last point</button>' : ''}<button data-ae="cancel">Cancel</button></div>`);
+    } else if (ed.edit) {
+      parts.push(`<div class="ae-ctx-title">Moving the points of the ${NAMES[ed.edit.e.kind]}</div>
+        <div class="muted small">Drag the points${ed.edit.e.kind === 'taxiway' || RINGS.has(ed.edit.e.kind) ? ', click a small dot between two to add one, right-click a point to take it away' : ''}. A click elsewhere on the map keeps it.</div>
+        <div class="dev-row"><button class="primary" data-ae="done">Done</button><button data-ae="cancel">Cancel</button></div>`);
+    } else if (ed.row) {
+      const n = rowStands(ed.row).length;
+      parts.push(`<div class="ae-ctx-title">Stand row · ${Math.round(dist(ed.row.a, ed.row.b))} m</div>
+        <div class="ae-row ae-form">Every <input id="ae-spacing" type="number" min="20" max="150" value="${ed.row.spacing}"> m · names <input id="ae-prefix" placeholder="e.g. A" maxlength="6" value="${esc(ed.row.prefix)}"></div>
+        <div class="dev-row"><button data-ae="flipRow">⇅ Turn them round</button><button class="primary" data-ae="placeRow">Place ${n} stand${n > 1 ? 's' : ''}</button><button data-ae="cancel">Cancel</button></div>`);
+    } else if (ed.curve) {
+      const cv = ed.curve;
+      parts.push(`<div class="ae-ctx-title">${cv.e ? 'Curve on the taxiway' : 'New taxiway: a curve'}</div><div class="muted small" id="ae-curveinfo">${esc(curveInfo(cv))}</div>
+        <div class="ae-row ae-form">Angle <input id="ae-angle" type="number" min="1" max="${MAX_ANGLE}" step="1" value="${Math.round(cv.angle)}"> °
+          ${[45, 60, 90, 120].map((v) => `<button class="mini" data-ae="curveAngle" data-v="${v}">${v}°</button>`).join('')}</div>
+        <div class="ae-row ae-form">Radius <input id="ae-radius" type="number" min="0" max="1000" step="5" value="${Math.round(cv.radius)}"> m <button class="mini" data-ae="curveFlip">⇄ Other way</button></div>
+        <div class="ae-row ae-form">Corner <span class="muted small">start</span><input id="ae-bend" type="range" min="5" max="95" value="${Math.round(cv.bend * 100)}"><span class="muted small">end</span></div>
+        <div class="muted small">Drag the square to move the corner, the dots to move the ends.</div>
+        <div class="dev-row"><button class="primary" data-ae="applyCurve">Build it</button>${cv.fit ? '<button data-ae="curveFit">Fit</button>' : ''}<button data-ae="cancel">Cancel</button></div>`);
+    } else if (ed.move) {
+      parts.push(`<div class="ae-ctx-title">${esc(describe(ed.move.e.kind, ed.move.e.geom))}</div><div class="muted small">Drag the ✥ to move it.</div>
+        <div class="dev-row"><button data-ae="cancel">Done</button></div>`);
+    } else if (e) {
+      parts.push(`<div class="ae-ctx-title">${esc(describe(e.kind, e.geom))}</div>`);
+      const others = ed.hits.filter((h) => h !== e);
+      if (others.length) parts.push(`<div class="muted small">Also here: ${others.slice(0, 6).map((h) => `<button class="mini" data-ae="pick" data-i="${ed.hits.indexOf(h)}">${esc(describe(h.kind, h.geom).split(' · ')[0])}</button>`).join(' ')}</div>`);
+      parts.push(`<div class="dev-row">
+        <button data-ae="move">✥ Move</button>
+        ${e.kind === 'stand' || e.kind === 'tower' ? '' : '<button data-ae="points">⋯ Points</button>'}
+        ${e.kind === 'stand' ? '<button data-ae="turn">Turn</button>' : ''}
+        ${e.kind === 'taxiway' || RINGS.has(e.kind) ? `<button data-ae="straighten">${e.kind === 'taxiway' ? 'Straighten' : 'Square corners'}</button>` : ''}
+        ${e.kind === 'taxiway' ? '<button data-ae="curve" title="Click two points on it: the part between becomes a curve">Curve part</button>' : ''}
+        <button class="danger" data-ae="del">🗑 Remove</button></div>`);
+      if (e.kind === 'taxiway') {
+        parts.push(`<div class="ae-row ae-form">Width <input id="ae-twwidth" type="number" min="5" max="80" step="0.5" value="${widthOf(e) || ''}" placeholder="${G.airportSize(e.code) >= 3 ? 23 : 15}"> m <button data-ae="setWidth">Apply</button></div>`);
+      }
+      if (e.kind === 'stand') {
+        parts.push(`<div class="ae-row ae-form">Name <input id="ae-name" value="${esc(e.geom[3] || '')}" maxlength="12"> Length <input id="ae-len" type="number" min="10" max="150" value="${e.geom[5] || ''}" placeholder="auto"> m <button data-ae="rename">Apply</button></div>`);
+      }
+      if (e.kind === 'apron' || e.kind === 'pad') {
+        parts.push(`<div class="dev-row small">It is ${['apron', 'pad'].map((k) => `<button class="mini${k === e.kind ? ' on' : ''}" data-ae="becomes" data-kind="${k}">${k === 'pad' ? 'a pad (free taxiing)' : 'an apron'}</button>`).join(' ')}</div>`);
+      }
+      if (BUILDINGS.includes(e.kind)) {
+        parts.push(`<div class="dev-row small">It is a ${BUILDINGS.map((k) => `<button class="mini${k === e.kind ? ' on' : ''}" data-ae="becomes" data-kind="${k}">${k}</button>`).join(' ')}</div>`);
+      }
+    } else {
+      const t = TOOLS.find(([k]) => k === ed.tool) || BUILD.find(([k]) => k === ed.tool);
+      parts.push(`<div class="muted small">${t ? t[t.length - 1] : ''}</div>`);
+    }
+    return parts.join('');
+  }
+
   // ---------- the panel ----------
   function banner() {
     const el = $('ae-banner');
     if (!el) return;
+    if (ed.player) { el.hidden = true; renderPanel(); return; } // (build mode: in the panel)
     const d = ed.draw;
     let html = '';
     if (d) {
@@ -1526,7 +1704,7 @@
     el.innerHTML = html;
     el.hidden = !html;
   }
-  // Build mode: what the player built here, undo, and what things cost.
+  // Build mode: the tools, what is going on or selected, undo, prices, and what the player built here.
   function playerPanel() {
     const code = ed.player;
     const a = G.airportByCode[code];
@@ -1534,27 +1712,29 @@
     const B = FG.config.airports.build;
     const share = G.stake(code);
     const m = (v) => G.fmtMoney(Math.round((v * share) / 100));
+    const price = { stand: m(B.stand), row: `${m(B.stand)} a stand`, tower: m(B.tower), taxiway: `${m(B.taxiway * 1000)} per 1000 m²`, curve: `${m(B.taxiway * 1000)} per 1000 m²`,
+      apron: `${m(B.apron * 1000)} per 1000 m²`, pad: `${m(B.pad * 1000)} per 1000 m²`, terminal: `${m(B.terminal * 1000)} per 1000 m²`, hangar: `${m(B.hangar * 1000)} per 1000 m²`, building: `${m(B.building * 1000)} per 1000 m²` };
+    const pending = FG.layouts.pending(code) && !FG.layouts.has(code);
     return `
-      <div class="dev-head"><b>🏗 Build at ${esc(code)}</b><button class="mini" data-ae="close" title="Done (Esc)">✕</button></div>
-      <div class="muted small">${esc(a.name)}: click the satellite picture to build stands, taxiways, aprons, pads, terminals,
-        hangars, other buildings and towers, or click what is there to move, reshape or pull it down. Runways come from
-        <b>Construction</b> in the airport's panel: the game places them and joins them to the taxiways.</div>
-      <section><h4>What you built here</h4>
-        ${ops.length ? `<ul class="ae-ops">${ops.map((op, i) => `<li><span>${{ add: '＋', del: '−', set: '✎' }[op.op]} ${esc(describe(op.kind, op.geom))}</span>
-          <button class="mini" data-ae="goOp" data-i="${i}" title="Show it">⌖</button><button class="mini" data-ae="removeOp" data-i="${i}" title="Take this change back (no money back)">✕</button></li>`).join('')}</ul>`
-          : '<div class="muted small">Nothing yet.</div>'}
-      </section>
+      <div class="dev-head"><b>🏗 Build at ${esc(code)}</b><button class="mini" data-ae="close" title="Done building">✕</button></div>
+      <div class="muted small">${esc(a.name)} · money <b>${G.fmtMoney(G.state.money)}</b>${share < 100 ? ` · you pay your ${share}%` : ''}</div>
+      ${pending ? '<div class="ae-warn">Reading the map data of the airport…</div>' : ''}
+      <div class="ae-tools">${TOOLS.map(([k, icon, name, hint]) => `<button class="${ed.tool === k ? 'on' : ''}" data-ae="tool" data-tool="${k}" title="${esc(hint)}"><span>${icon}</span>${name}</button>`).join('')}</div>
+      <div class="ae-sub">Build</div>
+      <div class="ae-tools ae-build">${BUILD.map(([k, name]) => `<button class="${ed.tool === k ? 'on' : ''}" data-ae="tool" data-tool="${k}" title="${esc(price[k] || '')}">${name}</button>`).join('')}</div>
+      <section class="ae-ctx">${buildContext()}</section>
+      <div id="ae-msg" class="${ed.bad ? 'bad' : ''}">${esc(ed.msg)}</div>
       <section>
         <div class="dev-row"><button data-ae="undo"${ed.undo.length ? '' : ' disabled'}>↶ Undo (money back)</button></div>
-        <div class="muted small">You pay ${share < 100 ? `your ${share}% share` : 'all'} of it: a stand ${m(B.stand)}, a tower ${m(B.tower)},
-          per 1000 m² of apron ${m(B.apron * 1000)}, terminal ${m(B.terminal * 1000)}, hangar ${m(B.hangar * 1000)}, taxiway ${m(B.taxiway * 1000)}.
-          Moving something costs ${Math.round(B.rework * 100)}% of it, pulling it down ${Math.round(B.demolish * 100)}%. Kept in this game only.</div>
-        <div class="muted small">The airport's layout is yours once you build here: a terminal from Construction still makes it bigger, but
-          its new stands you build yourself.</div>
-        <div class="muted small">Money: <b>${G.fmtMoney(G.state.money)}</b></div>
+        <div class="muted small">Moving something costs ${Math.round(B.rework * 100)}% of it, pulling it down ${Math.round(B.demolish * 100)}%.
+          Runways come from <b>Construction</b> in the airport's panel. Kept in this game only. The airport's layout is yours once you build
+          here: a terminal from Construction still makes it bigger, but its new stands you build yourself.</div>
+        <details${ed.listOpen ? ' open' : ''} data-ae-list><summary class="small">What you built here (${ops.length})</summary>
+          ${ops.length ? `<ul class="ae-ops">${ops.map((op, i) => `<li><span>${{ add: '＋', del: '−', set: '✎' }[op.op]} ${esc(describe(op.kind, op.geom))}</span>
+            <button class="mini" data-ae="goOp" data-i="${i}" title="Show it">⌖</button></li>`).join('')}</ul>` : '<div class="muted small">Nothing yet.</div>'}
+        </details>
       </section>
-      <div class="muted small">Esc cancels · Enter finishes · Backspace removes the last point · Ctrl+Z undoes · Del pulls down</div>
-      <div id="ae-msg" class="${ed.bad ? 'bad' : ''}">${esc(ed.msg)}</div>`;
+      <div class="muted small">Esc cancels · Enter finishes · Backspace removes the last point · Ctrl+Z undoes · Del removes</div>`;
   }
   function renderPanel() {
     const el = $('apedit');
@@ -1663,6 +1843,8 @@
       case 'finish': finishDraw(); break;
       case 'back': if (ed.draw) { ed.draw.pts.pop(); drawDraft(); banner(); } break;
       case 'sharp': ed.sharp = b.checked; drawDraft(); break;
+      case 'tool': setTool(d.tool); break;
+      case 'move': if (selection()) startMove(ed.sel); renderPanel(); break;
       case 'done': finishEdit(); break;
       case 'undo': undo(); break;
       case 'discard':
@@ -1690,6 +1872,7 @@
   function onMapClick(e) {
     const p = [e.latlng.lat, e.latlng.lng];
     if (ed.draw) { drawClick(p, e); return; }
+    if (ed.player) { buildClick(p, e); return; }
     if (ed.edit) return;
     ed.at = p;
     ed.form = null;
@@ -1736,6 +1919,9 @@
       }
       if (player !== ed.player) ed.undo = []; // (the other mode's changes are not undone here)
       ed.player = player;
+      ed.tool = 'select';
+      ed.sel = null;
+      ed.hits = [];
     }
     map = FG.ui.map;
     if (!layer) {
@@ -1763,12 +1949,13 @@
         ed.code = ed.player;
         ed.msg = '';
         if (map.getZoom() < 15 || map.distance(map.getCenter(), [a.lat, a.lon]) > 3000) map.setView([a.lat, a.lon], 15);
-        note('Click where you want to build, or on what you want to change.');
+        note('Pick a tool on the left, then click the map.');
       } else note(map.getZoom() < 14 ? 'Zoom in on an airport (taxiways and stands show from zoom 14).' : '');
       drawLayer();
       renderPanel();
       if (!ed.player) FG.fixes.target().then((t) => { ed.target = t; renderPanel(); });
     } else {
+      if (ed.move) stopMove();
       if (ed.player) G.save(); // (what was built is in the save game)
       ed.player = null;
       if (ed.draw) stopDraw();
@@ -1797,7 +1984,17 @@
     el.addEventListener('keydown', (e) => {
       e.stopPropagation();
       if (e.key === 'Enter' && e.target.id === 'ae-token') signIn();
+      // (build mode: the fields of what is selected or being placed are in the panel)
+      if (e.key === 'Enter' && ed.player) {
+        if (e.target.id === 'ae-name' || e.target.id === 'ae-len') rename();
+        if (e.target.id === 'ae-twwidth') setWidth();
+        if (e.target.id === 'ae-spacing' || e.target.id === 'ae-prefix') rowInput();
+        if (e.target.id === 'ae-angle' || e.target.id === 'ae-radius') { curveInput(); curveChanged(true); }
+      }
+      if (e.key === 'Escape' && ed.player) { e.target.blur(); cancel(); }
     });
+    el.addEventListener('input', () => { if (ed.player) { if (ed.curve) curveInput(); else if (ed.row) rowInput(); } });
+    el.addEventListener('toggle', (e) => { if (e.target.matches('[data-ae-list]')) ed.listOpen = e.target.open; }, true);
     $('ae-banner').addEventListener('click', onClick);
     window.addEventListener('keydown', onKey, true); // before the game's own keys (Esc opens its menu)
     window.addEventListener('beforeunload', (e) => {

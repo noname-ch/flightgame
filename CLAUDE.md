@@ -77,7 +77,9 @@ Play online: https://noname-ch.github.io/flightgame/ (GitHub Pages, deployed fro
   change turns them all into fix ops, so a made-up apron can be deleted. Never let an airport lose its last
   stand: the game would make it up again.
 - Build mode (the player's airport building): `FG.airportEdit.build(code)` opens the same editor with
-  `ed.player` set. Its ops go to `FG.fixes.player` (kept in `G.state.airportOps`, handed over by
+  `ed.player` set. It has no popups: `showPopup` and `banner` draw the panel instead (`playerPanel`, tools in
+  `TOOLS`/`BUILD`, map clicks in `buildClick`, what is selected or going on in `buildContext`); building never
+  calls the map-data lookup (`auto`), so it can't replace anything. Its ops go to `FG.fixes.player` (kept in `G.state.airportOps`, handed over by
   `G.registerBuilt` on every new or loaded game), never to `js/data/fixes.js`. `FG.fixes.ops(code)` is still
   the developer fixes only; `FG.fixes.all(code)` is both, and that is what the layouts get. No runway ops in
   build mode: runways come from construction (`placeRunway` in game.js picks the spot, `connectRunway` adds
