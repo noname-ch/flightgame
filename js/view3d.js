@@ -649,6 +649,15 @@ function refreshData() {
 
 // ---------- style ----------
 const LOD = { zoomLevels: 13, tileRatio: 2 }; // see map.setSourceTileLodParams in createMap
+// The flat layers are painted onto the terrain through a texture per terrain tile, 2048 px square (22 MB).
+// On phones half that (5.6 MB): a little softer, and iPhones close the page when it uses too much memory.
+// (MapLibre 6.13 has no option for it: the size is fixed when the terrain is set up, so it is set after that.)
+function phoneDrapes(map) {
+  const rtt = map.painter && map.painter.renderToTexture;
+  if (!window.matchMedia('(pointer: coarse)').matches || !map.terrain || !rtt || typeof rtt.rttSize !== 'number') return;
+  map.terrain.qualityFactor = 1;
+  rtt.rttSize = map.terrain.tileManager.tileSize;
+}
 function transformStyle(_prev, style) {
   style.projection = { type: 'globe' };
   // Terrain heights from zoom 12 on are only made larger, not loaded finer: runways are flat, and the
@@ -756,6 +765,12 @@ function transformStyle(_prev, style) {
       },
       paint: { 'text-color': '#1f2328', 'text-halo-color': '#fff', 'text-halo-width': 1.5 },
     });
+  // Over terrain, MapLibre paints each run of flat layers (one not broken by labels, 3D buildings or
+  // circles) into a texture of its own per terrain tile, 2048 px square (22 MB). Mixed in style order there
+  // were six runs: low and tilted, 18 tiles × 6 = 2.4 GB, and iPhones closed the page. All flat layers come
+  // first now (in their order), so there is one run; what stands on them is drawn over them anyway.
+  const DRAPED = ['background', 'fill', 'line', 'raster', 'hillshade', 'color-relief'];
+  style.layers = [...style.layers.filter((l) => DRAPED.includes(l.type)), ...style.layers.filter((l) => !DRAPED.includes(l.type))];
   return style;
 }
 
@@ -1346,6 +1361,7 @@ function createMap(fit) {
     map.setSourceTileLodParams(LOD.zoomLevels, LOD.tileRatio);
     map.setSourceTileLodParams(LOD.zoomLevels + 2, 1.5, 'terrain');
     map.setSourceTileLodParams(LOD.zoomLevels + 2, 1.5, 'hillshade');
+    phoneDrapes(map);
     map.addLayer(planeLayer, 'fg-airport-labels');
     v.ready = true;
     refreshData();
@@ -1446,6 +1462,7 @@ function chase(container, id) {
   if (map.setCenterClampedToGround) map.setCenterClampedToGround(false);
   map.once('style.load', () => {
     map.setSourceTileLodParams(LOD.zoomLevels, LOD.tileRatio);
+    phoneDrapes(map);
     map.addLayer(chaseLayer(cam), 'fg-airport-labels');
     map.getSource('fg-airports').setData(airportFeatures());
     cam.ready = true;
