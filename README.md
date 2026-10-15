@@ -175,7 +175,8 @@ Difficulty: **Easy** (CHF 5M, +25% passengers, −15% flight costs, bankrupt bel
 bankrupt below −250k). Both are set in `config.js` (`modes`, `difficulties`, `starterAircraft`).
 
 Rules: departures only 06:00–22:00, crew max 12h block time per day, each route has a limited
-daily demand shared by all your flights on it that day.
+daily demand shared by all your flights on it that day. After landing a plane turns around at the gate
+for 15–60 minutes by its size (Twin Otter 15, ATR 72 20, A320 30, A330 40, A380 60; `turnaround` in config.js).
 
 Map: the selected airport shows its catchment ring and the towns feeding it. Click a plane or a
 route to select that aircraft, click empty map to deselect. ⌂ zooms to your network, the layer

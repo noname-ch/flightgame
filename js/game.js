@@ -221,6 +221,11 @@
   // First moment at or after `after` (absolute minutes) that is `tod` minutes past midnight.
   const nextAt = (tod, after) => after + ((((tod - (after % DAY)) % DAY) + DAY) % DAY);
   const blockMinutes = (type, d) => Math.round((d / D.aircraft[type].speedKmh) * 60 + C.taxiMin);
+  // Minutes a plane stands at the gate after landing before it can leave again: longer for bigger planes.
+  function turnaroundMin(type) {
+    const T = C.turnaround;
+    return Math.min(T.max, Math.max(T.min, Math.round((T.base + T.perSeat * D.aircraft[type].seats) / 5) * 5));
+  }
   const landingFee = (code) => C.landingFee.base + C.landingFee.perSize * airportSize(code);
   const slotUpfront = (code) => C.slot.upfront[airportSize(code)];
   const slotWeekly = (code) => C.slot.weekly[airportSize(code)];
@@ -2294,7 +2299,7 @@
     dirty: true, // UI needs a full re-render
 
     airportByCode, distanceKm, dist, bearing, interpolate, catchment, dailyDemand,
-    ticketPrice, routeKey, blockMinutes, landingFee, slotUpfront, slotWeekly,
+    ticketPrice, routeKey, blockMinutes, turnaroundMin, landingFee, slotUpfront, slotWeekly,
     priceNew, fitsAirport, fitsReason, crewFor, factoryOf, onSale, dateOf,
     airportSize, baseSize, airportRunways, runwayLength, runwayTaxiways, runwayCover, roundLine,
     CLASSES, CLASS_ROOM, typeClass, standClassAt, maxClass, slotsFit, longestRunway, runwayNeed, attraction,
@@ -2771,7 +2776,17 @@
       if (!ac || d > ac.rangeKm || !fitsAirport(type, a) || !fitsAirport(type, b)) return null;
       const fare = R.fare[r.kind];
       const pax = dailyDemand(a, b) * Math.pow(fare, -C.ticket.elasticity);
-      const perDay = Math.min(R.maxPerDay, Math.floor(pax / (ac.seats * R.targetLoad)));
+      // As many flights a day as it expects to fill to targetLoad with its share of the passengers, against the
+      // player and the other rivals already on the route (it used to plan as if it would get every passenger).
+      const mySeats = (this.playerSeats(a, b) + this.playerSeats(b, a)) / 2;
+      const others = this.rivalsOn(a, b).filter((c) => c.r !== r)
+        .reduce((sum, c) => sum + this.pull(c.rt.perDay * c.rt.seats, c.rt.fare), mySeats > 0 ? this.pull(mySeats, this.fareFactor(a, b)) : 0);
+      let perDay = 0;
+      for (let n = 1; n <= R.maxPerDay; n++) {
+        const own = this.pull(n * ac.seats, fare);
+        if (pax * own / (own + others) < n * ac.seats * R.targetLoad) break;
+        perDay = n;
+      }
       if (perDay < 1) return null;
       return { a, b, type, seats: ac.seats, perDay, fare, since: this.state.time, weak: 0,
         value: Math.round(perDay * ac.seats * ticketPrice(d) * fare) };
@@ -2835,7 +2850,7 @@
           let block = 0;
           for (let i = 0; i < st.length; i++) {
             const bm = blockMinutes(p.type, dist(st[i], st[(i + 1) % st.length]));
-            loop += bm + C.turnaroundMin;
+            loop += bm + turnaroundMin(p.type);
             block += bm;
           }
           const loops = Math.max(1, Math.min(span / loop, C.crewMaxDutyMin / block));
@@ -3110,7 +3125,7 @@
       p.location = f.to;
       p.stand = { code: f.to, k: f.standTo != null ? f.standTo : this.freeStand(f.to, p.id) };
       p.status = 'turnaround';
-      p.readyAt = s.time + C.turnaroundMin;
+      p.readyAt = s.time + turnaroundMin(p.type);
       p.flight = null;
       s.money += result;
       if (f.kind === 'scheduled' || f.kind === 'ferry') {
@@ -3311,7 +3326,7 @@
           // Lands before us but flies on (its timetable) before we arrive: it doesn't need the slot then.
           const sch = q.schedule;
           const leg = sch.active && sch.legs && sch.legs.length && sch.legs[sch.index % sch.legs.length];
-          const gone = leg && leg.from === code && Math.max(sch.due || 0, q.flight.arr + C.turnaroundMin) < t;
+          const gone = leg && leg.from === code && Math.max(sch.due || 0, q.flight.arr + turnaroundMin(q.type)) < t;
           if (!gone) used.push(typeClass(q.type));
         } else if (this.staysUntil(q, code, t)) used.push(typeClass(q.type));
       }
@@ -4285,11 +4300,11 @@
           const block = this.legBlock(type, from, to);
           if (tt < C.curfew.start || tt > C.curfew.end || dd + block > C.crewMaxDutyMin) ok = false;
           loop.push({ from, to, dep: tt % DAY });
-          tt += block + C.turnaroundMin;
+          tt += block + turnaroundMin(type);
           dd += block;
         });
         // The day must end where it started, in time for the first departure tomorrow.
-        if (!ok || tt - C.turnaroundMin > firstDep + DAY - C.turnaroundMin) break;
+        if (!ok || tt - turnaroundMin(type) > firstDep + DAY - turnaroundMin(type)) break;
         legs.push(...loop);
         t = tt;
         duty = dd;
@@ -4390,7 +4405,7 @@
           if (dep - t < 0) errors.push('Flights overlap.');
           t = dep;
         }
-        const ready = t + this.legBlock(p.type, leg.from, leg.to) + C.turnaroundMin;
+        const ready = t + this.legBlock(p.type, leg.from, leg.to) + turnaroundMin(p.type);
         const nextDep = i + 1 < legs.length ? (() => { let d = legs[i + 1].dep; while (d < t) d += DAY; return d; })() : legs[0].dep + DAY;
         if (nextDep < ready) errors.push(`After ${fmtClock(leg.dep)} ${leg.from}→${leg.to} the plane is ready at ${fmtClock(ready % DAY)} – too late for the next flight at ${fmtClock(nextDep % DAY)}.`);
       });
@@ -4524,7 +4539,7 @@
       const sch = p.schedule;
       if (!sch.legs || !sch.legs.length) return;
       const at = p.status === 'flying' && p.flight ? p.flight.to : p.location;
-      const from = Math.max(this.state.time, p.status === 'flying' && p.flight ? p.flight.arr + C.turnaroundMin : 0);
+      const from = Math.max(this.state.time, p.status === 'flying' && p.flight ? p.flight.arr + turnaroundMin(p.type) : 0);
       let best = 0;
       let bestDue = Infinity;
       sch.legs.forEach((l, i) => {
@@ -4594,7 +4609,7 @@
       }
       if (p.status === 'turnaround' && !p.repair) {
         const left = Math.max(0, p.readyAt - t);
-        return Math.max(0.12, 1 - left / C.turnaroundMin);
+        return Math.max(0.12, 1 - left / turnaroundMin(p.type));
       }
       return 1;
     },
@@ -4614,7 +4629,7 @@
         const cost = flightCost(type, d, to, pax, costMult);
         legs.push({ from, to, d: Math.round(d), block: blockMinutes(type, d), demand, pax, revenue, cost });
       }
-      const loopMin = legs.reduce((s, l) => s + l.block + C.turnaroundMin, 0);
+      const loopMin = legs.reduce((s, l) => s + l.block + turnaroundMin(type), 0);
       const profit = legs.reduce((s, l) => s + l.revenue - l.cost, 0);
       return { legs, loopMin, profit };
     },

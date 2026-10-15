@@ -299,11 +299,15 @@ try {
   step('Fleet: Ferry there (to the other slot airport) says when the plane leaves');
   const ferry = await evaluate(async () => {
     const p = G.state.planes[0];
+    // paused, or at full speed a short turnaround and the whole ferry can be over before we look
+    const pause = document.getElementById('pause');
+    const running = FG.ui.speed > 0;
+    if (running) pause.click();
     document.querySelector('#rail [data-tab="fleet"]').click();
     await new Promise((r) => setTimeout(r, 300));
     const sel = document.getElementById(`send-${p.id}`);
     const btn = document.querySelector(`[data-action="sendSelect"][data-plane="${p.id}"]`);
-    if (!sel || !btn) return { err: 'no ferry select or button on the plane card' };
+    if (!sel || !btn) { if (running) pause.click(); return { err: 'no ferry select or button on the plane card' }; }
     const at = p.status === 'flying' && p.flight ? p.flight.to : p.location;
     const to = [...sel.options].map((o) => o.value).find((c) => c !== at);
     sel.value = to;
@@ -312,6 +316,7 @@ try {
     const text = document.getElementById('toast').textContent;
     const ok = p.pendingFerry === to && text.includes(`ferries to ${to}`);
     G.setScheduleActive(p.id, true); // back on its timetable for the rest of the test
+    if (running) pause.click();
     return ok ? { text } : { err: `no ferry (${p.pendingFerry}, toast "${text}")` };
   });
   if (ferry.err) errors.push(`ferry: ${ferry.err}`);

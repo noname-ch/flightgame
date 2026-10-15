@@ -24,7 +24,7 @@ FG.config = {
 
   // Demand model
   catchmentRadiusKm: 150,   // towns within this radius feed an airport
-  demandFactor: 0.000028,   // daily pax per direction = factor * sqrt(catchA * catchB) * distanceFactor
+  demandFactor: 0.00011,    // daily pax per direction = factor * sqrt(catchA * catchB) * distanceFactor
   ticket: {
     base: 60, perKm: 0.11,    // standard fare = base + perKm * distance
     elasticity: 1.5,          // demand = standard demand * priceFactor ^ -elasticity
@@ -41,7 +41,9 @@ FG.config = {
 
   // Operations
   taxiMin: 30,              // added to every flight for taxi/climb/approach
-  turnaroundMin: 45,
+  // Turnaround at the gate after landing (unloading, cleaning, catering, fuel, boarding): base + perSeat × seats
+  // minutes, rounded to 5, from min to max. Twin Otter 15, ATR 72 20, A220 25, A320 30, A330 40, 777 55, A380 60.
+  turnaround: { base: 10, perSeat: 0.11, min: 15, max: 60 },
   curfew: { start: 6 * 60, end: 22 * 60 }, // departures only allowed in this window
   crewMaxDutyMin: 12 * 60,  // max block time per crew per day
 
