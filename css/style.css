@@ -399,6 +399,7 @@ tr.click:hover { background: var(--panel-2); }
   font-size: 11px;
   font-weight: 600;
   line-height: 1.2;
+  margin-top: -0.6em; /* half its one line: centred on the dot (js/ui.js AirportLabel doesn't measure it) */
   text-shadow: -1px -1px 0 var(--m-halo), 1px -1px 0 var(--m-halo), -1px 1px 0 var(--m-halo),
     1px 1px 0 var(--m-halo), 0 0 3px var(--m-halo);
 }
@@ -787,6 +788,10 @@ i.s-net { background: var(--muted); }
   text-shadow: 0 0 2px #000, 0 0 2px #000;
   pointer-events: none;
 }
+/* stand names from zoom 16 (js/ui.js drawGates sets z16 on the pane) */
+.leaflet-gates-pane:not(.z16) .gate-label { display: none; }
+/* the aprons' canvas: nothing on it takes the mouse (runways under it do) */
+.leaflet-gates-pane > canvas { pointer-events: none; }
 .rw-num {
   color: #fff;
   font: 700 10px/14px system-ui, sans-serif;

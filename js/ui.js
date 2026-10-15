@@ -351,13 +351,22 @@
     }, 250);
   }
 
+  // Airport labels. Leaflet measures a label each time it places it (and on every zoom it places them all),
+  // which makes the browser lay out the page again for each one: hundreds in a row, and the map froze.
+  // These sit right of the dot without measuring; CSS centres them on it (.ap-label in style.css).
+  const AirportLabel = L.Tooltip.extend({
+    _setPosition(pos) {
+      L.DomUtil.setPosition(this._container, pos.add(L.point(this.options.offset)).add(this._getAnchor()));
+    },
+  });
+
   function createAirportMarker(a) {
     const m = L.circleMarker([a.lat, a.lon], {
       color: '#fff', weight: 2, fillOpacity: 1, className: 'ap-dot', bubblingMouseEvents: false,
     });
-    m.bindTooltip(`<b>${a.code}</b><span class="city"> · ${a.city}</span>`, {
-      permanent: true, direction: 'right', className: 'ap-label',
-    });
+    m.bindTooltip(new AirportLabel({
+      permanent: true, direction: 'right', className: 'ap-label leaflet-tooltip-right',
+    }).setContent(`<b>${a.code}</b><span class="city"> · ${a.city}</span>`));
     m.on('click', () => {
       if (ui.buildMode) return;
       ui.selectedAirport = a.code;
@@ -501,82 +510,125 @@
 
   // Aprons: terminal, jet bridges, stand lead-in lines and stop bars (planes park and push back here).
   const GATE_ZOOM = 14;
+  // Each airport's apron is drawn once (ui.gates[code]) and drawn again only when that airport changes. A zoom
+  // only sets the taxiway widths and shows or hides the hold bars and stand names: drawing thousands of shapes
+  // anew on every zoom step froze the map. They go on one canvas, as thousands of SVG elements to move on each
+  // zoom were slow too.
   function drawGates() {
     const z = ui.map.getZoom();
     if (z < GATE_ZOOM) {
-      if (ui.gateSig) { ui.gateLayer.clearLayers(); ui.gateSig = ''; delete ui.areas.gates; }
+      // (taken off the map but kept: zooming back in shows them without working them out again)
+      if (ui.map.hasLayer(ui.gateLayer)) ui.gateLayer.remove();
       return;
     }
+    if (!ui.map.hasLayer(ui.gateLayer)) ui.gateLayer.addTo(ui.map);
+    const gates = ui.gates || (ui.gates = {});
+    const looks = `${FG.layouts ? `${FG.layouts.version}.${FG.layouts.looked}` : 0}|${FG.devPreview ? ui.selectedAirport : ''}`;
     // (padded a lot: an apron can lie up to 3 km from the airport's reference point)
-    const view = drawnArea('gates', `${z}|${FG.layouts ? `${FG.layouts.version}.${FG.layouts.looked}` : 0}|${FG.devPreview ? ui.selectedAirport : ''}|${D.airports.length}|${G.state.projects.length}`, 1);
-    if (!view) return;
-    const list = airportsNear(view).filter((a) => !a.factory);
-    const sig = `${z}|${FG.layouts ? `${FG.layouts.version}.${FG.layouts.looked}` : 0}|${FG.devPreview ? ui.selectedAirport : ''}|${list.map((a) => `${a.code}:${G.airportSize(a.code)}:${G.airportRunways(a.code).length}`).join(',')}`;
-    if (sig === ui.gateSig) return; // redrawn only when the view or an airport changes
-    ui.gateSig = sig;
-    ui.gateLayer.clearLayers();
-    const quiet = { pane: 'gates', interactive: false };
-    for (const a of list) {
-      const ap = G.apronOf(a.code);
-      // Its real layout is on the way: not the one the game makes up meanwhile (it would stand somewhere else).
-      if (FG.layouts && FG.layouts.pending(a.code)) continue;
-      // taxiways, aprons and buildings (the real ones where the airport has a layout from OpenStreetMap)
-      const taxiways = G.drawnTaxiways(a.code); // (not across the aprons and pads)
-      // as wide as they are (`w`: fitted to the satellite picture, else 23 m at big airports and 15 m at small ones)
-      const twWidth = G.airportSize(a.code) >= 3 ? 23 : 15;
-      const mpp = metresPerPixel(a.lat);
-      for (const tw of taxiways) L.polyline(tw, { ...quiet, color: '#4a515c', weight: Math.max(2, (tw.w || twWidth) / mpp), opacity: 1 }).addTo(ui.gateLayer);
-      // (solid: the satellite's own planes and paint must not show through)
-      for (const r of ap.aprons || [ap.apron]) L.polygon(r, { ...quiet, stroke: false, fillColor: '#3a4049', fillOpacity: 1 }).addTo(ui.gateLayer);
-      // pads (airport fixes): open concrete, planes go straight across them to their stands
-      for (const r of ap.pads || []) L.polygon(r, { ...quiet, color: '#cbd5e1', weight: 1, dashArray: '5 4', fillColor: '#6b7280', fillOpacity: 1 }).addTo(ui.gateLayer);
-      // yellow centre lines, and the holding positions where a taxiway comes up to a paved runway
-      const paved = z >= 15 ? G.airportRunways(a.code).filter((r) => r[5]) : [];
-      for (const tw of taxiways) {
-        L.polyline(tw, { ...quiet, color: '#e3b70f', weight: z >= 18 ? 2 : 1, opacity: 1 }).addTo(ui.gateLayer);
-        for (const r of paved) {
-          for (let i = 1; i < tw.length; i++) {
-            for (const bar of holdBars(r, tw[i - 1], tw[i], (tw.w || twWidth) * 0.85)) L.polygon(bar, { ...quiet, stroke: false, fillColor: '#f2c40f', fillOpacity: 1 }).addTo(ui.gateLayer);
-          }
-        }
+    const view = drawnArea('gates', `${z}|${looks}|${D.airports.length}|${G.state.projects.length}`, 1);
+    if (view) {
+      const shown = new Set();
+      for (const a of airportsNear(view)) {
+        if (a.factory) continue;
+        // (asking for the apron starts the lookup of its real layout; a layout arriving for another airport
+        // leaves this one's apron object as it was, see flightTrack)
+        const ap = G.apronOf(a.code);
+        // Its real layout is on the way: not the one the game makes up meanwhile (it would stand somewhere else).
+        if (FG.layouts && FG.layouts.pending(a.code)) continue;
+        shown.add(a.code);
+        const sig = `${FG.devPreview && ui.selectedAirport === a.code}|${G.airportSize(a.code)}:${G.airportRunways(a.code).length}`;
+        if (gates[a.code] && gates[a.code].sig === sig && gates[a.code].ap === ap) continue;
+        if (gates[a.code]) ui.gateLayer.removeLayer(gates[a.code].group);
+        gates[a.code] = drawApron(a);
+        Object.assign(gates[a.code], { sig, ap });
+        ui.gateLayer.addLayer(gates[a.code].group);
       }
-      for (const b of ap.buildings) {
-        const fill = { terminal: '#64748b', hall: '#6b7a90', roof: '#94a3b8', tower: '#cbd5e1', bridge: '#cbd5e1', road: '#3b4048', carpark: '#57606c', hangar: '#57606c', other: '#5b6470' }[b.kind];
-        if (!fill) continue; // glazing, roof plant, masts and the like are too small to show from above
-        L.polygon(b.ring, { ...quiet, color: '#e2e8f0', weight: b.kind === 'road' ? 0 : 1, fillColor: fill, fillOpacity: 1 }).addTo(ui.gateLayer);
+      for (const code of Object.keys(gates)) {
+        if (!shown.has(code)) { ui.gateLayer.removeLayer(gates[code].group); delete gates[code]; }
       }
-      // developer tools: where construction at the selected airport would go
-      if (FG.devPreview && ui.selectedAirport === a.code) {
-        const pv = G.expansionPreview(a.code);
-        const plan = { ...quiet, color: '#22d3ee', weight: 2, dashArray: '6 5', fillColor: '#22d3ee', fillOpacity: 0.2 };
-        for (const { r } of pv.runways) L.polyline([[r[0], r[1]], [r[2], r[3]]], { ...plan, weight: 7, opacity: 0.75 }).addTo(ui.gateLayer);
-        for (const tw of pv.taxiways) L.polyline(tw, { ...plan, weight: 3 }).addTo(ui.gateLayer);
-        for (const r of pv.aprons) L.polygon(r, plan).addTo(ui.gateLayer);
-        for (const b of pv.buildings) L.polygon(b.ring, plan).addTo(ui.gateLayer);
-        for (const st of pv.stands) L.polyline(st.lead, { ...plan, weight: 1.5 }).addTo(ui.gateLayer);
-      }
-      // (a real layout without a terminal has none: not the square game.js puts in for it)
-      if (!ap.real || ap.real.terminals.length) {
-        L.polygon(ap.terminal, { pane: 'gates', color: '#e2e8f0', weight: 1, fillColor: '#64748b', fillOpacity: 1, bubblingMouseEvents: false })
-          .bindTooltip(`${a.code} terminal · ${ap.gates.length} gates with jet bridges · ${ap.stands.length - ap.gates.length} remote stands`, { sticky: true })
-          .addTo(ui.gateLayer);
-      }
-      for (const mk of ap.markings || []) {
-        L.polyline(mk.line, { ...quiet, color: mk.kind === 'w' ? '#e5e7eb' : '#facc15', weight: 1, opacity: 0.8 }).addTo(ui.gateLayer);
-      }
-      for (const st of ap.stands) {
-        L.polyline(st.lead, { ...quiet, color: '#facc15', weight: 1.2, opacity: 0.85 }).addTo(ui.gateLayer);
-        L.polyline(st.stopBar, { ...quiet, color: '#facc15', weight: 2.5 }).addTo(ui.gateLayer);
-        if (st.bridgePoly) {
-          L.polygon(st.bridgePoly, { ...quiet, color: '#e2e8f0', weight: 1, fillColor: '#94a3b8', fillOpacity: 1 }).addTo(ui.gateLayer);
-        }
-        if (z >= 16) {
-          L.marker(st.lead[0], {
-            ...quiet, icon: L.divIcon({ className: 'gate-label', html: st.name, iconSize: [26, 12], iconAnchor: [13, 6] }),
-          }).addTo(ui.gateLayer);
+    }
+    const pane = ui.map.getPane('gates');
+    pane.classList.toggle('z16', z >= 16);
+    for (const g of Object.values(gates)) zoomApron(g, z);
+  }
+
+  // What changes with the zoom: taxiways as wide as they are, hold bars from 15, and stand names from 16
+  // (shown by the pane's class, see .gate-label in style.css).
+  function zoomApron(g, z) {
+    if (g.z === z) return;
+    g.z = z;
+    const mpp = metresPerPixel(g.lat);
+    // (on the canvas, setStyle only asks for a repaint: one for them all, in the next frame)
+    for (const [line, w] of g.taxi) line.setStyle({ weight: Math.max(2, w / mpp) });
+    for (const line of g.centre) line.setStyle({ weight: z >= 18 ? 2 : 1 });
+    if (z >= 15 && !g.group.hasLayer(g.hold)) g.group.addLayer(g.hold);
+    else if (z < 15 && g.group.hasLayer(g.hold)) g.group.removeLayer(g.hold);
+  }
+
+  function drawApron(a) {
+    const group = L.layerGroup();
+    const taxi = []; // [taxiway, its width in metres]
+    const centre = [];
+    // (one canvas for all but the terminals, which have a tooltip: the canvas lets the mouse through to the
+    // runways under it, see .leaflet-gates-pane in style.css)
+    const renderer = ui.gateCanvas || (ui.gateCanvas = L.canvas({ pane: 'gates' }));
+    const quiet = { pane: 'gates', interactive: false, renderer };
+    const hold = L.layerGroup(); // hold bars
+    const ap = G.apronOf(a.code);
+    // taxiways, aprons and buildings (the real ones where the airport has a layout from OpenStreetMap)
+    const taxiways = G.drawnTaxiways(a.code); // (not across the aprons and pads)
+    // as wide as they are (`w`: fitted to the satellite picture, else 23 m at big airports and 15 m at small ones)
+    const twWidth = G.airportSize(a.code) >= 3 ? 23 : 15;
+    for (const tw of taxiways) taxi.push([L.polyline(tw, { ...quiet, color: '#4a515c', opacity: 1 }).addTo(group), tw.w || twWidth]);
+    // (solid: the satellite's own planes and paint must not show through)
+    for (const r of ap.aprons || [ap.apron]) L.polygon(r, { ...quiet, stroke: false, fillColor: '#3a4049', fillOpacity: 1 }).addTo(group);
+    // pads (airport fixes): open concrete, planes go straight across them to their stands
+    for (const r of ap.pads || []) L.polygon(r, { ...quiet, color: '#cbd5e1', weight: 1, dashArray: '5 4', fillColor: '#6b7280', fillOpacity: 1 }).addTo(group);
+    // yellow centre lines, and the holding positions where a taxiway comes up to a paved runway
+    const paved = G.airportRunways(a.code).filter((r) => r[5]);
+    for (const tw of taxiways) {
+      centre.push(L.polyline(tw, { ...quiet, color: '#e3b70f', opacity: 1 }).addTo(group));
+      for (const r of paved) {
+        for (let i = 1; i < tw.length; i++) {
+          for (const bar of holdBars(r, tw[i - 1], tw[i], (tw.w || twWidth) * 0.85)) L.polygon(bar, { ...quiet, stroke: false, fillColor: '#f2c40f', fillOpacity: 1 }).addTo(hold);
         }
       }
     }
+    for (const b of ap.buildings) {
+      const fill = { terminal: '#64748b', hall: '#6b7a90', roof: '#94a3b8', tower: '#cbd5e1', bridge: '#cbd5e1', road: '#3b4048', carpark: '#57606c', hangar: '#57606c', other: '#5b6470' }[b.kind];
+      if (!fill) continue; // glazing, roof plant, masts and the like are too small to show from above
+      L.polygon(b.ring, { ...quiet, color: '#e2e8f0', weight: b.kind === 'road' ? 0 : 1, fillColor: fill, fillOpacity: 1 }).addTo(group);
+    }
+    // developer tools: where construction at the selected airport would go
+    if (FG.devPreview && ui.selectedAirport === a.code) {
+      const pv = G.expansionPreview(a.code);
+      const plan = { ...quiet, color: '#22d3ee', weight: 2, dashArray: '6 5', fillColor: '#22d3ee', fillOpacity: 0.2 };
+      for (const { r } of pv.runways) L.polyline([[r[0], r[1]], [r[2], r[3]]], { ...plan, weight: 7, opacity: 0.75 }).addTo(group);
+      for (const tw of pv.taxiways) L.polyline(tw, { ...plan, weight: 3 }).addTo(group);
+      for (const r of pv.aprons) L.polygon(r, plan).addTo(group);
+      for (const b of pv.buildings) L.polygon(b.ring, plan).addTo(group);
+      for (const st of pv.stands) L.polyline(st.lead, { ...plan, weight: 1.5 }).addTo(group);
+    }
+    // (a real layout without a terminal has none: not the square game.js puts in for it)
+    if (!ap.real || ap.real.terminals.length) {
+      L.polygon(ap.terminal, { pane: 'gates', color: '#e2e8f0', weight: 1, fillColor: '#64748b', fillOpacity: 1, bubblingMouseEvents: false })
+        .bindTooltip(`${a.code} terminal · ${ap.gates.length} gates with jet bridges · ${ap.stands.length - ap.gates.length} remote stands`, { sticky: true })
+        .addTo(group);
+    }
+    for (const mk of ap.markings || []) {
+      L.polyline(mk.line, { ...quiet, color: mk.kind === 'w' ? '#e5e7eb' : '#facc15', weight: 1, opacity: 0.8 }).addTo(group);
+    }
+    for (const st of ap.stands) {
+      L.polyline(st.lead, { ...quiet, color: '#facc15', weight: 1.2, opacity: 0.85 }).addTo(group);
+      L.polyline(st.stopBar, { ...quiet, color: '#facc15', weight: 2.5 }).addTo(group);
+      if (st.bridgePoly) {
+        L.polygon(st.bridgePoly, { ...quiet, color: '#e2e8f0', weight: 1, fillColor: '#94a3b8', fillOpacity: 1 }).addTo(group);
+      }
+      L.marker(st.lead[0], {
+        ...quiet, icon: L.divIcon({ className: 'gate-label', html: st.name, iconSize: [26, 12], iconAnchor: [13, 6] }),
+      }).addTo(group);
+    }
+    return { group, hold, taxi, centre, lat: a.lat, z: null };
   }
 
   // Real runways (OurAirports) plus whatever the player built, from C.map.runwayZoom on.
@@ -584,11 +636,13 @@
     drawGates();
     const z = ui.map.getZoom();
     const projects = G.state.projects.map((p) => p.code + p.kind).join();
-    const view = drawnArea('runways', `${z}|${projects}|${D.airports.length}`, 0.4);
+    // (drawRunway only changes at zoom 14)
+    const band = z < C.map.runwayZoom ? 0 : z < 14 ? 1 : 2;
+    const view = drawnArea('runways', `${band}|${projects}|${D.airports.length}`, 0.4);
     if (!view) return;
     const list = z < C.map.runwayZoom ? [] : airportsNear(view);
     // Redrawn only when the zoom, the airports in view or a construction site changes.
-    const sig = `${z}|${list.map((a) => `${a.code}:${G.airportRunways(a.code).length}`).join()}|${projects}`;
+    const sig = `${band}|${list.map((a) => `${a.code}:${G.airportRunways(a.code).length}`).join()}|${projects}`;
     if (sig === ui.runwaySig) return;
     ui.runwaySig = sig;
     ui.runwayLayer.clearLayers();
@@ -647,17 +701,21 @@
 
   function resizeMarkers() {
     for (const { t, m } of ui.townMarkers) m.setRadius(townRadius(t));
-    for (const code of Object.keys(ui.airportMarkers)) sizeAirport(G.airportByCode[code]);
+    for (const code of Object.keys(ui.airportMarkers)) {
+      if (ui.map.hasLayer(ui.airportMarkers[code])) sizeAirport(G.airportByCode[code]); // (the others when shown again)
+    }
     if (ui.selectRing) ui.selectRing.setRadius(airportRadius(G.airportByCode[ui.selectedAirport]) + 5);
   }
 
   function sizeAirport(a) {
     const m = ui.airportMarkers[a.code];
     const r = airportRadius(a);
-    m.setRadius(r);
+    if (m.getRadius() !== r) m.setRadius(r);
     const tip = m.getTooltip();
-    tip.options.offset = L.point(r - 2, 0); // keep the label clear of the dot
-    tip.update();
+    if (tip.options.offset.x !== r - 2) {
+      tip.options.offset = L.point(r - 2, 0); // keep the label clear of the dot
+      tip.update();
+    }
     updateLabel(a);
   }
 
@@ -2656,7 +2714,8 @@
       // Airports, runways and gates drawn again (the airport editor changed some).
       redrawAirports() {
         ui.runwaySig = '';
-        ui.gateSig = '';
+        ui.gateLayer.clearLayers();
+        ui.gates = {};
         delete ui.areas.airports;
         delete ui.areas.runways;
         delete ui.areas.gates;

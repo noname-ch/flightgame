@@ -343,6 +343,15 @@
   const GATE_SPACING = [42, 45, 55, 65, 75, 80]; // m between stands by size
   const TAXI_LANE = 70;  // m from a stand back to the apron taxi lane (= pushback distance)
   const apronCache = new Map();
+  // A number for each layout object: an airport's layout can arrive twice (its file, then read fresh from the
+  // map tiles), and the apron must be made again from the new one.
+  const layoutIds = new WeakMap();
+  let layoutCount = 0;
+  const layoutId = (lay) => {
+    if (!lay) return 0;
+    if (!layoutIds.has(lay)) layoutIds.set(lay, ++layoutCount);
+    return layoutIds.get(lay);
+  };
 
   // Where to put an apron: beside the main runway on the airport reference point's side if nothing is in the
   // way there, else further along, further out or on the other side. In the way are the other runways and,
@@ -443,7 +452,7 @@
     const tpl = real || !rws.length ? null : copyTemplate(code, size);
     const from = tpl && FG.layouts ? FG.layouts.get(tpl[0]) : null;
     // (an airport fix changes its layout and runways: js/fixes.js)
-    const key = `${code}|${size}|${rws.length}|${real ? 1 : 0}${FG.obstacles && FG.obstacles[code] ? 2 : 0}${infra(code).style || ''}${from ? tpl : ''}|${FG.fixes ? FG.fixes.rev(code) : 0}`;
+    const key = `${code}|${size}|${rws.length}|${layoutId(real)}.${layoutId(from)}|${FG.obstacles && FG.obstacles[code] ? 2 : 0}${infra(code).style || ''}${from ? tpl : ''}|${FG.fixes ? FG.fixes.rev(code) : 0}`;
     let ap = apronCache.get(key);
     if (ap) return ap;
     if (real || from) ap = real ? realApron(code, size, real) : copiedApron(code, size, tpl, from, rws);
