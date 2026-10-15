@@ -78,8 +78,9 @@
         <div class="tl-bar">${nightAndNow()}${bar}</div></div>`;
     }
     h += `</div></div>`;
+    // (the timetable being planned is in its own window, js/planewin.js)
     const p = pl.edit && G.plane(pl.edit);
-    if (p) h += editor(p);
+    if (p && !FG.planeWin) h += editor(p);
     return h;
   }
 
@@ -408,7 +409,7 @@
       case 'edit': {
         const plane = G.plane(el.dataset.plane);
         if (pl.edit !== plane.id) { pl.edit = plane.id; startDraft(plane); }
-        ctx.setTab('schedule');
+        if (FG.planeWin) FG.planeWin.showTimetable(); else ctx.setTab('schedule');
         break;
       }
       case 'close': pl.edit = null; pl.draft = null; break;
@@ -513,7 +514,10 @@
       G.dirty = true;
       return null;
     },
-    openPlane(id) { const p = G.plane(id); if (p) { pl.edit = id; startDraft(p); } },
+    openPlane(id) { const p = G.plane(id); if (p && pl.edit !== id) { pl.edit = id; startDraft(p); } },
+    // The timetable editor of the plane being planned (the timetable window draws it), or ''.
+    editorHtml() { const p = pl.edit && G.plane(pl.edit); return p && pl.draft ? editor(p) : ''; },
+    closeEditor() { pl.edit = null; pl.draft = null; },
     reset() { pl.edit = null; pl.draft = null; pl.slotAt = null; pl.open = {}; pl.offer = {}; },
   };
 })();

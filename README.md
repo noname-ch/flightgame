@@ -37,6 +37,13 @@ narrower screens), and the airline, money, time and day are on its right. Every 
 where it comes from and goes to, the time left and its fuel; click to select, double-click to
 follow it (2D or 3D).
 
+**Plane window**: clicking a plane (on the map, in 3D or its card) opens its window, as in OpenTTD: a live 3D
+camera behind it (the wheel zooms), what it is doing, its speed and height, where it comes from and goes to, the
+time and distance left and the passengers on board. 🗓 *Timetable* opens its timetable in a window of its own
+(also from a plane's row in Schedule). Every window can be moved by its title bar (also the developer tools,
+the airport editor and build panel, the bug report, the airport checklist and settings) and opens where it was
+left last time. On a phone a click shows the plane's card in Fleet instead.
+
 **Main menu**: the very first start asks for a style, then the main menu offers *Continue*, *New game*,
 *Load game* (the last save in this browser, or a `.json` save file; ⋯ → *Save to file* makes one) and
 *Quick start*. A loading screen stays up until the map has its tiles. The 3D view asks once whether the device

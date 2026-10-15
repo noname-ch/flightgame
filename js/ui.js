@@ -211,9 +211,11 @@
     c.addTo(ui.map);
   }
 
+  // A plane clicked: its window (js/planewin.js; on a phone, its card in Fleet).
   function selectPlane(id) {
     ui.selectedPlane = id;
-    ui.tab = 'fleet';
+    if (FG.planeWin && id && !phone.matches) FG.planeWin.open(id);
+    else ui.tab = 'fleet';
     G.dirty = true;
   }
 
@@ -2016,6 +2018,7 @@
       <label class="check"><input type="checkbox" data-set="autosave" ${set.autosave ? 'checked' : ''}> Save automatically every 30 s</label>
       <h4>3D view</h4><p class="muted">Made for strong devices: a gaming PC, or a recent laptop or Mac.</p><div class="row"><button data-set="3d">${FG.view3d && FG.view3d.on ? 'Back to 2D' : 'Open 3D view'} <span class="muted">V</span></button></div>
       <h4 class="keys-help">Keys</h4><div class="muted keys-help">Space pause · ← → speed · V 3D · F2 developer tools · F3 airport editor · F8 airport checklist · Esc menu</div></div>`;
+    if (FG.win) FG.win.movable(el.querySelector('.set-card'), '.side-head', 'settings'); // (dragged by its title)
   }
   function onSettings(e) {
     const t = e.target.closest('[data-set]');
@@ -2084,6 +2087,7 @@
   function renderAll() {
     renderStrip();
     renderSidebar();
+    if (FG.planeWin) FG.planeWin.render();
     // The 2D map is hidden under the 3D view: it is brought up to date when it shows again (frame).
     if (in3d()) { ui.map2dStale = true; return; }
     refreshAirports();
@@ -2566,7 +2570,10 @@
         break;
       }
       case 'renameCancel': ui.renaming = null; break;
-      case 'planDay': FG.planner.openPlane(plane); ui.tab = 'schedule'; break;
+      case 'planDay':
+        FG.planner.openPlane(plane);
+        if (FG.planeWin && !phone.matches) FG.planeWin.showTimetable(); else ui.tab = 'schedule';
+        break;
       case 'planAdd': { const e2 = FG.planner.addStop(code); if (e2) { toast(e2, true); return; } ui.tab = 'schedule'; break; }
       case 'openMarket': e.preventDefault(); openMarket(); return;
       case 'buyNew': act(G.buyNew(el.dataset.type, code)); break;
@@ -2754,6 +2761,7 @@
       get time() { return nowMinutes(); }, // fractional game minutes
       timeAt: (at) => nowMinutes(at), // ... at a moment (performance.now() scale), e.g. a frame's timestamp
       selectPlane,
+      showFleet(id) { ui.selectedPlane = id; setTab('fleet'); G.dirty = true; },
       toast,
       selectAirport(code) { ui.selectedAirport = code; G.dirty = true; },
       showAirport(code) { // select it and bring it into view, close enough for its gates

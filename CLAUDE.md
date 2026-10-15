@@ -57,6 +57,11 @@ Play online: https://noname-ch.github.io/flightgame/ (GitHub Pages, deployed fro
   view draws `altFt - fieldFt` above them) and `ground`. Tracks follow the ground from `js/ground.js`
   (`FG.ground`; `FG.terrain` is the 3D view's airport-site check) and the type's `G.perf(type)`; a flight takes
   as long as it really takes and waits at the gate (phase `boarding`) for the rest of its block time.
+- Windows: `js/windows.js` (`FG.win.movable(el, handleSelector, key)` for a panel, `FG.win.open(key, opts)` for a
+  new window); positions are kept in localStorage `flightgame.win.<key>`. `js/planewin.js` is the plane window
+  (`FG.planeWin.open(id)`, from `ui.js selectPlane`) and the timetable window (planner's `editorHtml()`; clicks go
+  to `FG.planner.action/change/input` as in the sidebar). Its camera is `FG.view3d.chase(container, id)` in
+  view3d.js: a second small MapLibre map with its own plane layer (`chaseLayer`, models posed by `placeModel`).
 - `js/devtools.js` (F2) only uses public `G` methods (addPlane, crash, incident, infraOf,
   finishProjects, eventContext, refreshMarket). Keep those working.
 - Leaflet is in the repo (`js/vendor/leaflet`, 1.9.4), not loaded from unpkg: when that CDN was slow or down the game

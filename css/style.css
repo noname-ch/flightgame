@@ -1409,3 +1409,41 @@ body { height: 100dvh; } /* the visible height, also while the phone's address b
 .plane-card .rename-btn { padding: 0 4px; font-size: 11px; opacity: 0.6; vertical-align: middle; }
 .plane-card .rename-btn:hover { opacity: 1; }
 .plane-card .rename input { flex: 1; min-width: 0; padding: 4px 8px; border: 1px solid var(--input-border); border-radius: 6px; font-weight: 700; }
+
+/* ---------- windows that can be moved (js/windows.js) and the plane and timetable windows (js/planewin.js) ---------- */
+.fg-movable .dev-head, .fg-movable .side-head, .fg-win-head { cursor: grab; user-select: none; }
+.fg-dragging, .fg-dragging * { cursor: grabbing !important; user-select: none; }
+.fg-win {
+  position: fixed;
+  z-index: 2100;
+  max-width: calc(100vw - 24px);
+  max-height: calc(100vh - 70px);
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.45);
+  font-size: 13px;
+}
+.fg-win[hidden] { display: none; }
+.fg-win-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 10px; border-bottom: 1px solid var(--border); }
+.fg-win-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fg-win-title .muted { font-weight: 400; color: var(--muted); }
+.fg-win-body { padding: 8px 10px 10px; overflow-y: auto; }
+.tt-win .fg-win-body .panel { margin: 0; padding: 0; border: none; background: none; box-shadow: none; }
+.pw-cam { position: relative; height: 200px; margin: -8px -10px 8px; background: #1e293b; overflow: hidden; }
+.pw-cam-map { position: absolute; inset: 0; }
+.pw-cam-note { position: absolute; left: 10px; bottom: 8px; color: #cbd5e1; font-size: 12px; pointer-events: none; }
+.pw-phase { font-weight: 600; font-size: 14px; margin-bottom: 4px; }
+.pw-route { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 6px; }
+.pw-route > span:not(.pw-arrow) { flex: 1; min-width: 0; }
+.pw-route small { display: block; color: var(--muted); }
+.pw-arrow { color: var(--muted); padding-top: 1px; }
+.pw-bar { height: 5px; border-radius: 3px; background: var(--border); overflow: hidden; margin-bottom: 8px; }
+.pw-bar i { display: block; height: 100%; background: #007aff; }
+.pw-grid { display: grid; grid-template-columns: auto 1fr auto; gap: 2px 10px; align-items: baseline; margin-bottom: 6px; }
+.pw-grid span { color: var(--muted); }
+.pw-grid small { color: var(--muted); }
+.pw-buttons { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }

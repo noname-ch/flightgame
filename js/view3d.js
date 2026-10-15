@@ -807,6 +807,41 @@ function restoreGl(renderer, map) {
   if (map.painter && map.painter.context && map.painter.context.setDirty) map.painter.context.setDirty();
 }
 
+// Pose a plane's model (planeLayer and the chase camera): at the pose, `altM` up, `exag` times its real size,
+// heading, bank and pitch eased towards the pose's (frame-rate independent). `lineUp`: parked planes (index
+// at their airport) are lined up beside each other where they are drawn too big to stand at their gates.
+function placeModel(e, pose, altM, exag, globe, now, lineUp) {
+  const len = e.obj.userData.len;
+  const unit = frameAt(pose.lat, pose.lon, altM, globe);
+  // Ease heading, bank and pitch towards the target, so the plane turns, rolls and pitches
+  // smoothly instead of snapping (frame-rate independent).
+  const k = e.att ? 1 - Math.exp(-Math.min(0.25, (now - e.lastFrame) / 1000) / 0.35) : 1;
+  if (!e.att) e.att = { heading: pose.heading, bank: 0, pitch: 0 };
+  e.att.heading = (e.att.heading + wrap180(pose.heading - e.att.heading) * k + 360) % 360;
+  e.att.bank += ((pose.bank || 0) - e.att.bank) * k;
+  e.att.pitch += ((pose.pitch || 0) - e.att.pitch) * k;
+  e.lastFrame = now;
+  const h = e.att.heading * DEG;
+  const pitch = e.att.pitch * DEG;
+  const bank = e.att.bank * DEG;
+  const { fwd, right, up, east, north, pos } = tmp;
+  fwd.copy(north).multiplyScalar(Math.cos(h)).addScaledVector(east, Math.sin(h));
+  right.copy(east).multiplyScalar(Math.cos(h)).addScaledVector(north, -Math.sin(h));
+  // Pitch about the wing axis, then bank about the nose (right turn = right wing down).
+  const nose = fwd.clone().multiplyScalar(Math.cos(pitch)).addScaledVector(up, Math.sin(pitch));
+  const lift = up.clone().multiplyScalar(Math.cos(pitch)).addScaledVector(fwd, -Math.sin(pitch));
+  const wing = right.clone().multiplyScalar(Math.cos(bank)).addScaledVector(lift, -Math.sin(bank));
+  const top = lift.clone().multiplyScalar(Math.cos(bank)).addScaledVector(right, Math.sin(bank));
+  right.copy(wing);
+  // Zoomed out, enlarged parked planes would overlap at their gates: line them up instead.
+  if (lineUp != null && !pose.flying && (!pose.gate || exag > 2.5)) {
+    pos.addScaledVector(east, lineUp * len * exag * 1.1 * unit).addScaledVector(north, len * exag * 0.9 * unit);
+  }
+  const s = unit * exag;
+  e.obj.matrix.makeBasis(right.multiplyScalar(s), nose.multiplyScalar(s), top.multiplyScalar(s)).setPosition(pos);
+  e.obj.matrixWorldNeedsUpdate = true;
+}
+
 const planeLayer = {
   id: 'fg-planes',
   type: 'custom',
@@ -889,34 +924,8 @@ const planeLayer = {
       // Shown height: real cruise height, but always clearly above the ground when zoomed out.
       const altM = drawnAlt(map, p, pose, len, exag);
       if (p.id === sel) this.drawTrack(p, len, exag, globe);
-      const unit = frameAt(pose.lat, pose.lon, altM, globe);
-      // Ease heading, bank and pitch towards the target, so the plane turns, rolls and pitches
-      // smoothly instead of snapping (frame-rate independent).
-      const k = e.att ? 1 - Math.exp(-Math.min(0.25, (now - e.lastFrame) / 1000) / 0.35) : 1;
-      if (!e.att) e.att = { heading: pose.heading, bank: 0, pitch: 0 };
-      e.att.heading = (e.att.heading + wrap180(pose.heading - e.att.heading) * k + 360) % 360;
-      e.att.bank += ((pose.bank || 0) - e.att.bank) * k;
-      e.att.pitch += ((pose.pitch || 0) - e.att.pitch) * k;
-      e.lastFrame = now;
-      const h = e.att.heading * DEG;
-      const pitch = e.att.pitch * DEG;
-      const bank = e.att.bank * DEG;
-      const { fwd, right, up, east, north, pos } = tmp;
-      fwd.copy(north).multiplyScalar(Math.cos(h)).addScaledVector(east, Math.sin(h));
-      right.copy(east).multiplyScalar(Math.cos(h)).addScaledVector(north, -Math.sin(h));
-      // Pitch about the wing axis, then bank about the nose (right turn = right wing down).
-      const nose = fwd.clone().multiplyScalar(Math.cos(pitch)).addScaledVector(up, Math.sin(pitch));
-      const lift = up.clone().multiplyScalar(Math.cos(pitch)).addScaledVector(fwd, -Math.sin(pitch));
-      const wing = right.clone().multiplyScalar(Math.cos(bank)).addScaledVector(lift, -Math.sin(bank));
-      const top = lift.clone().multiplyScalar(Math.cos(bank)).addScaledVector(right, Math.sin(bank));
-      right.copy(wing);
-      // Zoomed out, enlarged parked planes would overlap at their gates: line them up instead.
-      if (!pose.flying && (!pose.gate || exag > 2.5)) {
-        pos.addScaledVector(east, n * len * exag * 1.1 * unit).addScaledVector(north, len * exag * 0.9 * unit);
-      }
-      const s = unit * exag;
-      e.obj.matrix.makeBasis(right.multiplyScalar(s), nose.multiplyScalar(s), top.multiplyScalar(s)).setPosition(pos);
-      e.obj.matrixWorldNeedsUpdate = true;
+      placeModel(e, pose, altM, exag, globe, now, n);
+      const { pos } = tmp;
       e.world.copy(pos);
       e.lngLat = [pose.lon, pose.lat];
       e.heading = e.att.heading;
@@ -1341,6 +1350,130 @@ function createMap() {
     el.addEventListener(t, (ev) => ev.stopPropagation());
   }
 }
+
+// ---------- chase camera (the plane window, js/planewin.js) ----------
+// A small 3D view of its own behind and above one plane, turning with it, as in OpenTTD's vehicle windows:
+// v.chase(container, id) -> { setPlane(id), resize(), destroy() }. The planes near it are drawn at their real
+// size, the airports round it with their runways, taxiways and gates. The wheel zooms; the rest follows.
+const CHASE_KM = 25; // planes and airports drawn round the camera
+function chaseLayer(cam) {
+  return {
+    id: 'fg-chase-planes',
+    type: 'custom',
+    renderingMode: '3d',
+    onAdd(map, gl) {
+      this.map = map;
+      this.camera = new THREE.Camera();
+      this.scene = new THREE.Scene();
+      this.scene.add(new THREE.AmbientLight(0xffffff, 1.6));
+      this.sun = new THREE.DirectionalLight(0xffffff, 2.2);
+      this.scene.add(this.sun, this.sun.target);
+      this.world = new THREE.Group();
+      this.scene.add(this.world);
+      this.renderer = new THREE.WebGLRenderer({ canvas: map.getCanvas(), context: gl, antialias: true });
+      this.renderer.autoClear = false;
+      this.matrix = new THREE.Matrix4();
+      this.shift = new THREE.Matrix4();
+      restoreGl(this.renderer, map);
+    },
+    render(gl, args) {
+      const map = this.map;
+      const pd = args.defaultProjectionData;
+      const globe = map.getProjection().type === 'globe' && pd.projectionTransition >= 0.5;
+      this.matrix.fromArray(globe ? pd.mainMatrix : pd.fallbackMatrix);
+      this.camera.projectionMatrix.copy(this.matrix);
+      const now = performance.now();
+      const t = cam.t != null ? cam.t : smoothTime(frameNow());
+      const center = map.getCenter();
+      frameAt(center.lat, center.lng, 0, globe);
+      this.sun.position.copy(tmp.pos).addScaledVector(tmp.up, 1).addScaledVector(tmp.east, -0.6).addScaledVector(tmp.north, 0.4);
+      this.sun.target.position.copy(tmp.pos);
+      this.world.position.copy(tmp.pos).negate();
+      this.camera.projectionMatrix.multiply(this.shift.makeTranslation(tmp.pos.x, tmp.pos.y, tmp.pos.z));
+      const dLat = CHASE_KM / 111;
+      const dLon = dLat / Math.max(0.05, Math.cos(center.lat * DEG));
+      const alive = new Set();
+      const livery = FG.livery().id;
+      for (const p of G.state.planes) {
+        const st = p.status === 'flying' && G.flightState ? G.flightState(p, t) : null;
+        const pose = planePose(p, t, st);
+        if (Math.abs(pose.lat - center.lat) > dLat || Math.abs(wrap180(pose.lon - center.lng)) > dLon) continue;
+        alive.add(p.id);
+        let e = cam.planes[p.id];
+        if (!e || e.type !== p.type || e.livery !== livery) {
+          if (e) this.world.remove(e.obj);
+          e = cam.planes[p.id] = { obj: planeModel(p.type), type: p.type, livery };
+          this.world.add(e.obj);
+        }
+        e.obj.visible = true;
+        e.altM = drawnAlt(map, p, pose, e.obj.userData.len, 1);
+        placeModel(e, pose, e.altM, 1, globe, now, null);
+      }
+      for (const id of Object.keys(cam.planes)) {
+        if (!alive.has(id)) { this.world.remove(cam.planes[id].obj); delete cam.planes[id]; }
+      }
+      this.renderer.resetState();
+      this.renderer.clearDepth();
+      facing.value = this.camera.projectionMatrix.determinant() < 0 ? 1 : -1;
+      this.renderer.render(this.scene, this.camera);
+      facing.value = 1;
+      restoreGl(this.renderer, map);
+    },
+  };
+}
+function chase(container, id) {
+  const cam = { id, t: null, bearing: null, zoom: null, userZoom: false, planes: {}, ready: false, dead: false, gatesSig: '', gatesAt: 0 };
+  const map = new maplibregl.Map({
+    container, center: [0, 0], zoom: 15, pitch: 72, maxPitch: 85,
+    canvasContextAttributes: { antialias: true }, attributionControl: false,
+    dragPan: false, dragRotate: false, keyboard: false, doubleClickZoom: false, touchZoomRotate: false, boxZoom: false,
+  });
+  map.setStyle('https://tiles.openfreemap.org/styles/liberty', { transformStyle });
+  if (map.setCenterClampedToGround) map.setCenterClampedToGround(false);
+  map.once('style.load', () => {
+    map.setSourceTileLodParams(LOD.zoomLevels, LOD.tileRatio);
+    map.addLayer(chaseLayer(cam), 'fg-airport-labels');
+    map.getSource('fg-airports').setData(airportFeatures());
+    cam.ready = true;
+  });
+  // (the wheel zooms the camera in and out; it keeps that distance from then on)
+  map.on('zoomend', (e) => { if (e.originalEvent) { cam.zoom = map.getZoom(); cam.userZoom = true; } });
+  for (const t of ['mousedown', 'click', 'dblclick', 'wheel', 'touchstart', 'pointerdown', 'contextmenu']) {
+    container.addEventListener(t, (ev) => ev.stopPropagation());
+  }
+  const tick = () => {
+    if (cam.dead) return;
+    cam.raf = requestAnimationFrame(tick);
+    const p = G.plane(cam.id);
+    if (!p || !cam.ready) return;
+    cam.t = smoothTime(frameNow() + 16.7);
+    const pose = planePose(p, cam.t);
+    const e = cam.planes[p.id];
+    const heading = e && e.att ? e.att.heading : pose.heading;
+    cam.bearing = cam.bearing == null ? heading : (cam.bearing + wrap180(heading - cam.bearing) * 0.06 + 360) % 360;
+    // (as close in the air as on the ground: the plane stays as big; the wheel takes the camera further out)
+    if (!cam.userZoom) cam.zoom = 17.2;
+    const opts = { center: [pose.lon, pose.lat], bearing: cam.bearing, pitch: 72, zoom: cam.zoom };
+    if (map.setCenterClampedToGround) opts.elevation = e && e.altM != null ? e.altM : drawnAlt(map, p, pose, 40, 1);
+    map.jumpTo(opts);
+    // the airports round it, every two seconds
+    const now = performance.now();
+    if (now - cam.gatesAt > 2000) {
+      cam.gatesAt = now;
+      const list = D.airports.filter((a) => !a.factory && Math.abs(a.lat - pose.lat) < CHASE_KM / 111 && Math.abs(a.lon - pose.lon) < CHASE_KM / 111 / Math.max(0.05, Math.cos(pose.lat * DEG)));
+      const sig = (FG.layouts ? `${FG.layouts.version}.${FG.layouts.looked}` : '') + list.map((a) => `${a.code}:${G.airportRunways(a.code).length}`).join(',');
+      if (sig !== cam.gatesSig) { cam.gatesSig = sig; map.getSource('fg-gates').setData(gateFeatures(list, true)); }
+    }
+    map.triggerRepaint();
+  };
+  cam.raf = requestAnimationFrame(tick);
+  return {
+    setPlane(n) { if (n !== cam.id) { cam.id = n; cam.bearing = null; cam.zoom = null; cam.userZoom = false; } },
+    resize() { map.resize(); },
+    destroy() { cam.dead = true; cancelAnimationFrame(cam.raf); map.remove(); },
+  };
+}
+v.chase = chase;
 
 function setOn(on) {
   v.on = on;

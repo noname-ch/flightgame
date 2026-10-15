@@ -198,13 +198,18 @@ try {
   if (plan.err) warnings.push(`second plane: ${plan.err}`);
   step(`flying ${plan.route}`);
 
-  step('planner: drag the start time of the second plane, then ✨ find a time that fits the slots');
+  step('planner: the second plane\'s row in Schedule opens its timetable window; drag the start time, then ✨ find a time that fits the slots');
   const fit = await evaluate(async () => {
     const p2 = G.state.planes[G.state.planes.length - 1];
-    FG.planner.openPlane(p2.id);
     document.querySelector('#rail [data-tab="schedule"]').click();
     await new Promise((r) => setTimeout(r, 300));
-    const range = document.getElementById('pl-first-range');
+    const row = document.querySelector(`[data-pl="edit"][data-plane="${p2.id}"]`);
+    if (!row) return { err: 'no row for the plane in Schedule' };
+    row.click();
+    await new Promise((r) => setTimeout(r, 300));
+    const win = document.getElementById('win-timetable');
+    if (!win || win.hidden) return { err: 'the timetable window did not open' };
+    const range = win.querySelector('#pl-first-range');
     if (!range) return { err: 'no start-time slider in the planner' };
     range.value = Number(range.min) + 120;
     range.dispatchEvent(new Event('input', { bubbles: true }));
@@ -214,7 +219,9 @@ try {
     fitBtn.click();
     await new Promise((r) => setTimeout(r, 300));
     const ok = !!document.querySelector('#pl-fit');
-    document.querySelector('[data-pl="close"]').click();
+    document.querySelector('#win-timetable [data-pl="close"]').click();
+    await new Promise((r) => setTimeout(r, 100));
+    if (!win.hidden) return { err: 'Close did not close the timetable window' };
     return { bars, ok };
   });
   if (fit.err || !fit.bars || !fit.ok) errors.push(`planner fit: ${fit.err || `${fit.bars} slot bars`}`);
@@ -251,6 +258,18 @@ try {
   }
   const t1 = await evaluate(() => G.state.time);
   if (t1 - t0 < 60) errors.push(`game time hardly moved at full speed (${t1 - t0} min in 20 s)`);
+
+  step('the plane clicked has its window (camera, phase, route), then it is closed');
+  const pw = await evaluate(() => {
+    const w = document.getElementById('win-plane');
+    if (!w || w.hidden) return { err: 'no plane window after clicking a plane' };
+    const stats = w.querySelector('.pw-stats').innerText;
+    w.querySelector('.fg-win-close').click();
+    return { stats: stats.split('\n')[0], closed: w.hidden };
+  });
+  if (pw.err) errors.push(`plane window: ${pw.err}`);
+  else if (!pw.stats || !pw.closed) errors.push(`plane window: ${pw.stats ? 'its ✕ did not close it' : 'no phase shown'}`);
+  else step(`plane window: ${pw.stats}`);
 
   step('30 more game days');
   await evaluate(() => { for (let d = 0; d < 30; d++) G.advance(24 * 60); G.dirty = true; });
