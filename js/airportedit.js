@@ -913,11 +913,17 @@
     closePopup();
     drawLayer();
   }
+  // What stands this far apart are (their class: the room each has is the spacing).
+  function rowClassText(spacing) {
+    const rc = G.CLASS_ROOM.reduce((c, need, i) => (need <= spacing ? i : c), 0);
+    return `${spacing} m apart: class <b>${G.CLASSES[rc]}</b> (up to ${[15, 24, 36, 52, 65, 80][rc]} m wingspan)${rc < 5 ? `; ${Math.ceil(G.CLASS_ROOM[rc + 1])} m for class ${G.CLASSES[rc + 1]}` : ''}.`;
+  }
   function rowInput() {
     const r = ed.row;
     if (!r) return;
     const sp = Number($('ae-spacing').value);
     if (sp >= 20 && sp <= 150) r.spacing = sp;
+    if ($('ae-rowcls')) $('ae-rowcls').innerHTML = rowClassText(r.spacing);
     r.prefix = $('ae-prefix').value.trim().slice(0, 6);
     drawLayer();
     const n = rowStands(r).length;
@@ -1109,6 +1115,11 @@
   function addStand() {
     const code = ed.code;
     const p = ed.at;
+    const hdg = standHeading(code, p);
+    const c = G.standClassAt(code, p, hdg);
+    commit(code, { op: 'add', kind: 'stand', geom: [r5(p[0]), r5(p[1]), Math.round(hdg), '', 1] }, `Class ${G.CLASSES[c.cls]} stand added (${Math.round(c.room)} m of room), nose to the nearest building. Turn it if that is wrong.`);
+  }
+  function standHeading(code, p) {
     const lay = layoutOf(code);
     let hdg = null;
     let best = 150;
@@ -1122,7 +1133,7 @@
       for (const r of G.airportRunways(code)) { const n = nearest(p, [[r[0], r[1]], [r[2], r[3]]]); if (n.d < near.d) near = n; }
       hdg = near.q && near.d > 1 ? bearing(near.q, p) : 0;
     }
-    commit(code, { op: 'add', kind: 'stand', geom: [r5(p[0]), r5(p[1]), Math.round(hdg), '', 1] }, 'Stand added, nose to the nearest building. Turn it if that is wrong.');
+    return hdg;
   }
   async function add(kind) {
     if (!ed.code) { note('No airport within 8 km: add an airport first.', true); return; }
@@ -1584,6 +1595,20 @@
     startDraw(t, null);
     drawClick(p, ev);
   }
+  // The Stand tool under the mouse: where the stand would go, and the class it would get there (its slot's).
+  function standPreview(p) {
+    draftLayer.clearLayers();
+    if (!ed.code || map.getZoom() < 14) return;
+    const hdg = standHeading(ed.code, p);
+    const c = G.standClassAt(ed.code, p, hdg);
+    drawShape(draftLayer, 'stand', [p[0], p[1], hdg], STYLE.found);
+    // the room it has: as wide as its class's widest wings plus their clearance
+    const half = G.CLASS_ROOM[c.cls] / 2;
+    L.polyline([offset(p, hdg - 90, half), offset(p, hdg + 90, half)], { pane: 'apedit', interactive: false, renderer, color: '#22d3ee', weight: 2, dashArray: '4 4' }).addTo(draftLayer);
+    L.marker(offset(p, hdg + 90, half + 4), { pane: 'apedit', interactive: false, keyboard: false,
+      icon: L.divIcon({ className: 'ae-class', html: `${G.CLASSES[c.cls]}<small>${c.room >= 200 ? 'open' : `${Math.round(c.room)} m`}</small>`, iconSize: [46, 30], iconAnchor: [0, 15] }) }).addTo(draftLayer);
+  }
+
   // Moving a whole thing: drag the ✥ in its middle (a stand keeps its heading).
   function startMove(e) {
     const pts = shape(e.kind, e.geom);
@@ -1637,6 +1662,7 @@
     } else if (ed.row) {
       const n = rowStands(ed.row).length;
       parts.push(`<div class="ae-ctx-title">Stand row · ${Math.round(dist(ed.row.a, ed.row.b))} m</div>
+        <div class="muted small" id="ae-rowcls">${rowClassText(ed.row.spacing)}</div>
         <div class="ae-row ae-form">Every <input id="ae-spacing" type="number" min="20" max="150" value="${ed.row.spacing}"> m · names <input id="ae-prefix" placeholder="e.g. A" maxlength="6" value="${esc(ed.row.prefix)}"></div>
         <div class="dev-row"><button data-ae="flipRow">⇅ Turn them round</button><button class="primary" data-ae="placeRow">Place ${n} stand${n > 1 ? 's' : ''}</button><button data-ae="cancel">Cancel</button></div>`);
     } else if (ed.curve) {
@@ -1666,6 +1692,8 @@
         parts.push(`<div class="ae-row ae-form">Width <input id="ae-twwidth" type="number" min="5" max="80" step="0.5" value="${widthOf(e) || ''}" placeholder="${G.airportSize(e.code) >= 3 ? 23 : 15}"> m <button data-ae="setWidth">Apply</button></div>`);
       }
       if (e.kind === 'stand') {
+        const c = G.standClassAt(e.code, [e.geom[0], e.geom[1]], e.geom[2], [e.geom[0], e.geom[1]]);
+        parts.push(`<div class="small">Class <b>${G.CLASSES[c.cls]}</b> (${c.room >= 200 ? 'nothing beside it' : `${Math.round(c.room)} m of room`}): planes up to ${[15, 24, 36, 52, 65, 80][c.cls]} m wingspan</div>`);
         parts.push(`<div class="ae-row ae-form">Name <input id="ae-name" value="${esc(e.geom[3] || '')}" maxlength="12"> Length <input id="ae-len" type="number" min="10" max="150" value="${e.geom[5] || ''}" placeholder="auto"> m <button data-ae="rename">Apply</button></div>`);
       }
       if (e.kind === 'apron' || e.kind === 'pad') {
@@ -1888,6 +1916,7 @@
     renderPanel();
   }
   function onMove(e) {
+    if (ed.player && !ed.draw && ed.tool === 'stand' && !ed.edit && !ed.move) { standPreview([e.latlng.lat, e.latlng.lng]); return; }
     if (!ed.draw) return;
     const p = [e.latlng.lat, e.latlng.lng];
     if (ed.draw.kind === 'curve') { const s = curveSnap(p, ed.draw.replace, e); ed.draw.mouse = s ? s.q : p; drawDraft(); return; }

@@ -182,7 +182,7 @@ const move = (p, hdg, m) => [p[0] + m * Math.sin(hdg * DEG), p[1] + m * Math.cos
 // `base`: the airport's layout file, if it has one (see the top).
 function build(code, parts, base) {
   const a = G.airportByCode[code];
-  const size = Math.max(0, Math.min(5, G.airportSize(code)));
+  const size = Math.max(0, Math.min(5, G.baseSize(code))); // (the data's: the size from the stands needs this layout)
   const F = frame(a.lat, a.lon);
   const rws = G.airportRunways(code).map((r) => [F.xy([r[0], r[1]]), F.xy([r[2], r[3]])]);
   // Only what belongs to this airport: aprons and taxiways near its runways (or its point, without runways).

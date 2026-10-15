@@ -108,6 +108,12 @@ Play online: https://noname-ch.github.io/flightgame/ (GitHub Pages, deployed fro
   to `BUGS.md` via `tools/serve.py` POST /__bugs, or to GitHub's new-issue page. Look in `BUGS.md` and the repo's
   issues for open bugs, and delete a `BUGS.md` entry once it is fixed.
 - Planning uses timetables only (`p.schedule.legs`). Slots are shared, and one slot equals one stand.
+- Stand classes (game.js): `typeClass(type)` from `FG.data.looks[type].span`; `classifyStands` sets `st.cls`/`st.room`
+  on every apron once (apronOf wraps layApron). Slots by class: `G.mySlotClasses(code)` (`state.slots[code].byClass`,
+  guessed for old saves), `G.slotTable(code)` { cap, mine, held, free }, `G.leaseSlot(code, cls)`, `G.dropSlot(code, cls)`;
+  checks go through `slotsFit(have, needs)`. `airportSize` is the derived size (demand, fees, map);
+  `baseSize` is the data's (+ old terminal levels) and is what layouts are generated from: use it in apronOf and
+  anything apronOf calls, or the size and the layout call each other.
 
 ## What the user wants
 

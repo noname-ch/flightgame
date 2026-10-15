@@ -218,10 +218,22 @@
       <table class="small sm-table">
         <tr><td><span class="rv-dot" style="background:var(--accent)"></span>You</td><td class="num">${mine}</td>
           <td class="muted">${mine ? (fee ? `${G.fmtMoney(fee)}/week each` : 'no weekly fee (you control the airport)') : ''}</td>
-          <td>${mine && (mine > 1 || code !== G.home()) ? `<button class="mini" data-pl="dropSlot" data-code="${code}">Give one back</button>` : ''}</td></tr>
+          <td></td></tr>
         <tr><td><span class="rv-dot sm-free"></span>Free</td><td class="num">${free}</td>
-          <td class="muted">${price ? `${G.fmtMoney(price)} + ${G.fmtMoney(G.slotWeekly(code))}/week` : 'no charge: you control the airport'}</td>
-          <td>${free ? `<button class="mini primary" data-pl="leaseFree" data-code="${code}" ${s.money < price ? 'disabled' : ''}>Lease one</button>` : ''}</td></tr>`;
+          <td class="muted">${price ? `${G.fmtMoney(price)} + ${G.fmtMoney(G.slotWeekly(code))}/week` : 'no charge: you control the airport'}</td><td></td></tr>`;
+    // By class: a plane needs a slot of its class or a bigger one (its wingspan, see the market).
+    const t = G.slotTable(code);
+    const big = Math.max(0, ...s.planes.map((q) => G.typeClass(q.type)));
+    h += `<tr class="sm-classes"><td colspan="4"><table class="sm-cls"><tr><th>Class</th><th>stands</th><th>yours</th><th>free</th><th></th></tr>`;
+    for (let c = 5; c >= 0; c--) {
+      if (!t.cap[c] && !t.mine[c]) continue;
+      const fits = s.planes.filter((q) => G.typeClass(q.type) <= c).length;
+      h += `<tr${c >= big ? '' : ' class="muted"'}><td title="${['up to 15', '15–24', '24–36', '36–52', '52–65', '65–80'][c]} m wingspan">${G.CLASSES[c]}</td><td class="num">${t.cap[c]}</td>
+        <td class="num">${t.mine[c] || ''}</td><td class="num">${t.free[c] || ''}</td>
+        <td class="nowrap">${t.free[c] ? `<button class="mini${c >= big ? ' primary' : ''}" data-pl="leaseFree" data-code="${code}" data-cls="${c}" ${s.money < price ? 'disabled' : ''} title="${fits} of your planes fit">Lease</button>` : ''}
+          ${t.mine[c] && (mine > 1 || code !== G.home()) ? `<button class="mini" data-pl="dropSlot" data-code="${code}" data-cls="${c}" title="Give a class ${G.CLASSES[c]} slot back">−</button>` : ''}</td></tr>`;
+    }
+    h += '</table></td></tr>';
     for (const x of holders) {
       h += `<tr><td><span class="rv-dot" style="background:${x.color}"></span>${x.name}${x.hub ? ' <span class="muted">(hub)</span>' : ''}</td><td class="num">${x.n}</td>`;
       if (free) { h += '<td></td><td></td></tr>'; continue; }
@@ -447,7 +459,7 @@
         pl.slotAt = code; ctx.setTab('slots'); break;
       case 'toggleAp': pl.open[code] = !pl.open[code]; break;
       case 'addSlot': err = G.addSlot(code); break;
-      case 'leaseFree': err = G.leaseSlot(code); break;
+      case 'leaseFree': err = G.leaseSlot(code, el.dataset.cls); break;
       case 'offerStep': {
         const fair = Number(el.dataset.fair);
         const now = pl.offer[el.dataset.key] || Math.round(fair);
@@ -460,7 +472,7 @@
         else { ctx.toast(r.text, !r.accepted); delete pl.offer[`${code}|${el.dataset.holder}`]; }
         break;
       }
-      case 'dropSlot': err = G.dropSlot(code); break;
+      case 'dropSlot': err = G.dropSlot(code, el.dataset.cls); break;
       case 'showAirport': ctx.selectAirport(code); break;
       default: return;
     }

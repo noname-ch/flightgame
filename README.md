@@ -83,6 +83,21 @@ of theirs: the airport decides by your offer and your **reputation** (0–100: f
 punctuality, crashes and incidents, your shares in that airport, your home base). A rejected offer can
 be made again the next day; a rival that gives up a slot flies one daily flight less there.
 
+**Stand classes**: aircraft and stands come in the ICAO classes A–F by wingspan (below 15, 24, 36, 52, 65 and
+80 m: a Twin Otter is B, an A320 C, a 757 D, an A330 or 747-400 E, an A380 F; the market shows each type's).
+A stand's class is the biggest whose widest wings fit into the room it has, with headroom on both sides (3 m
+for A and B, 4.5 m for C, 7.5 m from D on): the room is how far the stands beside it are (and at your own
+airports twice how far a building beside it is). Every slot is a stand of a class, and a plane needs a slot of
+its class or a bigger one: a 747 does not fit into a Cessna's slot. The airport panel lists its slots by class,
+and you lease the class you need (a plain Lease picks the smallest free one your biggest plane fits). At real
+airports the map data's stands are taken as at least class C (B at small airfields), and their roomiest third as
+big as the airport's size stands for. In build mode the Stand tool shows the class a stand would get where the
+mouse is, and a stand row the class its spacing gives.
+
+**Airport size** comes from what is there: at your own airports from the stands (by class) and the longest paved
+runway; real airports keep their size, and the stands you build there can raise it. There are no terminal
+upgrades any more: you build terminals and stands yourself.
+
 1. Click an airport on the map to see its catchment, demand from your slots and its slots.
 2. **Lease one** of its free slots (upfront fee + weekly fee), or make an offer when none is free.
 3. In the **Schedule** tab: click the plane, pick its airports (e.g. `BRN → BCN → BRN → LHR`),
@@ -117,8 +132,8 @@ be made again the next day; a rival that gives up a slot flies one daily flight 
    numbers from zoom 14. Every aircraft needs a long enough runway, and jets need a paved one.
 9. **Airport shares**: click an airport to buy or sell shares in 5% steps. Shareholders get a
    weekly dividend from its traffic (plus the fees your airline pays there). With **25%** you can
-   order construction and pay your share of the cost: a new parallel or crosswind runway, a runway
-   extension, or a terminal expansion that raises the airport size (bigger planes, more passengers).
+   order construction and pay your share of the cost: a new parallel or crosswind runway or a runway
+   extension; stands and terminals you build yourself (build mode), and they make the airport bigger.
    With **50%** your slots there are free (no upfront, no weekly fee). The **Airports** tab lists your stakes and building sites,
    and **builds new airports**: pick a site on the map, it opens after 12 weeks and is 100% yours.
    Only where the terrain is fit for one: level ground (heights from the terrain tiles of the 3D view), no

@@ -97,7 +97,8 @@
         <div class="pw-grid"><span>Speed</span><b>0 km/h</b><small></small><span>Next</span><b>${next ? `${next.from} → ${next.to} at ${clock(next.dep)}` : 'no timetable'}</b><small></small></div>`;
     }
     h += `<div class="muted small">${p.schedule.legs ? `${p.schedule.legs.length} flights a day${p.schedule.active ? '' : ' · paused'}` : 'No timetable yet'}
-      · ${p.stats.flights} flights flown · ${p.ownership === 'owned' ? 'owned' : 'leased'}</div>`;
+      · ${p.stats.flights} flights flown · ${p.ownership === 'owned' ? 'owned' : 'leased'}
+      · <span title="${D.looks[p.type].span} m wingspan: it needs stands and slots of this class or bigger">class ${G.CLASSES[G.typeClass(p.type)]}</span></div>`;
     pw.win.body.querySelector('.pw-stats').innerHTML = h;
   }
   // The next departure of its timetable from now on.

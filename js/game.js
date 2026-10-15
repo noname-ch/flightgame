@@ -106,7 +106,84 @@
   // The player's changes (state.infra[code]) sit on top of the static data.
   const A = C.airports;
   const infra = (code) => (Game.state && Game.state.infra[code]) || {};
-  const airportSize = (code) => Math.min(5, airportByCode[code].size + (infra(code).terminal || 0));
+  // The size the game lays an airport out by (where it makes the layout up, game.js apronOf): from the data, and
+  // the terminal expansions of older games.
+  const baseSize = (code) => Math.min(5, airportByCode[code].size + (infra(code).terminal || 0));
+
+  // ---------- stand size classes ----------
+  // Aircraft and stands come in the ICAO classes A–F by wingspan (below 15, 24, 36, 52, 65 and 80 m). A plane
+  // needs a stand of its class or a bigger one, and so a slot of that class. A stand's class is the biggest
+  // whose widest wings fit into the room it has, with headroom on both sides: 3 m for A and B, 4.5 m for C and
+  // 7.5 m from D on (ICAO's wingtip clearance). Its room: how far the stands beside it are, and twice how far a
+  // building beside it is (classifyStands).
+  const CLASSES = ['A', 'B', 'C', 'D', 'E', 'F'];
+  const CLASS_SPAN = [15, 24, 36, 52, 65, 80];
+  const CLASS_CLEAR = [3, 3, 4.5, 7.5, 7.5, 7.5];
+  // (the room a stand of each class needs: the widest span plus the clearance)
+  const CLASS_ROOM = CLASS_SPAN.map((m, i) => m + CLASS_CLEAR[i]);
+  function typeClass(type) {
+    const span = (D.looks && D.looks[type] && D.looks[type].span) || 35;
+    const i = CLASS_SPAN.findIndex((m) => span < m);
+    return i < 0 ? 5 : i;
+  }
+  const wrap180 = (d) => ((((d % 360) + 540) % 360) - 180);
+  function classForRoom(room) {
+    let c = 0;
+    for (let i = 0; i < 6; i++) if (CLASS_ROOM[i] <= room + 1e-6) c = i;
+    return c;
+  }
+  // Do planes of these classes (a list) fit into slots `have` (by class)? Each needs one of its class or bigger:
+  // they fit when, for every class, no more of them need that class or a bigger one than there are such slots.
+  function slotsFit(have, needs) {
+    let h = 0;
+    let n = 0;
+    for (let c = 5; c >= 0; c--) {
+      h += have[c];
+      n += needs.filter((x) => x === c).length;
+      if (n > h) return false;
+    }
+    return true;
+  }
+  // What a real airport's biggest stands take at least, by its size: the data's stands are not always where the
+  // planes stand, so the roomiest third of them are given this class at least (the size the data has it at).
+  const CLASS_BY_SIZE = [2, 2, 3, 4, 4, 5];
+
+  // ---------- airport size ----------
+  // The size passengers, fees and the map go by. An airport you built is as big as what is built there: its
+  // stands by class (CLASS_SCORE each) and its longest paved runway (sizeFor). A real airport keeps the size the
+  // data gives it, and what you build there can make it bigger: the stands you add count on top of what its size
+  // stands for.
+  const SIZE_SCORE = [0, 1, 8, 20, 45, 90];
+  const SIZE_RUNWAY = [0, 500, 1200, 1800, 2400, 3000];
+  const CLASS_SCORE = [0.25, 0.5, 1, 2, 3, 4];
+  function sizeFor(score, runway) {
+    let size = 0;
+    for (let i = 1; i < 6; i++) if (score >= SIZE_SCORE[i] && runway >= SIZE_RUNWAY[i]) size = i;
+    return size;
+  }
+  const sizeCache = new Map();
+  function airportSize(code) {
+    const a = airportByCode[code];
+    const base = baseSize(code);
+    const own = FG.fixes && FG.fixes.player ? FG.fixes.player.ops(code) : [];
+    if (a.factory || (a.built ? !a.open : !own.length && !infra(code).runways)) return base;
+    const key = `${FG.fixes ? FG.fixes.rev(code) : 0}|${FG.layouts ? FG.layouts.version : 0}|${airportRunways(code).length}|${base}`;
+    const hit = sizeCache.get(code);
+    if (hit && hit.key === key) return hit.size;
+    const ap = apronOf(code);
+    const runway = longestRunway(code, true);
+    let size;
+    if (a.built) size = Math.max(1, sizeFor(ap.stands.reduce((n, st) => n + CLASS_SCORE[st.cls], 0), runway));
+    else {
+      // the stands the player added (by their spot) on top of what the data's size stands for
+      const added = own.filter((o) => o.kind === 'stand' && o.op === 'add').map((o) => o.geom);
+      let score = SIZE_SCORE[base];
+      for (const st of ap.stands) if (added.some((g) => Math.abs(g[0] - st.lat) < 3e-5 && Math.abs(g[1] - st.lon) < 4e-5)) score += CLASS_SCORE[st.cls];
+      size = Math.max(base, sizeFor(score, runway));
+    }
+    sizeCache.set(code, { key, size });
+    return size;
+  }
   // Small airfields without an IATA code get fewer passengers until they grow a terminal.
   // Every terminal expansion the player builds draws more passengers.
   const attraction = (code) => (airportByCode[code].minor && airportSize(code) < 2 ? A.minorFactor : 1) *
@@ -122,7 +199,7 @@
   const RUNWAY_BY_SIZE = [0, 900, 1800, 2500, 3200, 3800];
   function longestRunway(code, pavedOnly) {
     const rws = airportRunways(code);
-    if (!rws.length) return RUNWAY_BY_SIZE[airportSize(code)];
+    if (!rws.length) return RUNWAY_BY_SIZE[baseSize(code)];
     return Math.round(Math.max(0, ...rws.filter((r) => !pavedOnly || r[5]).map(runwayLength)));
   }
   // Runway an aircraft type needs (m) and whether it needs a paved one.
@@ -444,8 +521,14 @@
   }
 
   // `sizeAs`: lay the airport out as if it had this size (for the expansion preview).
+  // The apron with its stands' classes (classifyStands, once per apron).
   function apronOf(code, sizeAs) {
-    const size = Math.max(0, Math.min(5, sizeAs == null ? airportSize(code) : sizeAs));
+    const ap = layApron(code, sizeAs);
+    if (!ap.classed) classifyStands(code, ap);
+    return ap;
+  }
+  function layApron(code, sizeAs) {
+    const size = Math.max(0, Math.min(5, sizeAs == null ? baseSize(code) : sizeAs));
     const rws = airportRunways(code);
     const real = FG.layouts ? FG.layouts.get(code) : null;
     // A terminal the player built is the copy of a real one, once that one's layout is there.
@@ -1244,6 +1327,90 @@
     return out.map(ll);
   }
 
+  // ---------- stand classes ----------
+  // Each stand's room (see the stand size classes above): the nearest stand beside it (one pointing about the same
+  // way whose plane would stand next to its plane: less than 30 m before or behind it and at least 8 m to the
+  // side, at a real airport 20 m: nearer, it is the same stand for another type), and twice the
+  // nearest building beside its plane (5 to 40 m behind its nose; the building its nose points at is ahead of
+  // it). Sets st.room (m) and st.cls.
+  function classifyStands(code, ap) {
+    ap.classed = true;
+    const stands = ap.stands;
+    if (!stands.length) return;
+    const o = [stands[0].lat, stands[0].lon];
+    const kx = 111320 * Math.cos(toRad(o[0]));
+    const xy = (p) => [(p[1] - o[1]) * kx, (p[0] - o[0]) * 111320];
+    const P = stands.map((st) => xy([st.lat, st.lon]));
+    const dir = stands.map((st) => [Math.sin(toRad(st.heading)), Math.cos(toRad(st.heading))]);
+    // building walls as points every 6 m (not the jet bridges, which reach to the plane's door, nor roads and car
+    // parks). Only at an airport you built (and where a stand is being placed): the map data's stands often point
+    // the wrong way round, and would have their own terminal beside them.
+    const a = airportByCode[code];
+    // (the map data's stands come with variants beside them, left and right of the middle one, for two smaller
+    // planes instead of a big one: nearer than 20 m to the side they don't count there; your own stands do from 8 m)
+    const sideBy = a && !a.built ? 20 : 8;
+    const wall = [];
+    const walls = a && !a.built ? [] : ap.buildings.filter((b) => b.kind === 'terminal' || b.kind === 'hall' || b.kind === 'hangar' || b.kind === 'other');
+    for (const ring of a && !a.built ? [] : [ap.terminal, ...walls.map((b) => b.ring)]) {
+      if (!ring || ring.length < 2) continue;
+      const q = ring.map(xy);
+      for (let i = 0; i < q.length; i++) {
+        const a = q[i], b = q[(i + 1) % q.length];
+        const n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / 6));
+        for (let k = 0; k < n; k++) wall.push([a[0] + ((b[0] - a[0]) * k) / n, a[1] + ((b[1] - a[1]) * k) / n]);
+      }
+    }
+    stands.forEach((st, i) => {
+      let room = 200;
+      const [ux, uy] = dir[i];
+      const near = (q) => {
+        const dx = q[0] - P[i][0], dy = q[1] - P[i][1];
+        return [dx * ux + dy * uy, Math.abs(dx * uy - dy * ux)]; // [ahead, beside]
+      };
+      for (let j = 0; j < stands.length; j++) {
+        if (j === i) continue;
+        // (one the other way round is across a pier or a lane; closer than 12 m, the same stand for another type,
+        // as the map data often has them: neither stands beside it)
+        if (Math.abs(wrap180(stands[j].heading - st.heading)) > 60) continue;
+        const [ahead, beside] = near(P[j]);
+        if (Math.abs(ahead) < 30 && beside >= sideBy) room = Math.min(room, beside);
+      }
+      for (const q of wall) {
+        const [ahead, beside] = near(q);
+        if (ahead < -5 && ahead > -40) room = Math.min(room, 2 * beside);
+      }
+      st.room = Math.round(room * 10) / 10;
+      st.cls = classForRoom(room);
+    });
+    // A real airport's stands take at least class C (B at size 1: the map data's stands are seldom exactly where
+    // the planes stand), and its roomiest third what its size stands for (CLASS_BY_SIZE).
+    if (a && !a.built) {
+      const least = [0, 1, 2, 2, 2, 2][baseSize(code)];
+      for (const st of stands) st.cls = Math.max(st.cls, least);
+      const floor = CLASS_BY_SIZE[baseSize(code)];
+      const order = stands.map((st, i) => i).sort((x, y) => stands[y].room - stands[x].room);
+      for (const i of order.slice(0, Math.ceil(stands.length / 3))) stands[i].cls = Math.max(stands[i].cls, floor);
+    }
+  }
+  // The class a stand at p (nose heading `hdg`) would have at an airport, as it is now (build mode shows it).
+  // `skip`: [lat, lon] of a stand that is not counted (the one being moved).
+  function standClassAt(code, p, hdg, skip) {
+    const ap = apronOf(code);
+    const others = ap.stands.filter((st) => !skip || Math.abs(st.lat - skip[0]) > 3e-5 || Math.abs(st.lon - skip[1]) > 4e-5);
+    const probe = { lat: p[0], lon: p[1], heading: hdg };
+    const tmp = { stands: [probe, ...others], terminal: ap.terminal, buildings: ap.buildings };
+    classifyStands('', tmp); // (no airport: no floor)
+    return { cls: probe.cls, room: probe.room };
+  }
+  // The biggest class an airport takes: from its stands where the layout is there (or it is yours), else what
+  // its size stands for (so that looking at the map doesn't make every airport load its layout).
+  function maxClass(code) {
+    const a = airportByCode[code];
+    if (a.factory) return 5;
+    if (a.built || (FG.layouts && FG.layouts.has(code))) return Math.max(...apronOf(code).stands.map((st) => st.cls), 0);
+    return CLASS_BY_SIZE[baseSize(code)];
+  }
+
   // ---------- crossing runways ----------
   // Where other runways cover a runway: the maps leave the paint of both out there (side stripes, centre line,
   // markings), so that where two runways cross neither is painted over the other. Returns cover(lo, hi): the
@@ -1509,7 +1676,7 @@
       for (const a of [0, len]) out.taxiways.push([rwyPoint(rwy, a, off), rwyPoint(rwy, a, 0)]);
       for (const e of ap.exits) out.taxiways.push([e, rwyPoint(rwy, Math.min(len, Math.max(0, rwyCoords(rwy, e).along)), off)]);
     }
-    const size = airportSize(code);
+    const size = baseSize(code);
     if (size < 5 && !airportByCode[code].factory) {
       const next = apronOf(code, size + 1);
       const have = new Set(ap.stands.map((s) => `${s.lat.toFixed(5)},${s.lon.toFixed(5)}`));
@@ -1960,7 +2127,8 @@
     const ac = D.aircraft[type];
     if (airportByCode[code].factory) return null;
     if (airportByCode[code].built && !airportByCode[code].open) return `${code} is still under construction.`;
-    if (airportSize(code) < (ac.minAirport || 1)) return `${code} is too small for the ${ac.name} (size ${airportSize(code)}, needs ${ac.minAirport}).`;
+    const pc = typeClass(type);
+    if (maxClass(code) < pc) return `${code} has no stand big enough for the ${ac.name} (class ${CLASSES[pc]}: ${D.looks[type].span} m wingspan).`;
     const need = runwayNeed(type);
     const have = longestRunway(code, need.paved);
     if (have < need.m) return `The ${ac.name} needs ${need.m} m of ${need.paved ? 'paved ' : ''}runway, ${code} has ${have} m.`;
@@ -2041,7 +2209,8 @@
     airportByCode, distanceKm, dist, bearing, interpolate, catchment, dailyDemand,
     ticketPrice, routeKey, blockMinutes, landingFee, slotUpfront, slotWeekly,
     priceNew, fitsAirport, fitsReason, crewFor, factoryOf, onSale, dateOf,
-    airportSize, airportRunways, runwayLength, runwayTaxiways, runwayCover, roundLine, longestRunway, runwayNeed, attraction,
+    airportSize, baseSize, airportRunways, runwayLength, runwayTaxiways, runwayCover, roundLine,
+    CLASSES, CLASS_ROOM, typeClass, standClassAt, maxClass, slotsFit, longestRunway, runwayNeed, attraction,
     flightTrack, flightState, legTrack, cruiseFt, perf, windFrom, gateOf, apronOf, taxiwaysOf, drawnTaxiways, expansionPreview, terminalPiece,
     fmtMoney, fmtTime, fmtClock, fmtDuration,
 
@@ -2364,9 +2533,20 @@
         if (q.status !== 'flying' && q.location === code && q.stand && q.stand.code === code) used.add(q.stand.k);
         if (q.status === 'flying' && q.flight && q.flight.to === code && q.flight.standTo != null) used.add(q.flight.standTo);
       }
-      const n = apronOf(code).stands.length;
-      for (let k = 0; k < n; k++) if (!used.has(k)) return k;
-      return n - 1; // all taken: share the last remote stand
+      // the free stand of the smallest class it fits (the bigger ones stay free for bigger planes), the first
+      // of those (contact gates first); none: the biggest free one; all taken: share the last remote stand
+      const stands = apronOf(code).stands;
+      const q = this.plane(planeId);
+      const pc = q ? typeClass(q.type) : 0;
+      let best = -1;
+      for (let k = 0; k < stands.length; k++) {
+        if (used.has(k)) continue;
+        const c = stands[k].cls;
+        if (best < 0) { best = k; continue; }
+        const b = stands[best].cls;
+        if (c >= pc ? b < pc || c < b : b < pc && c > b) best = k;
+      }
+      return best >= 0 ? best : stands.length - 1;
     },
 
     // The stand a plane on the ground holds at its airport.
@@ -3036,7 +3216,7 @@
 
     // Is one of your slots at `code` free for a plane landing at time t (not counting plane `planeId`)?
     slotFreeAt(code, t, planeId) {
-      let used = 0;
+      const used = [];
       for (const q of this.state.planes) {
         if (q.id === planeId) continue;
         if (q.status === 'flying' && q.flight && q.flight.to === code) {
@@ -3044,10 +3224,12 @@
           const sch = q.schedule;
           const leg = sch.active && sch.legs && sch.legs.length && sch.legs[sch.index % sch.legs.length];
           const gone = leg && leg.from === code && Math.max(sch.due || 0, q.flight.arr + C.turnaroundMin) < t;
-          if (!gone) used++;
-        } else if (this.staysUntil(q, code, t)) used++;
+          if (!gone) used.push(typeClass(q.type));
+        } else if (this.staysUntil(q, code, t)) used.push(typeClass(q.type));
       }
-      return used < this.slotCount(code);
+      const me = this.plane(planeId);
+      used.push(me ? typeClass(me.type) : 0);
+      return slotsFit(this.mySlotClasses(code), used);
     },
 
     // ---------- the slots of an airport ----------
@@ -3057,6 +3239,61 @@
     // a holder an offer for one of theirs: the airport agrees depending on the offer and your reputation.
     slotCapacity(code) {
       return Math.max(this.slotCount(code), 2, apronOf(code).stands.length);
+    },
+    // ---------- slot classes ----------
+    // Every slot is a stand of a class (A–F, see the stand size classes): a plane needs a slot of its class or
+    // a bigger one. Yours at an airport by class: [A, B, C, D, E, F].
+    mySlotClasses(code) {
+      const sl = this.state.slots[code];
+      if (!sl) return [0, 0, 0, 0, 0, 0];
+      const n = this.slotCount(code);
+      if (!sl.byClass || sl.byClass.reduce((x, y) => x + y, 0) !== n) sl.byClass = this.guessSlotClasses(code, n);
+      return sl.byClass;
+    },
+    // Classes for `n` slots held from before slot classes: those your planes there need (the biggest first),
+    // then the class most of the stands there have.
+    guessSlotClasses(code, n) {
+      const out = [0, 0, 0, 0, 0, 0];
+      const stands = this.standClasses(code);
+      const common = stands.indexOf(Math.max(...stands));
+      const need = this.state.planes.filter((p) => p.location === code || (p.flight && p.flight.to === code) || p.schedule.stops.includes(code))
+        .map((p) => typeClass(p.type)).sort((x, y) => y - x);
+      for (let k = 0; k < n; k++) out[k < need.length ? need[k] : common]++;
+      return out;
+    },
+    // An airport's stands by class.
+    standClasses(code) {
+      const out = [0, 0, 0, 0, 0, 0];
+      for (const st of apronOf(code).stands) out[st.cls]++;
+      return out;
+    },
+    // The slots of an airport by class: { cap, mine, held, free } (arrays by class). The holders' slots are
+    // spread over the classes as the stands are (what is left of each after yours).
+    slotTable(code) {
+      const mine = this.mySlotClasses(code).slice();
+      const cap = this.standClasses(code).map((n, c) => Math.max(n, mine[c]));
+      const total = cap.reduce((x, y) => x + y, 0);
+      if (total < this.slotCapacity(code)) cap[2] += this.slotCapacity(code) - total; // (at least two: class C)
+      const rest = cap.map((n, c) => n - mine[c]);
+      const restN = rest.reduce((x, y) => x + y, 0);
+      const heldN = Math.min(restN, this.slotHolders(code).reduce((n, h) => n + h.n, 0));
+      const share = rest.map((r) => (restN ? (heldN * r) / restN : 0));
+      const held = share.map(Math.floor);
+      let left = heldN - held.reduce((x, y) => x + y, 0);
+      for (const c of share.map((x, c) => c).sort((x, y) => (share[y] - held[y]) - (share[x] - held[x]))) {
+        if (left <= 0) break;
+        if (held[c] < rest[c]) { held[c]++; left--; }
+      }
+      return { cap, mine, held, free: rest.map((r, c) => Math.max(0, r - held[c])) };
+    },
+    // The class a new slot at an airport should have: the smallest free one your biggest plane fits, else the
+    // biggest free one (-1: none free).
+    leaseClassFor(code) {
+      const free = this.slotTable(code).free;
+      const big = Math.max(0, ...this.state.planes.map((p) => typeClass(p.type)));
+      for (let c = big; c < 6; c++) if (free[c]) return c;
+      for (let c = big - 1; c >= 0; c--) if (free[c]) return c;
+      return -1;
     },
     // Who holds the slots: [{ id, name, color, n, hub }] (rivals, then 'others'), at most what is left.
     slotHolders(code) {
@@ -3084,7 +3321,9 @@
       for (const rt of r.routes) if (rt.a === code || rt.b === code) n += Math.ceil(rt.perDay / 4);
       return n;
     },
-    freeSlots(code) {
+    // Free slots at an airport (of class `cls`, or all).
+    freeSlots(code, cls) {
+      if (cls != null) return this.slotTable(code).free[cls];
       return Math.max(0, this.slotCapacity(code) - this.slotCount(code) - this.slotHolders(code).reduce((n, h) => n + h.n, 0));
     },
     // What leasing a free slot costs upfront: nothing at an airport you control.
@@ -3306,18 +3545,25 @@
 
     // ---------- player actions (return an error string or null) ----------
     // Lease one of the free slots at an airport (the first, or one more).
-    leaseSlot(code) {
+    // `cls`: the slot's class (0–5 = A–F); without it the one leaseClassFor picks.
+    leaseSlot(code, cls) {
       const s = this.state;
       const a = airportByCode[code];
       if (a.built && !a.open) return `${a.name} isn't open yet.`;
       if (!this.freeSlots(code)) return `All ${this.slotCapacity(code)} slots at ${code} are taken – make one of the holders an offer.`;
+      if (cls == null || cls === '') cls = this.leaseClassFor(code);
+      cls = typeof cls === 'string' && CLASSES.includes(cls) ? CLASSES.indexOf(cls) : Number(cls);
+      if (!(cls >= 0 && cls < 6) || !this.freeSlots(code, cls)) return `No class ${CLASSES[cls] || '?'} slot is free at ${code}.`;
       const cost = this.slotPrice(code);
       if (s.money < cost) return `Not enough money (${fmtMoney(cost)} needed).`;
       s.money -= cost;
+      const byClass = this.mySlotClasses(code).slice();
+      byClass[cls]++;
       if (s.slots[code]) s.slots[code].count = this.slotCount(code) + 1;
       else s.slots[code] = { since: s.time, count: 1 };
+      s.slots[code].byClass = byClass;
       const fee = this.slotFee(code);
-      this.log(`Leased slot ${this.slotCount(code)} at ${a.name}${cost ? ` for ${fmtMoney(cost)}` : ' (yours: no charge)'}` +
+      this.log(`Leased a class ${CLASSES[cls]} slot at ${a.name} (${this.slotCount(code)} there)${cost ? ` for ${fmtMoney(cost)}` : ' (yours: no charge)'}` +
         `${fee ? ` (+${fmtMoney(fee)}/week)` : ''}.`, 'cost');
       this.dirty = true;
       return null;
@@ -3594,14 +3840,12 @@
 
     // What can be built at an airport right now, with cost (your share) and an error if not possible.
     projectOptions(code) {
-      const a = airportByCode[code];
       const st = this.stake(code);
       const share = st / 100;
       const busy = this.state.projects.some((p) => p.code === code);
       const base = busy ? 'Construction already under way here.'
         : st < A.boardStake ? `You need ${A.boardStake}% of the shares to order construction.` : null;
       const opts = [];
-      const longest = longestRunway(code, true);
       const hasRunways = airportRunways(code).length > 0;
       for (const len of A.runwayLengths) {
         for (const orient of hasRunways ? ['parallel', 'cross'] : ['new']) {
@@ -3621,15 +3865,7 @@
           err: base || (longestRunway(code) + A.extendBy > A.maxRunwayM ? 'The main runway is as long as it gets.' : null),
         });
       }
-      const next = airportSize(code) + 1;
-      if (next <= 5 && !a.factory) {
-        const full = A.terminalCost[next];
-        opts.push({
-          kind: 'terminal', full, cost: Math.round(full * share), weeks: A.terminalWeeks[next],
-          label: `Terminal & gates → size ${next}`,
-          err: base || (longest < A.terminalRunway[next] ? `Needs a ${A.terminalRunway[next]} m paved runway first.` : null),
-        });
-      }
+      // (no terminal upgrades: an airport grows with the stands and terminals built there, build mode)
       return opts;
     },
 
@@ -3829,16 +4065,28 @@
           if (at === code) uses.push({ planeId: p.id, code, from: 0, to: DAY, idle: true });
         }
       }
-      // Lanes: each slot is a row; a stay goes into the first row that is free for its whole time.
+      // Lanes: each of your slots is a row (the biggest class first); a stay goes into the smallest one free for
+      // its whole time that its plane fits. Stays that find none go into rows beyond yours (not enough slots).
       uses.sort((x, y) => !!x.idle - !!y.idle || x.from - y.from || y.to - x.to); // timetables first
-      const lanes = [];
+      const have = this.mySlotClasses(code);
+      const cls = [];
+      for (let c = 5; c >= 0; c--) for (let k = 0; k < have[c]; k++) cls.push(c);
+      const ends = cls.map(() => 0);
+      const extra = [];
+      let used = 0;
       for (const u of uses) {
-        let k = lanes.findIndex((end) => end <= u.from);
-        if (k < 0) { k = lanes.length; lanes.push(0); }
-        lanes[k] = u.to;
-        u.lane = k;
+        const q = draft && draft.planeId === u.planeId ? { type: draft.type } : this.plane(u.planeId);
+        const pc = typeClass(q.type);
+        u.cls = pc;
+        let k = -1;
+        for (let i = 0; i < cls.length; i++) if (cls[i] >= pc && ends[i] <= u.from && (k < 0 || cls[i] <= cls[k])) k = i;
+        if (k >= 0) { ends[k] = u.to; u.lane = k; used = Math.max(used, k + 1); continue; }
+        let e = extra.findIndex((end) => end <= u.from);
+        if (e < 0) { e = extra.length; extra.push(0); }
+        extra[e] = u.to;
+        u.lane = cls.length + e;
       }
-      return { uses, need: lanes.length, have: this.slotCount(code) };
+      return { uses, need: used + extra.length, have: this.slotCount(code), classes: cls };
     },
 
     // Problems with a timetable for a plane: errors block saving.
@@ -3855,6 +4103,9 @@
         const name = `${fmtClock(leg.dep)} ${leg.from}→${leg.to}`;
         if (leg.to !== next.from) errors.push(`${name} ends at ${leg.to}, but the next flight leaves from ${next.from}.`);
         if (!this.ownsSlot(leg.from)) errors.push(`No slot at ${leg.from}.`);
+        else if (!this.mySlotClasses(leg.from).some((n, c) => n && c >= typeClass(p.type))) {
+          errors.push(`No slot at ${leg.from} big enough for the ${ac.name}: it needs class ${CLASSES[typeClass(p.type)]} or bigger.`);
+        }
         if (leg.from === leg.to) errors.push(`${name} goes nowhere.`);
         if (leg.dep < C.curfew.start || leg.dep > C.curfew.end) errors.push(`${name}: departures only ${fmtClock(C.curfew.start)}–${fmtClock(C.curfew.end)} (night curfew).`);
         if (dist(leg.from, leg.to) > ac.rangeKm) errors.push(`${name} is out of range.`);
@@ -3909,7 +4160,7 @@
         const { busy, uses: others } = this.slotBusy(code, planeId);
         const have = this.slotCount(code);
         const at = mine.filter((g) => g.code === code);
-        const over = this.overSpans(busy, at, have);
+        const over = this.overSpans(busy, at, this.mySlotClasses(code), typeClass(p.type));
         const minutes = over.reduce((n, x) => n + x.to - x.from, 0);
         total += minutes;
         out.push({ code, have, mine: at, others, over, minutes });
@@ -3917,20 +4168,26 @@
       return { airports: out, minutes: total };
     },
     // Your other planes on the ground at an airport: { uses (slotUsage), busy: how many, minute by minute }.
+    // (busy[c][m]: how many of them need a slot of class c or bigger in minute m)
     slotBusy(code, planeId) {
-      const busy = new Uint8Array(DAY);
+      const busy = CLASSES.map(() => new Uint8Array(DAY));
       const p = this.plane(planeId);
       const uses = this.slotUsage(code, { planeId, type: p.type, legs: [] }).uses;
-      for (const u of uses) for (let m = Math.floor(u.from); m < Math.min(DAY, Math.ceil(u.to)); m++) busy[m]++;
+      for (const u of uses) {
+        for (let m = Math.floor(u.from); m < Math.min(DAY, Math.ceil(u.to)); m++) for (let c = 0; c <= u.cls; c++) busy[c][m]++;
+      }
       return { busy, uses };
     },
-    // Spans of the stays `at` where the other planes already fill all `have` slots.
-    overSpans(busy, at, have) {
+    // Spans of the stays `at` (of a plane of class `cls`) where the other planes already fill the slots `have`
+    // (by class) it could use.
+    overSpans(busy, at, have, cls) {
+      const atLeast = have.map((n, c) => have.slice(c).reduce((x, y) => x + y, 0));
       const over = [];
       for (const g of at) {
         let start = -1;
         for (let m = Math.floor(g.from); m <= Math.min(DAY, Math.ceil(g.to)); m++) {
-          const full = m < Math.min(DAY, Math.ceil(g.to)) && busy[m] + 1 > have;
+          let full = false;
+          if (m < Math.min(DAY, Math.ceil(g.to))) for (let c = 0; c <= cls && !full; c++) full = busy[c][m] + 1 > atLeast[c];
           if (full && start < 0) start = m;
           if (!full && start >= 0) { over.push({ from: start, to: m }); start = -1; }
         }
@@ -3957,7 +4214,7 @@
             if (!legs.length) continue;
             let over = 0;
             for (const g of this.groundTimes(p.type, legs)) {
-              for (const x of this.overSpans(busy[g.code], [g], this.slotCount(g.code))) over += x.to - x.from;
+              for (const x of this.overSpans(busy[g.code], [g], this.mySlotClasses(g.code), typeClass(p.type))) over += x.to - x.from;
             }
             const away = Math.abs(first - around) + (r ? 1 : 0);
             if (!best || over < best.over || (over === best.over && (legs.length > best.legs.length ||
@@ -4034,16 +4291,23 @@
     },
 
     // Lease one more slot at an airport where you already have one.
-    addSlot(code) { return this.leaseSlot(code); },
+    addSlot(code, cls) { return this.leaseSlot(code, cls); },
 
     // Give one slot back; the last one goes with releaseSlot.
-    dropSlot(code) {
+    // `cls`: which class (default: the smallest you hold).
+    dropSlot(code, cls) {
       const n = this.slotCount(code);
       if (n <= 1) return this.releaseSlot(code);
-      const busy = this.slotOccupants(code).filter((o) => o.how !== 'leaving').length;
-      if (busy >= n) return `All ${n} slots at ${code} have a plane in them right now.`;
+      const byClass = this.mySlotClasses(code).slice();
+      if (cls == null || cls === '') cls = byClass.findIndex((x) => x > 0);
+      cls = Number(cls);
+      if (!byClass[cls]) return `You hold no class ${CLASSES[cls]} slot at ${code}.`;
+      byClass[cls]--;
+      const busy = this.slotOccupants(code).filter((o) => o.how !== 'leaving').map((o) => typeClass(o.p.type));
+      if (!slotsFit(byClass, busy)) return `Your planes at ${code} need that slot right now.`;
       this.state.slots[code].count = n - 1;
-      this.log(`Gave back a slot at ${airportByCode[code].name} (${n - 1} left).`);
+      this.state.slots[code].byClass = byClass;
+      this.log(`Gave back a class ${CLASSES[cls]} slot at ${airportByCode[code].name} (${n - 1} left).`);
       this.dirty = true;
       return null;
     },
