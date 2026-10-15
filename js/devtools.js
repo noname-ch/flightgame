@@ -13,6 +13,10 @@
     count: 1,
     ownership: 'owned',
     event: null, // world event id
+    wdir: 270, // wind to place: from (°), speed (kt), radius (km)
+    wkt: 40,
+    wkm: 200,
+    picking: null, // the map click handler while a wind is being placed on the map
   };
 
   const $ = (id) => document.getElementById(id);
@@ -229,6 +233,47 @@
     done('all crews rested, all planes ready.');
   }
 
+  // ---------- wind ----------
+  // A wind placed by hand (G.placeWind): it blows from dv.wdir at dv.wkt knots within dv.wkm km, at every height;
+  // planes crab into it and the runways there turn into it. Shown on the maps by js/weather.js.
+  function placeWind(lat, lon) {
+    const err = G.placeWind(lat, lon, dv.wdir, dv.wkt, dv.wkm);
+    if (err) { note(err, true); return; }
+    windDone(`wind from ${String(dv.wdir).padStart(3, '0')}° at ${dv.wkt} kt placed near ${G.nearestPlace(lat, lon)} (${dv.wkm} km round).`);
+  }
+  // (the maps show it at once, not with the next weather tick)
+  function windDone(msg) {
+    if (FG.weather && FG.weather.syncWinds) FG.weather.syncWinds();
+    done(msg);
+  }
+  function mapCentre() {
+    const m3 = FG.view3d && FG.view3d.on && FG.view3d.map;
+    const c = m3 ? m3.getCenter() : FG.ui.map.getCenter();
+    return [c.lat, c.lng];
+  }
+  // Click on the map (2D or 3D) to place it; the button again stops.
+  function pickWind() {
+    const m3 = FG.view3d && FG.view3d.on && FG.view3d.map;
+    const stop = () => {
+      if (!dv.picking) return;
+      dv.picking.map.off('click', dv.picking.fn);
+      dv.picking = null;
+      $('map').classList.remove('wind-pick');
+    };
+    if (dv.picking) { stop(); render(); return; }
+    const map = m3 || FG.ui.map;
+    const fn = (e) => {
+      const ll = e.lngLat || e.latlng;
+      stop();
+      placeWind(ll.lat, ll.lng);
+    };
+    map.on('click', fn);
+    dv.picking = { map, fn };
+    $('map').classList.add('wind-pick');
+    note('Click on the map where the wind should blow.');
+    render();
+  }
+
   function newMarket() {
     G.refreshMarket();
     done('new used-aircraft offers.');
@@ -315,6 +360,23 @@
           <button data-dev="event">Trigger</button>
           <button data-dev="clearEffects">Clear all</button></div>
       </section>
+      <section><h4>Wind <span class="muted">${s.winds && s.winds.length ? `${s.winds.length} placed` : 'only the weather\'s own'}</span></h4>
+        <div class="row dev-wind"><label>From <input id="dev-wdir" type="number" min="0" max="359" step="5" value="${dv.wdir}">°</label>
+          <span class="dev-compass">${['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'].map((n, i) =>
+    `<button class="mini${dv.wdir === i * 45 ? ' on' : ''}" data-dev="wdir" data-v="${i * 45}" title="Wind from the ${n} (${i * 45}°)">${n}</button>`).join('')}</span></div>
+        <div class="row dev-wind"><label>Speed <input id="dev-wkt" type="range" min="0" max="120" step="5" value="${dv.wkt}"></label>
+          <b id="dev-wkt-v">${dv.wkt} kt</b>
+          <label>Radius <select id="dev-wkm">${options([50, 100, 200, 400, 1000].map((k) => [String(k), `${k} km`]), String(dv.wkm))}</select></label></div>
+        <div class="row"><button class="${dv.picking ? 'primary' : ''}" data-dev="windPick" title="Then click on the map (2D or 3D) where it should blow">${dv.picking ? 'Click on the map… (here to stop)' : '🌬 Place on the map'}</button>
+          <button data-dev="windHere">At the map centre</button>
+          ${ap ? `<button data-dev="windAirport">At ${esc(ap)}</button>` : ''}</div>
+        ${(s.winds || []).map((w) => `<div class="row dev-wind-row"><span title="${w.lat}, ${w.lon}">🌬 ${esc(G.nearestPlace(w.lat, w.lon))}</span>
+          <label>from <input type="number" class="dev-wnum" data-wind="${w.id}" data-k="from" min="0" max="359" step="5" value="${w.from}">°</label>
+          <label><input type="number" class="dev-wnum" data-wind="${w.id}" data-k="kt" min="0" max="150" step="5" value="${w.kt}"> kt</label>
+          <span class="muted">${w.km} km</span>
+          <button class="mini" data-dev="windDel" data-id="${w.id}" title="Remove this wind">✕</button></div>`).join('')}
+        ${s.winds && s.winds.length ? '<div class="row"><button data-dev="windClear">Remove all winds</button></div>' : ''}
+      </section>
       <section><h4>Time &amp; ops</h4>
         <div class="dev-row">
           <button data-dev="skip" data-min="60" data-label="1 hour">+1 h</button>
@@ -348,6 +410,12 @@
       case 'skip': skip(Number(d.min), d.label); break;
       case 'rest': refreshCrews(); break;
       case 'market': newMarket(); break;
+      case 'wdir': dv.wdir = Number(d.v); render(); break;
+      case 'windPick': pickWind(); break;
+      case 'windHere': { const [lat, lon] = mapCentre(); placeWind(lat, lon); break; }
+      case 'windAirport': { const a = G.airportByCode[selectedAirport()]; if (a) placeWind(a.lat, a.lon); break; }
+      case 'windDel': G.removeWind(Number(d.id)); windDone('wind removed.'); break;
+      case 'windClear': G.clearWinds(); windDone('all placed winds removed.'); break;
       default:
     }
   }
@@ -360,6 +428,15 @@
     if (t.id === 'dev-event') dv.event = t.value;
     if (t.id === 'dev-style') setStyle(t.value);
     if (t.id === 'dev-count') dv.count = Math.max(1, Math.min(20, Math.round(Number(t.value)) || 1));
+    if (t.id === 'dev-wdir') dv.wdir = ((Math.round(Number(t.value)) || 0) % 360 + 360) % 360;
+    if (t.id === 'dev-wkt') dv.wkt = Number(t.value);
+    if (t.id === 'dev-wkm') dv.wkm = Number(t.value);
+    if (t.dataset.wind) { // a placed wind's direction or speed
+      const err = G.setWind(Number(t.dataset.wind), { [t.dataset.k]: Number(t.value) });
+      const w = G.state.winds.find((x) => x.id === Number(t.dataset.wind));
+      if (err || !w) note(err || 'No such wind.', true);
+      else windDone(`wind near ${G.nearestPlace(w.lat, w.lon)} now from ${String(w.from).padStart(3, '0')}° at ${w.kt} kt.`);
+    }
   }
 
   function toggle(open = !dv.open) {
@@ -387,6 +464,8 @@
     const el = $('devtools');
     el.addEventListener('click', onClick);
     el.addEventListener('change', onChange);
+    // (the speed shows while the slider moves)
+    el.addEventListener('input', (e) => { if (e.target.id === 'dev-wkt') { dv.wkt = Number(e.target.value); $('dev-wkt-v').textContent = `${dv.wkt} kt`; } });
     el.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && e.target.id === 'dev-money') setMoney(parseFloat(e.target.value));
       e.stopPropagation(); // typing here must not pause the game or move the speed slider

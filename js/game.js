@@ -269,6 +269,29 @@
     return ((easterly ? 70 : 250) + (r - 0.5) * 120 + 360) % 360;
   }
 
+  // ---------- winds placed with the developer tools ----------
+  // state.winds: [{ id, lat, lon, km, from, kt }]. Within km of its spot it blows from `from` at `kt` knots, at every
+  // height, fading back into the weather's own wind over the outer 30%. The runways in use turn into it too.
+  let windRev = 0; // (bumped on every change: route lines are drawn again with the new runways)
+  function placedWind(lat, lon) {
+    const list = Game.state && Game.state.winds;
+    if (!list || !list.length) return null;
+    let best = null;
+    for (const w of list) {
+      const d = distanceKm({ lat, lon }, w);
+      if (d >= w.km) continue;
+      const k = Math.min(1, (1 - d / w.km) / 0.3);
+      if (!best || k > best.k) best = { from: w.from, kt: w.kt, k };
+    }
+    return best;
+  }
+  const blendDir = (a, b, k) => (a + k * (((b - a + 540) % 360) - 180) + 360) % 360;
+  // Surface wind direction, what the runways in use face: a placed wind there, else windFrom.
+  function surfaceFrom(lat, lon, day) {
+    const pw = placedWind(lat, lon);
+    return pw ? blendDir(windFrom(lat, lon, day), pw.from, pw.k) : windFrom(lat, lon, day);
+  }
+
   // ---------- weather: clouds, rain, snow, thunderstorms, fog and wind ----------
   // Made up but steady, the same for everyone at the same game time: smooth noise over the globe that drifts
   // east (WX_DRIFT degrees of longitude a minute, ~30 km/h in the mid-latitudes) and changes shape over a day
@@ -348,6 +371,8 @@
     const day = Math.floor(t / DAY);
     let windKt = Math.round(4 + 16 * wxNoise(x / 5, lat / 5, z * 1.5, 4) + 10 * rain + (storm ? 12 : 0));
     if (stormKm) windKt = Math.max(windKt, Math.round(30 + 25 * stormKm));
+    const pw = placedWind(lat, lon);
+    if (pw) windKt = Math.round(windKt + (pw.kt - windKt) * pw.k);
     const gustKt = windKt >= 15 ? Math.round(windKt * 1.45) : 0;
     const fog = !rain && !storm && windKt < 7 && cover > 0.55 && hour > 3 && hour < 10 && tempC < 14;
     let name;
@@ -362,7 +387,8 @@
     else if (cover > 0.55) [name, icon] = ['Cloudy', '🌥'];
     else if (cover > 0.2) [name, icon] = ['Some clouds', '⛅'];
     else [name, icon] = ['Clear', hour > 6 && hour < 20 ? '☀️' : '🌙'];
-    return { cover, rain, storm, snow, fog, tempC, windFrom: Math.round(windFrom(lat, lon, day)), windKt, gustKt, name, icon };
+    const from = pw ? blendDir(windFrom(lat, lon, day), pw.from, pw.k) : windFrom(lat, lon, day);
+    return { cover, rain, storm, snow, fog, tempC, windFrom: Math.round(from) % 360, windKt, gustKt, name, icon };
   }
   // Wind at a height (ft above sea level): the surface wind (from windFrom) near the ground, turning to the
   // westerly winds aloft (a jet stream in the mid-latitudes) and getting stronger with height.
@@ -373,9 +399,11 @@
     const aloft = (lat >= -25 && lat <= 25 ? 90 : 270) + (wxNoise(x / 12, lat / 10, z, 5) - 0.5) * 100;
     const k = smooth(2000, 12000, altFt);
     const jet = 60 * Math.exp(-(((Math.abs(lat) - 40) / 12) ** 2)) * (0.6 + 0.8 * wxNoise(x / 8, lat / 8, z, 6));
-    const from = (w.windFrom + k * (((aloft - w.windFrom + 540) % 360) - 180) + 360) % 360;
-    const kt = w.windKt * (1 + 1.2 * k) + k * jet;
-    return { from: Math.round(from), kt: Math.round(kt), gusty: w.gustKt > 0 || w.storm, storm: w.storm };
+    let from = (w.windFrom + k * (((aloft - w.windFrom + 540) % 360) - 180) + 360) % 360;
+    let kt = w.windKt * (1 + 1.2 * k) + k * jet;
+    const pw = placedWind(lat, lon); // (a placed wind blows at every height)
+    if (pw) { from = blendDir(from, pw.from, pw.k); kt += (pw.kt - kt) * pw.k; }
+    return { from: Math.round(from) % 360, kt: Math.round(kt), gusty: w.gustKt > 0 || w.storm, storm: w.storm };
   }
 
   // A runway's key (its ends): what a plane's runway choice at an airport remembers (Game.setRunway).
@@ -387,7 +415,7 @@
   // the one most into the wind (the shorter within 20°).
   function pickRunway(code, day, need, pick) {
     const a = airportByCode[code];
-    const wind = windFrom(a.lat, a.lon, day);
+    const wind = surfaceFrom(a.lat, a.lon, day);
     const ends = [];
     for (const r of airportRunways(code)) {
       const len = runwayLength(r);
@@ -2258,7 +2286,8 @@
   function flightTrack(p) {
     const f = p.flight;
     if (!f) return null;
-    const key = `${p.id}|${f.dep}|${f.from}|${f.to}|${f.rw ? `${f.rw.from || ''}~${f.rw.to || ''}` : ''}`;
+    // (route lines also by the placed winds: they show today's runways; a flight keeps the ones it started with)
+    const key = `${p.id}|${f.dep}|${f.from}|${f.to}|${f.rw ? `${f.rw.from || ''}~${f.rw.to || ''}` : ''}${p.id.startsWith('leg:') ? `|w${windRev}` : ''}`;
     const version = FG.layouts ? FG.layouts.version : 0;
     let t = trackCache.get(key);
     // A layout that arrives changes the taxi ways, but only at its own airport: a track whose two
@@ -2488,6 +2517,7 @@
       const home = airportByCode[homeCode];
       const crewT = crewFor(type);
       const story = opts.story ? { start: Number(opts.story), year: Number(opts.story) } : null;
+      windRev++; // (no placed winds in the new game)
       this.state = {
         version: 1,
         mode,
@@ -2535,6 +2565,7 @@
         built: [],    // airports the player built
         fees: {},     // code -> landing and passenger fees paid there this week (for dividends)
         rep: { flown: 0, onTime: 0, late: 0, crashes: [], incidents: [] }, // what the reputation is made of
+        winds: [],    // winds placed with the developer tools
         slotBuys: {}, // code -> { holder id -> slots bought from it }
         offers: {},   // 'code|holder' -> time a slot offer was turned down (no new one for a day)
         gameOver: false,
@@ -2766,6 +2797,8 @@
       if (!s.rep) s.rep = { flown: s.planes.reduce((n, p) => n + p.stats.flights, 0), onTime: 0, late: 0, crashes: [], incidents: [] };
       if (!s.slotBuys) s.slotBuys = {};
       if (!s.offers) s.offers = {};
+      if (!s.winds) s.winds = [];
+      windRev++;
       for (const code of Object.keys(s.slots)) {
         if (!s.slots[code].count) {
           const here = s.planes.filter((p) => (p.status === 'flying' && p.flight ? p.flight.to : p.location) === code).length;
@@ -3439,6 +3472,37 @@
     home() { return this.state.home || C.startAirport; },
     makerMult(type) { return this.mode().makerCrashMult[D.aircraft[type].maker] || 1; },
     crashChance(type) { return C.events.crashPerFlight * this.makerMult(type); },
+
+    // Developer tools: winds placed by hand (state.winds; see placedWind). Each returns an error string or null.
+    get windRev() { return windRev; },
+    placeWind(lat, lon, from, kt, km = 200) {
+      const s = this.state;
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) return 'Where?';
+      const id = s.winds.reduce((m, w) => Math.max(m, w.id), 0) + 1;
+      s.winds.push({ id, lat: Math.round(lat * 1e4) / 1e4, lon: Math.round(lon * 1e4) / 1e4, km: 200, from: 0, kt: 0 });
+      return this.setWind(id, { from, kt, km });
+    },
+    setWind(id, { from, kt, km } = {}) {
+      const w = this.state.winds.find((x) => x.id === id);
+      if (!w) return 'No such wind.';
+      if (Number.isFinite(from)) w.from = ((Math.round(from) % 360) + 360) % 360;
+      if (Number.isFinite(kt)) w.kt = Math.max(0, Math.min(150, Math.round(kt)));
+      if (Number.isFinite(km)) w.km = Math.max(10, Math.min(2000, Math.round(km)));
+      windRev++;
+      this.dirty = true;
+      return null;
+    },
+    removeWind(id) {
+      const s = this.state;
+      s.winds = s.winds.filter((w) => w.id !== id);
+      windRev++;
+      this.dirty = true;
+    },
+    clearWinds() {
+      this.state.winds = [];
+      windRev++;
+      this.dirty = true;
+    },
 
     // The weather at an airport (weatherAt), now or at game time t.
     airportWeather(code, t = this.state.time) {

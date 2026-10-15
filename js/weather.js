@@ -174,9 +174,51 @@
   function enabled() {
     return !!(st.layer && FG.ui && FG.ui.map && FG.ui.map.hasLayer(st.layer));
   }
+  // ---------- winds placed with the developer tools (G.placeWind) ----------
+  // 2D: a dashed circle and an arrow badge (pointing where it blows to); 3D: the same badge over the canvas.
+  const winds = { sig: null, group: null, els: [], m3: null };
+  const badge = (w) => `<div class="wx-wind-in"><span class="wx-wind-arrow" style="transform: rotate(${w.from + 90}deg)">➜</span>${pad3(w.from)}° ${w.kt} kt</div>`;
+  function syncWinds() {
+    const map2 = FG.ui && FG.ui.map;
+    if (!map2 || !G.state) return;
+    const list = G.state.winds || [];
+    const sig = list.map((w) => `${w.id}:${w.lat}:${w.lon}:${w.from}:${w.kt}:${w.km}`).join(',');
+    if (sig !== winds.sig) {
+      winds.sig = sig;
+      if (!winds.group) winds.group = L.layerGroup().addTo(map2);
+      winds.group.clearLayers();
+      for (const w of list) {
+        L.circle([w.lat, w.lon], { radius: w.km * 1000, pane: 'clouds', color: '#7dd3fc', weight: 1.5, dashArray: '6 6', fill: false, interactive: false }).addTo(winds.group);
+        L.marker([w.lat, w.lon], { interactive: false, icon: L.divIcon({ className: 'wx-wind', html: badge(w), iconSize: null }) }).addTo(winds.group);
+      }
+      const fx = fxEl();
+      for (const { e } of winds.els) e.remove();
+      winds.els = list.map((w) => {
+        const e = document.createElement('div');
+        e.className = 'wx-wind wx-wind-3d';
+        e.innerHTML = badge(w);
+        fx.appendChild(e);
+        return { e, w };
+      });
+    }
+    const m3 = FG.view3d && FG.view3d.on && FG.view3d.map;
+    if (m3 && winds.m3 !== m3) { winds.m3 = m3; m3.on('move', place3d); }
+    place3d();
+  }
+  function place3d() {
+    const m3 = FG.view3d && FG.view3d.on && FG.view3d.map;
+    for (const { e, w } of winds.els) {
+      e.hidden = !m3;
+      if (!m3) continue;
+      const p = m3.project([w.lon, w.lat]);
+      e.style.transform = `translate(${Math.round(p.x)}px, ${Math.round(p.y)}px)`;
+    }
+  }
+
   // Once a second: the 2D clouds drift on, the overlay and the chip follow the map's centre.
   function tick() {
     if (document.hidden || !G.state || !FG.ui || !FG.ui.map) return;
+    syncWinds();
     const on = enabled();
     const m3 = FG.view3d && FG.view3d.on && FG.view3d.map;
     const map2 = FG.ui.map;
@@ -223,6 +265,7 @@
     // the white blob for the 3D sprites (one look: they are turned at random)
     sprite: () => spritesOf()[0][0],
     redraw() { if (st.layer && st.layer._map) draw2d(st.layer); },
+    syncWinds,
     get stats() { return { puffs2d: st.n2d, puffs3d: st.n3d, overlay: st.fxClass, chip: st.chip }; },
     set n3d(n) { st.n3d = n; },
   };

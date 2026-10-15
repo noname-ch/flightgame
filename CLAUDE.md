@@ -86,7 +86,9 @@ Play online: https://noname-ch.github.io/flightgame/ (GitHub Pages, deployed fro
   `attitude` add it), `windFrom`, `windKt`, `gusty`. js/weather.js draws it: `FG.weather.puffs(box, t, max)`, the 2D
   canvas (an `L.Renderer` in the 'clouds' pane, the "Clouds and weather" overlay = `FG.weather.enabled()`), the
   `#wx-fx` CSS overlay and chip; view3d.js draws the same puffs as one `THREE.Points` in planeLayer
-  (`cloudPoints`/`updateClouds`) and greys the sky (`weatherSky`, map.setSky, no layers).
+  (`cloudPoints`/`updateClouds`) and greys the sky (`weatherSky`, map.setSky, no layers). Developer tools → Wind
+  places winds by hand: `state.winds` via `G.placeWind/setWind/removeWind/clearWinds`; `placedWind(lat, lon)` blends
+  them into weatherAt, windAt and `surfaceFrom` (what pickRunway uses); `G.windRev` keys the route-line tracks.
 - 3D only repaints while something moves. Anything new that animates in 3D must trigger a repaint
   itself.
 - Airport layouts: 116 airports have files in `js/data/layouts`. Every other airport is read from the

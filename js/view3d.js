@@ -648,7 +648,7 @@ function refreshData() {
     v.sig.airports = aSig;
     map.getSource('fg-airports').setData(airportFeatures());
   }
-  const rSig = `${G.state.planes.map((p) => `${p.id}:${p.schedule.stops.join('-')}:${p.status === 'flying' && p.flight.kind !== 'scheduled' ? p.flight.to : ''}${p.runways ? JSON.stringify(p.runways) : ''}`).join(',')}|${sel}`;
+  const rSig = `${G.state.planes.map((p) => `${p.id}:${p.schedule.stops.join('-')}:${p.status === 'flying' && p.flight.kind !== 'scheduled' ? p.flight.to : ''}${p.runways ? JSON.stringify(p.runways) : ''}`).join(',')}|${sel}|${G.windRev}`;
   if (rSig !== v.sig.routes) {
     v.sig.routes = rSig;
     map.getSource('fg-routes').setData(routeFeatures());

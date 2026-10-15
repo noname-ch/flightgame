@@ -816,7 +816,7 @@
     // Redrawn only when something on it changes: a schedule, the selection, a ferry or delivery flight,
     // the day (today's runways), or near the runways the zoom and the taxiways.
     const z = ui.map.getZoom();
-    const sig = `${z >= 13 ? `${FG.layouts ? FG.layouts.version : 0}` : 'far'}|${Math.floor(G.state.time / 1440)}|${ui.selectedPlane}|` +
+    const sig = `${z >= 13 ? `${FG.layouts ? FG.layouts.version : 0}` : 'far'}|${Math.floor(G.state.time / 1440)}|${ui.selectedPlane}|${G.windRev}|` +
       G.state.planes.map((p) => {
         const f = p.status === 'flying' && (p.id === ui.selectedPlane || p.flight.kind !== 'scheduled') ? p.flight : null;
         const draft = FG.planner.draftStops(p.id);

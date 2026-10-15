@@ -330,10 +330,17 @@ try {
     const w = G.airportWeather(G.home());
     const p = G.state.planes.find((q) => q.status === 'flying');
     const st = p && G.flightState(p, G.state.time);
+    // developer tools: a wind placed at home blows there, and goes again
+    const a = G.airportByCode[G.home()];
+    G.placeWind(a.lat, a.lon, 135, 55, 100);
+    const pw = G.airportWeather(a.code);
+    const placed = pw.windFrom === 135 && pw.windKt === 55;
+    G.clearWinds();
     return { puffs: FG.weather.stats.puffs2d, line: FG.weather.text(w), canvas: !!document.querySelector('canvas.fg-clouds'),
-      crab: st ? st.crab : null, wind: st ? st.windKt : null, sane: !!w && w.tempC > -60 && w.tempC < 60 && w.windKt >= 0 };
+      crab: st ? st.crab : null, wind: st ? st.windKt : null, sane: !!w && w.tempC > -60 && w.tempC < 60 && w.windKt >= 0,
+      placed, gone: G.airportWeather(a.code).windKt === w.windKt };
   });
-  if (!wx.canvas || !wx.line || !wx.sane || (wx.crab != null && !Number.isFinite(wx.crab))) errors.push(`weather: ${JSON.stringify(wx)}`);
+  if (!wx.canvas || !wx.line || !wx.sane || !wx.placed || !wx.gone || (wx.crab != null && !Number.isFinite(wx.crab))) errors.push(`weather: ${JSON.stringify(wx)}`);
   else step(`weather at home: ${wx.line}; ${wx.puffs} cloud puffs in view${wx.crab != null ? `; a plane in the air crabs ${wx.crab}° in ${wx.wind} kt` : ''}`);
 
   step('Fleet: Ferry there (to the other slot airport) says when the plane leaves');

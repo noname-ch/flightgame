@@ -292,8 +292,13 @@ model that you can turn by dragging (double-click to reset), the tiles as pictur
 Developer tools: the 🛠 button (or F2) opens a cheat panel for testing: add or set money, add any
 aircraft for free (delivered instantly to the chosen or selected airport, slot included), crash /
 damage / repair / remove the selected plane, free slots and 100% airport ownership, finish all
-construction, trigger or clear any world event, and skip an hour, day or week. Every cheat is noted
-in the log (`js/devtools.js`).
+construction, trigger or clear any world event, place wind, and skip an hour, day or week. Every cheat is
+noted in the log (`js/devtools.js`). **Wind**: pick where it blows from (degrees or N…NW), its speed (0-120 kt)
+and how far it reaches (50-1000 km), then *Place on the map* (click in 2D or 3D), *At the map centre* or *At* the
+selected airport. It blows at every height and fades into the weather's own wind at its edge; planes crab into it
+and the runways there turn into it from their next flight (one already under way keeps its runways). The maps
+show it as a dashed circle and an arrow badge; each placed wind's direction and speed can be changed in its row,
+or it can be removed. Placed winds are kept in the save game.
 
 Stands in buildings: in every layout that loads, a stand that lies in a building (a mapped gate sits on its
 terminal) is moved out in front of the nearest wall, nose to it, or dropped where there is no room

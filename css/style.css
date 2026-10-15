@@ -1511,3 +1511,18 @@ body { height: 100dvh; } /* the visible height, also while the phone's address b
   font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 #wx-fx .wx-chip[hidden] { display: none; }
+
+/* winds placed with the developer tools (js/devtools.js Wind, drawn by js/weather.js) */
+#map.wind-pick, #map.wind-pick .leaflet-interactive, #map.wind-pick #view3d canvas { cursor: crosshair !important; }
+.wx-wind { pointer-events: none; }
+.wx-wind-in {
+  transform: translate(-50%, -160%); display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
+  padding: 2px 9px 2px 5px; border-radius: 12px; background: rgba(8, 47, 73, 0.88); color: #e0f2fe;
+  font: 600 12px/1.4 system-ui, sans-serif; box-shadow: 0 0 0 1px #7dd3fc;
+}
+.wx-wind-arrow { display: inline-block; color: #7dd3fc; font-size: 15px; }
+.wx-wind-3d { position: absolute; left: 0; top: 0; }
+#devtools .dev-compass { display: inline-flex; gap: 2px; flex-wrap: wrap; }
+#devtools .dev-compass .on { background: #0369a1; color: #fff; }
+#devtools .dev-wind input[type=number], #devtools .dev-wnum { width: 56px; }
+#devtools .dev-wind-row { align-items: center; gap: 6px; }
