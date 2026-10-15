@@ -101,6 +101,9 @@ Play online: https://noname-ch.github.io/flightgame/ (GitHub Pages, deployed fro
   `col`. Roof colours are read off the Esri photo per airport (`roofsOf`, through `FG.taxiFit.photo(pts, pad, z)`
   at z17-15) and kept in IndexedDB (`flightgame.roofs2.<CODE>`). MapLibre extrusion patterns change size with the
   zoom, so they aren't used.
+- Runway choice: `pickRunway(code, day, need, pick)` in game.js (auto: the shortest that fits within 45° of the
+  wind). A plane's choices are `p.runways[code]` (a `runwayKey`, `G.setRunway`, `G.runwayChoices`); a flight copies
+  them into `f.rw` when it starts, so changing them never moves a flight already under way.
 - Crossing runways: `G.runwayCover(r, others)` says where other runways lie on a runway; ui.js `drawRunway` and
   view3d.js `runwayPaint` leave their lines and paint out there.
 - Taxiway widths: a taxiway fix op may carry `w` (metres). fixes.js puts it on the line (`line.w`), and

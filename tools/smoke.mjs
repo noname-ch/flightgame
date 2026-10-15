@@ -264,6 +264,17 @@ try {
     const w = document.getElementById('win-plane');
     if (!w || w.hidden) return { err: 'no plane window after clicking a plane' };
     const stats = w.querySelector('.pw-stats').innerText;
+    // its runway choice: Auto, or one of the runways (from its next flight on)
+    const sel = w.querySelector('.pw-rw select');
+    if (!sel) return { err: 'no runway choice in the plane window' };
+    const pick = [...sel.options].find((o) => o.value !== 'auto' && !o.disabled);
+    if (pick) {
+      sel.value = pick.value;
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+      const p0 = G.state.planes[0];
+      if (!p0.runways || p0.runways[sel.dataset.pwRw] !== pick.value) return { err: 'choosing a runway did not stick' };
+      G.setRunway(p0.id, sel.dataset.pwRw, 'auto');
+    }
     w.querySelector('.fg-win-close').click();
     return { stats: stats.split('\n')[0], closed: w.hidden };
   });

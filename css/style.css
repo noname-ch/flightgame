@@ -1457,3 +1457,8 @@ body { height: 100dvh; } /* the visible height, also while the phone's address b
 .site-check { list-style: none; margin: 4px 0; padding: 0; font-size: 12px; }
 .site-check li { padding: 1px 0; }
 #apedit .ae-site { border-top: none; }
+.pw-rw { margin-top: 6px; }
+.pw-rw-head { font-weight: 600; margin-bottom: 2px; }
+.pw-rw-row { display: flex; align-items: center; gap: 8px; margin: 3px 0; }
+.pw-rw-row b { width: 36px; }
+.pw-rw-row select { flex: 1; min-width: 0; }

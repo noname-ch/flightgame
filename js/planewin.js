@@ -24,13 +24,16 @@
       pw.win = FG.win.open('plane', { className: 'plane-win', width: 360, at: [64, 64], onClose: closed });
       pw.win.body.innerHTML = `<div class="pw-cam"><div class="pw-cam-map"></div><div class="pw-cam-note"></div></div>
         <div class="pw-stats"></div>
+        <div class="pw-rw"></div>
         <div class="row pw-buttons"><button data-pw="timetable" title="Plan its day">🗓 Timetable</button>
           <button data-pw="follow" title="Keep the map on it">🎥 Follow on the map</button>
           <button data-pw="fleet" title="Its card in Fleet">Fleet</button></div>`;
       pw.win.body.onclick = onClick;
+      pw.win.body.onchange = onChange;
       clearInterval(pw.timer);
       pw.timer = setInterval(update, 250);
     }
+    pw.rwSig = null;
     camera();
     update();
   }
@@ -85,6 +88,7 @@
           <span>Speed</span><b>${st ? `${st.speedKmh} km/h` : '–'}</b><small>${st ? `${Math.round(st.speedKmh / 1.852)} kt` : ''}</small>
           <span>Height</span><b>${st && !st.ground ? `${(Math.round(st.altFt / 100) * 100).toLocaleString('de-CH')} ft` : 'on the ground'}</b><small>${st && !st.ground ? `${Math.round(st.altFt * 0.3048).toLocaleString('de-CH')} m` : ''}</small>
           <span>Left</span><b>${G.fmtDuration(Math.max(0, Math.round(f.arr - t)))}</b><small>${Math.round(G.dist(f.from, f.to) * (1 - frac))} km</small>
+          ${st && st.depRunway ? `<span>Runways</span><b>${st.depRunway} → ${st.arrRunway}</b><small>off · on</small>` : ''}
           ${f.pax != null ? `<span>On board</span><b>${f.pax} / ${ac.seats}</b><small>passengers</small>` : ''}
         </div>`;
     } else {
@@ -100,6 +104,36 @@
       · ${p.stats.flights} flights flown · ${p.ownership === 'owned' ? 'owned' : 'leased'}
       · <span title="${D.looks[p.type].span} m wingspan: it needs stands and slots of this class or bigger">class ${G.CLASSES[G.typeClass(p.type)]}</span></div>`;
     pw.win.body.querySelector('.pw-stats').innerHTML = h;
+    runways(p);
+  }
+  // Which runway it takes at each airport of its day: Auto (the shortest one it can use, so the long ones stay
+  // free for the big planes) or one chosen here (G.setRunway). Drawn again only when its airports change.
+  function runways(p) {
+    const codes = [...new Set([
+      ...(p.status === 'flying' && p.flight ? [p.flight.from, p.flight.to] : [p.location]),
+      ...(p.schedule.legs || []).map((l) => l.from),
+    ])].filter((c) => G.airportRunways(c).length).slice(0, 8);
+    const sig = `${p.id}|${codes.join(',')}|${JSON.stringify(p.runways || {})}|${codes.map((c) => G.airportRunways(c).length).join(',')}`;
+    if (sig === pw.rwSig) return;
+    const box = pw.win.body.querySelector('.pw-rw');
+    if (box.contains(document.activeElement) && document.activeElement.tagName === 'SELECT') return; // (being picked)
+    pw.rwSig = sig;
+    const mine = p.runways || {};
+    box.innerHTML = `<div class="pw-rw-head">Runways <span class="muted small">(from its next flight there on)</span></div>${codes.map((c) => {
+      const list = G.runwayChoices(p.type, c);
+      return `<label class="pw-rw-row"><b>${c}</b><select data-pw-rw="${c}">
+        <option value="auto">Auto · the shortest it can use</option>
+        ${list.map((r) => `<option value="${r.key}"${mine[c] === r.key ? ' selected' : ''}${r.ok ? '' : ' disabled'}>${r.name} · ${r.len.toLocaleString('de-CH')} m${r.paved ? '' : ' grass'}${r.why ? ` – ${r.why}` : ''}</option>`).join('')}
+      </select></label>`;
+    }).join('')}`;
+  }
+  function onChange(e) {
+    const sel = e.target.closest('[data-pw-rw]');
+    if (!sel || !pw.id) return;
+    const err = G.setRunway(pw.id, sel.dataset.pwRw, sel.value);
+    if (err && FG.ui.toast) FG.ui.toast(err, true);
+    pw.rwSig = null;
+    update();
   }
   // The next departure of its timetable from now on.
   function nextLeg(p, t) {

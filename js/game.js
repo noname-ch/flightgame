@@ -262,27 +262,42 @@
     return ((easterly ? 70 : 250) + (r - 0.5) * 120 + 360) % 360;
   }
 
-  // Runway end to use at an airport: into the wind, long enough for the type if possible.
-  function pickRunway(code, day, needM) {
+  // A runway's key (its ends): what a plane's runway choice at an airport remembers (Game.setRunway).
+  const runwayKey = (r) => r.slice(0, 4).map((v) => Number(v).toFixed(4)).join(',');
+  // Runway end to use at an airport, into the day's wind. `need`: the type's { m, paved } (runwayNeed). `pick`:
+  // the runway the player chose for this plane there (runwayKey): that one, from whichever end is into the wind,
+  // while it is there and long enough. Else (auto) the shortest one the type can use (a paved one where there is)
+  // whose end is within 45° of the wind: the long runways stay free for the big planes. With none that close,
+  // the one most into the wind (the shorter within 20°).
+  function pickRunway(code, day, need, pick) {
     const a = airportByCode[code];
     const wind = windFrom(a.lat, a.lon, day);
     const ends = [];
     for (const r of airportRunways(code)) {
       const len = runwayLength(r);
       const h = bearing({ lat: r[0], lon: r[1] }, { lat: r[2], lon: r[3] });
-      ends.push({ thr: [r[0], r[1]], end: [r[2], r[3]], hdg: h, len });
-      ends.push({ thr: [r[2], r[3]], end: [r[0], r[1]], hdg: (h + 180) % 360, len });
+      const key = runwayKey(r);
+      ends.push({ thr: [r[0], r[1]], end: [r[2], r[3]], hdg: h, len, paved: !!r[5], key });
+      ends.push({ thr: [r[2], r[3]], end: [r[0], r[1]], hdg: (h + 180) % 360, len, paved: !!r[5], key });
     }
     if (!ends.length) { // no data: an imaginary 2.5 km runway into the wind
       const t = offsetPoint(a.lat, a.lon, wind + 180, 1250);
       const e = offsetPoint(a.lat, a.lon, wind, 1250);
       return { thr: t, end: e, hdg: wind, len: 2500 };
     }
-    const long = ends.filter((e) => e.len >= needM);
-    const pool = long.length ? long : ends;
     const off = (e) => Math.abs(((e.hdg - wind + 540) % 360) - 180);
-    // Within 20° the longer runway wins.
-    return pool.reduce((best, e) => (off(e) < off(best) - 20 || (off(e) < off(best) + 20 && e.len > best.len) ? e : best));
+    const intoWind = (list) => list.reduce((best, e) => (off(e) < off(best) - 20 || (off(e) < off(best) + 20 && e.len < best.len) ? e : best));
+    const fits = (e) => e.len >= need.m && (e.paved || !need.paved);
+    if (pick) {
+      const mine = ends.filter((e) => e.key === pick && fits(e));
+      if (mine.length) return mine.reduce((b, e) => (off(e) < off(b) ? e : b));
+    }
+    const ok = ends.filter(fits);
+    const paved = ok.filter((e) => e.paved);
+    const pool = paved.length ? paved : ok.length ? ok : ends.filter((e) => e.len >= need.m).length ? ends.filter((e) => e.len >= need.m) : ends;
+    const calm = pool.filter((e) => off(e) <= 45);
+    if (calm.length) return calm.reduce((b, e) => (e.len < b.len - 1 || (Math.abs(e.len - b.len) <= 1 && off(e) < off(b)) ? e : b));
+    return intoWind(pool);
   }
 
   // Turn from pos/heading with radius r (m) towards target until pointing at it. Returns arc points.
@@ -1779,9 +1794,11 @@
     const B0 = airportByCode[f.to];
     const ac = D.aircraft[type];
     const pf = perf(type);
-    const need = runwayNeed(type).m;
-    const dep = pickRunway(f.from, day, need);
-    const arr = pickRunway(f.to, day, need);
+    const need = runwayNeed(type);
+    // (the runways the player chose for this plane, as they were when the flight began: Game.setRunway)
+    const rw = f.rw || {};
+    const dep = pickRunway(f.from, day, need, rw.from);
+    const arr = pickRunway(f.to, day, need, rw.to);
     // Turn radius from the bank angle at about 1.35 × the approach speed: r = v² / (g tan φ).
     const vTurn = pf.vApp * 1.35 / 3.6;
     const radius = vTurn * vTurn / (9.81 * Math.tan(toRad(pf.bank)));
@@ -3155,6 +3172,7 @@
         pax, revenue, cost: flightCost(p.type, d, leg.to, pax, this.costMult(p) * this.fuelMult() * this.difficulty().costMult),
         standFrom: this.standAt(p), standTo: this.freeStand(leg.to, p.id),
       };
+      if (p.runways && (p.runways[p.flight.from] || p.runways[p.flight.to])) p.flight.rw = { from: p.runways[p.flight.from], to: p.runways[p.flight.to] };
       this.rollFlightEvents(p);
       p.status = 'flying';
       p.waitSlot = null;
@@ -3969,6 +3987,36 @@
       this.dirty = true;
       return null;
     },
+    // ---------- which runway a plane takes ----------
+    // The runways at an airport for a type: [{ key, name ('14/32'), len, paved, ok, why }] (why: why it can't).
+    runwayChoices(type, code) {
+      const need = runwayNeed(type);
+      return airportRunways(code).map((r) => {
+        const h = bearing({ lat: r[0], lon: r[1] }, { lat: r[2], lon: r[3] });
+        const num = (x) => String(Math.round((((x % 360) + 360) % 360) / 10) || 36).padStart(2, '0');
+        const len = Math.round(runwayLength(r));
+        const why = len < need.m ? `too short (needs ${need.m} m)` : need.paved && !r[5] ? 'needs a paved one' : '';
+        return { key: runwayKey(r), name: `${num(h)}/${num(h + 180)}`, len, paved: !!r[5], ok: !why, why };
+      }).sort((x, y) => x.len - y.len);
+    },
+    // Have a plane take this runway at an airport (from its next flight there on, from whichever end is into the
+    // wind); null or 'auto': the shortest that fits (pickRunway). Error, or null.
+    setRunway(planeId, code, key) {
+      const p = this.plane(planeId);
+      if (!p) return 'No such plane.';
+      if (!key || key === 'auto') {
+        if (p.runways) delete p.runways[code];
+      } else {
+        const c = this.runwayChoices(p.type, code).find((x) => x.key === key);
+        if (!c) return `That runway is not at ${code}.`;
+        if (!c.ok) return `Runway ${c.name} is ${c.why}.`;
+        p.runways = p.runways || {};
+        p.runways[code] = key;
+      }
+      this.dirty = true;
+      return null;
+    },
+
     // Close a runway (build mode): pulling it down costs part of what building it would.
     removeRunway(code, r) {
       const err = this.buildDenied(code);
