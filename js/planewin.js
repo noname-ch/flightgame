@@ -119,7 +119,7 @@
     if (box.contains(document.activeElement) && document.activeElement.tagName === 'SELECT') return; // (being picked)
     pw.rwSig = sig;
     const mine = p.runways || {};
-    box.innerHTML = `<div class="pw-rw-head">Runways <span class="muted small">(from its next flight there on)</span></div>${codes.map((c) => {
+    box.innerHTML = `<div class="pw-rw-head">Runways <span class="muted small">(at once while it boards, else from its next flight there)</span></div>${codes.map((c) => {
       const list = G.runwayChoices(p.type, c);
       return `<label class="pw-rw-row"><b>${c}</b><select data-pw-rw="${c}">
         <option value="auto">Auto · the shortest it can use</option>
@@ -130,8 +130,19 @@
   function onChange(e) {
     const sel = e.target.closest('[data-pw-rw]');
     if (!sel || !pw.id) return;
-    const err = G.setRunway(pw.id, sel.dataset.pwRw, sel.value);
-    if (err && FG.ui.toast) FG.ui.toast(err, true);
+    const code = sel.dataset.pwRw;
+    const err = G.setRunway(pw.id, code, sel.value);
+    const p = G.plane(pw.id);
+    if (err) {
+      if (FG.ui.toast) FG.ui.toast(err, true);
+    } else if (p && FG.ui.toast) {
+      // Say when it counts: a flight under way keeps the runways it started with.
+      const r = sel.value === 'auto' ? null : G.runwayChoices(p.type, code).find((x) => x.key === sel.value);
+      const what = r ? `takes runway ${r.name} at ${code}` : `picks its runway at ${code} itself again`;
+      const when = { now: 'on this flight', next: 'from its next flight there (this one is under way)' }[G.runwayTakes(p, code)]
+        || 'from its next flight there';
+      FG.ui.toast(`${G.planeName(p)} ${what} ${when}.`);
+    }
     pw.rwSig = null;
     update();
   }

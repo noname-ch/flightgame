@@ -2147,7 +2147,7 @@
   function flightTrack(p) {
     const f = p.flight;
     if (!f) return null;
-    const key = `${p.id}|${f.dep}|${f.from}|${f.to}`;
+    const key = `${p.id}|${f.dep}|${f.from}|${f.to}|${f.rw ? `${f.rw.from || ''}~${f.rw.to || ''}` : ''}`;
     const version = FG.layouts ? FG.layouts.version : 0;
     let t = trackCache.get(key);
     // A layout that arrives changes the taxi ways, but only at its own airport: a track whose two
@@ -2167,11 +2167,14 @@
     return t;
   }
 
-  // Today's planned track for a schedule leg (for drawing routes).
-  function legTrack(type, from, to) {
+  // Today's planned track for a schedule leg (for drawing routes). rw: the plane's runway choices for it
+  // ({ from, to } runway keys, Game.legRunways), else the runways it would take on its own.
+  function legTrack(type, from, to, rw) {
     const day = Game.state ? Math.floor(Game.state.time / DAY) : 0;
     const dep = day * DAY + 12 * 60;
-    return flightTrack({ id: `leg:${type}`, type, flight: { from, to, dep, arr: dep + blockMinutes(type, dist(from, to)) } });
+    const flight = { from, to, dep, arr: dep + blockMinutes(type, dist(from, to)) };
+    if (rw && (rw.from || rw.to)) flight.rw = rw;
+    return flightTrack({ id: `leg:${type}`, type, flight });
   }
 
   // Where a flying plane is at time t (fractional minutes allowed), how high and how fast.
@@ -3239,7 +3242,8 @@
         pax, revenue, cost: flightCost(p.type, d, leg.to, pax, this.costMult(p) * this.fuelMult() * this.difficulty().costMult),
         standFrom: this.standAt(p), standTo: this.freeStand(leg.to, p.id),
       };
-      if (p.runways && (p.runways[p.flight.from] || p.runways[p.flight.to])) p.flight.rw = { from: p.runways[p.flight.from], to: p.runways[p.flight.to] };
+      const rw = this.legRunways(p, p.flight.from, p.flight.to);
+      if (rw) p.flight.rw = rw;
       this.rollFlightEvents(p);
       p.status = 'flying';
       p.waitSlot = null;
@@ -4066,8 +4070,14 @@
         return { key: runwayKey(r), name: `${num(h)}/${num(h + 180)}`, len, paved: !!r[5], ok: !why, why };
       }).sort((x, y) => x.len - y.len);
     },
-    // Have a plane take this runway at an airport (from its next flight there on, from whichever end is into the
-    // wind); null or 'auto': the shortest that fits (pickRunway). Error, or null.
+    // The runways a plane chose for a flight from `from` to `to`: { from, to } runway keys, or null (auto at both).
+    legRunways(p, from, to) {
+      const mine = p.runways || {};
+      return mine[from] || mine[to] ? { from: mine[from], to: mine[to] } : null;
+    },
+    // Have a plane take this runway at an airport (from whichever end is into the wind); null or 'auto': the
+    // shortest that fits (pickRunway). A flight still boarding at the gate takes it at once, one under way keeps its
+    // runways and the next flight there takes it. Error, or null.
     setRunway(planeId, code, key) {
       const p = this.plane(planeId);
       if (!p) return 'No such plane.';
@@ -4080,8 +4090,28 @@
         p.runways = p.runways || {};
         p.runways[code] = key;
       }
+      const f = p.status === 'flying' && p.flight;
+      if (f && (f.from === code || f.to === code)) {
+        // (only while it boards, and only if the new way out still leaves it at the gate now: no jump)
+        const at = this.state.time - f.dep + 1;
+        if (at < flightTrack(p).boarding) {
+          const was = f.rw;
+          const rw = this.legRunways(p, f.from, f.to);
+          if (rw) f.rw = rw; else delete f.rw;
+          if (at >= flightTrack(p).boarding) { if (was) f.rw = was; else delete f.rw; }
+        }
+      }
       this.dirty = true;
       return null;
+    },
+    // Whether the plane's flight now (from or to that airport) takes its runway choice there: 'now', 'next' (it is
+    // under way on the runway it had: the choice counts from its next flight there), or null (no flight there now).
+    runwayTakes(p, code) {
+      const f = p.status === 'flying' && p.flight;
+      if (!f || (f.from !== code && f.to !== code)) return null;
+      const want = (p.runways || {})[code] || null;
+      const has = (f.rw && (f.from === code ? f.rw.from : f.rw.to)) || null;
+      return want === has ? 'now' : 'next';
     },
 
     // Close a runway (build mode): pulling it down costs part of what building it would.

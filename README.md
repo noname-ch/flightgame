@@ -42,7 +42,8 @@ camera behind it (the wheel zooms), what it is doing, its speed and height, wher
 time and distance left, the passengers on board and the runways it takes off from and lands on. **Runways**: for
 every airport of its day you choose which runway it takes, or *Auto*: the shortest runway it can use (long enough,
 paved where it needs that) whose end is within 45° of the day's wind, so the long runways stay free for the big
-planes; it takes off and lands into the wind. A choice counts from its next flight there on. 🗓 *Timetable* opens its timetable in a window of its own
+planes; it takes off and lands into the wind. A choice counts at once while the plane still boards at the gate, else from
+its next flight there (a flight under way keeps its runways); the route lines on the map show the chosen runways. 🗓 *Timetable* opens its timetable in a window of its own
 (also from a plane's row in Schedule). Every window can be moved by its title bar (also the developer tools,
 the airport editor and build panel, the bug report, the airport checklist and settings) and opens where it was
 left last time. On a phone a click shows the plane's card in Fleet instead.

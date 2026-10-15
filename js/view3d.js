@@ -604,11 +604,13 @@ function routeFeatures() {
       for (let i = 0; i < stops.length; i++) {
         const a = stops[i];
         const b = stops[(i + 1) % stops.length];
-        const key = `${a}-${b}${p.id === sel ? '*' : ''}`;
+        const rw = G.legRunways ? G.legRunways(p, a, b) : null;
+        const key = `${a}-${b}${rw ? `${rw.from}~${rw.to}` : ''}${p.id === sel ? '*' : ''}`;
         if (seen.has(key)) continue;
         seen.add(key);
-        // The planned runway-to-runway track when the game provides it, else a great circle.
-        const tr = G.legTrack && G.legTrack(p.type, a, b);
+        // The planned runway-to-runway track when the game provides it (with the runways chosen for the plane), else
+        // a great circle.
+        const tr = G.legTrack && G.legTrack(p.type, a, b, rw);
         const coords = tr ? unwrap(tr.pts) : arc(G.airportByCode[a], G.airportByCode[b]);
         feats.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: coords },
           properties: { kind: 'route', selected: p.id === sel ? 1 : 0 } });
@@ -637,7 +639,7 @@ function refreshData() {
     v.sig.airports = aSig;
     map.getSource('fg-airports').setData(airportFeatures());
   }
-  const rSig = `${G.state.planes.map((p) => `${p.id}:${p.schedule.stops.join('-')}:${p.status === 'flying' && p.flight.kind !== 'scheduled' ? p.flight.to : ''}`).join(',')}|${sel}`;
+  const rSig = `${G.state.planes.map((p) => `${p.id}:${p.schedule.stops.join('-')}:${p.status === 'flying' && p.flight.kind !== 'scheduled' ? p.flight.to : ''}${p.runways ? JSON.stringify(p.runways) : ''}`).join(',')}|${sel}`;
   if (rSig !== v.sig.routes) {
     v.sig.routes = rSig;
     map.getSource('fg-routes').setData(routeFeatures());

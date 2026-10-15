@@ -812,7 +812,8 @@
         const f = p.status === 'flying' && (p.id === ui.selectedPlane || p.flight.kind !== 'scheduled') ? p.flight : null;
         const draft = FG.planner.draftStops(p.id);
         return `${p.id}${p.type}:${(draft || p.schedule.stops).join('-')}${draft ? 'd' : ''}${p.schedule.active ? 1 : 0}` +
-          `${f ? `${f.kind}${f.from}${f.to}${f.dep}` : ''}${p.pendingFerry ? p.pendingFerry + p.location : ''}`;
+          `${f ? `${f.kind}${f.from}${f.to}${f.dep}${f.rw ? f.rw.from + f.rw.to : ''}` : ''}${p.pendingFerry ? p.pendingFerry + p.location : ''}` +
+          `${p.runways ? JSON.stringify(p.runways) : ''}`;
       }).join(',');
     if (sig === ui.routeSig) return;
     ui.routeSig = sig;
@@ -826,10 +827,11 @@
       const selected = ui.selectedPlane === p.id;
       if (stops.length >= 2) {
         const pts = [];
-        // Each leg as today's real track: runway into the wind, climb, cruise, approach.
+        // Each leg as today's real track: the runways it takes (into the wind, or the ones chosen for it), climb,
+        // cruise, approach.
         stops.forEach((c, i) => {
           const to = stops[(i + 1) % stops.length];
-          pts.push(...(c === to ? [] : unwrapped(G.legTrack(p.type, c, to).pts)));
+          pts.push(...(c === to ? [] : unwrapped(G.legTrack(p.type, c, to, G.legRunways(p, c, to)).pts)));
         });
         const weight = (selected ? 5 : 3) * (ui.map.getZoom() >= 13 ? 0.5 : 1); // thin near runways
         const active = p.schedule.active;
