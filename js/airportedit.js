@@ -60,6 +60,7 @@
     sharp: false, // a taxiway drawn by clicking keeps its corners (else they are rounded, RADIUS m)
     tool: 'select', // build mode: what a click on the map does (TOOLS)
     move: null,   // build mode: moving a whole thing: { e, c (its middle), d ([dLat, dLon]) }
+    place: null,  // build mode: a runway or terminal being placed: { kind, at, hdg, len, width, paved | gates, cls, depth, both }
     msg: '',
     bad: false,
   };
@@ -357,7 +358,7 @@
   function madeUp(code) {
     if (!code || FG.layouts.has(code) || FG.layouts.pending(code)) return [];
     const ap = G.apronOf(code);
-    if (!ap || ap.real) return [];
+    if (!ap || ap.real || ap.empty) return []; // (a new site: nothing made up)
     const pt = ([lat, lon]) => [r5(lat), r5(lon)];
     const out = [];
     const seen = new Set();
@@ -407,7 +408,7 @@
     // (build mode: only that airport, and not its runways)
     for (const a of ed.player ? [G.airportByCode[ed.player]] : airportsNear(p, 8)) {
       for (const e of elements(a.code)) {
-        if (ed.player && e.kind === 'runway') continue;
+        if (ed.player && e.kind === 'runway' && ed.tool !== 'select' && ed.tool !== 'remove') continue;
         const g = e.geom;
         const d = ed.player && e.kind === 'stand' ? nearest(p, [offset([g[0], g[1]], g[2] + 180, 35), offset([g[0], g[1]], g[2], 4)]).d
           : ed.player && e.kind === 'taxiway' ? Math.max(0, distTo(e, p) - (g.w || 15) / 2) : distTo(e, p);
@@ -1274,6 +1275,7 @@
     if (d.kind === 'taxiway' && FG.taxiFit && !ed.player) fitTaxiway({ code, kind: 'taxiway', geom }, true);
   }
   function cancel() {
+    if (ed.place) { ed.place = null; draftLayer.clearLayers(); note('Not built.'); renderPanel(); return true; }
     if (ed.move) { stopMove(); note('Not moved.'); drawLayer(); renderPanel(); return true; }
     if (ed.draw) { stopDraw(); note('Drawing cancelled.'); drawLayer(); return true; }
     if (ed.edit) { stopEdit(); note('Not moved.'); return true; }
@@ -1388,6 +1390,7 @@
     drawDraft();
   }
   function drawDraft() {
+    if (ed.place) { drawPlace(); return; }
     draftLayer.clearLayers();
     if (ed.move) {
       drawShape(draftLayer, ed.move.e.kind, movedGeom(), STYLE.draw);
@@ -1549,19 +1552,21 @@
     ['remove', '🗑', 'Remove', 'Click something to pull it down (Undo brings it back).'],
   ];
   const BUILD = [
+    ['runway', 'Runway', 'Click where its middle goes (again to move it); turn it and set its length in the panel, or with Q / E.'],
+    ['terminal', 'Terminal', 'Click where it goes (again to move it): a terminal with its gates, apron and taxi lane; turn it and size it in the panel.'],
     ['stand', 'Stand', 'Click where a plane stands: its nose points to the nearest building (Turn it if that is wrong).'],
     ['row', 'Stand row', 'Click where the row of stands starts, then where it ends.'],
     ['taxiway', 'Taxiway', 'Click points along its middle; click the last point again (or Enter) when done.'],
     ['curve', 'Curve', 'A taxiway as one curve: click where it starts, then where it ends.'],
     ['apron', 'Apron', 'Click its corners; click the first corner again (or Enter) when done.'],
     ['pad', 'Pad', 'Open concrete where planes go straight to their stands: click its corners, the first again when done.'],
-    ['terminal', 'Terminal', 'Click its corners; click the first corner again (or Enter) when done.'],
     ['hangar', 'Hangar', 'Click its corners; click the first corner again (or Enter) when done.'],
     ['building', 'Building', 'Click its corners; click the first corner again (or Enter) when done.'],
     ['tower', 'Tower', 'Click where the tower stands.'],
   ];
   function setTool(t) {
     while (cancel()) { /* whatever was going on */ }
+    ed.place = null;
     ed.tool = t;
     ed.sel = null;
     ed.hits = [];
@@ -1583,11 +1588,12 @@
       if (!ed.sel) note(t === 'select' ? '' : 'Nothing there: click right on it.');
       else if (t === 'move') startMove(ed.sel);
       else if (t === 'points') startEdit();
-      else if (t === 'remove') del();
+      else if (t === 'remove' && ed.sel.kind !== 'runway') del(); // (a runway: closed with the button in the panel)
       drawLayer();
       renderPanel();
       return;
     }
+    if (t === 'runway' || t === 'terminal') { placeAt(p); return; }
     ed.sel = null;
     ed.hits = [];
     if (t === 'stand') { addStand(); return; }
@@ -1642,11 +1648,211 @@
     handleLayer.clearLayers();
     draftLayer.clearLayers();
   }
+  // ---------- build mode: runways and terminals placed whole ----------
+  // The first click puts it there, the next ones move it; the panel turns and sizes it, and orders it: it is
+  // built over weeks (G.orderRunway, G.orderBuild) and shows dashed meanwhile.
+  function placeAt(p) {
+    const code = ed.code;
+    if (!ed.place || ed.place.kind !== ed.tool) {
+      const rws = G.airportRunways(code);
+      const main = rws.length ? rws.reduce((a, b) => (G.runwayLength(b) > G.runwayLength(a) ? b : a)) : null;
+      if (ed.tool === 'runway') ed.place = { kind: 'runway', at: p, hdg: main ? Math.round(bearing([main[0], main[1]], [main[2], main[3]])) : 70, len: 1800, width: 30, paved: 1 };
+      // a terminal's gates face the nearest runway
+      else ed.place = { kind: 'terminal', at: p, hdg: main ? Math.round(bearing(p, nearest(p, [[main[0], main[1]], [main[2], main[3]]]).q)) : 0, gates: 4, cls: 2, depth: 40, both: false };
+    } else ed.place.at = p;
+    drawPlace();
+    renderPanel();
+  }
+  function placedRunway(pl) {
+    const a = offset(pl.at, pl.hdg + 180, pl.len / 2);
+    const b = offset(pl.at, pl.hdg, pl.len / 2);
+    return [r5(a[0]), r5(a[1]), r5(b[0]), r5(b[1]), pl.width, pl.paved ? 1 : 0];
+  }
+  // A terminal placed at pl.at, its gates facing pl.hdg (and the other way too, `both`): the building, an apron in
+  // front of each gated side, a stand of class pl.cls at every gate (as far apart as that class needs), the apron's
+  // taxi lane, and a taxiway from that lane to the nearest one there is. { ops, full, weeks, label, size: [m, m] }.
+  function terminalPlan(pl) {
+    const code = ed.code;
+    const B = FG.config.airports.build;
+    const sp = Math.ceil(G.CLASS_ROOM[pl.cls]);
+    const stop = Math.round(sp * 0.4); // (as game.js: the nose stops this far ahead of the stand point,
+    const front = stop + 12;           // the building's face 12 m further on)
+    const lane = 70;                   // from a stand back to the apron's taxi lane (the pushback)
+    const len = pl.gates * sp + 20;
+    const P = (x, y) => { const q = offset(offset(pl.at, pl.hdg + 90, x), pl.hdg, y); return [r5(q[0]), r5(q[1])]; };
+    const rect = (x0, x1, y0, y1) => [P(x0, y0), P(x1, y0), P(x1, y1), P(x0, y1)];
+    const ops = [{ op: 'add', kind: 'terminal', geom: rect(-len / 2, len / 2, -pl.depth, 0) }];
+    let full = len * pl.depth * B.terminal;
+    const lanes = [];
+    const letter = String.fromCharCode(65 + ((layoutOf(code) || { terminals: [] }).terminals.length % 26));
+    let k = 0;
+    for (const side of pl.both ? [1, -1] : [1]) {
+      const face = side > 0 ? 0 : -pl.depth;
+      const apron = rect(-len / 2 - 20, len / 2 + 20, face, face + side * (front + lane + 25));
+      ops.push({ op: 'add', kind: 'apron', geom: apron });
+      full += (len + 40) * (front + lane + 25) * B.apron;
+      for (let i = 0; i < pl.gates; i++) {
+        const q = P((i - (pl.gates - 1) / 2) * sp, face + side * front);
+        ops.push({ op: 'add', kind: 'stand', geom: [q[0], q[1], Math.round((pl.hdg + (side > 0 ? 180 : 0) + 360) % 360), `${letter}${++k}`, 1] });
+        full += B.stand;
+      }
+      const ln = [P(-len / 2 - 20, face + side * (front + lane)), P(len / 2 + 20, face + side * (front + lane))];
+      lanes.push(ln);
+      ops.push({ op: 'add', kind: 'taxiway', geom: ln });
+    }
+    // the way to the taxiways there are: from the nearer end of a lane to the nearest point on one
+    const lines = elements(code).filter((e) => e.kind === 'taxiway').map((e) => e.geom);
+    let best = null;
+    for (const ln of lanes) {
+      for (const end of ln) {
+        for (const l of lines) {
+          const n = nearest(end, l);
+          if (n.d > 3 && (!best || n.d < best.d)) best = { d: n.d, line: [end, [r5(n.q[0]), r5(n.q[1])]] };
+        }
+      }
+    }
+    if (best && best.d < 2500) ops.push({ op: 'add', kind: 'taxiway', geom: best.line });
+    for (const o of ops) if (o.kind === 'taxiway') full += lengthOf(o.geom) * (G.airportSize(code) >= 3 ? 23 : 15) * B.taxiway;
+    const weeks = Math.max(3, Math.round(3 + (len * pl.depth) / 3000 + (pl.gates * (pl.both ? 2 : 1)) / 4));
+    const n = pl.gates * (pl.both ? 2 : 1);
+    return { ops, full: Math.round(full / 1000) * 1000, weeks, label: `Terminal · ${n} class ${G.CLASSES[pl.cls]} gate${n > 1 ? 's' : ''}`, size: [len, pl.depth] };
+  }
+  // The thing being placed, on the map.
+  function drawPlace() {
+    draftLayer.clearLayers();
+    const pl = ed.place;
+    if (!pl) return;
+    const o = { pane: 'apedit', interactive: false, renderer };
+    if (pl.kind === 'runway') {
+      const r = placedRunway(pl);
+      drawShape(draftLayer, 'runway', r, STYLE.found);
+      L.polyline([[r[0], r[1]], [r[2], r[3]]], Object.assign({}, o, { color: '#fff', weight: 1, dashArray: '10 10' })).addTo(draftLayer);
+      for (const [q, h] of [[[r[0], r[1]], pl.hdg], [[r[2], r[3]], pl.hdg + 180]]) {
+        L.marker(offset(q, h, 60), { pane: 'apedit', interactive: false, keyboard: false, icon: L.divIcon({ className: 'ae-class', html: designator(h), iconSize: [30, 16], iconAnchor: [15, 8] }) }).addTo(draftLayer);
+      }
+    } else {
+      const plan = terminalPlan(pl);
+      for (const op of plan.ops) drawShape(draftLayer, op.kind, op.geom, op.kind === 'stand' ? STYLE.found : STYLE.found);
+    }
+    L.circleMarker(pl.at, Object.assign({}, o, { radius: 5, color: '#111827', weight: 2, fillColor: '#f59e0b', fillOpacity: 1 })).addTo(draftLayer);
+  }
+  function turnPlace(by) {
+    if (!ed.place) return;
+    ed.place.hdg = Math.round((((ed.place.hdg + by) % 360) + 360) % 360);
+    drawPlace();
+    renderPanel();
+  }
+  // The panel's fields of the thing being placed (as they are typed).
+  function placeInput() {
+    const pl = ed.place;
+    if (!pl) return;
+    const num = (id) => { const el = $(id); return el && el.value !== '' ? Number(el.value) : NaN; };
+    const hdg = num('ae-pl-hdg');
+    if (hdg >= 0 && hdg <= 360) pl.hdg = hdg % 360;
+    if (pl.kind === 'runway') {
+      const len = num('ae-pl-len');
+      if (len >= 300 && len <= 5000) pl.len = len;
+      const w = num('ae-pl-width');
+      if (w) pl.width = w;
+      if ($('ae-pl-paved')) pl.paved = $('ae-pl-paved').checked ? 1 : 0;
+    } else {
+      const g = num('ae-pl-gates');
+      if (g >= 1 && g <= 30) pl.gates = Math.round(g);
+      const c = num('ae-pl-cls');
+      if (c >= 0 && c <= 5) pl.cls = c;
+      const d = num('ae-pl-depth');
+      if (d >= 15 && d <= 200) pl.depth = d;
+      if ($('ae-pl-both')) pl.both = $('ae-pl-both').checked;
+    }
+    drawPlace();
+    const info = $('ae-pl-info');
+    if (info) info.innerHTML = placeInfo();
+  }
+  // What it costs, how long it takes and what is in its way.
+  function placeInfo() {
+    const pl = ed.place;
+    const code = ed.code;
+    if (pl.kind === 'runway') {
+      const r = placedRunway(pl);
+      const o = G.runwayProject(code, r);
+      const c = G.runwayCheck(code, r);
+      const way = [c.buildings && `${c.buildings} building${c.buildings > 1 ? 's' : ''}`, c.aprons && `${c.aprons} apron${c.aprons > 1 ? 's' : ''}`].filter(Boolean);
+      return `<b>${designator(pl.hdg)}/${designator(pl.hdg + 180)}</b> · ${o.len.toLocaleString('de-CH')} m × ${pl.width} m${pl.paved ? '' : ' grass'} ·
+        <b>${G.fmtMoney(o.cost)}</b> · ${o.weeks} weeks${c.runways ? ` · crosses ${c.runways} runway${c.runways > 1 ? 's' : ''}` : ''}
+        ${way.length ? `<div class="ae-warn">In its way: ${way.join(', ')}.</div>` : ''}${o.err ? `<div class="ae-warn">${esc(o.err)}</div>` : ''}`;
+    }
+    const plan = terminalPlan(pl);
+    const share = Math.round((plan.full * G.stake(code)) / 100);
+    return `${esc(plan.label)} · ${plan.size[0]} m × ${plan.size[1]} m · <b>${G.fmtMoney(share)}</b> · ${plan.weeks} weeks
+      <div class="muted small">Its gates are ${Math.ceil(G.CLASS_ROOM[pl.cls])} m apart: class ${G.CLASSES[pl.cls]}, planes up to ${[15, 24, 36, 52, 65, 80][pl.cls]} m wingspan.</div>`;
+  }
+  function placeHtml() {
+    const pl = ed.place;
+    const turn = `<div class="ae-row ae-form">Heading <input id="ae-pl-hdg" type="number" min="0" max="360" step="1" value="${pl.hdg}"> °
+      ${[-45, -5, 5, 45].map((by) => `<button class="mini" data-ae="plTurn" data-by="${by}" title="Turn it ${Math.abs(by)}° (${by < 0 ? 'Q' : 'E'}${Math.abs(by) > 5 ? ' with Shift' : ''})">${by < 0 ? '↺' : '↻'}${Math.abs(by)}</button>`).join('')}</div>`;
+    if (pl.kind === 'runway') {
+      const rws = G.airportRunways(ed.code);
+      return `<div class="ae-ctx-title">New runway</div><div class="muted small">Click the map to move it.</div>
+        <div class="ae-row ae-form"><button class="mini" data-ae="plLen" data-by="-100">−</button> Length <input id="ae-pl-len" type="number" min="300" max="5000" step="50" value="${pl.len}"> m <button class="mini" data-ae="plLen" data-by="100">+</button></div>
+        <div class="ae-row ae-form">Width <select id="ae-pl-width">${[18, 23, 30, 45, 60].map((w) => `<option${w === pl.width ? ' selected' : ''}>${w}</option>`).join('')}</select> m
+          <label class="small"><input id="ae-pl-paved" type="checkbox"${pl.paved ? ' checked' : ''}> paved</label></div>
+        ${turn}
+        ${rws.length ? `<div class="dev-row small">Like ${rws.map((r, i) => `<button class="mini" data-ae="plAlign" data-i="${i}" title="Parallel to it">${runwayName(r)}</button>`).join(' ')}</div>` : ''}
+        <div id="ae-pl-info" class="small">${placeInfo()}</div>
+        <div class="dev-row"><button class="primary" data-ae="placeBuild">Build it</button><button data-ae="cancel">Cancel</button></div>`;
+    }
+    return `<div class="ae-ctx-title">New terminal</div><div class="muted small">Click the map to move it; its gates face the arrow's way.</div>
+      <div class="ae-row ae-form"><button class="mini" data-ae="plGates" data-by="-1">−</button> Gates <input id="ae-pl-gates" type="number" min="1" max="30" value="${pl.gates}"> <button class="mini" data-ae="plGates" data-by="1">+</button>
+        class <select id="ae-pl-cls">${G.CLASSES.map((c, i) => `<option value="${i}"${i === pl.cls ? ' selected' : ''}>${c}</option>`).join('')}</select></div>
+      <div class="ae-row ae-form">Depth <input id="ae-pl-depth" type="number" min="15" max="200" step="5" value="${pl.depth}"> m
+        <label class="small"><input id="ae-pl-both" type="checkbox"${pl.both ? ' checked' : ''}> gates on both sides</label></div>
+      ${turn}
+      <div id="ae-pl-info" class="small">${placeInfo()}</div>
+      <div class="dev-row"><button class="primary" data-ae="placeBuild">Build it</button><button data-ae="cancel">Cancel</button></div>`;
+  }
+  function placeBuild() {
+    const pl = ed.place;
+    if (!pl) return;
+    const code = ed.code;
+    let err;
+    if (pl.kind === 'runway') err = G.orderRunway(code, placedRunway(pl));
+    else {
+      const plan = terminalPlan(pl);
+      // (at an airport the game laid out itself, what it made up becomes yours first: else the new terminal
+      // would be all there is once it is built)
+      const made = madeUp(code);
+      if (made.length) setOps(code, opsOf(code).concat(made.map((e) => ({ op: 'add', kind: e.kind, geom: e.geom }))));
+      err = G.orderBuild(code, plan.ops, { label: plan.label, full: plan.full, weeks: plan.weeks });
+    }
+    if (err) { note(err, true); return; }
+    note(`${pl.kind === 'runway' ? 'Runway' : 'Terminal'} ordered: it is built over the coming weeks (dashed meanwhile).`);
+    ed.place = null;
+    draftLayer.clearLayers();
+    refresh();
+  }
+  // A runway selected: close it (build mode).
+  function closeRunway() {
+    const e = ed.sel;
+    if (!e || e.kind !== 'runway') return;
+    const err = G.removeRunway(e.code, e.geom);
+    if (err) { note(err, true); return; }
+    ed.sel = null;
+    note(`Runway ${runwayName(e.geom)} closed.`);
+    refresh();
+  }
+
   // What is going on, or what is selected, and what can be done with it (in the panel).
   function buildContext() {
     const e = ed.sel;
     const parts = [];
     const d = ed.draw;
+    if (ed.place) return placeHtml();
+    if (e && e.kind === 'runway') {
+      const o = G.runwayProject(e.code, e.geom);
+      return `<div class="ae-ctx-title">${esc(describe('runway', e.geom))}</div>
+        <div class="muted small">Runways are built whole with the Runway tool; this one can be closed (it costs ${G.fmtMoney(Math.round((o.full * FG.config.airports.build.demolish * G.stake(e.code)) / 100))}).</div>
+        <div class="dev-row"><button class="danger" data-ae="closeRunway">Close this runway</button></div>`;
+    }
     if (d) {
       const name = d.kind === 'turn' ? 'Turning the stand' : d.kind === 'curve' ? (d.replace ? 'Curve on the taxiway' : 'New taxiway as a curve') : `Building the ${NAMES[d.kind]}`;
       let hint = d.kind === 'turn' ? HINT.turn : RINGS.has(d.kind) ? HINT.ring : HINT[d.kind];
@@ -1732,6 +1938,13 @@
     el.innerHTML = html;
     el.hidden = !html;
   }
+  // A new airport: what it still needs (G.siteChecklist), and opening it once it has all of it.
+  function sitePanel(code) {
+    const list = G.siteChecklist(code);
+    const ready = list.every((x) => x.done);
+    return `<section class="ae-site"><h4>Before it opens</h4><ul class="site-check">${list.map((x) => `<li class="${x.done ? 'pos' : ''}">${x.done ? '✔' : '○'} ${esc(x.label)}${x.note ? ` <span class="muted">(${esc(x.note)})</span>` : ''}</li>`).join('')}</ul>
+      <div class="dev-row"><button class="${ready ? 'primary' : ''}" data-ae="openAirport" ${ready ? '' : 'disabled'}>✈ Open the airport</button></div></section>`;
+  }
   // Build mode: the tools, what is going on or selected, undo, prices, and what the player built here.
   function playerPanel() {
     const code = ed.player;
@@ -1747,6 +1960,7 @@
       <div class="dev-head"><b>🏗 Build at ${esc(code)}</b><button class="mini" data-ae="close" title="Done building">✕</button></div>
       <div class="muted small">${esc(a.name)} · money <b>${G.fmtMoney(G.state.money)}</b>${share < 100 ? ` · you pay your ${share}%` : ''}</div>
       ${pending ? '<div class="ae-warn">Reading the map data of the airport…</div>' : ''}
+      ${a.built && !a.open ? sitePanel(code) : ''}
       <div class="ae-tools">${TOOLS.map(([k, icon, name, hint]) => `<button class="${ed.tool === k ? 'on' : ''}" data-ae="tool" data-tool="${k}" title="${esc(hint)}"><span>${icon}</span>${name}</button>`).join('')}</div>
       <div class="ae-sub">Build</div>
       <div class="ae-tools ae-build">${BUILD.map(([k, name]) => `<button class="${ed.tool === k ? 'on' : ''}" data-ae="tool" data-tool="${k}" title="${esc(price[k] || '')}">${name}</button>`).join('')}</div>
@@ -1755,8 +1969,8 @@
       <section>
         <div class="dev-row"><button data-ae="undo"${ed.undo.length ? '' : ' disabled'}>↶ Undo (money back)</button></div>
         <div class="muted small">Moving something costs ${Math.round(B.rework * 100)}% of it, pulling it down ${Math.round(B.demolish * 100)}%.
-          Runways come from <b>Construction</b> in the airport's panel. Kept in this game only. The airport's layout is yours once you build
-          here: a terminal from Construction still makes it bigger, but its new stands you build yourself.</div>
+          Runways and terminals placed with their tools are built over weeks. Kept in this game only; the airport's layout is yours once
+          you build here, and the stands you build make it bigger.</div>
         <details${ed.listOpen ? ' open' : ''} data-ae-list><summary class="small">What you built here (${ops.length})</summary>
           ${ops.length ? `<ul class="ae-ops">${ops.map((op, i) => `<li><span>${{ add: '＋', del: '−', set: '✎' }[op.op]} ${esc(describe(op.kind, op.geom))}</span>
             <button class="mini" data-ae="goOp" data-i="${i}" title="Show it">⌖</button></li>`).join('')}</ul>` : '<div class="muted small">Nothing yet.</div>'}
@@ -1872,6 +2086,22 @@
       case 'back': if (ed.draw) { ed.draw.pts.pop(); drawDraft(); banner(); } break;
       case 'sharp': ed.sharp = b.checked; drawDraft(); break;
       case 'tool': setTool(d.tool); break;
+      case 'plTurn': turnPlace(Number(d.by)); break;
+      case 'plLen': if (ed.place) { ed.place.len = Math.max(300, Math.min(5000, ed.place.len + Number(d.by))); drawPlace(); renderPanel(); } break;
+      case 'plGates': if (ed.place) { ed.place.gates = Math.max(1, Math.min(30, ed.place.gates + Number(d.by))); drawPlace(); renderPanel(); } break;
+      case 'plAlign': {
+        const r = G.airportRunways(ed.code)[Number(d.i)];
+        if (ed.place && r) { ed.place.hdg = Math.round(bearing([r[0], r[1]], [r[2], r[3]])); drawPlace(); renderPanel(); }
+        break;
+      }
+      case 'placeBuild': placeBuild(); break;
+      case 'closeRunway': closeRunway(); break;
+      case 'openAirport': {
+        const err = G.openAirport(ed.player);
+        note(err || `${G.airportByCode[ed.player].name} is open: lease slots there and fly to it.`, !!err);
+        refresh();
+        break;
+      }
       case 'move': if (selection()) startMove(ed.sel); renderPanel(); break;
       case 'done': finishEdit(); break;
       case 'undo': undo(); break;
@@ -1927,6 +2157,12 @@
     if (e.key === 'F3') { toggle(); e.preventDefault(); e.stopPropagation(); return; }
     if (!ed.on || (e.target instanceof Element && e.target.matches('input, select, textarea'))) return;
     let used = true;
+    if (ed.place && (e.key === 'q' || e.key === 'Q' || e.key === 'e' || e.key === 'E')) {
+      turnPlace((e.key.toLowerCase() === 'q' ? -1 : 1) * (e.shiftKey ? 45 : 5));
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
     if (e.key === 'Escape') { if (!cancel()) toggle(false); } else if (e.key === 'Enter') {
       if (ed.draw) finishDraw(); else if (ed.edit) finishEdit(); else if (ed.found) useFound(); else if (ed.curve) applyCurve(); else used = false;
     } else if (e.key === 'Backspace' && ed.draw) { ed.draw.pts.pop(); drawDraft(); banner(); } else if ((e.key === 'z' || e.key === 'Z') && (e.ctrlKey || e.metaKey)) undo();
@@ -1948,7 +2184,7 @@
       }
       if (player !== ed.player) ed.undo = []; // (the other mode's changes are not undone here)
       ed.player = player;
-      ed.tool = 'select';
+      ed.tool = player && G.airportByCode[player].built && !G.airportRunways(player).length ? 'runway' : 'select';
       ed.sel = null;
       ed.hits = [];
     }
@@ -2022,7 +2258,8 @@
       }
       if (e.key === 'Escape' && ed.player) { e.target.blur(); cancel(); }
     });
-    el.addEventListener('input', () => { if (ed.player) { if (ed.curve) curveInput(); else if (ed.row) rowInput(); } });
+    el.addEventListener('input', () => { if (ed.player) { if (ed.place) placeInput(); else if (ed.curve) curveInput(); else if (ed.row) rowInput(); } });
+    el.addEventListener('change', () => { if (ed.player && ed.place) placeInput(); });
     el.addEventListener('toggle', (e) => { if (e.target.matches('[data-ae-list]')) ed.listOpen = e.target.open; }, true);
     $('ae-banner').addEventListener('click', onClick);
     window.addEventListener('keydown', onKey, true); // before the game's own keys (Esc opens its menu)
@@ -2037,6 +2274,15 @@
     toggle,
     // Build mode at an airport (see the top).
     build(code) { toggle(true, code); },
+    // The game moved on (ui.js renderAll): the build panel again, at most once a second (construction finishes,
+    // the money changes), not while something in it is being typed in.
+    tick() {
+      if (!ed.on || !ed.player || Date.now() - (ed.ticked || 0) < 1000) return;
+      const a = document.activeElement;
+      if (a && $('apedit').contains(a) && a.matches('input, select, textarea')) return;
+      ed.ticked = Date.now();
+      renderPanel();
+    },
     unsaved: () => FG.fixes.unsaved(),
     // for tests: what the editor would find or make
     straightLine, rightTurn, squareRing, curvePts, cornerAt, fitCurve, curveResult: () => ed.curve && curveResult(ed.curve), lookup, hitsAt: (lat, lon) => hitsAt([lat, lon]), madeUp,

@@ -135,20 +135,26 @@ upgrades any more: you build terminals and stands yourself.
    order construction and pay your share of the cost: a new parallel or crosswind runway or a runway
    extension; stands and terminals you build yourself (build mode), and they make the airport bigger.
    With **50%** your slots there are free (no upfront, no weekly fee). The **Airports** tab lists your stakes and building sites,
-   and **builds new airports**: pick a site on the map, it opens after 12 weeks and is 100% yours.
+   and **builds new airports**: pick a site on the map (CHF 3M, 100% yours) and build it in build mode: a runway,
+   an apron with stands, a terminal and the taxiways between them. A checklist (build panel and airport panel)
+   shows what it still needs; **✈ Open the airport** when it is all there.
    Only where the terrain is fit for one: level ground (heights from the terrain tiles of the 3D view), no
    water, glacier or built-up area (from the map data); `FG.terrain.check(lat, lon)` in `js/view3d.js`.
-   New runways are placed by the game, clear of the aprons, buildings and other runways (a parallel one 400 m
-   or more away, on the far side of the apron first; a crosswind one across the main runway, near an end where
-   that is clear), and get taxiways: a parallel taxiway, exits and a link into the taxiways there are. Where
-   two runways cross, neither is painted over the other, and where a taxiway meets a runway the runway and its
+   New runways and terminals are placed by you in build mode (below) and built over weeks; a new runway gets
+   taxiways (a parallel taxiway round into its ends, exits and a link into the taxiways there are). Where two
+   runways cross, neither is painted over the other, and where a taxiway meets a runway the runway and its
    paint lie on top. Taxiways are round at their bends: those the game lays out, and those drawn in the editor
    (unless "Sharp corners" is ticked while drawing; `G.roundLine`).
    **🏗 Build at the airport** (in its Construction section, at an airport you built or where you have 25%) opens
-   the build mode: a tool panel beside the satellite map, without runways. Pick a tool, then click the map:
-   **Select** (change what you click in the panel), **Move** (drag the ✥), **Points**, **Remove**, or one of the
-   things to build: stands (also in rows), taxiways and curves, aprons, pads, terminals, hangars, other buildings
-   and towers. Building only ever adds. It costs your share (stand CHF 1.5M, apron CHF 150/m², terminal CHF 2'500/m²,
+   the build mode: a tool panel beside the satellite map. Pick a tool, then click the map:
+   **Select** (change what you click in the panel), **Move** (drag the ✥), **Points**, **Remove** (a runway: close
+   it), or one of the things to build. **Runway**: click where its middle goes (again to move it), then set its
+   length, width and paved in the panel and turn it (buttons, a heading, Q / E, or "like" a runway that is there);
+   the panel shows its price, weeks and what is in its way. **Terminal**: click where it goes and turn it the same
+   way; set its gates, their class (which sets how far apart they are), its depth and gates on both sides: it comes
+   with an apron, its stands and a taxi lane joined to the nearest taxiway. Both are ordered with **Build it** and
+   built over weeks (dashed in orange meanwhile). The rest is built at once: stands (also in rows), taxiways and
+   curves, aprons, pads, hangars, other buildings and towers. Building only ever adds. It costs your share (stand CHF 1.5M, apron CHF 150/m², terminal CHF 2'500/m²,
    …; `C.airports.build`), Undo gives the money back, and it is kept in that save game only
    (`G.state.airportOps`, applied by `js/fixes.js` after the airport fixes).
 

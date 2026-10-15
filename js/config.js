@@ -92,7 +92,9 @@ FG.config = {
     terminalWeeks: [0, 0, 8, 12, 20, 30],
     terminalRunway: [0, 0, 1200, 1800, 2500, 3000], // longest paved runway needed for that size
     terminalDemand: 0.25,     // each terminal expansion adds this much passenger demand
-    newAirportCost: 15000000, newAirportWeeks: 12, newAirportRunway: 1200, newAirportMinKm: 8,
+    // A new airport: its site (you build the runway, apron, stands, terminal and taxiways on it, build mode);
+    // newAirportWeeks / newAirportRunway are for games from before (a ready airfield after 12 weeks).
+    newAirportCost: 3000000, newAirportWeeks: 12, newAirportRunway: 1200, newAirportMinKm: 8,
     // Building by hand (the airport editor's build mode), in CHF: per m² of apron, pad, building or taxiway
     // (its length times its width), per stand and per tower. Moving or reshaping something costs `rework` of what
     // it is then (at least what it grew by), pulling it down `demolish` of it. You pay your share.

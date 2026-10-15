@@ -357,7 +357,15 @@ try {
     const charged = [];
     const pay = G.payForBuilding;
     G.payForBuilding = function (c, full, what) { const err = pay.call(this, c, full, what); if (!err) charged.push(full); return err; };
-    if (document.querySelector('#apedit [data-ae="tool"][data-tool="runway"]')) return { err: 'build mode offers to build a runway' };
+    // the Runway tool: a click places one, the panel shows its price; not built (Cancel)
+    const rt = document.querySelector('#apedit [data-ae="tool"][data-tool="runway"]');
+    if (!rt) return { err: 'no Runway tool in the build panel' };
+    rt.click();
+    FG.airportEdit.click(a.lat - 0.01, a.lon + 0.01);
+    const rinfo = document.getElementById('ae-pl-info');
+    if (!rinfo || !/CHF/.test(rinfo.textContent)) return { err: 'placing a runway shows no price' };
+    document.querySelector('#apedit [data-ae="cancel"]').click();
+    if (FG.airportEdit.state.place) return { err: 'Cancel did not drop the runway being placed' };
     const b = document.querySelector('#apedit [data-ae="tool"][data-tool="stand"]');
     if (!b) return { err: 'no "Stand" tool in the build panel' };
     b.click();

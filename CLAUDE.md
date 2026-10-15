@@ -84,11 +84,15 @@ Play online: https://noname-ch.github.io/flightgame/ (GitHub Pages, deployed fro
 - Build mode (the player's airport building): `FG.airportEdit.build(code)` opens the same editor with
   `ed.player` set. It has no popups: `showPopup` and `banner` draw the panel instead (`playerPanel`, tools in
   `TOOLS`/`BUILD`, map clicks in `buildClick`, what is selected or going on in `buildContext`); building never
-  calls the map-data lookup (`auto`), so it can't replace anything. Its ops go to `FG.fixes.player` (kept in `G.state.airportOps`, handed over by
+  calls the map-data lookup (`auto`), so it can't replace anything. Runways and terminals are placed whole
+  (`ed.place`, `placeAt`/`placeHtml`/`terminalPlan`) and ordered as construction: `G.orderRunway(code, r)` (project
+  kind 'runway' with `geo.runway`) and `G.orderBuild(code, ops, info)` (kind 'build': its ops join
+  `FG.fixes.player` when done). New airports are sites (`a.site`): `layApron` gives them only what the player built
+  (`emptyApron` before that, nothing made up), `G.siteChecklist(code)` and `G.openAirport(code)`. Its ops go to `FG.fixes.player` (kept in `G.state.airportOps`, handed over by
   `G.registerBuilt` on every new or loaded game), never to `js/data/fixes.js`. `FG.fixes.ops(code)` is still
   the developer fixes only; `FG.fixes.all(code)` is both, and that is what the layouts get. No runway ops in
-  build mode: runways come from construction (`placeRunway` in game.js picks the spot, `connectRunway` adds
-  their taxiways as player ops where the airport has a layout of its own). Prices: `C.airports.build`,
+  build mode: runways are construction placed by the player (`connectRunway` adds their taxiways as player ops
+  where the airport has a layout of its own; `placeRunway` only serves old games' runway projects). Prices: `C.airports.build`,
   charged in `commit` through `G.payForBuilding`. The first change at a made-up airport adopts the whole
   made-up layout (else the airport would be left with only the new piece).
 - 3D building looks: `js/facades.js` (`FG.facades.parts(b, roof, toward)`) splits each terminal, hangar, car park

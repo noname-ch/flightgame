@@ -346,6 +346,7 @@
   // All taxiway centre lines of an airport, for drawing: [[lat, lon], [lat, lon]] each.
   function taxiwaysOf(code) {
     const ap = apronOf(code);
+    if (ap.empty) return [];
     // (each stretch keeps its taxiway's width, where the fixes give one: `w`, m)
     if (ap.real) return ap.real.taxiways.flatMap((l) => l.slice(1).map((p, i) => Object.assign([l[i], p], l.w ? { w: l.w } : {})));
     const lines = [...(ap.lanes || [ap.lane])];
@@ -521,6 +522,12 @@
   }
 
   // `sizeAs`: lay the airport out as if it had this size (for the expansion preview).
+  // A site with nothing built on it yet.
+  function emptyApron(code) {
+    const a = airportByCode[code];
+    return { code, empty: true, stands: [], gates: [], buildings: [], markings: [], terminal: [], apron: [], aprons: [], pads: [],
+      lanes: [], lane: null, exits: [], ref: [a.lat, a.lon], hdg: 0, side: 1, nose: 0, spacing: 45, style: 'linear' };
+  }
   // The apron with its stands' classes (classifyStands, once per apron).
   function apronOf(code, sizeAs) {
     const ap = layApron(code, sizeAs);
@@ -538,6 +545,15 @@
     const key = `${code}|${size}|${rws.length}|${layoutId(real)}.${layoutId(from)}|${FG.obstacles && FG.obstacles[code] ? 2 : 0}${infra(code).style || ''}${from ? tpl : ''}|${FG.fixes ? FG.fixes.rev(code) : 0}`;
     let ap = apronCache.get(key);
     if (ap) return ap;
+    // A new airport site (bought to build an airport on, Game.buildAirport): only what you built there, even
+    // before it is enough for planes (no stand yet); nothing at all at first. The game makes nothing up there.
+    if (!real && airportByCode[code].site) {
+      const own = FG.fixes ? FG.fixes.layout(code, (FG.layouts && FG.layouts.raw(code)) || null) : null;
+      try { ap = own ? realApron(code, size, own) : null; } catch (e) { ap = null; }
+      ap = ap || emptyApron(code);
+      apronCache.set(key, ap);
+      return ap;
+    }
     if (real || from) ap = real ? realApron(code, size, real) : copiedApron(code, size, tpl, from, rws);
     if (ap) {
       apronCache.set(key, ap);
@@ -1705,6 +1721,8 @@
   // A plane's stand at an airport: where it parks nose-in (heading = towards the terminal).
   function gateOf(code, planeId) {
     const ap = apronOf(code);
+    const a = airportByCode[code];
+    if (!ap.stands.length) return { lat: a.lat, lon: a.lon, heading: 0, name: '', push: TAXI_LANE };
     const st = ap.stands[Math.min(standIndex(code, planeId), ap.stands.length - 1)];
     return { lat: st.lat, lon: st.lon, heading: st.heading, name: st.name, bridge: st.bridge, push: st.push || TAXI_LANE };
   }
@@ -3875,34 +3893,97 @@
     },
 
     // What can be built at an airport right now, with cost (your share) and an error if not possible.
+    // What can be ordered from the airport panel: extending the main runway. New runways and terminals are placed
+    // in build mode (runwayProject / orderRunway, orderBuild).
     projectOptions(code) {
       const st = this.stake(code);
       const share = st / 100;
-      const busy = this.state.projects.some((p) => p.code === code);
-      const base = busy ? 'Construction already under way here.'
+      const busy = this.state.projects.some((p) => p.code === code && p.kind === 'extend');
+      const base = busy ? 'The main runway is being extended already.'
         : st < A.boardStake ? `You need ${A.boardStake}% of the shares to order construction.` : null;
       const opts = [];
-      const hasRunways = airportRunways(code).length > 0;
-      for (const len of A.runwayLengths) {
-        for (const orient of hasRunways ? ['parallel', 'cross'] : ['new']) {
-          const full = A.runwayCost.base + A.runwayCost.perM * len;
-          opts.push({
-            kind: 'runway', len, orient, full, cost: Math.round(full * share),
-            weeks: Math.round(A.runwayWeeks.base + A.runwayWeeks.perKm * len / 1000),
-            label: `${orient === 'cross' ? 'Crosswind' : orient === 'parallel' ? 'Parallel' : 'New'} runway ${len} m`,
-            err: base,
-          });
-        }
-      }
-      if (hasRunways) {
+      if (airportRunways(code).length) {
         opts.push({
           kind: 'extend', full: A.extendCost, cost: Math.round(A.extendCost * share), weeks: A.extendWeeks,
           label: `Extend main runway +${A.extendBy} m (to ${longestRunway(code) + A.extendBy} m)`,
           err: base || (longestRunway(code) + A.extendBy > A.maxRunwayM ? 'The main runway is as long as it gets.' : null),
         });
       }
-      // (no terminal upgrades: an airport grows with the stands and terminals built there, build mode)
       return opts;
+    },
+
+    // ---------- runways and terminals placed in build mode ----------
+    // What a runway r ([lat, lon, lat, lon, width m, paved 0/1]) costs and takes: { len, full, cost (your
+    // share), weeks, err }. Wider runways cost more, grass ones about a third.
+    runwayProject(code, r) {
+      const a = airportByCode[code];
+      const len = Math.round(runwayLength(r));
+      const full = Math.round(((A.runwayCost.base + A.runwayCost.perM * len * Math.max(0.5, (r[4] || 30) / 45)) * (r[5] ? 1 : 0.35)) / 1000) * 1000;
+      const weeks = Math.max(2, Math.round(A.runwayWeeks.base + (A.runwayWeeks.perKm * len) / 1000));
+      let err = this.buildDenied(code);
+      if (!err && len < 300) err = 'A runway is at least 300 m long.';
+      if (!err && len > A.maxRunwayM) err = `A runway is at most ${A.maxRunwayM} m long.`;
+      if (!err && [[r[0], r[1]], [r[2], r[3]]].some((q) => distanceKm(a, { lat: q[0], lon: q[1] }) > 8)) err = `That is too far from ${a.name} (8 km at most).`;
+      return { len, full, cost: Math.round((full * this.stake(code)) / 100), weeks, err };
+    },
+    // What lies in a placed runway's way: { runways: crossed, aprons, buildings } (how many of each).
+    runwayCheck(code, r) {
+      const ap = apronOf(code);
+      const hdg = bearing({ lat: r[0], lon: r[1] }, { lat: r[2], lon: r[3] });
+      const len = runwayLength(r);
+      const W = Math.max(18, r[4] || 30);
+      const hit = (rings, m) => rings.filter((ring) => ring && ring.length > 2 && runwayHits([r[0], r[1]], hdg, len, W, { rings: [{ r: ring, m, w: 1 }], lines: [] }, []) > 0).length;
+      const others = airportRunways(code).filter((x) => [0, 1, 2, 3].some((i) => Math.abs(x[i] - r[i]) > 1e-6));
+      return {
+        runways: others.filter((x) => runwayHits([r[0], r[1]], hdg, len, W, { rings: [], lines: [] }, [[x, 0]]) > 0).length,
+        aprons: hit([...(ap.aprons || [ap.apron]), ...(ap.pads || [])], 0),
+        buildings: hit([ap.terminal, ...ap.buildings.filter((b) => b.kind !== 'road' && b.kind !== 'carpark').map((b) => b.ring)], 10),
+      };
+    },
+    orderRunway(code, r) {
+      const s = this.state;
+      const o = this.runwayProject(code, r);
+      if (o.err) return o.err;
+      if (s.money < o.cost) return `Not enough money (${fmtMoney(o.cost)} needed).`;
+      s.money -= o.cost;
+      const h = bearing({ lat: r[0], lon: r[1] }, { lat: r[2], lon: r[3] });
+      const name = (x) => String(Math.round((((x % 360) + 360) % 360) / 10) || 36).padStart(2, '0');
+      const runway = r.map((v, i) => (i < 4 ? Math.round(v * 1e5) / 1e5 : v));
+      const label = `Runway ${name(h)}/${name(h + 180)} · ${o.len} m${r[5] ? '' : ' grass'}`;
+      s.projects.push({ code, kind: 'runway', len: o.len, label, cost: o.cost, full: o.full, start: s.time, done: s.time + o.weeks * 7 * DAY, geo: { runway } });
+      this.log(`Construction started at ${airportByCode[code].name}: ${label} – your share ${fmtMoney(o.cost)}, ready in ${o.weeks} weeks.`, 'cost');
+      this.dirty = true;
+      return null;
+    },
+    // Building placed in build mode that is built over weeks (a terminal with its apron, stands and taxi lane):
+    // the airport fix ops it adds when it is done. info: { label, full, weeks }.
+    orderBuild(code, ops, info) {
+      const s = this.state;
+      const err = this.buildDenied(code);
+      if (err) return err;
+      const cost = Math.round((info.full * this.stake(code)) / 100);
+      if (s.money < cost) return `Not enough money (${fmtMoney(cost)} needed).`;
+      s.money -= cost;
+      s.projects.push({ code, kind: 'build', label: info.label, cost, full: info.full, start: s.time, done: s.time + info.weeks * 7 * DAY, geo: { ops } });
+      this.log(`Construction started at ${airportByCode[code].name}: ${info.label} – your share ${fmtMoney(cost)}, ready in ${info.weeks} weeks.`, 'cost');
+      this.dirty = true;
+      return null;
+    },
+    // Close a runway (build mode): pulling it down costs part of what building it would.
+    removeRunway(code, r) {
+      const err = this.buildDenied(code);
+      if (err) return err;
+      const rws = airportRunways(code);
+      const same = (x) => [0, 1, 2, 3].every((i) => Math.abs(x[i] - r[i]) < 1e-5);
+      if (!rws.some(same)) return 'That runway is not there.';
+      const o = this.runwayProject(code, r);
+      const paid = this.payForBuilding(code, Math.round(o.full * A.build.demolish), `runway of ${o.len} m closed`);
+      if (paid) return paid;
+      this.infraOf(code).runways = rws.filter((x) => !same(x)).map((x) => x.slice());
+      delete catchmentCache[code];
+      if (FG.layouts) FG.layouts.refix(code);
+      this.dirty = true;
+      return null;
     },
 
     startProject(code, kind, len, orient) {
@@ -3926,7 +4007,7 @@
 
     // Geometry of a runway that a project will add (also drawn while it is being built).
     plannedRunway(p) {
-      if (p.geo) return p.geo; // (worked out when it was ordered: it stays where it was shown)
+      if (p.geo) return p.geo.runway ? p.geo : null; // (worked out when it was ordered: it stays where it was shown)
       const rws = airportRunways(p.code);
       if (p.kind === 'extend') {
         const r = rws.reduce((m, x) => (runwayLength(x) > runwayLength(m) ? x : m), rws[0]);
@@ -3952,6 +4033,8 @@
           this.connectRunway(p.code, inf.runways[0]);
         }
         if (p.kind === 'terminal') inf.terminal = (inf.terminal || 0) + 1;
+        // building placed in build mode: what it adds becomes part of what you built there
+        if (p.kind === 'build' && FG.fixes && FG.fixes.player) FG.fixes.player.set(p.code, FG.fixes.player.ops(p.code).concat(p.geo.ops));
         if (p.kind === 'airport') inf.runways = [this.plannedRunway({ code: p.code, kind: 'runway', len: A.newAirportRunway }).runway];
         if (p.kind === 'airport') airportByCode[p.code].open = true;
         inf.invested = (inf.invested || 0) + p.full;
@@ -3967,7 +4050,7 @@
     buildDenied(code) {
       const a = airportByCode[code];
       if (!a || a.factory) return 'Not at a factory.';
-      if (a.built) return a.open ? null : `${a.name} is still being built.`;
+      if (a.built) return null; // (yours: also while it is being built, see the checklist)
       return this.stake(code) >= A.boardStake ? null : `Own ${A.boardStake}% of ${a.name} to build there.`;
     },
     // Pay your share of building work worth `full` there (negative: money back, as when it is undone). Null when
@@ -3989,7 +4072,7 @@
     connectRunway(code, r) {
       delete catchmentCache[code];
       const ap = apronOf(code);
-      if (ap.real && FG.fixes && FG.fixes.player) {
+      if ((ap.real || ap.empty || airportByCode[code].site) && FG.fixes && FG.fixes.player) {
         const lines = runwayTaxiways(code, r);
         if (lines.length) {
           FG.fixes.player.set(code, FG.fixes.player.ops(code).concat(lines.map((geom) => ({ op: 'add', kind: 'taxiway', geom }))));
@@ -4015,18 +4098,68 @@
       do code = 'X' + L[Math.floor(Math.random() * 26)] + L[Math.floor(Math.random() * 26)];
       while (airportByCode[code]);
       const name = `${town ? town.name : s.company} ${s.company.split(' ')[0]} Field`;
+      // (a site: empty until you build on it, siteChecklist; it opens when that is done, openAirport)
       const a = { code, name, city: town ? town.name : name, country: town ? town.country : '',
-        lat: Math.round(lat * 1e4) / 1e4, lon: Math.round(lon * 1e4) / 1e4, size: 1, built: true, open: false };
+        lat: Math.round(lat * 1e4) / 1e4, lon: Math.round(lon * 1e4) / 1e4, size: 1, built: true, open: false, site: true };
       s.money -= A.newAirportCost;
       s.built.push(a);
       this.registerBuilt();
       this.infraOf(code).stake = 100;
-      s.projects.push({ code, kind: 'airport', label: 'New airfield with a 1200 m runway', cost: A.newAirportCost,
-        full: A.newAirportCost, start: s.time, done: s.time + A.newAirportWeeks * 7 * DAY });
-      this.log(`Construction of ${name} (${code}) started for ${fmtMoney(A.newAirportCost)} – opens in ` +
-        `${A.newAirportWeeks} weeks.`, 'cost');
+      this.log(`Bought the site of ${name} (${code}) for ${fmtMoney(A.newAirportCost)}: build a runway, an apron with stands, ` +
+        'a terminal and the taxiways between them, then open it.', 'cost');
       this.dirty = true;
       return code;
+    },
+
+    // What a new airport site still needs before it can open: [{ id, label, done, note }].
+    siteChecklist(code) {
+      const lay = (FG.fixes && FG.fixes.layout(code, (FG.layouts && FG.layouts.raw(code)) || null)) || { aprons: [], pads: [], terminals: [], stands: [], taxiways: [], links: [] };
+      const rws = airportRunways(code);
+      const building = this.state.projects.filter((p) => p.code === code);
+      const runway = rws.some((r) => runwayLength(r) >= 800);
+      const out = [
+        { id: 'runway', label: 'A runway of 800 m or more', done: runway,
+          note: !runway && building.some((p) => p.kind === 'runway') ? 'being built' : runway ? `${Math.round(Math.max(...rws.map(runwayLength))).toLocaleString('de-CH')} m` : '' },
+        { id: 'apron', label: 'An apron', done: lay.aprons.length + (lay.pads || []).length > 0 },
+        { id: 'stand', label: 'A stand on it', done: lay.stands.length > 0, note: lay.stands.length ? `${lay.stands.length}` : '' },
+        { id: 'terminal', label: 'A terminal', done: lay.terminals.length > 0,
+          note: !lay.terminals.length && building.some((p) => p.kind === 'build') ? 'being built' : '' },
+      ];
+      // a way along the taxiways from a stand to a runway
+      let joined = false;
+      if (runway && lay.stands.length && lay.taxiways.length) {
+        const g = taxiGraph(code, lay);
+        const onRunway = (q) => rws.some((r) => segMetres(q, [r[0], r[1]], [r[2], r[3]]).d < 30);
+        for (const st of lay.stands) {
+          let start = -1;
+          let bd = 200;
+          g.pts.forEach((q, i) => { const d = metres(q, st); if (d < bd) { bd = d; start = i; } });
+          if (start < 0) continue;
+          const seen = new Set([start]);
+          const stack = [start];
+          while (stack.length && !joined) {
+            const u = stack.pop();
+            if (onRunway(g.pts[u])) joined = true;
+            for (const [w] of g.adj[u]) if (!seen.has(w)) { seen.add(w); stack.push(w); }
+          }
+          if (joined) break;
+        }
+      }
+      out.push({ id: 'taxiway', label: 'Taxiways from the stands to the runway', done: joined });
+      return out;
+    },
+    // Open a new airport whose checklist is done: planes may fly there from now on.
+    openAirport(code) {
+      const a = airportByCode[code];
+      if (!a || !a.built) return 'Not one of your sites.';
+      if (a.open) return `${a.name} is open already.`;
+      const left = this.siteChecklist(code).filter((x) => !x.done);
+      if (left.length) return `Still missing: ${left.map((x) => x.label.toLowerCase()).join(', ')}.`;
+      a.open = true;
+      delete catchmentCache[code];
+      this.log(`${a.name} (${code}) is open!`, 'good');
+      this.dirty = true;
+      return null;
     },
 
     // ---------- timetables ----------

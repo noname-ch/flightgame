@@ -679,6 +679,15 @@
         ? G.plannedRunway({ code: p.code, kind: 'runway', len: C.airports.newAirportRunway })
         : G.plannedRunway(p);
       if (planned) drawRunway(p.code, planned.runway, true);
+      // a terminal placed in build mode: what it adds, dashed until it is built
+      if (p.kind === 'build') {
+        const dash = { pane: 'runways', interactive: false, color: COLORS.orange, weight: 1.5, dashArray: '5 4', fillColor: COLORS.orange, fillOpacity: 0.15 };
+        for (const op of p.geo.ops) {
+          if (op.kind === 'stand') L.circleMarker([op.geom[0], op.geom[1]], { ...dash, radius: 4 }).addTo(ui.runwayLayer);
+          else if (op.kind === 'taxiway') L.polyline(op.geom, dash).addTo(ui.runwayLayer);
+          else L.polygon(op.geom, dash).addTo(ui.runwayLayer);
+        }
+      }
       if (p.kind === 'terminal' || p.kind === 'airport') {
         L.marker([a.lat, a.lon], {
           pane: 'runways', interactive: false,
@@ -696,8 +705,9 @@
       const res = G.buildAirport(latlng.lat, latlng.lng);
       if (res && res.length !== 3) { toast(res, true); G.dirty = true; return; }
       ui.selectedAirport = res;
-      toast(`Construction of ${G.airportByCode[res].name} started.`);
+      toast(`Site of ${G.airportByCode[res].name} bought: build it (the checklist says what it needs), then open it.`);
       G.dirty = true;
+      if (FG.airportEdit) FG.airportEdit.build(res);
     };
     // Only where the terrain is fit for an airport: level, dry, not built on (FG.terrain in js/view3d.js;
     // without that module, or if the terrain cannot be looked up, anywhere).
@@ -1084,7 +1094,10 @@
       <div class="muted">${a.city}, ${a.country} · size ${sizeDots(G.airportSize(code))}${a.minor ? ' · airfield' : ''}</div>
       <div>Catchment: <b>${fmtPop(G.catchment(code))}</b> people · landing fee ${G.fmtMoney(G.landingFee(code))}</div>
       <div>${runwayText(code)}</div>${rivalsAt(code)}`;
-    if (a.built && !a.open) h += `<div class="warn">🏗 Under construction – opens ${openDate(code)}.</div>`;
+    if (a.built && !a.open) {
+      h += a.site ? '<div class="warn">🏗 Being built: open it once its checklist (Construction, below) is done.</div>'
+        : `<div class="warn">🏗 Under construction – opens ${openDate(code)}.</div>`;
+    }
 
     if (!a.built || a.open) h += `<h4>Slots</h4>${FG.planner.slotMarket(code)}`;
 
@@ -1150,36 +1163,39 @@
     return h;
   }
 
+  // What a new airport still needs, and opening it.
+  function siteChecklist(code) {
+    const list = G.siteChecklist(code);
+    const ready = list.every((x) => x.done);
+    return `<ul class="site-check">${list.map((x) => `<li class="${x.done ? 'pos' : ''}">${x.done ? '✔' : '○'} ${x.label}${x.note ? ` <span class="muted">(${x.note})</span>` : ''}</li>`).join('')}</ul>
+      <div class="row"><button class="${ready ? 'primary' : ''}" data-action="openAirport" data-code="${code}" ${ready ? '' : 'disabled'}>✈ Open the airport</button></div>`;
+  }
+
   function constructionSection(code) {
-    const p = G.state.projects.find((x) => x.code === code);
     let h = `<h4>Construction</h4>`;
-    // building by hand: stands, taxiways, aprons and buildings (the airport editor's build mode)
-    if (FG.airportEdit && !G.buildDenied(code)) {
-      h += `<div class="row"><button data-action="airportBuild" data-code="${code}" title="Build stands, taxiways, aprons and buildings yourself">🏗 Build at the airport</button></div>`;
+    const site = G.airportByCode[code];
+    if (site.built && !site.open) h += `<div class="label">Before it opens</div>${siteChecklist(code)}`;
+    // building by hand: runways and terminals placed on the map, stands, taxiways, aprons and buildings
+    const can = FG.airportEdit && !G.buildDenied(code);
+    if (can) {
+      h += `<div class="row"><button class="primary" data-action="airportBuild" data-code="${code}" title="Place runways and terminals, build stands, taxiways, aprons and buildings">🏗 Build at the airport</button></div>`;
     }
-    if (p) {
+    for (const p of G.state.projects.filter((x) => x.code === code)) {
       const frac = Math.min(1, (G.state.time - p.start) / (p.done - p.start));
-      return h + `<div>🏗 ${p.label}</div><div class="progress"><i style="width:${Math.round(frac * 100)}%"></i></div>
+      h += `<div>🏗 ${p.label}</div><div class="progress"><i style="width:${Math.round(frac * 100)}%"></i></div>
         <div class="muted">${Math.round(frac * 100)}% · ready ${G.fmtTime(p.done)}</div>`;
     }
     const opts = G.projectOptions(code);
-    if (!opts.length) return '';
-    if (G.stake(code) < C.airports.boardStake) {
-      return h + `<div class="muted">Own ${C.airports.boardStake}% of the airport to build runways and terminals.</div>`;
+    if (G.stake(code) < C.airports.boardStake && !G.airportByCode[code].built) {
+      return h + `<div class="muted">Own ${C.airports.boardStake}% of the airport to build runways, terminals and stands.</div>`;
     }
-    const share = G.stake(code) < 100 ? ` <span class="muted">(your ${G.stake(code)}% share of the cost)</span>` : '';
-    const runways = opts.filter((o) => o.kind === 'runway');
-    h += `<div class="row"><select id="rw-${code}">`;
-    for (const o of runways) {
-      h += `<option value="${o.len}:${o.orient}">${o.label} · ${G.fmtMoney(o.cost)} · ${o.weeks} wk</option>`;
-    }
-    h += `</select><button data-action="buildRunway" data-code="${code}">Build</button></div>`;
-    for (const o of opts.filter((x) => x.kind !== 'runway')) {
+    for (const o of opts) {
       h += `<div class="row"><button data-action="project" data-kind="${o.kind}" data-code="${code}"
         ${o.err || G.state.money < o.cost ? 'disabled' : ''}>${o.label} · ${G.fmtMoney(o.cost)} · ${o.weeks} wk</button>
         ${o.err ? `<span class="muted">${o.err}</span>` : ''}</div>`;
     }
-    return h + `<div class="hint">Costs${share}. Longer runways take bigger aircraft, terminals raise the size and draw more passengers.</div>`;
+    const share = G.stake(code) < 100 ? ` You pay your ${G.stake(code)}% share.` : '';
+    return h + `<div class="hint">Runways and terminals are placed in 🏗 Build (click where, turn them, set their size); they are built over weeks.${share}</div>`;
   }
 
   // ---------- airports tab: shares, construction, new airports ----------
@@ -2092,6 +2108,7 @@
     renderStrip();
     renderSidebar();
     if (FG.planeWin) FG.planeWin.render();
+    if (FG.airportEdit && FG.airportEdit.tick) FG.airportEdit.tick();
     // The 2D map is hidden under the 3D view: it is brought up to date when it shows again (frame).
     if (in3d()) { ui.map2dStale = true; return; }
     refreshAirports();
@@ -2537,13 +2554,9 @@
       case 'buyShares': act(G.buyShares(code)); break;
       case 'sellShares': act(G.sellShares(code)); break;
       case 'project': act(G.startProject(code, el.dataset.kind)); break;
-      case 'buildRunway': {
-        const [len, orient] = $(`rw-${code}`).value.split(':');
-        act(G.startProject(code, 'runway', len, orient));
-        break;
-      }
       case 'buildMode': setBuildMode(!ui.buildMode); break;
       case 'airportBuild': FG.airportEdit.build(code); break;
+      case 'openAirport': act(G.openAirport(code)); break;
       case 'zoomRunways': {
         e.preventDefault();
         const a = G.airportByCode[code];

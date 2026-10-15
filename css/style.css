@@ -1454,3 +1454,6 @@ body { height: 100dvh; } /* the visible height, also while the phone's address b
 .sm-cls td, .sm-cls th { padding: 1px 4px; }
 .ae-class { color: #22d3ee; font: 700 16px/1 system-ui, sans-serif; text-shadow: 0 0 3px #000, 0 0 3px #000; white-space: nowrap; }
 .ae-class small { display: block; font-size: 11px; font-weight: 600; }
+.site-check { list-style: none; margin: 4px 0; padding: 0; font-size: 12px; }
+.site-check li { padding: 1px 0; }
+#apedit .ae-site { border-top: none; }
