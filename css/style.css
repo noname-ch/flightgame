@@ -57,6 +57,10 @@ body { display: flex; flex-direction: column; }
 }
 #topbar .icon-btn.active { background: var(--accent); border-color: var(--accent); }
 #view3d-toggle { font-size: 12px; font-weight: 700; }
+#sound-toggle { font-size: 15px; }
+#sound-toggle.off { opacity: 0.55; }
+.set-volume { display: flex; align-items: center; gap: 10px; padding: 3px 0; }
+.set-volume input { flex: 1; max-width: 220px; }
 .speed-ctl { position: relative; display: flex; align-items: center; gap: 6px; }
 #speed-btn svg { width: 18px; height: 18px; fill: #fff; transform: rotate(90deg); display: block; }
 #speed-btn.paused svg { fill: var(--warn); }

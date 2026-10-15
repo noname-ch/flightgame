@@ -48,6 +48,7 @@ const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'fg-smoke-'));
 const chrome = spawn(findChrome(), [
   '--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run',
   '--no-sandbox', '--window-size=1400,900', '--use-angle=swiftshader', '--enable-unsafe-swiftshader',
+  '--autoplay-policy=no-user-gesture-required', // (the aircraft sounds start without a real click)
   'about:blank',
 ], { stdio: ['ignore', 'ignore', 'pipe'] });
 const wsUrl = await new Promise((resolve, reject) => {
@@ -342,6 +343,58 @@ try {
   });
   if (!wx.canvas || !wx.line || !wx.sane || !wx.placed || !wx.gone || (wx.crab != null && !Number.isFinite(wx.crab))) errors.push(`weather: ${JSON.stringify(wx)}`);
   else step(`weather at home: ${wx.line}; ${wx.puffs} cloud puffs in view${wx.crab != null ? `; a plane in the air crabs ${wx.crab}° in ${wx.wind} kt` : ''}`);
+
+  step('sound: the engines through a flight (started in the pushback, take-off power, reverse thrust), heard following a plane on the 2D map; M off and on');
+  const snd = await evaluate(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    FG.sound.set({ on: true }); // (off until turned on)
+    document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); // (sound starts with the first click)
+    const flying = () => G.state.planes.find((q) => q.status === 'flying' && q.flight.kind === 'scheduled');
+    for (let i = 0; i < 1440 && !flying(); i++) G.advance(1); // (all at their gates: on until one leaves)
+    const p = flying();
+    if (!p) return { none: true };
+    const f = p.flight;
+    const pr = FG.sound.profile(p.type);
+    const seen = { starter: false, lit: false, apu: !pr.apu, takeoff: 0, cruise: 0, rev: pr.kind === 'piston', bad: [] };
+    for (let t = f.dep; t < f.arr; t += 0.1) {
+      const e = FG.sound.engines(p, t);
+      for (const k of ['run', 'pw', 'np', 'n2']) if (!Number.isFinite(e[k] || 0) || (e[k] || 0) < 0 || (e[k] || 0) > 1.01) seen.bad.push(`${k} ${e[k]} at ${e.phase}`);
+      if (e.phase === 'boarding' && e.apu) seen.apu = true;
+      if (e.start != null && !e.run && e.n2 > 0.05) seen.starter = true;
+      if (e.start != null && e.lit) seen.lit = true;
+      if (e.phase === 'takeoff') seen.takeoff = Math.max(seen.takeoff, e.pw);
+      if (e.phase === 'cruise' || e.phase === 'climb') seen.cruise = Math.max(seen.cruise, e.pw);
+      if (e.phase === 'landing' && e.rev) seen.rev = true;
+    }
+    // heard: follow it on the 2D map, close in, at 10×
+    FG.ui.follow(p.id);
+    FG.ui.map.setZoom(16, { animate: false });
+    // (a newspaper pauses the game: read them all first)
+    for (let k = 0; k < 4; k++) {
+      await sleep(400);
+      for (let i = 0; i < 50 && !document.getElementById('newspaper').hidden; i++) document.querySelector('[data-action=newsNext]').click();
+      document.querySelector('#speed-pop [data-speed="10"]').click();
+      await sleep(1100);
+      if (FG.ui.speed > 0 && FG.sound.playing.length) break;
+    }
+    const out = { kind: pr.kind, state: FG.sound.state, playing: FG.sound.playing.some((v) => v.id === p.id), db: FG.sound.meter(), ...seen, bad: seen.bad.slice(0, 3) };
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'm', bubbles: true }));
+    out.mOff = !FG.sound.on && document.getElementById('sound-toggle').classList.contains('off');
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'm', bubbles: true }));
+    out.mOn = FG.sound.on;
+    const stop = document.querySelector('#follow-badge button');
+    if (stop) stop.click();
+    if (FG.ui.speed > 0) document.getElementById('pause').click();
+    return out;
+  });
+  if (snd.none) warnings.push('sound: no plane in the air to listen to');
+  else {
+    if (!snd.starter || !snd.lit || !snd.apu || snd.takeoff < 0.9 || snd.cruise < 0.6 || !snd.rev || snd.bad.length) errors.push(`sound: engines through a flight: ${JSON.stringify(snd)}`);
+    if (!snd.mOff || !snd.mOn) errors.push(`sound: M did not turn the sound off and on again: ${JSON.stringify(snd)}`);
+    if (snd.state !== 'running') warnings.push(`sound: no audio in this browser (${snd.state}): not heard`);
+    else if (!snd.playing || !(snd.db > -120) || !Number.isFinite(snd.db)) errors.push(`sound: the followed plane was not heard: ${JSON.stringify(snd)}`);
+    step(`sound: ${snd.kind} engines; take-off power ${snd.takeoff.toFixed(2)}, climb/cruise ${snd.cruise.toFixed(2)}; heard at ${snd.db == null ? '-∞' : snd.db.toFixed(1)} dB (${snd.state})`);
+  }
 
   step('parking: at Zurich an A320neo and a 777 (where it fits) stop short of the buildings (before: 31 of 42 noses of 777s were in one)');
   await evaluate(() => { FG.layouts.get('ZRH'); });

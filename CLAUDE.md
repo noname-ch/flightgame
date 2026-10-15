@@ -89,6 +89,15 @@ Play online: https://noname-ch.github.io/flightgame/ (GitHub Pages, deployed fro
   (`cloudPoints`/`updateClouds`) and greys the sky (`weatherSky`, map.setSky, no layers). Developer tools → Wind
   places winds by hand: `state.winds` via `G.placeWind/setWind/removeWind/clearWinds`; `placedWind(lat, lon)` blends
   them into weatherAt, windAt and `surfaceFrom` (what pickRunway uses); `G.windRev` keys the route-line tracks.
+- Sound (js/sound.js, `FG.sound`, off until turned on; prefs in localStorage `flightgame.sound`): Web Audio voices
+  made up as they play, no files. `engines(p, t)` says what a plane's engines do from its `G.flightState` phase and
+  the game clock (start over `START` game minutes from the pushback, the levers by phase, run-down after `land`
+  from `p.readyAt - G.turnaroundMin`), smoothed in game time (`SPOOL`). `listener()` is where it is heard from: the
+  3D camera (`cameraAt`: back from the centre by the tilt, up from `map.getCenterElevation()`; MapLibre 6 has no
+  getFreeCameraOptions), the fly-by spot, or above the 2D map's centre (`mpp * 60`); the followed plane
+  (`v3.follow`, `FG.ui.following`, `FG.planeWin.id`) is heard as from close by. `pick` gives the `VOICES` loudest
+  planes a voice (4×/s), `play` sets them (20×/s). The smoke test runs Chrome with
+  `--autoplay-policy=no-user-gesture-required` and reads `FG.sound.meter()`.
 - 3D cameras (view3d.js): following, `v.cam` is 'chase' (`chaseTick`; a drag turns it round the plane through
   `v.orbit`, MapLibre's own dragging is off while following), 'flyby' (`flybyTick`, spot in `v.flyby`) or 'wing'
   (`wingTick`, spot in `WING_CAM`). Keys V/B/N and `camera(mode)`. Fly-by and wing place the camera with

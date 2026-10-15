@@ -66,6 +66,17 @@ angle. The weather is for looks: flights don't wait for it (storm events still c
 the computer (one half-resolution canvas in 2D, one batch of sprites in 3D, CSS for rain and snow);
 Settings → On the map → *Clouds and weather* turns it all off.
 
+**Sound**: the aircraft are heard, made up as they play (no sound files): jets whine up on the starter during the
+pushback, the igniters tick, the engines light and settle to idle; a burst of thrust gets them rolling on the
+taxiway, take-off power roars (rumbling from behind, buzzing ahead of a big fan), then climb and cruise power, near
+silence on the descent, power again on the approach, reverse thrust after the tyres chirp, and the whine running
+down at the gate. Turboprops buzz (two propellers a little out of tune), old ones whistle; piston radials crank,
+cough, catch and run rough until warm. APUs hum at the gates. You hear what you look at: zoomed in on an airport its
+planes, zoomed out nothing; the plane you follow (2D or 3D, or the plane window's camera) from close behind, the
+wing camera right by the engines with the wind, and the fly-by camera hears it pass with the Doppler drop. Engines
+follow the game clock, so fast-forwarded it all goes quicker; above 300× it fades out, paused it is quiet. It is off
+until you turn it on: the 🔇 button in the top bar, **M**, or Settings → Sound (with the volume).
+
 **Main menu**: the very first start asks for a style, then the main menu offers *Continue*, *New game*,
 *Load game* (the last save in this browser, or a `.json` save file; ⋯ → *Save to file* makes one) and
 *Quick start*. A loading screen stays up until the map has its tiles. The 3D view asks once whether the device
@@ -367,7 +378,7 @@ script errors) go with it unless you untick them. Signed in to GitHub (airport e
 the repo; from `./play.sh` it is written into `BUGS.md`; otherwise GitHub's new-issue page opens filled in (you
 need a GitHub account), or Copy puts it on the clipboard.
 
-Controls: Space = pause, 1/2/3 = speed, V = 2D/3D (and the chase camera), B = fly-by camera, N = wing camera. The game keeps running in a background tab. It autosaves to the browser (localStorage; the airport layouts read off the map are kept apart, in IndexedDB).
+Controls: Space = pause, 1/2/3 = speed, V = 2D/3D (and the chase camera), B = fly-by camera, N = wing camera. M = sound on/off. The game keeps running in a background tab. It autosaves to the browser (localStorage; the airport layouts read off the map are kept apart, in IndexedDB).
 
 ## Extending
 

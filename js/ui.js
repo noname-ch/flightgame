@@ -2056,8 +2056,10 @@
         `<button class="${l.id === FG.livery().id ? 'on' : ''}" data-set="livery" data-v="${l.id}">${l.name}</button>`).join('')}</div>
       <h4>Game</h4>
       <label class="check"><input type="checkbox" data-set="autosave" ${set.autosave ? 'checked' : ''}> Save automatically every 30 s</label>
+      ${FG.sound ? `<h4>Sound</h4><label class="check"><input type="checkbox" data-set="sound" ${FG.sound.on ? 'checked' : ''}> Aircraft sounds <span class="muted">M</span></label>
+      <label class="set-volume">Volume <input type="range" data-set="volume" min="0" max="100" value="${Math.round(FG.sound.volume * 100)}"></label>` : ''}
       <h4>3D view</h4><p class="muted">Made for strong devices: a gaming PC, or a recent laptop or Mac.</p><div class="row"><button data-set="3d">${FG.view3d && FG.view3d.on ? 'Back to 2D' : 'Open 3D view'} <span class="muted">V</span></button></div>
-      <h4 class="keys-help">Keys</h4><div class="muted keys-help">Space pause · ← → speed · V 3D · F2 developer tools · F3 airport editor · F8 airport checklist · Esc menu</div></div>`;
+      <h4 class="keys-help">Keys</h4><div class="muted keys-help">Space pause · ← → speed · V 3D · M sound · F2 developer tools · F3 airport editor · F8 airport checklist · Esc menu</div></div>`;
     if (FG.win) FG.win.movable(el.querySelector('.set-card'), '.side-head', 'settings'); // (dragged by its title)
   }
   function onSettings(e) {
@@ -2070,6 +2072,8 @@
     if (k === 'overlay') { set.overlays[t.dataset.v] = t.checked; applySettings(); }
     if (k === 'legend') { set.legend = t.checked; applySettings(); }
     if (k === 'autosave') set.autosave = t.checked;
+    if (k === 'sound') FG.sound.set({ on: t.checked });
+    if (k === 'volume') FG.sound.set({ volume: t.value / 100, on: true }); // (while dragged: the input listener)
     if (k === 'livery') { G.state.livery = t.dataset.v; G.dirty = true; } // every aircraft of the airline is repainted
     if (k === '3d') { $('view3d-toggle').click(); }
     saveSettings();
@@ -2121,6 +2125,7 @@
     $('exit').addEventListener('click', () => { G.save(); openStart(true, 'menu'); });
     $('settings-btn').addEventListener('click', () => { renderSettings(); $('settings').hidden = false; });
     $('settings').addEventListener('click', onSettings);
+    $('settings').addEventListener('input', (e) => { if (e.target.dataset.set === 'volume') FG.sound.set({ volume: e.target.value / 100, on: true }); });
     $('side-close').addEventListener('click', () => { ui.tab = null; ui.selectedAirport = null; G.dirty = true; });
   }
 
@@ -2828,6 +2833,7 @@
     FG.ui = {
       get selectedPlane() { return ui.selectedPlane; },
       get selectedAirport() { return ui.selectedAirport; },
+      get following() { return ui.follow; }, // the plane the 2D map keeps on (js/sound.js)
       get speed() { return ui.paused || st.open ? 0 : ui.speed; },
       get time() { return nowMinutes(); }, // fractional game minutes
       timeAt: (at) => nowMinutes(at), // ... at a moment (performance.now() scale), e.g. a frame's timestamp

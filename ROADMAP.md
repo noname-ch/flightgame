@@ -87,8 +87,8 @@ realistic flight tracks in 2D and 3D, AI rival airlines, random events and a dev
   and storms close runways, strong crosswinds rule out short ones.
 - [ ] **Cockpit and tower cameras in 3D** (S/M). Next to the 🎥 follow camera: a view from the cockpit and
   one from the control tower of the airport.
-- [ ] **Sound** (S/M). Engines when following a plane, a quiet airport ambience, a radio call on take-off.
-  Off by default.
+- [ ] **More sound** (S). The engines are in (js/sound.js). Still to do: a quiet airport ambience (vehicles,
+  announcements), a radio call on take-off, rain and thunder from the weather.
 - [ ] **Night in 3D** (M). Darker map and lit runways, taxiways and terminals after sunset at the plane's
   position.
 
@@ -115,6 +115,8 @@ realistic flight tracks in 2D and 3D, AI rival airlines, random events and a dev
 
 Recent milestones, newest first (see `git log` for the rest):
 
+- Aircraft sounds (off until turned on, M): engine start, idle, take-off power, climb, cruise, approach, reverse
+  thrust and run-down for jets, turboprops and piston radials, heard from where you look (Web Audio, no files)
 - Weather: clouds in 2D and 3D, rain, snow, fog and lightning up close, a grey sky under cloud, storms from the
   newspaper drawn as storms, and planes crabbing into crosswinds (straightened before touchdown)
 - Plane stats as in OpenTTD: every plane keeps its records (this year, last year, all time, the last 12 weeks,
