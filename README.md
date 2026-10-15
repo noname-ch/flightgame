@@ -181,6 +181,10 @@ routes – sometimes one of yours (low-cost carriers even open a base for it). T
 routes with your share and every rival's network; route tables show competitors as coloured dots and your share.
 A rival can also go bust (newspaper), and its routes are gone.
 
+Buildings in 3D have windows, glass fronts, entrance doors on the landside, hangar doors facing the apron and
+open car park decks, in a few styles that differ from building to building; their roofs take the colour of the
+satellite photo, and the walls are picked to go with it (js/facades.js).
+
 Gates: every airport has an apron beside its longest runway, where nothing is in the way: it keeps clear of
 the other runways and of the real taxiways and buildings there (read off the 3D map the first time the
 airport is looked at in 3D from zoom 13, kept in the browser). Up to size 2 the gates are one row; from size 3

@@ -418,7 +418,15 @@ function gateFeatures(list, gates, hide = []) {
     const ap = G.apronOf(a.code);
     for (const r of ap.aprons || [ap.apron]) poly(r, { kind: 'apron' });
     for (const r of ap.pads || []) poly(r, { kind: 'pad' }); // (airport fixes: open concrete)
-    for (const b of ap.buildings) poly(b.ring, { kind: 'building', part: b.kind, base: b.base, h: b.h });
+    // Buildings with windows, doors and a roof coloured like the satellite photo (js/facades.js), where the
+    // layout is real; made-up ones get the same looks with default roofs.
+    const F = FG.facades;
+    const roofs = F && ap.real ? F.roofsOf(a.code, ap.buildings) : null;
+    ap.buildings.forEach((b, i) => {
+      const ps = F && F.parts(b, roofs && roofs[i], [a.lat, a.lon]);
+      if (ps) for (const q of ps) poly(q.ring, { kind: 'building', part: 'fac', base: q.base, h: q.h, col: q.color });
+      else poly(b.ring, { kind: 'building', part: b.kind, base: b.base, h: b.h });
+    });
     for (const b of ap.buildings) if (HIDES.has(b.kind)) hide.push(b.ring);
     if (!ap.real) hide.push(...(ap.aprons || [ap.apron])); // (a made-up apron may lie over real buildings)
     for (const m of ap.markings || []) path(m.line, { kind: m.kind === 'w' ? 'paint' : 'lead' });
@@ -540,7 +548,7 @@ function readObstacles() {
 function refreshGates() {
   const map = v.map;
   readObstacles();
-  const infra = (FG.layouts ? `${FG.layouts.version}.${FG.layouts.looked}` : 0) + (FG.devPreview ? `pv${FG.ui && FG.ui.selectedAirport}` : '') + Object.entries(G.state.infra).map(([c, i]) => `${c}${i.terminal || 0}${i.runways ? i.runways.length : ''}`).join();
+  const infra = (FG.layouts ? `${FG.layouts.version}.${FG.layouts.looked}` : 0) + (FG.facades ? `f${FG.facades.version}` : '') + (FG.devPreview ? `pv${FG.ui && FG.ui.selectedAirport}` : '') + Object.entries(G.state.infra).map(([c, i]) => `${c}${i.terminal || 0}${i.runways ? i.runways.length : ''}`).join();
   if (!v.gatesDirty && infra === v.gatesInfra) return;
   v.gatesDirty = false;
   v.gatesInfra = infra;
@@ -700,7 +708,7 @@ function transformStyle(_prev, style) {
       paint: { 'line-color': '#facc15', 'line-width': ['case', ['==', ['get', 'kind'], 'stop'], 3, 1.2] } },
     { id: 'fg-terminals', type: 'fill-extrusion', source: 'fg-gates', minzoom: GATE_MINZOOM, filter: kind('building'),
       paint: {
-        'fill-extrusion-color': ['match', ['get', 'part'], 'tower', '#aab4c2', 'cab', '#27313f', 'hangar', '#7b8590', 'carpark', '#6b7280', 'hall', '#9aa7b8', 'bridge', '#c3ccd8', 'glass', '#35506a', 'roof', '#e3e7ed', 'plant', '#6d7682', 'canopy', '#dfe5ec', 'road', '#3b4048', 'mast', '#d1d5db', '#8a96a8'],
+        'fill-extrusion-color': ['case', ['has', 'col'], ['get', 'col'], ['match', ['get', 'part'], 'tower', '#aab4c2', 'cab', '#27313f', 'hangar', '#7b8590', 'carpark', '#6b7280', 'hall', '#9aa7b8', 'bridge', '#c3ccd8', 'glass', '#35506a', 'roof', '#e3e7ed', 'plant', '#6d7682', 'canopy', '#dfe5ec', 'road', '#3b4048', 'mast', '#d1d5db', '#8a96a8']],
         'fill-extrusion-base': ['get', 'base'], 'fill-extrusion-height': ['get', 'h'], 'fill-extrusion-opacity': 0.95,
       } },
     { id: 'fg-bridges', type: 'fill-extrusion', source: 'fg-gates', minzoom: 14, filter: kind('bridge'),
@@ -1311,6 +1319,8 @@ function controls() {
 function createMap() {
   const el = document.getElementById('view3d');
   const home = G.airportByCode[G.home()];
+  // Roof colours read off the satellite photo: draw the airport's buildings again.
+  if (FG.facades) FG.facades.onChange = () => { v.gatesDirty = true; if (v.on && v.map) v.map.triggerRepaint(); };
   const map = v.map = new maplibregl.Map({
     container: el,
     center: [home.lon, home.lat],

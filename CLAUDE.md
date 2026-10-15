@@ -91,6 +91,12 @@ Play online: https://noname-ch.github.io/flightgame/ (GitHub Pages, deployed fro
   their taxiways as player ops where the airport has a layout of its own). Prices: `C.airports.build`,
   charged in `commit` through `G.payForBuilding`. The first change at a made-up airport adopts the whole
   made-up layout (else the airport would be left with only the new piece).
+- 3D building looks: `js/facades.js` (`FG.facades.parts(b, roof, toward)`) splits each terminal, hangar, car park
+  and other building into extruded parts in metres (walls, parapet, roof slab, window bands, mullions, glass
+  fronts, landside doors, hangar doors facing the apron); view3d.js draws them in the `fg-terminals` layer with
+  `col`. Roof colours are read off the Esri photo per airport (`roofsOf`, through `FG.taxiFit.photo(pts, pad, z)`
+  at z17-15) and kept in IndexedDB (`flightgame.roofs2.<CODE>`). MapLibre extrusion patterns change size with the
+  zoom, so they aren't used.
 - Crossing runways: `G.runwayCover(r, others)` says where other runways lie on a runway; ui.js `drawRunway` and
   view3d.js `runwayPaint` leave their lines and paint out there.
 - Taxiway widths: a taxiway fix op may carry `w` (metres). fixes.js puts it on the line (`line.w`), and

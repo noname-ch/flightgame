@@ -15,10 +15,11 @@
   const GAP = 2.5;     // m of something else in a row: the pavement has ended (paint, cracks and shadows are shorter)
   const MIN_W = 6, MAX_W = 70;
 
-  const tileX = (lon) => ((lon + 180) / 360) * 2 ** Z;
-  const tileY = (lat) => ((1 - Math.log(Math.tan(lat * DEG) + 1 / Math.cos(lat * DEG)) / Math.PI) / 2) * 2 ** Z;
+  const tileX = (lon, z = Z) => ((lon + 180) / 360) * 2 ** z;
+  const tileY = (lat, z = Z) => ((1 - Math.log(Math.tan(lat * DEG) + 1 / Math.cos(lat * DEG)) / Math.PI) / 2) * 2 ** z;
 
-  // The photo round the points (lat/lon), as one canvas: { at(lat, lon) -> [r, g, b] or null }.
+  // The photo round the points (lat/lon), as one canvas: { at(lat, lon) -> [r, g, b] or null }. z: a coarser zoom
+  // for big areas (js/facades.js reads roof colours at 16-17).
   function loadImage(img, src) {
     return new Promise((ok, fail) => {
       img.crossOrigin = 'anonymous';
@@ -27,13 +28,13 @@
       img.src = src;
     });
   }
-  async function photo(pts, pad) {
+  async function photo(pts, pad, z = Z) {
     const lat0 = pts[0][0];
     const dLat = pad / M, dLon = pad / (M * Math.cos(lat0 * DEG));
     const s = Math.min(...pts.map((p) => p[0])) - dLat, n = Math.max(...pts.map((p) => p[0])) + dLat;
     const w = Math.min(...pts.map((p) => p[1])) - dLon, e = Math.max(...pts.map((p) => p[1])) + dLon;
-    const x0 = Math.floor(tileX(w)), x1 = Math.floor(tileX(e));
-    const y0 = Math.floor(tileY(n)), y1 = Math.floor(tileY(s));
+    const x0 = Math.floor(tileX(w, z)), x1 = Math.floor(tileX(e, z));
+    const y0 = Math.floor(tileY(n, z)), y1 = Math.floor(tileY(s, z));
     if ((x1 - x0 + 1) * (y1 - y0 + 1) > 120) throw new Error('too long to fit in one go: split it');
     const cv = document.createElement('canvas');
     cv.width = (x1 - x0 + 1) * 256;
@@ -42,7 +43,7 @@
     const jobs = [];
     for (let x = x0; x <= x1; x++) {
       for (let y = y0; y <= y1; y++) {
-        jobs.push(loadImage(new Image(), URL.replace('{z}', Z).replace('{x}', x).replace('{y}', y))
+        jobs.push(loadImage(new Image(), URL.replace('{z}', z).replace('{x}', x).replace('{y}', y))
           .then((img) => ctx.drawImage(img, (x - x0) * 256, (y - y0) * 256)));
       }
     }
@@ -50,7 +51,7 @@
     const data = ctx.getImageData(0, 0, cv.width, cv.height).data;
     return {
       at(lat, lon) {
-        const px = Math.floor((tileX(lon) - x0) * 256), py = Math.floor((tileY(lat) - y0) * 256);
+        const px = Math.floor((tileX(lon, z) - x0) * 256), py = Math.floor((tileY(lat, z) - y0) * 256);
         if (px < 0 || py < 0 || px >= cv.width || py >= cv.height) return null;
         const i = (py * cv.width + px) * 4;
         return [data[i], data[i + 1], data[i + 2]];
