@@ -114,6 +114,8 @@ realistic flight tracks in 2D and 3D, AI rival airlines, random events and a dev
 
 Recent milestones, newest first (see `git log` for the rest):
 
+- Plane stats as in OpenTTD: every plane keeps its records (this year, last year, all time, the last 12 weeks,
+  its last flights) in a stats window, opened from its window, its Fleet card or its card clicked again
 - Story mode: start in 1955 (or a later year); 65 more airliners from the 1940s to the 2000s reach the market
   in their real first year of service, announced in the newspaper. Rivals fly the types of their time
 - Storage: the airport layout cache moved from localStorage to IndexedDB, so it can never push the save out

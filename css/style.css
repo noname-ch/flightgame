@@ -1462,3 +1462,17 @@ body { height: 100dvh; } /* the visible height, also while the phone's address b
 .pw-rw-row { display: flex; align-items: center; gap: 8px; margin: 3px 0; }
 .pw-rw-row b { width: 36px; }
 .pw-rw-row select { flex: 1; min-width: 0; }
+
+/* the plane stats window (js/planewin.js openStats): its records, as OpenTTD's vehicle details */
+.ps-top { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.ps-top img { width: 132px; height: 60px; object-fit: contain; flex: none; }
+.ps-top > div { min-width: 0; }
+.ps-grid { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; align-items: baseline; margin-bottom: 8px; }
+.ps-grid > span { color: var(--muted); }
+.ps-grid small { color: var(--muted); font-weight: 400; }
+.ps-table th, .ps-table td { text-align: right; }
+.ps-table th:first-child, .ps-table td:first-child { text-align: left; color: var(--muted); }
+.ps-table th small { font-weight: 400; color: var(--muted); }
+.ps-table tr.ps-net td { border-bottom: none; padding-top: 5px; }
+.ps-win h4 { margin: 10px 0 4px; font-size: 13px; }
+.ps-flights td:last-child { text-align: right; }

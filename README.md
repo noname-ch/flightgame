@@ -34,8 +34,8 @@ Run it before you push.
 developer tools, exit) and the ✈ button next to it sets the game speed. The tabs in the middle of the
 top bar open the sections (Fleet, Airports, Slots, Schedule, Marketplace, Finance, Rivals, Log; icons only on
 narrower screens), and the airline, money, time and day are on its right. Every plane has a card at the bottom: hover it for
-where it comes from and goes to, the time left and its fuel; click to select, double-click to
-follow it (2D or 3D).
+where it comes from and goes to, the time left and its fuel; click to select, click again for its stats,
+double-click to follow it (2D or 3D).
 
 **Plane window**: clicking a plane (on the map, in 3D or its card) opens its window, as in OpenTTD: a live 3D
 camera behind it (the wheel zooms), what it is doing, its speed and height, where it comes from and goes to, the
@@ -43,7 +43,14 @@ time and distance left, the passengers on board and the runways it takes off fro
 every airport of its day you choose which runway it takes, or *Auto*: the shortest runway it can use (long enough,
 paved where it needs that) whose end is within 45° of the day's wind, so the long runways stay free for the big
 planes; it takes off and lands into the wind. A choice counts at once while the plane still boards at the gate, else from
-its next flight there (a flight under way keeps its runways); the route lines on the map show the chosen runways. 🗓 *Timetable* opens its timetable in a window of its own
+its next flight there (a flight under way keeps its runways); the route lines on the map show the chosen runways.
+**Plane stats**: 📊 *Stats* (in its window or its Fleet card, or its card at the bottom clicked once more) opens
+its records, like OpenTTD's vehicle details: maker, age, value or lease, speed, range, seats, size class, the
+runway it needs, its running cost per block hour (more as it ages) and its crew; then flights, passengers, seats
+filled, revenue, flying costs, its share of the weekly lease and crew, repairs and profit for this year, last year
+and all time; a bar per week for the last 12 weeks (hover for the numbers); kilometres and hours flown, how often
+it left on time, incidents, ferry flights and its last 8 flights. A year is the calendar year in story mode, else
+365 game days. 🗓 *Timetable* opens its timetable in a window of its own
 (also from a plane's row in Schedule). Every window can be moved by its title bar (also the developer tools,
 the airport editor and build panel, the bug report, the airport checklist and settings) and opens where it was
 left last time. On a phone a click shows the plane's card in Fleet instead.

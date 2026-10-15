@@ -62,6 +62,10 @@ Play online: https://noname-ch.github.io/flightgame/ (GitHub Pages, deployed fro
   (`FG.planeWin.open(id)`, from `ui.js selectPlane`) and the timetable window (planner's `editorHtml()`; clicks go
   to `FG.planner.action/change/input` as in the sidebar). Its camera is `FG.view3d.chase(container, id)` in
   view3d.js: a second small MapLibre map with its own plane layer (`chaseLayer`, models posed by `placeModel`).
+- Plane stats (as OpenTTD's vehicle details): game.js keeps each plane's records in `p.stats` through `record(p, add, t)`
+  (totals, `year`/`last`, 12 `weeks`, the 8 `recent` flights; `stats.profit` stays the sum of flight results).
+  `G.planeStats(p)` is what the stats window shows (`FG.planeWin.openStats(id)` in planewin.js, drawn with
+  `FG.ui.chart`). Anything new that earns or costs money for one plane should go through `record` too.
 - `js/devtools.js` (F2) only uses public `G` methods (addPlane, crash, incident, infraOf,
   finishProjects, eventContext, refreshMarket). Keep those working.
 - Leaflet is in the repo (`js/vendor/leaflet`, 1.9.4), not loaded from unpkg: when that CDN was slow or down the game

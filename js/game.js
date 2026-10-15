@@ -2274,6 +2274,49 @@
   // Still flying with airlines in year y (pre-owned ones for sale)?
   const inService = (type, y) => D.aircraft[type].year <= y && y <= (D.aircraft[type].endYear || Infinity) + C.story.serviceYears;
 
+  // ---------- a plane's records (its stats window, as OpenTTD's vehicle details) ----------
+  // p.stats: totals since it joined the fleet (flights, pax and profit = flight results, as before; rev, cost, km,
+  // mins, seats flown, fixed = its lease and crew, repair, onTime/late, incidents, ferries), the year so far and
+  // the year before (`year`, `last`), the last weeks (`weeks`, for the profit graph) and its last flights
+  // (`recent`). A year is the calendar year in a story game, else 365 game days (Year 1 starts at day 0).
+  const TALLY = ['rev', 'cost', 'fixed', 'repair', 'flights', 'pax', 'seats', 'km'];
+  const STATS_WEEKS = 12;
+  const STATS_RECENT = 8;
+  const tally0 = (key) => Object.assign(Object.fromEntries(TALLY.map((k) => [k, 0])), key);
+  const yearOf = (t) => (Game.state && Game.state.story ? dateOf(t).getUTCFullYear() : Math.floor(t / DAY / 365) + 1);
+  const weekOf = (t) => Math.floor(t / DAY / 7);
+  const newStats = () => ({
+    flights: 0, pax: 0, profit: 0, rev: 0, cost: 0, fixed: 0, repair: 0, seats: 0, km: 0, mins: 0,
+    onTime: 0, late: 0, incidents: 0, ferries: 0, year: null, last: null, weeks: [], recent: [],
+  });
+  // (old saves only had flights, pax and profit: `old` marks totals that started later)
+  function statsOf(p) {
+    if (!p.stats || p.stats.rev == null) p.stats = Object.assign(newStats(), p.stats, p.stats && p.stats.flights ? { old: true } : {});
+    return p.stats;
+  }
+  // Adds to its totals and to the year and week of time t.
+  function record(p, add, t = Game.state.time) {
+    const s = statsOf(p);
+    for (const k in add) s[k] += add[k];
+    const y = yearOf(t);
+    if (!s.year || s.year.y < y) {
+      s.last = s.year && s.year.y === y - 1 ? s.year : null;
+      s.year = tally0({ y });
+    }
+    const w = weekOf(t);
+    let wk = s.weeks.find((x) => x.w === w);
+    if (!wk && !s.weeks.some((x) => x.w > w)) {
+      wk = tally0({ w });
+      s.weeks.push(wk);
+      if (s.weeks.length > STATS_WEEKS) s.weeks.shift();
+    }
+    for (const k of TALLY) {
+      if (!add[k]) continue;
+      if (s.year.y === y) s.year[k] += add[k];
+      if (wk) wk[k] += add[k];
+    }
+  }
+
   // ---------- formatting ----------
   // Type names as a list: 'A, B and C'.
   const nameList = (types) => {
@@ -2343,7 +2386,7 @@
           pendingFerry: null,
           crewId: 'crew-1',
           schedule: { stops: [], index: 0, active: false },
-          stats: { flights: 0, pax: 0, profit: 0 },
+          stats: newStats(),
         }],
         crews: [{
           id: 'crew-1',
@@ -2579,6 +2622,7 @@
         if (!p.ownership) p.ownership = 'leased';
         if (p.age == null) p.age = 0;
         if (p.acquiredAt == null) p.acquiredAt = 0;
+        statsOf(p);
       }
       if (!s.market) {
         s.market = { listings: [], nextId: 1 };
@@ -3093,6 +3137,12 @@
         s.today.fixed += w.total;
         this.log(`Weekly costs paid: ${fmtMoney(w.total)} (aircraft ${fmtMoney(w.planes)}, ` +
           `crew ${fmtMoney(w.crews)}, slots ${fmtMoney(w.slots)}).`, 'cost');
+        // each plane's own share (its lease and its crew), counted in the week just ended
+        for (const p of s.planes) {
+          const crew = this.crewOf(p);
+          const fixed = (p.ownership === 'owned' ? 0 : D.aircraft[p.type].leasePerWeek) + (crew ? crew.weeklySalary : 0);
+          if (fixed) record(p, { fixed }, s.time - 1);
+        }
         this.payDividends();
         this.refreshMarket();
         this.rivalsWeek();
@@ -3136,14 +3186,15 @@
       }
       s.today.revenue += f.revenue;
       s.today.cost += f.cost;
-      p.stats.profit += result;
+      const seats = D.aircraft[p.type].seats;
+      record(p, { profit: result, rev: f.revenue, cost: f.cost, km: f.distance, mins: f.arr - f.dep,
+        ...(f.kind === 'scheduled' ? { flights: 1, pax: f.pax, seats } : f.kind === 'ferry' ? { ferries: 1 } : {}) });
+      p.stats.recent.unshift({ t: s.time, from: f.from, to: f.to, kind: f.kind, pax: f.pax, seats, result });
+      if (p.stats.recent.length > STATS_RECENT) p.stats.recent.length = STATS_RECENT;
       if (f.kind === 'scheduled') {
         s.today.flights++;
         s.rep.flown++;
         s.today.pax += f.pax;
-        p.stats.flights++;
-        p.stats.pax += f.pax;
-        const seats = D.aircraft[p.type].seats;
         this.log(`${nameOf(p)} ${f.from}→${f.to}: ${f.pax}/${seats} pax, revenue ${fmtMoney(f.revenue)}, ` +
           `cost ${fmtMoney(f.cost)} → ${fmtMoney(result)}`, result >= 0 ? 'good' : 'bad');
       } else if (f.kind === 'delivery') {
@@ -3228,8 +3279,7 @@
         p.schedule.index = leg.nextIndex;
         if (leg.timed) {
           // punctual: within 15 minutes of the timetable
-          if (t - p.schedule.due > 15) s.rep.late++;
-          else s.rep.onTime++;
+          if (t - p.schedule.due > 15) { s.rep.late++; record(p, { late: 1 }); } else { s.rep.onTime++; record(p, { onTime: 1 }); }
           p.schedule.due = nextAt(p.schedule.legs[leg.nextIndex].dep, p.schedule.due + 1);
         }
       } else if (p.pendingFerry === leg.to) {
@@ -3640,6 +3690,7 @@
       const inc = (list.find((x) => (r -= x.w) < 0) || list[0]).i;
       s.money -= inc.repair;
       s.today.cost += inc.repair;
+      record(p, { repair: inc.repair, incidents: 1 });
       p.readyAt = Math.max(p.readyAt, s.time + inc.groundedHours * 60);
       p.repair = inc.id;
       s.rep.incidents.push(s.time);
@@ -3768,6 +3819,30 @@
 
     // ---------- fleet & market ----------
     planeAge(p) { return p.age + (this.state.time - p.acquiredAt) / DAY / 365; },
+    // A plane's records as of now, for its stats window: totals (p.stats), this year and last year (all zero when it
+    // didn't fly then), and the last weeks oldest first, ending with this one. Profit = rev - cost - fixed - repair.
+    planeStats(p) {
+      const s = statsOf(p);
+      const t = this.state.time;
+      const y = yearOf(t);
+      const name = (yy) => (this.state.story ? String(yy) : `Year ${yy}`);
+      const year = s.year && s.year.y === y ? s.year : tally0({ y });
+      const last = s.year && s.year.y === y - 1 ? s.year : s.last && s.last.y === y - 1 ? s.last : tally0({ y: y - 1 });
+      const w = weekOf(t);
+      const weeks = [];
+      for (let i = Math.min(STATS_WEEKS - 1, w); i >= 0; i--) { // (none before the game started)
+        const wk = s.weeks.find((x) => x.w === w - i) || tally0({ w: w - i });
+        const d = dateOf((w - i) * 7 * DAY);
+        weeks.push({ ...wk, label: d ? `Week of ${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}` : `Week ${w - i + 1}`,
+          profit: wk.rev - wk.cost - wk.fixed - wk.repair });
+      }
+      const net = (x) => x.rev - x.cost - x.fixed - x.repair;
+      return {
+        total: s, year, last, weeks,
+        yearName: name(y), lastName: y > 1 || this.state.story ? name(y - 1) : null,
+        profit: { year: net(year), last: net(last), total: s.profit - s.fixed - s.repair },
+      };
+    },
     costMult(p) { return agingMult(this.planeAge(p)); },
     // What you get for selling an owned plane today.
     saleValue(p) { return Math.round(usedPrice(p.type, this.planeAge(p)) * M.resaleFactor); },
@@ -3831,7 +3906,7 @@
         id, type, location: code, status: 'idle', readyAt: 0, flight: null, pendingFerry: null,
         ownership, age, acquiredAt: s.time, crewId,
         schedule: { stops: [], index: 0, active: false },
-        stats: { flights: 0, pax: 0, profit: 0 },
+        stats: newStats(),
       };
       if (from) {
         // Delivery flight, paid by the seller; ignores curfew and crew duty.

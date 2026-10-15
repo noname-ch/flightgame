@@ -1,7 +1,8 @@
 // The plane window: click a plane (on the map, in 3D or in the strip) and a window shows it, as in OpenTTD: a
 // live 3D camera behind it (js/view3d.js FG.view3d.chase), what it is doing, its speed and height, where it
 // comes from and goes to. 🗓 opens its timetable in a window of its own (the editor of js/planner.js). Both
-// windows can be moved (js/windows.js); clicking another plane shows that one.
+// windows can be moved (js/windows.js); clicking another plane shows that one. 📊 (or its strip card clicked once
+// more, or 📊 Stats in Fleet) opens its stats window: its records as OpenTTD's vehicle details (G.planeStats).
 (function () {
   const G = FG.game;
   const D = FG.data;
@@ -10,7 +11,8 @@
     boarding: 'Boarding', pushback: 'Pushing back', 'taxi-out': 'Taxiing to the runway', takeoff: 'Taking off', climb: 'Climbing',
     cruise: 'Cruising', descent: 'Descending', approach: 'On final', landing: 'Landing', 'taxi-in': 'Taxiing to the gate',
   };
-  const pw = { id: null, win: null, cam: null, tt: null, timer: null };
+  const pw = { id: null, win: null, cam: null, tt: null, timer: null, st: null, stId: null, stTimer: null };
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const pad = (n) => String(n).padStart(2, '0');
   const clock = (m) => `${pad(Math.floor((((m % DAY) + DAY) % DAY) / 60))}:${pad(Math.floor(((m % 60) + 60) % 60))}`;
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
@@ -25,7 +27,8 @@
       pw.win.body.innerHTML = `<div class="pw-cam"><div class="pw-cam-map"></div><div class="pw-cam-note"></div></div>
         <div class="pw-stats"></div>
         <div class="pw-rw"></div>
-        <div class="row pw-buttons"><button data-pw="timetable" title="Plan its day">🗓 Timetable</button>
+        <div class="row pw-buttons"><button data-pw="stats" title="Profit this year and last year, load factor, punctuality…">📊 Stats</button>
+          <button data-pw="timetable" title="Plan its day">🗓 Timetable</button>
           <button data-pw="follow" title="Keep the map on it">🎥 Follow on the map</button>
           <button data-pw="fleet" title="Its card in Fleet">Fleet</button></div>`;
       pw.win.body.onclick = onClick;
@@ -36,6 +39,7 @@
     pw.rwSig = null;
     camera();
     update();
+    if (pw.st && pw.st.shown && pw.stId !== id) { pw.stId = id; updateStats(); } // (it shows the plane chosen)
   }
   function closed() {
     clearInterval(pw.timer);
@@ -60,6 +64,7 @@
   function onClick(e) {
     const b = e.target.closest('[data-pw]');
     if (!b || !pw.id) return;
+    if (b.dataset.pw === 'stats') openStats(pw.id);
     if (b.dataset.pw === 'timetable') { FG.planner.openPlane(pw.id); showTimetable(); }
     if (b.dataset.pw === 'follow') FG.ui.follow(pw.id);
     if (b.dataset.pw === 'fleet') FG.ui.showFleet(pw.id);
@@ -183,8 +188,121 @@
     if (html !== pw.tt.last) { pw.tt.last = html; pw.tt.body.innerHTML = html; }
   }
 
+  // ---------- the stats window ----------
+  // What the plane is and costs, profit this year, last year and in all, a bar for each of the last weeks, how full
+  // and how punctual it flies, and its last flights. One window: it shows the plane chosen last.
+  const money = (v) => G.fmtMoney(v);
+  const num = (v) => Math.round(v).toLocaleString('de-CH');
+  const shot = (type) => (FG.planeShots && FG.planeShots.get(type)) || `models/hangar/${D.typeSlug(type)}.webp`;
+  const dayText = (t) => {
+    const d = G.dateOf(t);
+    return d ? `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}` : `day ${Math.floor(t / DAY) + 1}`;
+  };
+  function openStats(id) {
+    if (!G.plane(id)) return;
+    pw.stId = id;
+    if (!pw.st || !pw.st.shown) {
+      const x = Math.max(12, Math.min(436, window.innerWidth - 412));
+      pw.st = FG.win.open('planestats', { className: 'ps-win', width: 400, at: [x, 80], onClose: closedStats });
+      pw.st.body.innerHTML = '<div class="ps-head"></div><div class="ps-chart"></div><div class="ps-more"></div>';
+      // (hover a week for its numbers: the Finance charts' tip, above this window)
+      pw.st.body.onmousemove = (e) => {
+        FG.ui.chartHover(e);
+        const tip = document.getElementById('chart-tip');
+        if (tip) tip.style.zIndex = String((Number(pw.st.el.style.zIndex) || 2100) + 1);
+      };
+      pw.st.body.onmouseleave = hideTip;
+      clearInterval(pw.stTimer);
+      pw.stTimer = setInterval(updateStats, 1000);
+    } else FG.win.front(pw.st.el);
+    updateStats();
+  }
+  function closedStats() {
+    clearInterval(pw.stTimer);
+    pw.stTimer = null;
+    pw.stId = null;
+    hideTip();
+  }
+  function hideTip() {
+    const tip = document.getElementById('chart-tip');
+    if (tip) tip.hidden = true;
+  }
+  // (each part drawn again only when it changed, so the chart keeps its hover)
+  function put(el, html) {
+    if (el.fgHtml === html) return;
+    el.fgHtml = html;
+    el.innerHTML = html;
+  }
+  function updateStats() {
+    if (!pw.st || !pw.st.shown) return;
+    const p = G.plane(pw.stId);
+    if (!p) { pw.st.close(); return; }
+    const ac = D.aircraft[p.type];
+    const r = G.planeStats(p);
+    const T = r.total;
+    const crew = G.crewOf(p);
+    const age = G.planeAge(p);
+    const year = G.year();
+    const need = G.runwayNeed(p.type);
+    const aging = G.costMult(p);
+    const perHour = ac.costPerBlockHour * aging * G.fuelMult() * G.difficulty().costMult; // as its flights pay it now
+    pw.st.title(`📊 ${esc(G.planeName(p))} <span class="muted">${p.name ? `${esc(p.id)} · ` : ''}${esc(ac.name)}</span>`);
+
+    const ageText = age < 1 ? 'new' : `${age.toFixed(1)} years old`;
+    let h = `<div class="ps-top"><img src="${shot(p.type)}" alt="" onerror="this.style.visibility='hidden'">
+      <div><b>${ac.name.startsWith(ac.maker) ? '' : `${esc(ac.maker)} `}${esc(ac.name)}</b>
+        <div class="muted">${year != null ? `Built ${Math.round(year - age)} · ` : ''}${ageText}</div>
+        <div class="muted">${p.ownership === 'owned' ? `Owned · worth ${money(Math.round(G.saleValue(p) / 1000) * 1000)}` : `Leased · ${money(ac.leasePerWeek)} a week`}</div>
+        <div class="muted">In the fleet since ${dayText(p.acquiredAt)}</div></div></div>
+      <div class="ps-grid">
+        <span>Max speed</span><b>${num(ac.speedKmh)} km/h</b>
+        <span>Range</span><b>${num(ac.rangeKm)} km</b>
+        <span>Capacity</span><b>${ac.seats} seats</b>
+        <span>Size</span><b>class ${G.CLASSES[G.typeClass(p.type)]} · ${D.looks[p.type].span} m wingspan</b>
+        <span>Runway</span><b>${num(need.m)} m${need.paved ? ', paved' : ''}</b>
+        <span>Running cost</span><b>${money(perHour)} per block hour${aging > 1.005 ? ` <small>(+${Math.round((aging - 1) * 100)}% for its age)</small>` : ''}</b>
+        ${crew ? `<span>Crew</span><b>${crew.pilots} pilots, ${crew.cabin} cabin · ${money(crew.weeklySalary)} a week</b>` : ''}
+      </div>`;
+
+    // this year, last year (from the second year on) and since it joined
+    const cols = [[r.yearName, r.year, r.profit.year, false], ...(r.lastName ? [[r.lastName, r.last, r.profit.last, false]] : []),
+      ['All time', T, r.profit.total, !!T.old]];
+    const lf = (x) => (x.seats ? `${Math.round((x.pax / x.seats) * 100)}%` : '–');
+    const row = (label, f, cls = '') => `<tr class="${cls}"><td>${label}</td>${cols.map(([, x, pr, old]) => `<td>${f(x, pr, old)}</td>`).join('')}</tr>`;
+    const notYet = '<span class="muted" title="Not counted for planes from before the stats came in">–</span>';
+    h += `<table class="small ps-table"><tr><th></th>${cols.map(([n], i) => `<th>${esc(n)}${i === 0 ? ' <small>so far</small>' : ''}</th>`).join('')}</tr>
+      ${row('Flights', (x) => num(x.flights))}
+      ${row('Passengers', (x) => num(x.pax))}
+      ${row('Seats filled', (x, pr, old) => (old ? notYet : lf(x)))}
+      ${row('Revenue', (x, pr, old) => (old ? notYet : money(x.rev)))}
+      ${row('Flying costs', (x, pr, old) => (old ? notYet : money(-x.cost)))}
+      ${row('Lease and crew', (x, pr, old) => (old ? notYet : money(-x.fixed)))}
+      ${row('Repairs', (x, pr, old) => (old ? notYet : money(-x.repair)))}
+      ${row('Profit', (x, pr) => `<b class="${pr >= 0 ? 'pos' : 'neg'}">${money(pr)}</b>`, 'ps-net')}
+    </table>`;
+    put(pw.st.body.querySelector('.ps-head'), h);
+
+    put(pw.st.body.querySelector('.ps-chart'), `<h4>Profit per week</h4>${FG.ui.chart('planestats', r.weeks,
+      [{ key: 'profit', label: 'Profit', cls: 's-net' }], 'bar', [], { now: 'This week', unit: 'weeks' })}`);
+
+    const departures = T.onTime + T.late;
+    h = `<div class="ps-grid">
+        <span>Flown</span><b>${num(T.km)} km · ${num(T.mins / 60)} hours</b>
+        <span>On time</span><b>${departures ? `${Math.round((T.onTime / departures) * 100)}% of ${num(departures)} departures` : '–'}</b>
+        <span>Incidents</span><b>${T.incidents}${p.repair ? ' · <span class="neg">in repair now</span>' : ''}</b>
+        <span>Ferry flights</span><b>${T.ferries}</b>
+      </div>
+      <h4>Last flights</h4>${T.recent.length ? `<table class="small ps-flights">${T.recent.map((f) => `<tr>
+        <td class="muted">${esc(G.fmtTime(f.t))}</td><td><b>${f.from}</b>→<b>${f.to}</b></td>
+        <td>${f.kind === 'scheduled' ? `${f.pax}/${f.seats}` : `<span class="muted">${esc(f.kind)}</span>`}</td>
+        <td class="${f.result >= 0 ? 'pos' : 'neg'}">${money(f.result)}</td></tr>`).join('')}</table>` : '<div class="muted">None yet.</div>'}`;
+    put(pw.st.body.querySelector('.ps-more'), h);
+  }
+
   FG.planeWin = {
     open,
+    openStats,
+    get statsId() { return pw.st && pw.st.shown ? pw.stId : null; },
     get id() { return pw.win && pw.win.shown ? pw.id : null; },
     showTimetable,
     render() { renderTimetable(false); },

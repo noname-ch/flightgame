@@ -1301,7 +1301,8 @@
           duty today ${G.fmtDuration(crew.dutyToday)} / ${G.fmtDuration(C.crewMaxDutyMin)}</div>`;
       }
       h += `<div class="muted">Totals: ${p.stats.flights} flights · ${p.stats.pax} pax · ${G.fmtMoney(p.stats.profit)}</div>
-        <div class="row"><button data-action="follow" data-plane="${p.id}">🎥 Follow</button></div>`;
+        <div class="row"><button data-action="follow" data-plane="${p.id}">🎥 Follow</button>
+          <button data-action="planeStats" data-plane="${p.id}" title="Profit this year and last year, load factor, punctuality…">📊 Stats</button></div>`;
 
       h += `<div class="row"><select id="send-${p.id}">`;
       for (const c of owned) h += `<option value="${c}">${c} · ${G.airportByCode[c].city}</option>`;
@@ -1689,7 +1690,8 @@
   }
 
   // series: [{ key, label, cls }]; kind: 'line' | 'bar'. Hover data lives in ui.charts[id].
-  function chart(id, rows, series, kind, refs = []) {
+  // opts: { now: label of the last slot ('Today'), unit: what a slot is ('days') }.
+  function chart(id, rows, series, kind, refs = [], opts = {}) {
     const vals = rows.flatMap((r) => series.map((s) => r[s.key])).filter((v) => v != null);
     if (!vals.length) return '<div class="muted">No data yet.</div>';
     const { lo, hi, ticks } = niceTicks(Math.min(0, ...vals, ...refs.map((r) => r.v)), Math.max(0, ...vals));
@@ -1710,7 +1712,7 @@
         <text class="tick" x="${CHART_W - PAD.r}" y="${y(r.v) - 3}" text-anchor="end">${r.label}</text>`;
     }
     g += `<text class="tick" x="${x(0)}" y="${CHART_H - 4}" text-anchor="start">${rows[0].label}</text>`;
-    if (n > 1) g += `<text class="tick" x="${x(n - 1)}" y="${CHART_H - 4}" text-anchor="end">Today</text>`;
+    if (n > 1) g += `<text class="tick" x="${x(n - 1)}" y="${CHART_H - 4}" text-anchor="end">${opts.now || 'Today'}</text>`;
 
     if (kind === 'bar') {
       const key = series[0].key;
@@ -1737,7 +1739,7 @@
       ? `<div class="legend">${series.map((s) => `<span><i class="${s.cls}"></i>${s.label}</span>`).join('')}</div>`
       : '';
     return `${legend}<svg class="chart" data-chart="${id}" viewBox="0 0 ${CHART_W} ${CHART_H}" role="img"
-      aria-label="${series.map((s) => s.label).join(', ')} over the last ${n} days">${g}</svg>`;
+      aria-label="${series.map((s) => s.label).join(', ')} over the last ${n} ${opts.unit || 'days'}">${g}</svg>`;
   }
 
   function chartHover(e) {
@@ -1880,7 +1882,7 @@
         <div>${planeStatus(p)}</div>${next ? `<div class="muted">${next}</div>` : ''}`;
     }
     h += `<div class="tt-fuel">⛽ <span class="bar"><i class="${fuel < 25 ? 'low' : ''}" style="width:${fuel}%"></i></span> ${fuel}%</div>
-      <div class="hint">Click: select · double-click: follow</div>`;
+      <div class="hint">Click: select · again: stats · double-click: follow</div>`;
     return h;
   }
 
@@ -1900,14 +1902,18 @@
   function bindStrip() {
     const list = $('strip-list');
     let last = { id: null, t: 0 };
+    let statsSoon = null;
     list.addEventListener('click', (e) => {
       if (e.target.closest('[data-action-strip="market"]')) { openMarket(); return; }
       const card = e.target.closest('.pcard[data-plane]');
       if (!card) return;
       const id = card.dataset.plane;
       const now = performance.now();
+      clearTimeout(statsSoon);
       if (last.id === id && now - last.t < 400) { follow(id); last = { id: null, t: 0 }; return; }
       last = { id, t: now };
+      // The card of the plane already chosen, clicked again: its stats (unless that click starts a double-click).
+      if (id === ui.selectedPlane && FG.planeWin) statsSoon = setTimeout(() => FG.planeWin.openStats(id), 400);
       selectPlane(id);
       if (!(FG.view3d && FG.view3d.on)) {
         const pos = planePosition(G.plane(id));
@@ -2590,6 +2596,7 @@
       }
       case 'start': act(G.setScheduleActive(plane, true)); break;
       case 'follow': follow(plane); break;
+      case 'planeStats': if (FG.planeWin) FG.planeWin.openStats(plane); break;
       case 'rename': ui.renaming = plane; setTimeout(() => { const i = $('rename-input'); if (i) { i.focus(); i.select(); } }, 0); break;
       case 'renameSave': {
         const i = $('rename-input');
@@ -2823,6 +2830,8 @@
       },
       clearSelection() { ui.selectedAirport = null; ui.selectedPlane = null; G.dirty = true; },
       follow,
+      chart, // (the plane stats window draws its weekly profit with the Finance charts)
+      chartHover,
       get buildMode() { return ui.buildMode; },
       buildAt(lat, lon) { buildAt({ lat, lng: lon }); },
       get map() { return ui.map; }, // the 2D map (the airport editor draws on it)

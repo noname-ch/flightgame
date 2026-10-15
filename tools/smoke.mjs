@@ -296,6 +296,33 @@ try {
   if (!result.flights) errors.push('no flight landed in 30 game days');
   if (result.gameOver) warnings.push('the airline went bankrupt during the test');
 
+  step('plane stats: its strip card clicked, then clicked again, opens its stats window');
+  // (paused, as for the ferry: at full speed a long task can hold up the click's timer)
+  const psRunning = await evaluate(() => {
+    const running = FG.ui.speed > 0;
+    if (running) document.getElementById('pause').click();
+    FG.ui.clearSelection();
+    document.querySelector('.pcard[data-plane]').click();
+    return running;
+  });
+  await sleep(600);
+  await evaluate(() => document.querySelector('.pcard[data-plane]').click());
+  await waitFor(() => { const w = document.getElementById('win-planestats'); return w && !w.hidden; }, 10000, 'the plane stats window');
+  const ps = await evaluate((running) => {
+    const w = document.getElementById('win-planestats');
+    const p = G.plane(FG.planeWin.statsId);
+    const r = G.planeStats(p);
+    const out = { flights: r.year.flights, profit: r.profit.year, bars: w.querySelectorAll('svg.chart rect.bar').length,
+      rows: w.querySelectorAll('.ps-table tr').length, recent: w.querySelectorAll('.ps-flights tr').length };
+    w.querySelector('.fg-win-close').click();
+    const pw = document.getElementById('win-plane');
+    if (pw && !pw.hidden) pw.querySelector('.fg-win-close').click();
+    if (running) document.getElementById('pause').click();
+    return out;
+  }, psRunning);
+  if (!ps.flights || ps.rows < 9 || !ps.recent) errors.push(`plane stats: ${JSON.stringify(ps)}`);
+  else step(`plane stats: ${ps.flights} flights this year, profit ${ps.profit.toLocaleString('en')}, ${ps.bars} week bars, ${ps.recent} last flights`);
+
   step('Fleet: Ferry there (to the other slot airport) says when the plane leaves');
   const ferry = await evaluate(async () => {
     const p = G.state.planes[0];
