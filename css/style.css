@@ -1330,6 +1330,9 @@ body { height: 100dvh; } /* the visible height, also while the phone's address b
 #loading:not(.det) #ld-bar { animation: ld-indet 1.3s ease-in-out infinite; }
 @keyframes ld-indet { 0% { transform: translateX(-100%); } 100% { transform: translateX(290%); } }
 #ld-text { margin: 12px 0 0; color: var(--muted); font-size: 13px; }
+.ld-fail { margin-top: 14px; font-size: 13px; }
+.ld-fail p { margin: 0 0 8px; color: var(--neg); }
+.ld-fail button { padding: 6px 16px; border-radius: 8px; border: 1px solid var(--border); background: var(--accent); color: #fff; font-weight: 700; cursor: pointer; }
 
 /* ---------- main menu and its pages (js/ui.js start screen) ---------- */
 #start-screen[data-page="menu"] { display: flex; align-items: center; justify-content: center; overflow: hidden; }

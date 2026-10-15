@@ -59,6 +59,9 @@ Play online: https://noname-ch.github.io/flightgame/ (GitHub Pages, deployed fro
   as long as it really takes and waits at the gate (phase `boarding`) for the rest of its block time.
 - `js/devtools.js` (F2) only uses public `G` methods (addPlane, crash, incident, infraOf,
   finishProjects, eventContext, refreshMarket). Keep those working.
+- Leaflet is in the repo (`js/vendor/leaflet`, 1.9.4), not loaded from unpkg: when that CDN was slow or down the game
+  hung on the loading screen for good. Only the optional 3D view and fonts come from CDNs. The inline script after
+  `#loading` in index.html shows a Reload message when a game file fails or the screen is up for 30 s.
 - Use `G.home()` and `G.bankruptcyLimit()`, not `C.startAirport` or `C.bankruptcyLimit`.
 - For anything animated, use `FG.ui.time` (exact fractional game time), not `G.state.time`.
 - 3D only repaints while something moves. Anything new that animates in 3D must trigger a repaint

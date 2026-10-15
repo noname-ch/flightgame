@@ -2486,12 +2486,21 @@
   function enterGame(text, start) {
     showLoading(text);
     closeStart();
-    // (a frame first, so the loading screen is up before the work starts)
-    requestAnimationFrame(() => setTimeout(() => {
-      start();
+    // (a frame first, so the loading screen is up before the work starts; no frames come in a hidden tab)
+    const go = () => setTimeout(() => {
+      // Whatever goes wrong, the loading screen goes: it used to stay up for good when `start` threw.
+      try {
+        start();
+      } catch (e) {
+        console.error('Starting the game failed:', e);
+        toast(`Something went wrong while starting: ${e.message}`, true);
+      }
       G.dirty = true;
-      untilMapLoaded().then(hideLoading);
-    }, 30));
+      let wait;
+      try { wait = untilMapLoaded(); } catch (e) { wait = Promise.resolve(); }
+      wait.then(hideLoading, hideLoading);
+    }, 30);
+    if (document.hidden) go(); else requestAnimationFrame(go);
   }
 
   // ---------- input ----------

@@ -12,12 +12,12 @@
   <link rel="apple-touch-icon" href="icon-180.png">
   <meta name="color-scheme" content="dark">
   <title>Flightgame</title>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=UnifrakturMaguntia&family=Old+Standard+TT:ital,wght@0,400;0,700;1,400&family=Playfair+Display:wght@700;900&display=swap">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@6.13.0/dist/maplibre-gl.css">
-  <link rel="stylesheet" href="css/style.css?v=202610151027">
-  <link rel="stylesheet" href="css/themes.css?v=202610151027">
-  <script src="js/themes.js?v=202610151027"></script>
+  <link rel="stylesheet" href="js/vendor/leaflet/leaflet.css">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=UnifrakturMaguntia&family=Old+Standard+TT:ital,wght@0,400;0,700;1,400&family=Playfair+Display:wght@700;900&display=swap" media="print" onload="this.media='all'">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@6.13.0/dist/maplibre-gl.css" media="print" onload="this.media='all'">
+  <link rel="stylesheet" href="css/style.css?v=1792052990">
+  <link rel="stylesheet" href="css/themes.css?v=1792052990">
+  <script src="js/themes.js?v=1792052990"></script>
   <script type="importmap">
     {
       "imports": {
@@ -39,6 +39,42 @@
       <p id="ld-text">Loading the world – 16,000 airports and 32,000 cities…</p>
     </div>
   </div>
+  <script>
+    // Never leave the loading screen up for good: when one of the game's own files fails to load or throws
+    // while it is shown, or it has been up for 30 s, say so and offer a reload.
+    (function () {
+      const el = document.getElementById('loading');
+      const shown = () => !el.hidden && !el.classList.contains('done');
+      function fail(msg) {
+        if (!shown() || el.querySelector('.ld-fail')) return;
+        const box = document.createElement('div');
+        box.className = 'ld-fail';
+        box.innerHTML = '<p></p><button type="button">Reload</button>';
+        box.querySelector('p').textContent = msg;
+        box.querySelector('button').onclick = () => location.reload();
+        el.querySelector('.ld-card').appendChild(box);
+      }
+      window.addEventListener('error', (e) => {
+        const t = e.target;
+        let src = e.filename || '';
+        if (t && t !== window) { // a file that didn't load: only scripts count (map tiles and pictures fail all the time)
+          if (t.tagName !== 'SCRIPT' || t.type === 'module') return;
+          src = t.src;
+        } else if (!src.startsWith(location.origin) && location.protocol !== 'file:') return;
+        if (/view3d|models3d|livery|hangar3d|icons3d|shots3d|osmairports/.test(src)) return; // (3D: optional)
+        fail(`The game could not start: ${t && t !== window ? `${src.split('/').pop().split('?')[0]} did not load` : e.message}. ` +
+          'Reload the page (Ctrl+Shift+R).');
+      }, true);
+      let since = Date.now();
+      let was = true;
+      setInterval(() => {
+        const now = shown();
+        if (now && !was) { since = Date.now(); el.querySelectorAll('.ld-fail').forEach((x) => x.remove()); }
+        was = now;
+        if (now && Date.now() - since > 30000) fail('This takes much longer than it should. Check your internet connection and reload.');
+      }, 1000);
+    })();
+  </script>
   <header id="topbar">
     <div class="tb-left">
       <button id="menu-btn" class="icon-btn" title="Menu (Esc)" aria-haspopup="true">⋯</button>
@@ -115,40 +151,40 @@
 
   <div id="chart-tip" hidden></div>
 
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="js/config.js?v=202610151027"></script>
-  <script src="js/bugreport.js?v=202610151027"></script>
-  <script src="js/data/aircraft.js?v=202610151027"></script>
-  <script src="js/data/airports.js?v=202610151027"></script>
-  <script src="js/data/airports-more.js?v=202610151027"></script>
-  <script src="js/data/runways.js?v=202610151027"></script>
-  <script src="js/data/towns.js?v=202610151027"></script>
-  <script src="js/data/cities.js?v=202610151027"></script>
-  <script src="js/data/factories.js?v=202610151027"></script>
-  <script src="js/data/looks.js?v=202610151027"></script>
-  <script src="js/data/models.js?v=202610151027"></script>
-  <script src="js/data/liveries.js?v=202610151027"></script>
-  <script src="js/data/layouts.js?v=202610151027"></script>
-  <script src="js/data/terminals.js?v=202610151027"></script>
-  <script src="js/idb.js?v=202610151027"></script>
-  <script src="js/data/fixes.js?v=202610151027"></script>
-  <script src="js/data/busiest.js?v=202610151027"></script>
-  <script src="js/data/checks.js?v=202610151027"></script>
-  <script src="js/fixes.js?v=202610151027"></script>
-  <script src="js/layouts.js?v=202610151027"></script>
-  <script src="js/data/events.js?v=202610151027"></script>
-  <script src="js/data/rivals.js?v=202610151027"></script>
-  <script src="js/data/presets.js?v=202610151027"></script>
-  <script src="js/data/story.js?v=202610151027"></script>
-  <script src="js/ground.js?v=202610151027"></script>
-  <script src="js/game.js?v=202610151027"></script>
-  <script src="js/hangar.js?v=202610151027"></script>
-  <script src="js/planner.js?v=202610151027"></script>
-  <script src="js/ui.js?v=202610151027"></script>
-  <script src="js/devtools.js?v=202610151027"></script>
-  <script src="js/taxifit.js?v=202610151027"></script>
-  <script src="js/airportedit.js?v=202610151027"></script>
-  <script src="js/airportcheck.js?v=202610151027"></script>
+  <script src="js/vendor/leaflet/leaflet.js"></script>
+  <script src="js/config.js?v=1792052990"></script>
+  <script src="js/bugreport.js?v=1792052990"></script>
+  <script src="js/data/aircraft.js?v=1792052990"></script>
+  <script src="js/data/airports.js?v=1792052990"></script>
+  <script src="js/data/airports-more.js?v=1792052990"></script>
+  <script src="js/data/runways.js?v=1792052990"></script>
+  <script src="js/data/towns.js?v=1792052990"></script>
+  <script src="js/data/cities.js?v=1792052990"></script>
+  <script src="js/data/factories.js?v=1792052990"></script>
+  <script src="js/data/looks.js?v=1792052990"></script>
+  <script src="js/data/models.js?v=1792052990"></script>
+  <script src="js/data/liveries.js?v=1792052990"></script>
+  <script src="js/data/layouts.js?v=1792052990"></script>
+  <script src="js/data/terminals.js?v=1792052990"></script>
+  <script src="js/idb.js?v=1792052990"></script>
+  <script src="js/data/fixes.js?v=1792052990"></script>
+  <script src="js/data/busiest.js?v=1792052990"></script>
+  <script src="js/data/checks.js?v=1792052990"></script>
+  <script src="js/fixes.js?v=1792052990"></script>
+  <script src="js/layouts.js?v=1792052990"></script>
+  <script src="js/data/events.js?v=1792052990"></script>
+  <script src="js/data/rivals.js?v=1792052990"></script>
+  <script src="js/data/presets.js?v=1792052990"></script>
+  <script src="js/data/story.js?v=1792052990"></script>
+  <script src="js/ground.js?v=1792052990"></script>
+  <script src="js/game.js?v=1792052990"></script>
+  <script src="js/hangar.js?v=1792052990"></script>
+  <script src="js/planner.js?v=1792052990"></script>
+  <script src="js/ui.js?v=1792052990"></script>
+  <script src="js/devtools.js?v=1792052990"></script>
+  <script src="js/taxifit.js?v=1792052990"></script>
+  <script src="js/airportedit.js?v=1792052990"></script>
+  <script src="js/airportcheck.js?v=1792052990"></script>
   <script>
     // The 3D view is an ES module with imports from the internet. If it fails to load (offline, a
     // blocked CDN, or old cached files mixed with new ones), say so instead of leaving a dead button.
@@ -171,10 +207,10 @@
       }));
     })();
   </script>
-  <script type="module" async src="js/osmairports.js?v=202610151027"></script>
-  <script type="module" async src="js/view3d.js?v=202610151027"></script>
-  <script type="module" async src="js/hangar3d.js?v=202610151027"></script>
-  <script type="module" async src="js/icons3d.js?v=202610151027"></script>
-  <script type="module" async src="js/shots3d.js?v=202610151027"></script>
+  <script type="module" async src="js/osmairports.js?v=1792052990"></script>
+  <script type="module" async src="js/view3d.js?v=1792052990"></script>
+  <script type="module" async src="js/hangar3d.js?v=1792052990"></script>
+  <script type="module" async src="js/icons3d.js?v=1792052990"></script>
+  <script type="module" async src="js/shots3d.js?v=1792052990"></script>
 </body>
 </html>
