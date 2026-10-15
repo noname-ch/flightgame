@@ -93,6 +93,11 @@ FG.config = {
     terminalRunway: [0, 0, 1200, 1800, 2500, 3000], // longest paved runway needed for that size
     terminalDemand: 0.25,     // each terminal expansion adds this much passenger demand
     newAirportCost: 15000000, newAirportWeeks: 12, newAirportRunway: 1200, newAirportMinKm: 8,
+    // Building by hand (the airport editor's build mode), in CHF: per m² of apron, pad, building or taxiway
+    // (its length times its width), per stand and per tower. Moving or reshaping something costs `rework` of what
+    // it is then (at least what it grew by), pulling it down `demolish` of it. You pay your share.
+    build: { apron: 150, pad: 150, terminal: 2500, hangar: 900, building: 1200, taxiway: 200, stand: 1500000,
+      tower: 4000000, rework: 0.3, demolish: 0.1 },
   },
 
   bankruptcyLimit: -500000,

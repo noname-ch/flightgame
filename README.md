@@ -116,6 +116,16 @@ be made again the next day; a rival that gives up a slot flies one daily flight 
    and **builds new airports**: pick a site on the map, it opens after 12 weeks and is 100% yours.
    Only where the terrain is fit for one: level ground (heights from the terrain tiles of the 3D view), no
    water, glacier or built-up area (from the map data); `FG.terrain.check(lat, lon)` in `js/view3d.js`.
+   New runways are placed by the game, clear of the aprons, buildings and other runways (a parallel one 400 m
+   or more away, on the far side of the apron first; a crosswind one across the main runway, near an end where
+   that is clear), and get taxiways: a parallel taxiway, exits and a link into the taxiways there are. Where
+   two runways cross, neither is painted over the other.
+   **🏗 Build at the airport** (in its Construction section, at an airport you built or where you have 25%) opens
+   the build mode: the airport editor's tools on the satellite map, without runways. Build stands (also in rows),
+   taxiways and curves, aprons, pads, terminals, hangars, other buildings and towers, or click what is there to
+   move, reshape or pull it down. It costs your share (stand CHF 1.5M, apron CHF 150/m², terminal CHF 2'500/m²,
+   …; `C.airports.build`), Undo gives the money back, and it is kept in that save game only
+   (`G.state.airportOps`, applied by `js/fixes.js` after the airport fixes).
 
 10. **Realistic flights**: planes taxi to the runway, take off into the day's wind (neighbouring
     airports share it, mostly westerly), climb out, turn onto the great circle and cruise at a

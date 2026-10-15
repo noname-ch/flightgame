@@ -10,6 +10,10 @@
 // by clicking its points. Changes show at once; Save keeps them (js/fixes.js): in js/data/fixes.js when the
 // game runs from ./play.sh; on the website as a commit to the repo, for contributors signed in to GitHub;
 // else in this browser. Every game loads them, new or saved.
+// Build mode (FG.airportEdit.build(code), from an airport's Construction section): the player builds at an
+// airport they built or have the board's stake in. The same tools, but no runways (the game places those:
+// construction) and no saving anywhere: what they build is kept in their save game (FG.fixes.player) and costs
+// their share of C.airports.build.
 (function () {
   const G = FG.game;
   const D = FG.data;
@@ -48,7 +52,8 @@
     busy: false,  // looking in the map data, saving or signing in
     target: null, // where Save puts the fixes: 'server', 'github' or 'browser' (FG.fixes.target)
     signin: false, // the GitHub sign-in form is open
-    undo: [],     // [{ code, ops }] before each change
+    undo: [],     // [{ code, ops, paid }] before each change (paid: in build mode, what it cost in full)
+    player: null, // build mode: the airport the player builds at (the changes go into the save game)
     msg: '',
     bad: false,
   };
@@ -391,8 +396,10 @@
     const k = mpp(p[0]);
     const tol = { stand: Math.max(18, 9 * k), tower: Math.max(10, 8 * k), taxiway: Math.max(8, 7 * k), runway: 6 * k };
     const out = [];
-    for (const a of airportsNear(p, 8)) {
+    // (build mode: only that airport, and not its runways)
+    for (const a of ed.player ? [G.airportByCode[ed.player]] : airportsNear(p, 8)) {
       for (const e of elements(a.code)) {
+        if (ed.player && e.kind === 'runway') continue;
         const d = distTo(e, p);
         if (d <= (tol[e.kind] != null ? tol[e.kind] : 5 * k)) out.push(Object.assign(e, { d }));
       }
@@ -559,9 +566,33 @@
   }
 
   // ---------- changing the fixes ----------
+  // The changes are the airport's fixes, or in build mode what the player built there (the save game's).
+  const opsOf = (code) => (ed.player ? FG.fixes.player.ops(code) : FG.fixes.ops(code));
   function setOps(code, ops) {
-    if (JSON.stringify(ops) === JSON.stringify(FG.fixes.saved(code))) FG.fixes.discard(code);
+    if (ed.player) FG.fixes.player.set(code, ops);
+    else if (JSON.stringify(ops) === JSON.stringify(FG.fixes.saved(code))) FG.fixes.discard(code);
     else FG.fixes.edit(code, ops);
+  }
+  // Build mode: what changes are worth in full (C.airports.build); the player pays their share.
+  function worth(kind, g, w) {
+    const B = FG.config.airports.build;
+    if (kind === 'stand' || kind === 'tower') return B[kind];
+    if (kind === 'taxiway') return lengthOf(g) * (w || (G.airportSize(ed.player) >= 3 ? 23 : 15)) * B.taxiway;
+    if (RINGS.has(kind)) return areaOf(g) * (B[kind] || 0);
+    return 0;
+  }
+  function priceOf(list) {
+    const B = FG.config.airports.build;
+    let full = 0;
+    for (const op of list) {
+      if (op.op === 'add') full += worth(op.kind, op.geom, op.w);
+      else if (op.op === 'del') full += B.demolish * worth(op.kind, op.geom, op.w);
+      else {
+        const now = worth(op.kind, op.geom, op.w);
+        full += Math.max(B.rework * now, now - worth(op.kind, op.from, op.w));
+      }
+    }
+    return Math.round(full);
   }
   // A change to something a fix added or changed changes that fix instead of adding another.
   function fold(ops, op) {
@@ -580,9 +611,9 @@
     ops.push(op);
   }
   // Changes that are undone together.
-  function record(code, list) {
-    const ops = FG.fixes.ops(code).slice();
-    ed.undo.push({ code, ops: ops.slice() });
+  function record(code, list, paid = 0) {
+    const ops = opsOf(code).slice();
+    ed.undo.push({ code, ops: ops.slice(), paid });
     if (ed.undo.length > 100) ed.undo.shift();
     for (const op of list) fold(ops, op);
     setOps(code, ops);
@@ -600,14 +631,29 @@
   function commit(code, op, msg) {
     let list = [].concat(op);
     const last = list[list.length - 1];
+    let paid = 0;
+    if (ed.player) {
+      if (code !== ed.player) { note(`You are building at ${ed.player}.`, true); return; }
+      if (list.some((o) => o.kind === 'runway' || o.kind === 'airport')) { note('Runways are built from the airport\'s Construction section.', true); return; }
+      const a = G.airportByCode[code];
+      if (list.some((o) => o.op !== 'del' && shape(o.kind, o.geom).some((q) => dist(q, [a.lat, a.lon]) > 8000))) {
+        note(`That is too far from ${a.name}.`, true);
+        return;
+      }
+      paid = priceOf(list);
+      const err = G.payForBuilding(code, paid, `${cap(NAMES[last.kind])} ${{ add: 'built', del: 'pulled down', set: 'rebuilt' }[last.op]}${list.length > 1 ? ` (${list.length} changes)` : ''}`);
+      if (err) { note(err, true); return; }
+      if (paid) msg = `${msg} Your share: ${G.fmtMoney(Math.round((paid * G.stake(code)) / 100))}.`;
+    }
     // A change to something the game made up: all it made up becomes fixes first (see madeUp).
     const made = madeUp(code);
     const isMade = new Set(made.map((e) => `${e.kind}|${keyOf(e.geom)}`));
-    if (list.some((o) => o.op !== 'add' && isMade.has(`${o.kind}|${keyOf(o.op === 'del' ? o.geom : o.from)}`))) {
+    // (in build mode any change: what the player builds is added to the airport as it is, not instead of it)
+    if (made.length && (ed.player || list.some((o) => o.op !== 'add' && isMade.has(`${o.kind}|${keyOf(o.op === 'del' ? o.geom : o.from)}`)))) {
       list = made.map((e) => ({ op: 'add', kind: e.kind, geom: e.geom })).concat(list);
       msg = `${msg} The rest the game made up here is this airport's own now: change or delete it piece by piece.`;
     }
-    record(code, list);
+    record(code, list, paid);
     ed.code = code;
     ed.sel = last.op === 'del' || last.kind === 'airport' ? null : { code, kind: last.kind, geom: last.geom };
     ed.hits = [];
@@ -619,6 +665,7 @@
   function undo() {
     const u = ed.undo.pop();
     if (!u) { note('Nothing to undo.'); return; }
+    if (u.paid) G.payForBuilding(u.code, -u.paid, 'building work undone');
     setOps(u.code, u.ops);
     ed.code = u.code;
     ed.sel = null;
@@ -627,7 +674,7 @@
     note('Undone.');
   }
   function removeOp(code, i) {
-    const ops = FG.fixes.ops(code).slice();
+    const ops = opsOf(code).slice();
     ed.undo.push({ code, ops: ops.slice() });
     ops.splice(i, 1);
     setOps(code, ops);
@@ -1062,6 +1109,7 @@
   }
   async function add(kind) {
     if (!ed.code) { note('No airport within 8 km: add an airport first.', true); return; }
+    if (ed.player && kind === 'runway') return;
     if (kind === 'stand') { addStand(); return; }
     if (kind === 'row') { ed.sel = null; startDraw('row', null); return; }
     if (kind === 'curve') { ed.sel = null; startDraw('curve', null); return; }
@@ -1281,7 +1329,7 @@
         for (const s of lay ? lay.stands : []) drawShape(layer, 'stand', s, STYLE.stand);
         for (const e of madeUp(code)) if (e.kind === 'stand') drawShape(layer, 'stand', e.geom, STYLE.stand);
       }
-      for (const op of FG.fixes.ops(code)) {
+      for (const op of opsOf(code)) {
         if (op.kind === 'airport' || op.kind === 'bridges') continue; // (no shape)
         if (op.op !== 'add') drawShape(layer, op.kind, op.op === 'del' ? op.geom : op.from, STYLE.del);
         if (op.op !== 'del') drawShape(layer, op.kind, op.geom, STYLE.add);
@@ -1413,8 +1461,9 @@
           <button class="primary" data-ae="addAirport">Add airport</button><button data-ae="cancelForm">Cancel</button></div>`);
       return parts.join('');
     }
-    const near = airportsNear(ed.at, 4).length > 0;
-    parts.push(`<div class="ae-sub">Add here</div><div class="ae-row">${code ? ADD.map((k) => `<button class="mini" data-ae="add" data-kind="${k}">${cap(NAMES[k])}</button>`).join(' ') : ''}
+    const near = ed.player || airportsNear(ed.at, 4).length > 0;
+    const kinds = ed.player ? ADD.filter((k) => k !== 'runway') : ADD; // (the player's runways come from construction)
+    parts.push(`<div class="ae-sub">${ed.player ? 'Build here' : 'Add here'}</div><div class="ae-row">${code ? kinds.map((k) => `<button class="mini" data-ae="add" data-kind="${k}">${cap(NAMES[k])}</button>`).join(' ') : ''}
       ${near ? '' : '<button class="mini" data-ae="airportForm">Airport</button>'}</div>`);
     return parts.join('');
   }
@@ -1471,9 +1520,40 @@
     el.innerHTML = html;
     el.hidden = !html;
   }
+  // Build mode: what the player built here, undo, and what things cost.
+  function playerPanel() {
+    const code = ed.player;
+    const a = G.airportByCode[code];
+    const ops = opsOf(code);
+    const B = FG.config.airports.build;
+    const share = G.stake(code);
+    const m = (v) => G.fmtMoney(Math.round((v * share) / 100));
+    return `
+      <div class="dev-head"><b>🏗 Build at ${esc(code)}</b><button class="mini" data-ae="close" title="Done (Esc)">✕</button></div>
+      <div class="muted small">${esc(a.name)}: click the satellite picture to build stands, taxiways, aprons, pads, terminals,
+        hangars, other buildings and towers, or click what is there to move, reshape or pull it down. Runways come from
+        <b>Construction</b> in the airport's panel: the game places them and joins them to the taxiways.</div>
+      <section><h4>What you built here</h4>
+        ${ops.length ? `<ul class="ae-ops">${ops.map((op, i) => `<li><span>${{ add: '＋', del: '−', set: '✎' }[op.op]} ${esc(describe(op.kind, op.geom))}</span>
+          <button class="mini" data-ae="goOp" data-i="${i}" title="Show it">⌖</button><button class="mini" data-ae="removeOp" data-i="${i}" title="Take this change back (no money back)">✕</button></li>`).join('')}</ul>`
+          : '<div class="muted small">Nothing yet.</div>'}
+      </section>
+      <section>
+        <div class="dev-row"><button data-ae="undo"${ed.undo.length ? '' : ' disabled'}>↶ Undo (money back)</button></div>
+        <div class="muted small">You pay ${share < 100 ? `your ${share}% share` : 'all'} of it: a stand ${m(B.stand)}, a tower ${m(B.tower)},
+          per 1000 m² of apron ${m(B.apron * 1000)}, terminal ${m(B.terminal * 1000)}, hangar ${m(B.hangar * 1000)}, taxiway ${m(B.taxiway * 1000)}.
+          Moving something costs ${Math.round(B.rework * 100)}% of it, pulling it down ${Math.round(B.demolish * 100)}%. Kept in this game only.</div>
+        <div class="muted small">The airport's layout is yours once you build here: a terminal from Construction still makes it bigger, but
+          its new stands you build yourself.</div>
+        <div class="muted small">Money: <b>${G.fmtMoney(G.state.money)}</b></div>
+      </section>
+      <div class="muted small">Esc cancels · Enter finishes · Backspace removes the last point · Ctrl+Z undoes · Del pulls down</div>
+      <div id="ae-msg" class="${ed.bad ? 'bad' : ''}">${esc(ed.msg)}</div>`;
+  }
   function renderPanel() {
     const el = $('apedit');
     if (!el || !ed.on) return;
+    if (ed.player) { el.innerHTML = playerPanel(); return; }
     const code = ed.code;
     const a = code && G.airportByCode[code];
     const ops = code ? FG.fixes.ops(code) : [];
@@ -1593,7 +1673,7 @@
       case 'signIn': signIn(); break;
       case 'signOut': signOut(); break;
       case 'goto': goTo(d.code); break;
-      case 'goOp': goTo(ed.code, FG.fixes.ops(ed.code)[Number(d.i)]); break;
+      case 'goOp': goTo(ed.code, opsOf(ed.code)[Number(d.i)]); break;
       case 'removeOp': removeOp(ed.code, Number(d.i)); break;
       default:
     }
@@ -1612,7 +1692,7 @@
     ed.hits = hitsAt(p);
     ed.sel = ed.hits[0] || null;
     const o = ed.sel ? null : owner(p);
-    ed.code = ed.sel ? ed.sel.code : o ? o.code : null;
+    ed.code = ed.player || (ed.sel ? ed.sel.code : o ? o.code : null);
     drawLayer();
     showPopup();
     renderPanel();
@@ -1637,9 +1717,19 @@
     if (used) { e.preventDefault(); e.stopPropagation(); }
   }
 
-  function toggle(on = !ed.on) {
+  // `player`: build mode at that airport (see the top); else the developer's airport editor.
+  function toggle(on = !ed.on, player = null) {
+    if (on && ed.on && (player || null) !== ed.player) toggle(false); // (from one mode to the other)
     if (on === ed.on) return;
     if (!FG.ui || !FG.ui.map) return;
+    if (on) {
+      if (player) {
+        const why = G.buildDenied(player);
+        if (why) { if (FG.ui.toast) FG.ui.toast(why, true); return; }
+      }
+      if (player !== ed.player) ed.undo = []; // (the other mode's changes are not undone here)
+      ed.player = player;
+    }
     map = FG.ui.map;
     if (!layer) {
       map.createPane('apedit').style.zIndex = 620; // above the planes, below tooltips and popups
@@ -1650,6 +1740,7 @@
     }
     ed.on = on;
     $('apedit').hidden = !on;
+    $('apedit').classList.toggle('ae-build', !!ed.player);
     $('ae-banner').hidden = true;
     map.getContainer().classList.toggle('ap-edit', on);
     if (on) {
@@ -1660,11 +1751,19 @@
       map.eachLayer((l) => { if (l instanceof L.TileLayer) l.options.maxZoom = MAX_ZOOM; });
       map.setMaxZoom(MAX_ZOOM);
       if (!ed.code && FG.ui.selectedAirport) ed.code = FG.ui.selectedAirport;
-      note(map.getZoom() < 14 ? 'Zoom in on an airport (taxiways and stands show from zoom 14).' : '');
+      if (ed.player) {
+        const a = G.airportByCode[ed.player];
+        ed.code = ed.player;
+        ed.msg = '';
+        if (map.getZoom() < 15 || map.distance(map.getCenter(), [a.lat, a.lon]) > 3000) map.setView([a.lat, a.lon], 15);
+        note('Click where you want to build, or on what you want to change.');
+      } else note(map.getZoom() < 14 ? 'Zoom in on an airport (taxiways and stands show from zoom 14).' : '');
       drawLayer();
       renderPanel();
-      FG.fixes.target().then((t) => { ed.target = t; renderPanel(); });
+      if (!ed.player) FG.fixes.target().then((t) => { ed.target = t; renderPanel(); });
     } else {
+      if (ed.player) G.save(); // (what was built is in the save game)
+      ed.player = null;
       if (ed.draw) stopDraw();
       if (ed.edit) stopEdit();
       ed.found = null;
@@ -1701,7 +1800,10 @@
 
   FG.airportEdit = {
     get on() { return ed.on; },
+    get building() { return ed.on ? ed.player : null; },
     toggle,
+    // Build mode at an airport (see the top).
+    build(code) { toggle(true, code); },
     unsaved: () => FG.fixes.unsaved(),
     // for tests: what the editor would find or make
     straightLine, rightTurn, squareRing, curvePts, cornerAt, fitCurve, curveResult: () => ed.curve && curveResult(ed.curve), lookup, hitsAt: (lat, lon) => hitsAt([lat, lon]), madeUp,

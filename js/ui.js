@@ -454,24 +454,39 @@
   // Runway number seen when landing on heading h (e.g. 265° → "27").
   const designator = (h) => String(Math.round(((h % 360) + 360) % 360 / 10) || 36).padStart(2, '0');
 
-  function drawRunway(code, r, building) {
+  // `others`: the airport's runways. Where it crosses one, neither is painted over the other: its edges, centre
+  // line and numbers stop there (G.runwayCover).
+  function drawRunway(code, r, building, others = []) {
     const z = ui.map.getZoom();
     const pick = () => { ui.selectedAirport = code; G.dirty = true; };
-    const poly = L.polygon(runwayCorners(r, 3), building
+    const corners = runwayCorners(r, 3);
+    const poly = L.polygon(corners, building
       ? { pane: 'runways', color: COLORS.orange, weight: 2, dashArray: '6 5', fillColor: COLORS.orange, fillOpacity: 0.25, bubblingMouseEvents: false }
-      : { pane: 'runways', color: '#fff', weight: z >= 14 ? 1.5 : 1, fillColor: r[5] ? '#4b5563' : '#7fae5f', fillOpacity: 1, bubblingMouseEvents: false });
+      : { pane: 'runways', stroke: false, fillColor: r[5] ? '#4b5563' : '#7fae5f', fillOpacity: 1, bubblingMouseEvents: false });
     const len = Math.round(G.runwayLength(r));
     poly.bindTooltip(`${code} · ${len.toLocaleString('de-CH')} m ${r[5] ? 'paved' : 'grass'}${building ? ' · under construction' : ''}`, { sticky: true })
       .on('click', pick).addTo(ui.runwayLayer);
-    if (z < 14 || building || G.runwayLength(r) < 800) return;
+    if (building) return;
+    const cv = G.runwayCover(r, others);
+    const half = G.distanceKm({ lat: corners[0][0], lon: corners[0][1] }, { lat: corners[3][0], lon: corners[3][1] }) * 500;
+    const line = { pane: 'runways', interactive: false, color: '#fff' };
+    for (const s of [-1, 1]) {
+      for (const [a0, a1] of cv.open(0, cv.len, s * half)) {
+        L.polyline([cv.at(a0, s * half), cv.at(a1, s * half)], { ...line, weight: z >= 14 ? 1.5 : 1 }).addTo(ui.runwayLayer);
+      }
+    }
+    if (z < 14 || G.runwayLength(r) < 800) return;
     if (r[5]) {
-      L.polyline([[r[0], r[1]], [r[2], r[3]]], { pane: 'runways', interactive: false, color: '#fff', weight: 1, dashArray: '10 10' })
-        .addTo(ui.runwayLayer);
+      for (const [a0, a1] of cv.open(0, cv.len, -2, 2)) {
+        L.polyline([cv.at(a0, 0), cv.at(a1, 0)], { ...line, weight: 1, dashArray: '10 10' }).addTo(ui.runwayLayer);
+      }
     }
     const h = G.bearing({ lat: r[0], lon: r[1] }, { lat: r[2], lon: r[3] });
     const ends = [[0.06, designator(h)], [0.94, designator(h + 180)]];
+    const covered = cv.cover(-r[4] / 2, r[4] / 2);
     for (const [f, label] of ends) {
-      L.marker([r[0] + (r[2] - r[0]) * f, r[1] + (r[3] - r[1]) * f], {
+      if (covered.some(([c0, c1]) => f * cv.len > c0 - 30 && f * cv.len < c1 + 30)) continue; // (on the other runway)
+      L.marker(cv.at(f * cv.len, 0), {
         pane: 'runways', interactive: false,
         icon: L.divIcon({ className: 'rw-num', html: label, iconSize: [22, 14], iconAnchor: [11, 7] }),
       }).addTo(ui.runwayLayer);
@@ -635,7 +650,8 @@
   function drawRunways() {
     drawGates();
     const z = ui.map.getZoom();
-    const projects = G.state.projects.map((p) => p.code + p.kind).join();
+    // (finished construction too: the airports' runways the player built)
+    const projects = G.state.projects.map((p) => p.code + p.kind).join() + Object.entries(G.state.infra).map(([c, i]) => (i.runways ? c + i.runways.length : '')).join('');
     // (drawRunway only changes at zoom 14)
     const band = z < C.map.runwayZoom ? 0 : z < 14 ? 1 : 2;
     const view = drawnArea('runways', `${band}|${projects}|${D.airports.length}`, 0.4);
@@ -648,7 +664,9 @@
     ui.runwayLayer.clearLayers();
     if (z < C.map.runwayZoom) return;
     for (const a of list) {
-      for (const r of G.airportRunways(a.code)) drawRunway(a.code, r, false);
+      // (grass under paved, where they cross)
+      const rws = G.airportRunways(a.code);
+      for (const r of rws.slice().sort((x, y) => (x[5] ? 1 : 0) - (y[5] ? 1 : 0))) drawRunway(a.code, r, false, rws);
     }
     for (const p of G.state.projects) {
       const a = G.airportByCode[p.code];
@@ -1131,6 +1149,10 @@
   function constructionSection(code) {
     const p = G.state.projects.find((x) => x.code === code);
     let h = `<h4>Construction</h4>`;
+    // building by hand: stands, taxiways, aprons and buildings (the airport editor's build mode)
+    if (FG.airportEdit && !G.buildDenied(code)) {
+      h += `<div class="row"><button data-action="airportBuild" data-code="${code}" title="Build stands, taxiways, aprons and buildings yourself">🏗 Build at the airport</button></div>`;
+    }
     if (p) {
       const frac = Math.min(1, (G.state.time - p.start) / (p.done - p.start));
       return h + `<div>🏗 ${p.label}</div><div class="progress"><i style="width:${Math.round(frac * 100)}%"></i></div>
@@ -2496,6 +2518,7 @@
         break;
       }
       case 'buildMode': setBuildMode(!ui.buildMode); break;
+      case 'airportBuild': FG.airportEdit.build(code); break;
       case 'zoomRunways': {
         e.preventDefault();
         const a = G.airportByCode[code];
@@ -2699,6 +2722,7 @@
       get time() { return nowMinutes(); }, // fractional game minutes
       timeAt: (at) => nowMinutes(at), // ... at a moment (performance.now() scale), e.g. a frame's timestamp
       selectPlane,
+      toast,
       selectAirport(code) { ui.selectedAirport = code; G.dirty = true; },
       showAirport(code) { // select it and bring it into view, close enough for its gates
         const a = G.airportByCode[code];

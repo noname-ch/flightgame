@@ -66,7 +66,7 @@ function finish(code) {
   finished = true;
   chrome.kill('SIGKILL');
   server.close();
-  fs.rmSync(profile, { recursive: true, force: true });
+  try { fs.rmSync(profile, { recursive: true, force: true, maxRetries: 3 }); } catch { /* Chrome still writing: left for the OS */ }
   process.exit(code);
 }
 setTimeout(() => { console.error(`✗ smoke test took longer than ${MAX_RUN_MS / 60000} min`); finish(1); }, MAX_RUN_MS).unref();
@@ -278,6 +278,49 @@ try {
     step(`editor: stands ${ed.n0} → ${ed.n1}${ed.real ? '' : ' (made-up layout)'}`);
     if (!ed.unsaved) errors.push('airport editor: the new stand is not an unsaved fix');
     if (ed.real && ed.n1 !== ed.n0 + 1) errors.push(`airport editor: the new stand did not reach the layout (${ed.n0} → ${ed.n1})`);
+  }
+
+  step(`build mode at ${home} (own it, 🏗 Build at the airport → add a stand → it costs, undo gives it back)`);
+  const bm = await evaluate(async (code) => {
+    G.infraOf(code).stake = 100;
+    FG.ui.showAirport(code);
+    G.dirty = true;
+    await new Promise((r) => setTimeout(r, 800));
+    const btn = document.querySelector(`[data-action="airportBuild"][data-code="${code}"]`);
+    if (!btn) return { err: 'no "Build at the airport" button in the airport panel' };
+    btn.click();
+    if (FG.airportEdit.building !== code) return { err: 'build mode did not open' };
+    const lay = FG.layouts.get(code);
+    const a = G.airportByCode[code];
+    const ring = lay && lay.aprons.slice().sort((x, y) => y.length - x.length)[0];
+    const p = ring ? [ring.reduce((s, q) => s + q[0], 0) / ring.length, ring.reduce((s, q) => s + q[1], 0) / ring.length] : [a.lat, a.lon];
+    const stands0 = G.apronOf(code).stands.length;
+    // (what it charges: the money itself moves with the flights meanwhile)
+    const charged = [];
+    const pay = G.payForBuilding;
+    G.payForBuilding = function (c, full, what) { const err = pay.call(this, c, full, what); if (!err) charged.push(full); return err; };
+    FG.airportEdit.click(p[0], p[1]);
+    if (document.querySelector('.ae-pop [data-ae="add"][data-kind="runway"]')) return { err: 'build mode offers to add a runway' };
+    const b = document.querySelector('.ae-pop [data-ae="add"][data-kind="stand"]');
+    if (!b) return { err: 'no "Stand" button in the build popup' };
+    b.click();
+    await new Promise((r) => setTimeout(r, 300));
+    const out = { paid: charged[0] || 0, ops: FG.fixes.player.ops(code).length, stands0, stands1: G.apronOf(code).stands.length, devUnsaved: FG.fixes.unsaved().length };
+    document.querySelector('#apedit [data-ae="undo"]').click();
+    out.back = -(charged[1] || 0);
+    out.left = FG.fixes.player.ops(code).length;
+    G.payForBuilding = pay;
+    FG.airportEdit.toggle(false);
+    return out;
+  }, home);
+  if (bm.err) errors.push(`build mode: ${bm.err}`);
+  else {
+    step(`build mode: stands ${bm.stands0} → ${bm.stands1}, paid ${bm.paid}, back ${bm.back}`);
+    if (!(bm.paid > 0)) errors.push('build mode: the stand cost nothing');
+    if (!bm.ops) errors.push('build mode: the stand is not in the save game (FG.fixes.player)');
+    if (bm.devUnsaved) errors.push('build mode: it made an airport fix (it must stay in the save game)');
+    if (bm.stands1 < bm.stands0) errors.push(`build mode: the airport lost stands (${bm.stands0} → ${bm.stands1})`);
+    if (bm.back !== bm.paid || bm.left) errors.push(`build mode: undo did not take it back (${bm.back} of ${bm.paid} back, ${bm.left} changes left)`);
   }
 
   step(`airport editor: a new taxiway as a curve at ${home} (Add here → Curve, two points, 60°, Apply)`);

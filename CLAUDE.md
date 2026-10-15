@@ -73,6 +73,16 @@ Play online: https://noname-ch.github.io/flightgame/ (GitHub Pages, deployed fro
   mapped, game.js `apronOf` makes a layout up. The editor lists those parts too (`madeUp(code)`): the first
   change turns them all into fix ops, so a made-up apron can be deleted. Never let an airport lose its last
   stand: the game would make it up again.
+- Build mode (the player's airport building): `FG.airportEdit.build(code)` opens the same editor with
+  `ed.player` set. Its ops go to `FG.fixes.player` (kept in `G.state.airportOps`, handed over by
+  `G.registerBuilt` on every new or loaded game), never to `js/data/fixes.js`. `FG.fixes.ops(code)` is still
+  the developer fixes only; `FG.fixes.all(code)` is both, and that is what the layouts get. No runway ops in
+  build mode: runways come from construction (`placeRunway` in game.js picks the spot, `connectRunway` adds
+  their taxiways as player ops where the airport has a layout of its own). Prices: `C.airports.build`,
+  charged in `commit` through `G.payForBuilding`. The first change at a made-up airport adopts the whole
+  made-up layout (else the airport would be left with only the new piece).
+- Crossing runways: `G.runwayCover(r, others)` says where other runways lie on a runway; ui.js `drawRunway` and
+  view3d.js `runwayPaint` leave their lines and paint out there.
 - Taxiway widths: a taxiway fix op may carry `w` (metres). fixes.js puts it on the line (`line.w`), and
   `G.taxiwaysOf` / `G.drawnTaxiways` pass it on, so 2D and 3D draw that width (default 23 m at size ≥3, else
   15 m). `js/taxifit.js` (`FG.taxiFit.fit(line, { keep })`) reads the Esri satellite picture across the line,

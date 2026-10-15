@@ -295,11 +295,16 @@ function runwayFrame(r) {
 
 // The white paint of a paved runway, as rectangles: side stripes, the dashed centre line and, from both ends,
 // the threshold stripes, the aiming point and the touchdown zone bars (fewer on short and narrow runways).
-// And its two numbers, each read from its own end.
-function runwayPaint(f) {
+// And its two numbers, each read from its own end. `cover` (G.runwayCover): where another runway crosses it,
+// none of it is painted, so that neither runway is painted over the other.
+function runwayPaint(f, cover) {
   const { len, width: W } = f;
   const polys = [];
-  const rect = (a0, a1, c, w) => polys.push([f.at(a0, c - w / 2), f.at(a1, c - w / 2), f.at(a1, c + w / 2), f.at(a0, c + w / 2)]);
+  const rect = (a0, a1, c, w) => {
+    for (const [b0, b1] of cover ? cover.open(Math.min(a0, a1), Math.max(a0, a1), c - w / 2, c + w / 2) : [[a0, a1]]) {
+      polys.push([f.at(b0, c - w / 2), f.at(b1, c - w / 2), f.at(b1, c + w / 2), f.at(b0, c + w / 2)]);
+    }
+  };
   for (const s of [-1, 1]) rect(0, len, s * (W / 2 - 1), 1);
   for (let x = 80; x + 30 <= len - 80; x += 50) rect(x, x + 30, 0, 1.2);
   const n = W >= 45 ? 12 : W >= 30 ? 8 : W >= 23 ? 6 : 4; // threshold stripes
@@ -320,9 +325,15 @@ function runwayPaint(f) {
     }
   }
   const num = (h) => String(Math.round(h / 10) % 36 || 36).padStart(2, '0');
+  // (a number that would lie on the other runway is left out)
+  const free = (x) => {
+    if (!cover) return true;
+    const o = cover.open(x - 20, x + 20, -W / 4, W / 4);
+    return o.length === 1 && o[0][1] - o[0][0] >= 40;
+  };
   return {
     polys,
-    numbers: len < 400 ? [] : [{ at: f.at(50, 0), text: num(f.hdg), rot: f.hdg }, { at: f.at(len - 50, 0), text: num(f.hdg + 180), rot: (f.hdg + 180) % 360 }],
+    numbers: len < 400 ? [] : [{ at: f.at(50, 0), text: num(f.hdg), rot: f.hdg, x: 50 }, { at: f.at(len - 50, 0), text: num(f.hdg + 180), rot: (f.hdg + 180) % 360, x: len - 50 }].filter((n) => free(n.x)),
   };
 }
 
@@ -357,15 +368,18 @@ function gateFeatures(list, gates, hide = []) {
   const path = (pts, properties) => feats.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: line(pts) }, properties });
   for (const a of list) {
     const paved = []; // frames of the paved runways
-    for (const r of G.airportRunways(a.code)) {
+    const rws = G.airportRunways(a.code);
+    // (grass under paved, where they cross)
+    for (const r of rws.slice().sort((x, y) => (x[5] ? 1 : 0) - (y[5] ? 1 : 0))) {
       const ends = [[r[0], r[1]], [r[2], r[3]]];
       const rw = strip(ends[0], ends[1], Math.max(18, r[4] || 30));
       poly(rw, { kind: 'runway', paved: r[5] ? 1 : 0 });
       if (!r[5] || !gates) continue;
-      path(ends, { kind: 'rwline' }); // from afar; close up the paint itself
+      const cover = G.runwayCover(r, rws);
+      for (const [a0, a1] of cover.open(0, cover.len, -2, 2)) path([cover.at(a0, 0), cover.at(a1, 0)], { kind: 'rwline' }); // from afar; close up the paint itself
       const f = runwayFrame(r);
       paved.push(f);
-      const paint = runwayPaint(f);
+      const paint = runwayPaint(f, cover);
       for (const p of paint.polys) poly(p, { kind: 'rwpaint' });
       const size = metresWidth(f.width >= 45 ? 15 : f.width / 3, a.lat); // height of the numbers
       for (const n of paint.numbers) {

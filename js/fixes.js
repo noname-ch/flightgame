@@ -17,6 +17,9 @@
 // game runs from ./play.sh; commit the file then), or on the website (GitHub Pages) as a commit to the repo on
 // GitHub, for contributors signed in with a GitHub token (GitHub takes it only from those who may push to the
 // repo). Until the website has the new file, and for everyone else, the fixes stay in this browser.
+// The player's own building (the airport editor's build mode, js/airportedit.js) is a second list of
+// operations per airport, kept in the save game (G.state.airportOps) and applied after these: it changes only
+// that game, and is never saved anywhere else.
 (function () {
   const D = FG.data;
   const LOCAL = 'flightgame.fixes';
@@ -43,6 +46,9 @@
 
   const saved = (code) => local[code] || repo[code] || [];
   const opsOf = (code) => drafts[code] || saved(code);
+  let own = {}; // code -> the save game's operations (G.state.airportOps)
+  // Everything applied to an airport: the fixes, then what the player built there.
+  const allOps = (code) => (own[code] && own[code].length ? opsOf(code).concat(own[code]) : opsOf(code));
   const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
   const copy = (g) => JSON.parse(JSON.stringify(g));
 
@@ -134,7 +140,7 @@
   function fixRunways(code) {
     if (!(code in runways0)) runways0[code] = D.runways[code] || null;
     delete missedRw[code];
-    const ops = opsOf(code).filter((o) => o.kind === 'runway');
+    const ops = allOps(code).filter((o) => o.kind === 'runway');
     if (!ops.length) {
       if (runways0[code]) D.runways[code] = runways0[code]; else delete D.runways[code];
       return;
@@ -145,7 +151,7 @@
   }
   // An airport a fix adds stays until the page is loaded again (planes may fly there by then).
   function fixAirports(code) {
-    for (const op of opsOf(code)) {
+    for (const op of allOps(code)) {
       if (op.kind !== 'airport' || op.op !== 'add' || D.airports.some((a) => a.code === op.geom.code)) continue;
       const a = Object.assign({ city: '', country: '', size: 1 }, copy(op.geom), { fixed: true });
       D.airports.push(a);
@@ -170,7 +176,7 @@
   // The airport's layout (from its file or the tiles: `raw`, null if there is none) with its fixes. Without a
   // layout to start from, the fixes make one of their own (an apron and a stand at least make it usable).
   function layout(code, raw) {
-    const ops = opsOf(code);
+    const ops = allOps(code);
     const own = ops.filter((o) => LISTS[o.kind]);
     const rw = ops.some((o) => o.kind === 'runway');
     const br = ops.filter((o) => o.kind === 'bridges').pop();
@@ -184,9 +190,10 @@
     for (const op of own) {
       if (!apply(out[LISTS[op.kind]], op, HEIGHTS[op.kind] && out.heights[HEIGHTS[op.kind]])) (missedLay[code] = missedLay[code] || []).push(op);
     }
-    // Planes may taxi along the runways (links): along the fixed ones, not the old ones.
-    const rws = D.runways[code] || [];
-    if (rw || !raw) {
+    // Planes may taxi along the runways (links): along the fixed ones, not the old ones (and along the ones
+    // the player built, game.js airportRunways).
+    const rws = (FG.game && FG.game.state ? FG.game.airportRunways(code) : D.runways[code]) || [];
+    if (rw || !raw || (rws.length && rws !== D.runways[code])) {
       const old = runways0[code] || [];
       const along = (l, r) => (ptM(l[0], [r[0], r[1]]) < 30 && ptM(l[l.length - 1], [r[2], r[3]]) < 30) ||
         (ptM(l[0], [r[2], r[3]]) < 30 && ptM(l[l.length - 1], [r[0], r[1]]) < 30);
@@ -320,6 +327,7 @@
     version: 0,
     LISTS,
     ops: opsOf,
+    all: allOps,
     saved,
     has: (code) => opsOf(code).length > 0,
     rev: (code) => revs[code] || 0,
@@ -407,6 +415,21 @@
         if (!r.ok) throw new Error(`GitHub answered ${r.status}.`);
         return r.json();
       },
+    },
+    // The save game's own operations (game.js hands its G.state.airportOps over on every new or loaded game).
+    useSave(ops) {
+      const codes = new Set([...Object.keys(own), ...Object.keys(ops || {})]);
+      own = ops || {};
+      for (const code of codes) changed(code);
+    },
+    player: {
+      ops: (code) => own[code] || [],
+      // Change what the player built at an airport (the maps show it at once).
+      set(code, ops) {
+        if (ops.length) own[code] = ops; else delete own[code];
+        changed(code);
+      },
+      codes: () => Object.keys(own).filter((c) => own[c].length),
     },
     // js/data/fixes.js with every fix in it (for when there is no dev server to write it).
     fileText: () => {

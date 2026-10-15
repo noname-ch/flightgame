@@ -74,7 +74,7 @@
   }
   // The layout the game uses: the one read, with the fixes (if there is enough for a layout).
   function settle(code, lay) {
-    const ops = FG.fixes ? FG.fixes.ops(code).filter((o) => o.kind === 'stand' && o.op !== 'add') : [];
+    const ops = FG.fixes ? FG.fixes.all(code).filter((o) => o.kind === 'stand' && o.op !== 'add') : [];
     raw[code] = lay = tidy(lay, ops.map((o) => (o.op === 'set' ? o.from : o.geom)));
     const out = FG.fixes ? FG.fixes.layout(code, lay) : lay;
     loaded[code] = usable(out) ? out : null;

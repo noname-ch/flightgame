@@ -1207,6 +1207,249 @@
   // ---------- expansion preview (developer tools) ----------
   // What the possible construction at an airport would add: each kind of runway where it would be built
   // (with its taxiway), and the apron, stands and buildings of the next terminal size.
+  // ---------- crossing runways ----------
+  // Where other runways cover a runway: the maps leave the paint of both out there (side stripes, centre line,
+  // markings), so that where two runways cross neither is painted over the other. Returns cover(lo, hi): the
+  // stretches [from, to] (metres from the runway's first end) where its band `lo`..`hi` metres right of the centre
+  // line lies on another runway, and at(along, across): that point [lat, lon].
+  function runwayCover(r, others) {
+    const len = runwayLength(r);
+    const rwy = { thr: [r[0], r[1]], hdg: bearing({ lat: r[0], lon: r[1] }, { lat: r[2], lon: r[3] }), len };
+    const quads = [];
+    for (const o of others) {
+      if (o === r || [0, 1, 2, 3].every((i) => o[i] === r[i])) continue;
+      const olen = runwayLength(o);
+      const orw = { thr: [o[0], o[1]], hdg: bearing({ lat: o[0], lon: o[1] }, { lat: o[2], lon: o[3] }), len: olen };
+      const half = Math.max(18, o[4] || 30) / 2;
+      const q = [[0, -half], [olen, -half], [olen, half], [0, half]].map(([al, ac]) => rwyCoords(rwy, rwyPoint(orw, al, ac)));
+      // (only those that come near it)
+      if (q.every((p) => p.along < -50) || q.every((p) => p.along > len + 50) || q.every((p) => p.across > 200) || q.every((p) => p.across < -200)) continue;
+      quads.push(q);
+    }
+    // the stretch of the line `across` that lies in quad q, or null
+    const span = (q, across) => {
+      const xs = [];
+      for (let i = 0; i < 4; i++) {
+        const a = q[i], b = q[(i + 1) % 4];
+        if ((a.across - across) * (b.across - across) > 0 || a.across === b.across) continue;
+        xs.push(a.along + ((across - a.across) / (b.across - a.across)) * (b.along - a.along));
+      }
+      return xs.length >= 2 ? [Math.min(...xs), Math.max(...xs)] : null;
+    };
+    return {
+      len,
+      cover(lo, hi = lo) {
+        const out = [];
+        for (const q of quads) {
+          let s = null;
+          for (const c of lo === hi ? [lo] : [lo, (lo + hi) / 2, hi]) {
+            const x = span(q, c);
+            if (x) s = s ? [Math.min(s[0], x[0]), Math.max(s[1], x[1])] : x;
+          }
+          if (s) out.push(s);
+        }
+        out.sort((a, b) => a[0] - b[0]);
+        const merged = [];
+        for (const s of out) {
+          const last = merged[merged.length - 1];
+          if (last && s[0] <= last[1]) last[1] = Math.max(last[1], s[1]); else merged.push(s.slice());
+        }
+        return merged;
+      },
+      // the parts of [a0, a1] that are not covered
+      open(a0, a1, lo, hi = lo) {
+        const parts = [];
+        let at = a0;
+        for (const [c0, c1] of this.cover(lo, hi)) {
+          if (c1 <= at) continue;
+          if (c0 >= a1) break;
+          if (c0 > at) parts.push([at, c0]);
+          at = Math.max(at, c1);
+        }
+        if (at < a1) parts.push([at, a1]);
+        return parts;
+      },
+      at: (along, across) => rwyPoint(rwy, along, across),
+    };
+  }
+
+  // ---------- where new runways go ----------
+  // A new runway is put where it is clear of the airport: its aprons and buildings (150 m: the runway strip and
+  // the clearance round it), the other runways (a parallel one at least 400 m from them; a crosswind runway may
+  // cross them, js/ui.js and view3d.js then paint neither over the other) and the runways of airports nearby.
+  // Of the places that are clear, the first of a list in the order a planner would take them.
+  function siteObstacles(code) {
+    const ap = apronOf(code);
+    const rings = [];
+    const add = (r, m, w) => { if (r && r.length > 2) rings.push({ r, m, w }); };
+    for (const r of ap.aprons || [ap.apron]) add(r, 90, 3);
+    for (const r of ap.pads || []) add(r, 90, 3);
+    add(ap.terminal, 150, 4);
+    for (const b of ap.buildings) add(b.ring, 150, 2);
+    const known = FG.obstacles && FG.obstacles[code];
+    if (known) for (const r of known.rings) add(r, 120, 1);
+    return { rings, lines: known ? known.lines : [] };
+  }
+  // How badly a runway from `thr` on heading `hdg` (len, width m) hits what is in the way (0: not at all).
+  // `runways`: [[lat, lon, lat, lon], margin] the runways it must keep off.
+  function runwayHits(thr, hdg, len, width, obst, runways) {
+    const rwy = { thr, hdg, len };
+    const C = (p) => rwyCoords(rwy, p);
+    const x0 = -60, x1 = len + 60, y0 = -width / 2, y1 = width / 2;
+    // Does the segment p-q (runway coordinates) come within `m` of the runway's rectangle?
+    const hits = (p, q, m) => {
+      let t0 = 0;
+      let t1 = 1;
+      for (const [d, lo, hi, v] of [[q.along - p.along, x0 - m, x1 + m, p.along], [q.across - p.across, y0 - m, y1 + m, p.across]]) {
+        if (Math.abs(d) < 1e-9) { if (v < lo || v > hi) return false; continue; }
+        const ta = (lo - v) / d;
+        const tb = (hi - v) / d;
+        t0 = Math.max(t0, Math.min(ta, tb));
+        t1 = Math.min(t1, Math.max(ta, tb));
+        if (t0 > t1) return false;
+      }
+      return true;
+    };
+    let bad = 0;
+    for (const { r, m, w } of obst.rings) {
+      const q = r.map(C);
+      if (q.every((p) => p.along < x0 - m || p.along > x1 + m || Math.abs(p.across) > width / 2 + m + 2000)) continue;
+      if (q.some((p, i) => hits(p, q[(i + 1) % q.length], m))) bad += w;
+    }
+    for (const [p, q] of obst.lines) if (hits(C(p), C(q), 25)) bad += 0.2; // (a taxiway can be moved; a runway is better off it)
+    for (const [r, m] of runways) if (hits(C([r[0], r[1]]), C([r[2], r[3]]), m)) bad += 5;
+    return bad;
+  }
+  // The runway [lat, lon, lat, lon, width, paved] for a project: `orient` 'parallel', 'cross' or 'new'.
+  function placeRunway(code, len, orient) {
+    const a = airportByCode[code];
+    const rws = airportRunways(code);
+    const width = len >= 2500 ? 45 : 30;
+    const obst = siteObstacles(code);
+    const nearby = neighbours(code, 15).flatMap((b) => airportRunways(b.code)).map((r) => [r, 300]);
+    const make = (mid, hdg) => {
+      const e1 = offsetPoint(mid[0], mid[1], hdg + 180, len / 2);
+      const e2 = offsetPoint(mid[0], mid[1], hdg, len / 2);
+      return [e1[0], e1[1], e2[0], e2[1], width, 1];
+    };
+    const cands = []; // [mid, hdg, extra runways to keep off]
+    const main = rws.length ? rws.reduce((m, x) => (runwayLength(x) > runwayLength(m) ? x : m), rws[0]) : null;
+    if (!main) {
+      for (const h of [70, 50, 90, 30, 110, 10, 130, 150]) {
+        for (const shift of [0, 600, -600, 1200, -1200]) cands.push([offsetPoint(a.lat, a.lon, h + 90, shift), h, []]);
+      }
+    } else {
+      const h = bearing({ lat: main[0], lon: main[1] }, { lat: main[2], lon: main[3] });
+      const mlen = runwayLength(main);
+      const mid = [(main[0] + main[2]) / 2, (main[1] + main[3]) / 2];
+      const ap = apronOf(code);
+      // the apron's side of the main runway: a parallel runway goes to the other side first
+      const apSide = rwyCoords({ thr: [main[0], main[1]], hdg: h }, ap.ref || [a.lat, a.lon]).across < 0 ? -1 : 1;
+      if (orient === 'cross') {
+        // across the main runway, from right angles down to 45 degrees off it, where it crosses near an end or
+        // in the middle; or where it only meets it with its end (a V)
+        for (const turn of [90, -90, 60, -60, 120, -120, 45, -45, 135, -135]) {
+          for (const at of [0.2, 0.8, 0.5, 0.35, 0.65, 0.05, 0.95]) {
+            for (const own of [0.5, 0.25, 0.75, 0.05, 0.95]) {
+              const x = offsetPoint(main[0], main[1], h, mlen * at);
+              cands.push([offsetPoint(x[0], x[1], h + turn, len * (0.5 - own)), h + turn, rws.filter((r) => r !== main).map((r) => [r, 0])]);
+            }
+          }
+        }
+      } else {
+        for (const sep of [400, 550, 760, 1035, 1300, 1600, 2000]) {
+          for (const side of [-apSide, apSide]) {
+            for (const shift of [0, (mlen - len) / 2, -(mlen - len) / 2, 400, -400]) {
+              const c = offsetPoint(mid[0], mid[1], h + 90 * side, sep);
+              cands.push([offsetPoint(c[0], c[1], h, shift), h, rws.map((r) => [r, 300])]);
+            }
+          }
+        }
+      }
+    }
+    let best = null;
+    for (const [mid, hdg, keepOff] of cands) {
+      const r = make(mid, hdg);
+      const bad = runwayHits([r[0], r[1]], (hdg + 360) % 360, len, width, obst, [...keepOff, ...nearby]);
+      if (!best || bad < best.bad) best = { bad, r };
+      if (!bad) break;
+    }
+    return best.r.map((v, i) => (i < 4 ? Math.round(v * 1e5) / 1e5 : v));
+  }
+
+  // Taxiways for a new runway at an airport with a layout of its own (real, or built by the player; a layout
+  // the game makes up has them already, taxiwaysOf): a parallel taxiway on the apron's side where none runs yet,
+  // exits at right angles at both ends (and at the thirds of a long runway) where there is none, and a link from
+  // the new parallel taxiway into the taxiways there are. Lines [[lat, lon], ..].
+  function runwayTaxiways(code, r) {
+    const ap = apronOf(code);
+    const len = runwayLength(r);
+    const rwy = { thr: [r[0], r[1]], hdg: bearing({ lat: r[0], lon: r[1] }, { lat: r[2], lon: r[3] }), len };
+    const W = r[4] || 30;
+    const ref = ap.ref || ap.terminal[0];
+    const off = (rwyCoords(rwy, ref).across < 0 ? -1 : 1) * (W >= 45 ? 180 : W >= 30 ? 150 : 100);
+    const segs = taxiwaysOf(code);
+    // the nearest point of the taxiways there are: { d (m), q }
+    const nearest = (p) => {
+      const kx = 111320 * Math.cos(toRad(p[0]));
+      let best = { d: Infinity, q: null };
+      for (const [a, b] of segs) {
+        const ax = (a[1] - p[1]) * kx, ay = (a[0] - p[0]) * 111320;
+        const dx = (b[1] - a[1]) * kx, dy = (b[0] - a[0]) * 111320;
+        const t = Math.max(0, Math.min(1, -(ax * dx + ay * dy) / (dx * dx + dy * dy || 1)));
+        const d = Math.hypot(ax + t * dx, ay + t * dy);
+        if (d < best.d) best = { d, q: [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])] };
+      }
+      return best;
+    };
+    const lines = [];
+    // the parallel taxiway, in pieces where no taxiway runs along there yet
+    const STEP = 25;
+    const n = Math.max(1, Math.round(len / STEP));
+    const at = Array.from({ length: n + 1 }, (_, i) => rwyPoint(rwy, (len * i) / n, off));
+    const there = at.map((p) => nearest(p).d < 40);
+    let fresh = 0;
+    for (let i = 0; i <= n;) {
+      if (there[i]) { i++; continue; }
+      let j = i;
+      while (j < n && !there[j + 1]) j++;
+      if ((j - i) * STEP >= 100 || i === 0 || j === n) {
+        const a = Math.max(0, i - 1), b = Math.min(n, j + 1);
+        const line = [at[a], at[b]];
+        // (a piece that ends beside a taxiway joins it)
+        for (const k of [a, b]) {
+          if (!there[k]) continue;
+          const f = nearest(at[k]);
+          if (f.d > 3) lines.push([at[k], f.q]);
+        }
+        lines.push(line);
+        fresh += (b - a) * STEP;
+      }
+      i = j + 1;
+    }
+    // exits
+    const exits = [0, len];
+    if (len >= 1500) exits.push(len / 3, (2 * len) / 3);
+    for (const x of exits) {
+      if (nearest(rwyPoint(rwy, x, off / 2)).d < 30) continue;
+      lines.push([rwyPoint(rwy, x, 0), rwyPoint(rwy, x, off)]);
+    }
+    // all of the parallel taxiway is new: a way from it to the nearest taxiway (or the apron)
+    if (fresh >= len - 1) {
+      let best = { d: Infinity };
+      for (const p of at) {
+        const f = nearest(p);
+        if (f.d < best.d) best = { d: f.d, p, q: f.q };
+      }
+      if (!best.q) { // no taxiways at all: to the apron
+        for (const p of at) for (const q of ap.aprons ? ap.aprons.flat() : ap.apron) { const d = metres(p, q); if (d < best.d) best = { d, p, q }; }
+      }
+      if (best.q && best.d < 5000) lines.push([best.p, best.q]);
+    }
+    const r5 = (v) => Math.round(v * 1e5) / 1e5;
+    return lines.map((l) => l.map((p) => [r5(p[0]), r5(p[1])])).filter((l) => metres(l[0], l[1]) > 2);
+  }
+
   function expansionPreview(code) {
     const out = { runways: [], taxiways: [], stands: [], buildings: [], aprons: [] };
     const ap = apronOf(code);
@@ -1219,7 +1462,7 @@
       if (!geo) continue;
       const r = geo.runway;
       out.runways.push({ r, label: o.label });
-      if (ap.real) continue; // its taxiway would have to join the real ones
+      if (ap.real) { out.taxiways.push(...runwayTaxiways(code, r).flatMap((l) => l.slice(1).map((p, i) => [l[i], p]))); continue; }
       const len = runwayLength(r);
       const rwy = { thr: [r[0], r[1]], hdg: bearing({ lat: r[0], lon: r[1] }, { lat: r[2], lon: r[3] }), len };
       const off = taxiwayOffset(rwy, ap.ref);
@@ -1757,7 +2000,7 @@
     airportByCode, distanceKm, dist, bearing, interpolate, catchment, dailyDemand,
     ticketPrice, routeKey, blockMinutes, landingFee, slotUpfront, slotWeekly,
     priceNew, fitsAirport, fitsReason, crewFor, factoryOf, onSale, dateOf,
-    airportSize, airportRunways, runwayLength, longestRunway, runwayNeed, attraction,
+    airportSize, airportRunways, runwayLength, runwayTaxiways, runwayCover, longestRunway, runwayNeed, attraction,
     flightTrack, flightState, legTrack, cruiseFt, perf, windFrom, gateOf, apronOf, taxiwaysOf, drawnTaxiways, expansionPreview, terminalPiece,
     fmtMoney, fmtTime, fmtClock, fmtDuration,
 
@@ -2115,6 +2358,9 @@
         airportByCode[a.code] = a;
         delete catchmentCache[a.code];
       }
+      // What the player built at airports (the airport editor's build mode): this game's own airport fixes.
+      if (!this.state.airportOps) this.state.airportOps = {};
+      if (FG.fixes && FG.fixes.useSave) FG.fixes.useSave(this.state.airportOps);
     },
 
     save() {
@@ -3339,8 +3585,11 @@
       if (o.err) return o.err;
       if (s.money < o.cost) return `Not enough money (${fmtMoney(o.cost)} needed).`;
       s.money -= o.cost;
-      s.projects.push({ code, kind, len: o.len, orient: o.orient, label: o.label, cost: o.cost, full: o.full,
-        start: s.time, done: s.time + o.weeks * 7 * DAY });
+      const project = { code, kind, len: o.len, orient: o.orient, label: o.label, cost: o.cost, full: o.full,
+        start: s.time, done: s.time + o.weeks * 7 * DAY };
+      const geo = this.plannedRunway(project);
+      if (geo) project.geo = geo;
+      s.projects.push(project);
       this.log(`Construction started at ${airportByCode[code].name}: ${o.label} – your share ${fmtMoney(o.cost)}, ` +
         `ready in ${o.weeks} weeks.`, 'cost');
       this.dirty = true;
@@ -3349,7 +3598,7 @@
 
     // Geometry of a runway that a project will add (also drawn while it is being built).
     plannedRunway(p) {
-      const a = airportByCode[p.code];
+      if (p.geo) return p.geo; // (worked out when it was ordered: it stays where it was shown)
       const rws = airportRunways(p.code);
       if (p.kind === 'extend') {
         const r = rws.reduce((m, x) => (runwayLength(x) > runwayLength(m) ? x : m), rws[0]);
@@ -3359,21 +3608,7 @@
         return { replace: r, runway: [e1[0], e1[1], e2[0], e2[1], r[4], 1] };
       }
       if (p.kind !== 'runway') return null;
-      let center = [a.lat, a.lon];
-      let h = 70; // prevailing westerlies
-      const main = rws.length ? rws.reduce((m, x) => (runwayLength(x) > runwayLength(m) ? x : m), rws[0]) : null;
-      if (main) {
-        h = bearing({ lat: main[0], lon: main[1] }, { lat: main[2], lon: main[3] });
-        center = [(main[0] + main[2]) / 2, (main[1] + main[3]) / 2];
-        if (p.orient === 'cross') h += 90;
-        else {
-          const k = rws.length;
-          center = offsetPoint(center[0], center[1], h + 90, 400 * Math.ceil(k / 2) * (k % 2 ? 1 : -1));
-        }
-      }
-      const e1 = offsetPoint(center[0], center[1], h + 180, p.len / 2);
-      const e2 = offsetPoint(center[0], center[1], h, p.len / 2);
-      return { runway: [e1[0], e1[1], e2[0], e2[1], p.len >= 2500 ? 45 : 30, 1] };
+      return { runway: placeRunway(p.code, p.len, rws.length ? p.orient || 'parallel' : 'new') };
     },
 
     finishProjects() {
@@ -3382,8 +3617,11 @@
         const inf = this.infraOf(p.code);
         const geo = this.plannedRunway(p);
         if (geo) {
-          const rws = airportRunways(p.code).filter((r) => r !== geo.replace);
+          // (the runway an extension replaces: by its ends, as the project kept a copy of it)
+          const same = (r) => geo.replace && [0, 1, 2, 3].every((i) => Math.abs(r[i] - geo.replace[i]) < 1e-5);
+          const rws = airportRunways(p.code).filter((r) => !same(r));
           inf.runways = [geo.runway, ...rws].map((r) => r.map((v, i) => (i < 4 ? Math.round(v * 1e5) / 1e5 : v)));
+          this.connectRunway(p.code, inf.runways[0]);
         }
         if (p.kind === 'terminal') inf.terminal = (inf.terminal || 0) + 1;
         if (p.kind === 'airport') inf.runways = [this.plannedRunway({ code: p.code, kind: 'runway', len: A.newAirportRunway }).runway];
@@ -3394,6 +3632,44 @@
       }
       s.projects = s.projects.filter((x) => s.time < x.done);
       this.dirty = true;
+    },
+
+    // Building by hand at an airport (the airport editor's build mode, js/airportedit.js): at an airport you
+    // built, once it is open, or where you have the board's stake. Null when you may, else why not.
+    buildDenied(code) {
+      const a = airportByCode[code];
+      if (!a || a.factory) return 'Not at a factory.';
+      if (a.built) return a.open ? null : `${a.name} is still being built.`;
+      return this.stake(code) >= A.boardStake ? null : `Own ${A.boardStake}% of ${a.name} to build there.`;
+    },
+    // Pay your share of building work worth `full` there (negative: money back, as when it is undone). Null when
+    // paid, else why not.
+    payForBuilding(code, full, what) {
+      const s = this.state;
+      const cost = Math.round((full * this.stake(code)) / 100);
+      if (cost > 0 && s.money < cost) return `Not enough money (${fmtMoney(cost)} needed).`;
+      s.money -= cost;
+      const inf = this.infraOf(code);
+      inf.invested = Math.max(0, (inf.invested || 0) + full);
+      if (cost) this.log(`${airportByCode[code].name}: ${what} – ${cost > 0 ? `your share ${fmtMoney(cost)}` : `${fmtMoney(-cost)} back`}.`, cost > 0 ? 'cost' : 'good');
+      this.dirty = true;
+      return null;
+    },
+
+    // A new runway joins the taxiways (runwayTaxiways): they become part of what the player built there (the
+    // airport editor's build mode can move them). Where the game makes the layout up, it lays them out itself.
+    connectRunway(code, r) {
+      delete catchmentCache[code];
+      const ap = apronOf(code);
+      if (ap.real && FG.fixes && FG.fixes.player) {
+        const lines = runwayTaxiways(code, r);
+        if (lines.length) {
+          FG.fixes.player.set(code, FG.fixes.player.ops(code).concat(lines.map((geom) => ({ op: 'add', kind: 'taxiway', geom }))));
+          return lines.length;
+        }
+      }
+      if (FG.layouts) FG.layouts.refix(code); // (its runways are links again)
+      return 0;
     },
 
     // Build a brand-new airfield; it opens after construction and is 100% yours.
