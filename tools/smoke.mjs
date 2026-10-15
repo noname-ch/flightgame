@@ -220,6 +220,24 @@ try {
   if (fit.err || !fit.bars || !fit.ok) errors.push(`planner fit: ${fit.err || `${fit.bars} slot bars`}`);
   else step(`fit: ${fit.bars} airport slot bars`);
 
+  step('Fleet: rename the first plane (✏️, type a name, Enter)');
+  const named = await evaluate(async () => {
+    document.querySelector('#rail [data-tab="fleet"]').click();
+    await new Promise((r) => setTimeout(r, 300));
+    const btn = document.querySelector('[data-action="rename"]');
+    if (!btn) return 'no ✏️ button on the plane card';
+    btn.click();
+    await new Promise((r) => setTimeout(r, 300));
+    const i = document.getElementById('rename-input');
+    if (!i) return 'no name field';
+    i.value = 'Smoke Test One';
+    i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await new Promise((r) => setTimeout(r, 300));
+    const p = G.plane(i.dataset.plane);
+    return p.name === 'Smoke Test One' && document.querySelector('.plane-card h3').textContent.includes('Smoke Test One') ? null : `name not shown (${p.name})`;
+  });
+  if (named) errors.push(`rename: ${named}`);
+
   step('full speed for 20 s with the 2D map, every section opened');
   await evaluate(() => document.querySelector('#speed-pop [data-speed]:last-child').click());
   const t0 = await evaluate(() => G.state.time);

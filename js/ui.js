@@ -833,7 +833,7 @@
           color: draft ? COLORS.orange : active ? COLORS.blue : COLORS.gray,
           weight: draft ? weight + 1 : weight, opacity: 1,
           dashArray: draft ? '0.1 9' : null,
-        }).bindTooltip(`${p.id}: ${stops.join(' → ')} ↺`, { sticky: true })
+        }).bindTooltip(`${G.planeLabel(p)}: ${stops.join(' → ')} ↺`, { sticky: true })
           .on('click', () => selectPlane(p.id)).addTo(ui.routeLayer);
       }
       if (selected && p.status === 'flying') drawTrack(p);
@@ -848,7 +848,7 @@
         L.polyline(ferryPts, {
           pane: 'routes', bubblingMouseEvents: false,
           color: COLORS.purple, weight: selected ? 4 : 2.5, opacity: 1, dashArray: '7 7',
-        }).bindTooltip(`${p.id}: ferry to ${ferryTo}`, { sticky: true })
+        }).bindTooltip(`${G.planeLabel(p)}: ferry to ${ferryTo}`, { sticky: true })
           .on('click', () => selectPlane(p.id)).addTo(ui.routeLayer);
       }
     }
@@ -900,7 +900,7 @@
     return `${fmtAlt(st.altFt)} · ${st.speedKmh} km/h · ${PHASES[st.phase]}${where}`;
   }
 
-  const planeTip = (p) => `<b>${p.id}</b> · ${planeStatus(p)}`;
+  const planeTip = (p) => `<b>${G.planeLabel(p)}</b> · ${planeStatus(p)}`;
 
   // Altitude colour for tracks: orange near the ground, green mid-level, teal/violet at cruise.
   const ALT_STOPS = [[0, [255, 149, 0]], [10000, [255, 204, 0]], [22000, [52, 199, 89]], [34000, [48, 176, 199]], [42000, [88, 86, 214]], [60000, [175, 82, 222]]];
@@ -1263,7 +1263,13 @@
       const crew = G.crewOf(p);
       const sch = p.schedule;
       h += `<div class="panel plane-card ${ui.selectedPlane === p.id ? 'selected' : ''}">
-        <h3><span class="type-icon">${planeGlyph(p.type)}</span> ${p.id} <span class="muted">${ac.name}</span></h3>
+        ${ui.renaming === p.id
+    ? `<div class="row rename"><input id="rename-input" data-plane="${p.id}" maxlength="24" placeholder="${p.id}" value="${p.name || ''}">
+        <button class="primary" data-action="renameSave" data-plane="${p.id}">Save</button><button data-action="renameCancel">Cancel</button></div>
+        <div class="muted">Empty = no name, just the registration ${p.id}.</div>`
+    : `<h3><span class="type-icon">${planeGlyph(p.type)}</span> ${G.planeName(p)}${p.name ? ` <span class="muted">${p.id}</span>` : ''}
+        <button class="mini rename-btn" data-action="rename" data-plane="${p.id}" title="Give this plane a name">✏️</button>
+        <span class="muted">${ac.name}</span></h3>`}
         <div class="muted">${ac.seats} seats · range ${ac.rangeKm} km · ${ac.speedKmh} km/h · ${ownershipText(p)}</div>
         <div class="status">${planeStatus(p)}</div>`;
       if (crew) {
@@ -1807,7 +1813,7 @@
     const planes = G.state.planes;
     // (the picture in the airline's livery: the file in the first one, else rendered by js/shots3d.js)
     const shot = (type) => (FG.planeShots && FG.planeShots.get(type)) || `models/hangar/${D.typeSlug(type)}.webp`;
-    const sig = planes.map((p) => `${p.id}:${p.type}:${shot(p.type)}`).join('|') + `|${ui.selectedPlane}|${ui.follow}`;
+    const sig = planes.map((p) => `${p.id}:${p.type}:${p.name || ''}:${shot(p.type)}`).join('|') + `|${ui.selectedPlane}|${ui.follow}`;
     if (sig === ui.stripSig) {
       // Same cards: only the status dots change (planes take off and land all the time).
       const dots = $('strip-list').querySelectorAll('.pcard[data-plane] .st');
@@ -1821,7 +1827,7 @@
     $('strip-list').innerHTML = planes.map((p) => `<div class="pcard${p.id === ui.selectedPlane ? ' sel' : ''}${p.id === ui.follow ? ' follow' : ''}" data-plane="${p.id}">
         <img src="${shot(p.type)}" alt="" draggable="false" onerror="this.style.visibility='hidden'">
         <i class="st ${STATUS_DOT[p.status] || 'idle'}${p.repair ? ' repair' : ''}"></i>
-        <div class="pc-type">${p.type}</div></div>`).join('') +
+        <div class="pc-type" title="${G.planeLabel(p)} · ${p.type}">${p.name || p.type}</div></div>`).join('') +
       `<button class="pcard add" data-action-strip="market" title="Marketplace">＋<div class="pc-type">Buy</div></button>`;
   }
 
@@ -1831,7 +1837,7 @@
     const f = p.flight;
     const fuel = Math.round(G.fuelLevel(p, t) * 100);
     const ac = D.aircraft[p.type];
-    let h = `<div class="tt-head"><b>${p.id}</b> <span class="muted">${ac.name}</span></div>`;
+    let h = `<div class="tt-head"><b>${G.planeName(p)}</b> <span class="muted">${p.name ? `${p.id} · ` : ''}${ac.name}</span></div>`;
     if (p.status === 'flying' && f) {
       const left = Math.max(0, f.arr - t);
       h += `<div class="tt-route"><span>${f.from}<small>${G.airportByCode[f.from].city}</small></span><span class="arrow">✈</span>
@@ -2551,6 +2557,15 @@
       }
       case 'start': act(G.setScheduleActive(plane, true)); break;
       case 'follow': follow(plane); break;
+      case 'rename': ui.renaming = plane; setTimeout(() => { const i = $('rename-input'); if (i) { i.focus(); i.select(); } }, 0); break;
+      case 'renameSave': {
+        const i = $('rename-input');
+        const err = G.renamePlane(plane, i ? i.value : '');
+        if (err) toast(err, true);
+        ui.renaming = null;
+        break;
+      }
+      case 'renameCancel': ui.renaming = null; break;
       case 'planDay': FG.planner.openPlane(plane); ui.tab = 'schedule'; break;
       case 'planAdd': { const e2 = FG.planner.addStop(code); if (e2) { toast(e2, true); return; } ui.tab = 'schedule'; break; }
       case 'openMarket': e.preventDefault(); openMarket(); return;
@@ -2584,6 +2599,12 @@
     });
     $('sidebar').addEventListener('change', (e) => { if (FG.planner.change(e.target)) ui.selectOpen = false; });
     $('sidebar').addEventListener('input', (e) => FG.planner.input(e.target));
+    $('sidebar').addEventListener('keydown', (e) => {
+      if (e.target.id !== 'rename-input') return;
+      e.stopPropagation(); // (letters are not game shortcuts here)
+      if (e.key === 'Enter') { G.renamePlane(e.target.dataset.plane, e.target.value); ui.renaming = null; e.target.blur(); G.dirty = true; }
+      if (e.key === 'Escape') { ui.renaming = null; e.target.blur(); G.dirty = true; }
+    });
     bindStrip();
     bindTopbar();
     bindSheet();

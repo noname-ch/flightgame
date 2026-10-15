@@ -1404,3 +1404,8 @@ body { height: 100dvh; } /* the visible height, also while the phone's address b
 .w3-gpu { font-size: 12px; padding: 8px 10px; border-radius: 8px; background: var(--panel-2); }
 .w3-gpu.slow { color: var(--neg); }
 .w3-card .row { justify-content: flex-end; margin-top: 14px; }
+
+/* ---------- plane names (Fleet card ✏️) ---------- */
+.plane-card .rename-btn { padding: 0 4px; font-size: 11px; opacity: 0.6; vertical-align: middle; }
+.plane-card .rename-btn:hover { opacity: 1; }
+.plane-card .rename input { flex: 1; min-width: 0; padding: 4px 8px; border: 1px solid var(--input-border); border-radius: 6px; font-weight: 700; }

@@ -10,6 +10,7 @@
   const clock = (m) => `${pad(Math.floor((((m % DAY) + DAY) % DAY) / 60))}:${pad(Math.round(m) % 60)}`;
   const parseClock = (s) => { const [h, m] = String(s).split(':').map(Number); return ((h || 0) * 60 + (m || 0)) % DAY; };
   const pct = (m) => `${(m / DAY) * 100}%`;
+  const nameOf = (id) => { const q = G.plane(id); return q ? G.planeName(q) : id; };
 
   const pl = {
     edit: null,       // plane whose timetable is open in the editor
@@ -73,7 +74,7 @@
       else bar = `<span class="tl-text">no timetable · parked at ${p.status === 'flying' && p.flight ? p.flight.to : p.location} · click to plan</span>`;
       const state = !sch.legs && !editing ? '' : p.waitSlot ? '<em class="neg" title="Waiting for a free slot">⏳</em>' : sch.active ? '<em class="pos" title="Flying its timetable">●</em>' : '<em class="muted" title="Paused">⏸</em>';
       h += `<div class="tl-row${editing ? ' editing' : ''}" data-pl="edit" data-plane="${p.id}">
-        <div class="tl-label"><span class="type-icon">${ctx.planeGlyph(p.type)}</span>${p.id} ${state}<small>${p.type}</small></div>
+        <div class="tl-label"><span class="type-icon">${ctx.planeGlyph(p.type)}</span>${G.planeName(p)} ${state}<small>${p.name ? `${p.id} · ` : ''}${p.type}</small></div>
         <div class="tl-bar">${nightAndNow()}${bar}</div></div>`;
     }
     h += `</div></div>`;
@@ -118,7 +119,7 @@
       return `<option value="${c}"${why ? ' disabled' : ''}>${c} · ${G.airportByCode[c].city}${last ? ` · ${Math.round(G.dist(last, c))} km` : ''}${why ? ` (${why})` : ''}</option>`;
     }).join('');
     const where = p.status === 'flying' && p.flight ? `flying to ${p.flight.to}` : `at ${p.location}`;
-    let h = `<div class="panel plan"><h3>${p.id} <span class="muted">${ac.name} · ${ac.seats} seats · ${ac.rangeKm} km range · ${where}</span></h3>
+    let h = `<div class="panel plan"><h3>${G.planeLabel(p)} <span class="muted">${ac.name} · ${ac.seats} seats · ${ac.rangeKm} km range · ${where}</span></h3>
       <div class="label">1 · Where does it fly? <span class="muted">(the last stop flies back to the first)</span></div>
       <div class="chips stops-chips">${d.stops.map((c, i) => `<span class="chip">${c}
         ${i ? `<button class="mini" data-pl="stopUp" data-i="${i}" title="Earlier">↑</button>` : ''}
@@ -175,15 +176,15 @@
       h += `<div class="tl-row"><div class="tl-label" data-pl="slotAt" data-code="${a.code}" title="Open the slots at ${a.code}">${a.code}
         <small>${a.have} slot${a.have === 1 ? '' : 's'}</small></div><div class="tl-bar fit">${nightAndNow()}`;
       for (const x of a.others) {
-        h += `<b class="fit-other" style="left:${pct(x.from)};width:${pct(x.to - x.from)}" title="${x.planeId} ${x.idle ? 'parked here all day (no timetable)' : `here ${clock(x.arr)}–${clock(x.dep)}`}">${x.to - x.from >= 70 ? x.planeId : ''}</b>`;
+        h += `<b class="fit-other" style="left:${pct(x.from)};width:${pct(x.to - x.from)}" title="${nameOf(x.planeId)} ${x.idle ? 'parked here all day (no timetable)' : `here ${clock(x.arr)}–${clock(x.dep)}`}">${x.to - x.from >= 70 ? nameOf(x.planeId) : ''}</b>`;
       }
       for (const x of a.mine) {
-        h += `<b class="fit-mine" style="left:${pct(x.from)};width:${pct(x.to - x.from)}" title="${p.id} here ${clock(x.arr)}–${clock(x.dep)}">${x.to - x.from >= 70 ? p.id : ''}</b>`;
+        h += `<b class="fit-mine" style="left:${pct(x.from)};width:${pct(x.to - x.from)}" title="${G.planeName(p)} here ${clock(x.arr)}–${clock(x.dep)}">${x.to - x.from >= 70 ? p.id : ''}</b>`;
       }
       for (const x of a.over) h += `<i class="fit-over" style="left:${pct(x.from)};width:${pct(x.to - x.from)}" title="No free slot ${clock(x.from)}–${clock(x.to)}"></i>`;
       h += '</div></div>';
     }
-    h += `<div class="muted fit-legend"><b class="key mine"></b> ${p.id} on the ground · <b class="key other"></b> your other planes ·
+    h += `<div class="muted fit-legend"><b class="key mine"></b> ${G.planeName(p)} on the ground · <b class="key other"></b> your other planes ·
       <b class="key over"></b> no free slot</div>`;
     if (!fit.minutes) h += '<div class="pos">✔ Fits: whenever this plane is on the ground, one of your slots there is free.</div>';
     else {
@@ -268,8 +269,8 @@
       h += `<div class="tl-row slot${over ? ' over' : ''}"><div class="tl-label">${over ? '<span class="neg">no slot</span>' : `Slot ${k + 1}`}</div>
         <div class="tl-bar">${nightAndNow()}${u.uses.filter((x) => x.lane === k).map((x) => {
           const mine = draft && x.planeId === draft.planeId;
-          const title = x.idle ? `${x.planeId}: parked here (no running timetable) – it keeps this slot until it leaves` : `${x.planeId}: lands ${clock(x.arr)}, leaves ${clock(x.dep)}`;
-          return `<b class="tl-use${x.idle ? ' idle' : ''}${mine ? ' draft' : ''}" style="left:${pct(x.from)};width:${pct(x.to - x.from)}" title="${title}">${x.to - x.from >= 60 ? x.planeId : ''}</b>`;
+          const title = x.idle ? `${nameOf(x.planeId)}: parked here (no running timetable) – it keeps this slot until it leaves` : `${nameOf(x.planeId)}: lands ${clock(x.arr)}, leaves ${clock(x.dep)}`;
+          return `<b class="tl-use${x.idle ? ' idle' : ''}${mine ? ' draft' : ''}" style="left:${pct(x.from)};width:${pct(x.to - x.from)}" title="${title}">${x.to - x.from >= 60 ? nameOf(x.planeId) : ''}</b>`;
         }).join('')}</div></div>`;
     }
     return h + `</div>`;
@@ -368,7 +369,7 @@
           h += `<table class="small"><tr><th>Plane</th><th>route</th><th>here</th></tr>${planes.map((p) => {
             const legs = (p.schedule.legs || []).filter((l) => l.to === code);
             const when = legs.length ? legs.map((l) => clock(l.dep + G.legBlock(p.type, l.from, l.to))).join(', ') : p.location === code && p.status !== 'flying' ? 'parked' : '–';
-            return `<tr class="click" data-pl="edit" data-plane="${p.id}"><td>${p.id} <span class="muted">${p.type}</span></td>
+            return `<tr class="click" data-pl="edit" data-plane="${p.id}"><td>${G.planeName(p)} <span class="muted">${p.name ? `${p.id} · ` : ''}${p.type}</span></td>
               <td>${p.schedule.stops.length >= 2 ? p.schedule.stops.join('→') : '–'}</td><td>${when}</td></tr>`;
           }).join('')}</table>`;
         }
@@ -428,7 +429,7 @@
       case 'save': {
         err = G.setTimetable(p.id, d.legs);
         if (!err && el.dataset.start) err = G.setScheduleActive(p.id, true);
-        if (!err) ctx.toast(el.dataset.start ? `${p.id} flies its new timetable.` : 'Timetable saved.');
+        if (!err) ctx.toast(el.dataset.start ? `${G.planeName(p)} flies its new timetable.` : 'Timetable saved.');
         break;
       }
       case 'toggle': err = G.setScheduleActive(p.id, !p.schedule.active); break;

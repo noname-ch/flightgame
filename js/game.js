@@ -2022,6 +2022,8 @@
     return `${v < 0 ? '-' : ''}${C.currency} ${Math.abs(v).toLocaleString('de-CH')}`;
   }
   const pad = (n) => String(n).padStart(2, '0');
+  // A plane in messages: its own name with the registration, or just the registration.
+  const nameOf = (p) => (p.name ? `${p.name} (${p.id})` : p.id);
   const fmtClock = (t) => `${pad(Math.floor((t % DAY) / 60))}:${pad(t % 60)}`;
   function fmtTime(t) {
     const day = Math.floor(t / DAY);
@@ -2419,6 +2421,21 @@
     },
 
     plane(id) { return this.state.planes.find((p) => p.id === id); },
+    // A plane's own name (or its registration when it has none), and the name with the registration.
+    planeName(p) { return p.name || p.id; },
+    planeLabel: nameOf,
+    // Give a plane its own name (at most 24 characters); an empty name takes it away again.
+    renamePlane(id, name) {
+      const p = this.plane(id);
+      if (!p) return 'No such plane.';
+      const clean = String(name || '').replace(/[<>&"]/g, '').replace(/\s+/g, ' ').trim().slice(0, 24);
+      if (clean === (p.name || '')) return null;
+      const old = nameOf(p);
+      if (clean) p.name = clean; else delete p.name;
+      this.log(clean ? `${old} is now called ${clean}.` : `${p.id} has no name any more.`);
+      this.dirty = true;
+      return null;
+    },
     crewOf(p) { return this.state.crews.find((c) => c.id === p.crewId); },
     ownsSlot(code) { return !!this.state.slots[code]; },
     // How many slots you hold at an airport: each one takes one plane on the ground at a time.
@@ -2842,12 +2859,12 @@
         p.stats.flights++;
         p.stats.pax += f.pax;
         const seats = D.aircraft[p.type].seats;
-        this.log(`${p.id} ${f.from}→${f.to}: ${f.pax}/${seats} pax, revenue ${fmtMoney(f.revenue)}, ` +
+        this.log(`${nameOf(p)} ${f.from}→${f.to}: ${f.pax}/${seats} pax, revenue ${fmtMoney(f.revenue)}, ` +
           `cost ${fmtMoney(f.cost)} → ${fmtMoney(result)}`, result >= 0 ? 'good' : 'bad');
       } else if (f.kind === 'delivery') {
-        this.log(`${p.id} (${D.aircraft[p.type].name}) delivered to ${f.to} from ${airportByCode[f.from].name}.`, 'good');
+        this.log(`${nameOf(p)} (${D.aircraft[p.type].name}) delivered to ${f.to} from ${airportByCode[f.from].name}.`, 'good');
       } else {
-        this.log(`${p.id} ferried ${f.from}→${f.to} (cost ${fmtMoney(f.cost)}).`, 'cost');
+        this.log(`${nameOf(p)} ferried ${f.from}→${f.to} (cost ${fmtMoney(f.cost)}).`, 'cost');
       }
       if (f.incident) this.incident(p, f);
     },
@@ -2890,18 +2907,18 @@
       }
 
       if (!this.ownsSlot(leg.to)) {
-        this.stopPlane(p, `${p.id} has no slot at ${leg.to} – stopped.`);
+        this.stopPlane(p, `${nameOf(p)} has no slot at ${leg.to} – stopped.`);
         return;
       }
       const unfit = fitsReason(p.type, leg.to);
       if (unfit) {
-        this.stopPlane(p, `${p.id} stopped: ${unfit}`);
+        this.stopPlane(p, `${nameOf(p)} stopped: ${unfit}`);
         return;
       }
       const ac = D.aircraft[p.type];
       const d = dist(p.location, leg.to);
       if (d > ac.rangeKm) {
-        this.stopPlane(p, `${leg.to} is out of range for ${p.id} – stopped.`);
+        this.stopPlane(p, `${leg.to} is out of range for ${nameOf(p)} – stopped.`);
         return;
       }
       const tod = t % DAY;
@@ -3255,11 +3272,11 @@
       s.crews = s.crews.filter((c) => c.id !== p.crewId);
       s.rep.crashes.push(s.time);
       const rep = E.crashReputation;
-      s.effects.push({ label: `Bookings slump after the ${p.id} crash`, where: { all: true },
+      s.effects.push({ label: `Bookings slump after the ${nameOf(p)} crash`, where: { all: true },
         demandMult: rep.demandMult, until: s.time + rep.days * DAY });
 
       const place = this.nearestPlace(lat, lon);
-      this.log(`✖ ${p.id} (${ac.name}) crashed near ${place} on ${f.from}→${f.to}. ` +
+      this.log(`✖ ${nameOf(p)} (${ac.name}) crashed near ${place} on ${f.from}→${f.to}. ` +
         `${survivors}/${onBoard} survived. Cash effect ${fmtMoney(cash)}.`, 'bad');
       this.news(D.crashStory({
         id: p.id, company: s.company, type: ac.name, maker: ac.maker, from: f.from, to: f.to,
@@ -3323,12 +3340,12 @@
     sendPlane(planeId, code) {
       const p = this.plane(planeId);
       if (!this.ownsSlot(code)) return `You need a slot at ${code} first.`;
-      if (p.location === code && p.status !== 'flying') return `${p.id} is already at ${code}.`;
+      if (p.location === code && p.status !== 'flying') return `${nameOf(p)} is already at ${code}.`;
       if (!fitsAirport(p.type, code)) return fitsReason(p.type, code);
       if (dist(p.location, code) > D.aircraft[p.type].rangeKm) return 'Out of range.';
       p.schedule.active = false;
       p.pendingFerry = code;
-      this.log(`${p.id} will ferry to ${code}${p.status === 'idle' ? '' : ' when ready'}.`);
+      this.log(`${nameOf(p)} will ferry to ${code}${p.status === 'idle' ? '' : ' when ready'}.`);
       return null;
     },
 
@@ -3356,7 +3373,7 @@
       p.waitSlot = null;
       if (active) p.pendingFerry = null;
       if (active && p.schedule.legs) this.syncTimetable(p);
-      this.log(`${p.id} schedule ${active ? 'started' : 'paused'}.`);
+      this.log(`${nameOf(p)} schedule ${active ? 'started' : 'paused'}.`);
       return null;
     },
 
@@ -3488,16 +3505,16 @@
       const p = this.plane(planeId);
       if (!p) return 'No such plane.';
       if (s.planes.length === 1) return 'You cannot give up your last plane.';
-      if (p.status === 'flying') return `${p.id} is in the air – wait until it lands.`;
+      if (p.status === 'flying') return `${nameOf(p)} is in the air – wait until it lands.`;
       const name = D.aircraft[p.type].name;
       if (p.ownership === 'owned') {
         const v = this.saleValue(p);
         s.money += v;
-        this.log(`Sold ${p.id} (${name}) for ${fmtMoney(v)}.`, 'good');
+        this.log(`Sold ${nameOf(p)} (${name}) for ${fmtMoney(v)}.`, 'good');
       } else {
         const fee = this.returnFee(p);
         s.money -= fee;
-        this.log(`Returned leased ${p.id} (${name}), return fee ${fmtMoney(fee)}.`, 'cost');
+        this.log(`Returned leased ${nameOf(p)} (${name}), return fee ${fmtMoney(fee)}.`, 'cost');
       }
       s.planes = s.planes.filter((x) => x !== p);
       s.crews = s.crews.filter((c) => c.id !== p.crewId);
@@ -3958,7 +3975,7 @@
       const p = this.plane(planeId);
       p.schedule = { stops: [], index: 0, active: false };
       p.waitSlot = null;
-      this.log(`${p.id} has no timetable any more and stays at ${p.status === 'flying' && p.flight ? p.flight.to : p.location}.`);
+      this.log(`${nameOf(p)} has no timetable any more and stays at ${p.status === 'flying' && p.flight ? p.flight.to : p.location}.`);
       this.dirty = true;
       return null;
     },
@@ -3971,7 +3988,7 @@
       const sorted = legs.slice();
       p.schedule = { stops: sorted.map((l) => l.from), legs: sorted, index: 0, active: p.schedule.active, due: 0 };
       this.syncTimetable(p);
-      this.log(`${p.id} timetable: ${sorted.map((l) => `${fmtClock(l.dep)} ${l.from}→${l.to}`).join(', ')}.`);
+      this.log(`${nameOf(p)} timetable: ${sorted.map((l) => `${fmtClock(l.dep)} ${l.from}→${l.to}`).join(', ')}.`);
       this.dirty = true;
       return null;
     },

@@ -1060,7 +1060,7 @@ function hoverText(id) {
   } else {
     line = `${p.status === 'turnaround' ? 'Turnaround' : 'At the gate'} · ${p.location}`;
   }
-  return `<b>${p.id}</b> · ${ac.name}<br>${line}`;
+  return `<b>${G.planeLabel ? G.planeLabel(p) : p.id}</b> · ${ac.name}<br>${line}`;
 }
 
 function onMove(e) {

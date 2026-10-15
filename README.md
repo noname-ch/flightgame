@@ -94,7 +94,7 @@ be made again the next day; a rival that gives up a slot flies one daily flight 
    rate) or buy pre-owned (new offers every Monday; older planes are cheaper but cost more to run).
    New planes fly a delivery flight from their factory (🏭 on the map) to your airport, e.g. Boeings from Everett or Renton in the US.
    Each plane gets its own crew. Big jets need a big enough airport. Sell owned planes or return
-   leased ones from the **Fleet** tab.
+   leased ones from the **Fleet** tab, and give a plane its own name with ✏️ next to its registration.
 
 7. **Events**: strikes, storms, volcanic ash, fuel price swings, festivals, bird strikes and
    crashes happen at random. Each one appears as a newspaper cutout (the game pauses until you
