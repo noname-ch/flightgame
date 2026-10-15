@@ -119,7 +119,9 @@ be made again the next day; a rival that gives up a slot flies one daily flight 
    New runways are placed by the game, clear of the aprons, buildings and other runways (a parallel one 400 m
    or more away, on the far side of the apron first; a crosswind one across the main runway, near an end where
    that is clear), and get taxiways: a parallel taxiway, exits and a link into the taxiways there are. Where
-   two runways cross, neither is painted over the other.
+   two runways cross, neither is painted over the other, and where a taxiway meets a runway the runway and its
+   paint lie on top. Taxiways are round at their bends: those the game lays out, and those drawn in the editor
+   (unless "Sharp corners" is ticked while drawing; `G.roundLine`).
    **🏗 Build at the airport** (in its Construction section, at an airport you built or where you have 25%) opens
    the build mode: the airport editor's tools on the satellite map, without runways. Build stands (also in rows),
    taxiways and curves, aprons, pads, terminals, hangars, other buildings and towers, or click what is there to

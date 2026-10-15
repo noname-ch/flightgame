@@ -252,8 +252,10 @@
 
     // Stacking: tiles < towns + catchment < routes < airports < planes.
     map.createPane('towns').style.zIndex = 350;
-    map.createPane('runways').style.zIndex = 370;
-    map.createPane('gates').style.zIndex = 375;
+    // (runways over the aprons and taxiways: where a taxiway meets or crosses a runway, the runway and its
+    // paint lie on top, as in 3D)
+    map.createPane('gates').style.zIndex = 370;
+    map.createPane('runways').style.zIndex = 375;
     map.createPane('rivals').style.zIndex = 380;
     map.createPane('routes').style.zIndex = 390;
 

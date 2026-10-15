@@ -276,10 +276,10 @@
       const len = runwayLength(r);
       const rwy = { thr: [r[0], r[1]], hdg: bearing({ lat: r[0], lon: r[1] }, { lat: r[2], lon: r[3] }), len };
       const off = taxiwayOffset(rwy, ap.ref);
-      lines.push([rwyPoint(rwy, 0, off), rwyPoint(rwy, len, off)]);
+      // the parallel taxiway and its exits at the runway ends, round at the corners
+      lines.push(roundLine([rwyPoint(rwy, 0, 0), rwyPoint(rwy, 0, off), rwyPoint(rwy, len, off), rwyPoint(rwy, len, 0)], 35));
       const leave = Math.min(len * 0.65, 2200); // where a landing plane leaves the runway, from either end
       const run = exitRun(len, off);
-      for (const a of [0, len]) lines.push([rwyPoint(rwy, a, off), rwyPoint(rwy, a, 0)]);
       lines.push([rwyPoint(rwy, leave, 0), rwyPoint(rwy, Math.min(len, leave + run), off)], [rwyPoint(rwy, len - leave, 0), rwyPoint(rwy, Math.max(0, len - leave - run), off)]);
       for (const e of ap.exits) {
         lines.push([e, rwyPoint(rwy, Math.min(len, Math.max(0, rwyCoords(rwy, e).along)), off)]);
@@ -1207,6 +1207,43 @@
   // ---------- expansion preview (developer tools) ----------
   // What the possible construction at an airport would add: each kind of runway where it would be built
   // (with its taxiway), and the apron, stands and buildings of the next terminal size.
+  // ---------- smooth taxiways ----------
+  // A line [[lat, lon], ..] with its corners rounded: each bend becomes an arc of `radius` m (less where its
+  // legs are short: two arcs never take more than half of a leg between them, and never the end legs whole).
+  function roundLine(line, radius = 45) {
+    if (line.length < 3) return line.map((p) => p.slice());
+    const o = line[0];
+    const kx = 111320 * Math.cos(toRad(o[0]));
+    const p = line.map((q) => [(q[1] - o[1]) * kx, (q[0] - o[0]) * 111320]);
+    const ll = (q) => [Math.round((o[0] + q[1] / 111320) * 1e6) / 1e6, Math.round((o[1] + q[0] / kx) * 1e6) / 1e6];
+    const out = [p[0]];
+    for (let i = 1; i < p.length - 1; i++) {
+      const a = p[i - 1], b = p[i], c = p[i + 1];
+      const lu = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      const lv = Math.hypot(c[0] - b[0], c[1] - b[1]);
+      if (lu < 0.5 || lv < 0.5) { out.push(b); continue; }
+      const u = [(b[0] - a[0]) / lu, (b[1] - a[1]) / lu];
+      const v = [(c[0] - b[0]) / lv, (c[1] - b[1]) / lv];
+      const th = Math.acos(Math.max(-1, Math.min(1, u[0] * v[0] + u[1] * v[1]))); // how far it turns
+      if (th < toRad(2) || th > toRad(175)) { out.push(b); continue; }
+      const side = u[0] * v[1] - u[1] * v[0] > 0 ? 1 : -1; // left (1) or right
+      const tan = Math.tan(th / 2);
+      const T = Math.min(radius * tan, 0.95 * (i === 1 ? lu : lu / 2), 0.95 * (i === p.length - 2 ? lv : lv / 2));
+      const r = T / tan;
+      const p1 = [b[0] - u[0] * T, b[1] - u[1] * T];
+      const n = [-side * u[1], side * u[0]]; // towards the arc's centre
+      const cen = [p1[0] + n[0] * r, p1[1] + n[1] * r];
+      const w = [p1[0] - cen[0], p1[1] - cen[1]];
+      const steps = Math.max(2, Math.ceil(th / toRad(5))); // a point every 5 degrees
+      for (let k = 0; k <= steps; k++) {
+        const x = (side * th * k) / steps;
+        out.push([cen[0] + w[0] * Math.cos(x) - w[1] * Math.sin(x), cen[1] + w[0] * Math.sin(x) + w[1] * Math.cos(x)]);
+      }
+    }
+    out.push(p[p.length - 1]);
+    return out.map(ll);
+  }
+
   // ---------- crossing runways ----------
   // Where other runways cover a runway: the maps leave the paint of both out there (side stripes, centre line,
   // markings), so that where two runways cross neither is painted over the other. Returns cover(lo, hi): the
@@ -1427,8 +1464,10 @@
       }
       i = j + 1;
     }
-    // exits
-    const exits = [0, len];
+    // exits; where all of the parallel taxiway is new, it and its end exits are one line, round at the corners
+    const whole = fresh >= len - 1 && lines.length === 1;
+    if (whole) lines[0] = roundLine([rwyPoint(rwy, 0, 0), rwyPoint(rwy, 0, off), rwyPoint(rwy, len, off), rwyPoint(rwy, len, 0)], Math.min(60, Math.abs(off) * 0.6));
+    const exits = whole ? [] : [0, len];
     if (len >= 1500) exits.push(len / 3, (2 * len) / 3);
     for (const x of exits) {
       if (nearest(rwyPoint(rwy, x, off / 2)).d < 30) continue;
@@ -1437,7 +1476,7 @@
     // all of the parallel taxiway is new: a way from it to the nearest taxiway (or the apron)
     if (fresh >= len - 1) {
       let best = { d: Infinity };
-      for (const p of at) {
+      for (const p of at.slice(1, -1)) { // (from the straight part: the ends are round now)
         const f = nearest(p);
         if (f.d < best.d) best = { d: f.d, p, q: f.q };
       }
@@ -1446,8 +1485,8 @@
       }
       if (best.q && best.d < 5000) lines.push([best.p, best.q]);
     }
-    const r5 = (v) => Math.round(v * 1e5) / 1e5;
-    return lines.map((l) => l.map((p) => [r5(p[0]), r5(p[1])])).filter((l) => metres(l[0], l[1]) > 2);
+    const r6 = (v) => Math.round(v * 1e6) / 1e6; // (to 0.1 m: a curve rounded to 1 m wobbles)
+    return lines.map((l) => l.map((p) => [r6(p[0]), r6(p[1])])).filter((l) => metres(l[0], l[l.length - 1]) > 2);
   }
 
   function expansionPreview(code) {
@@ -2000,7 +2039,7 @@
     airportByCode, distanceKm, dist, bearing, interpolate, catchment, dailyDemand,
     ticketPrice, routeKey, blockMinutes, landingFee, slotUpfront, slotWeekly,
     priceNew, fitsAirport, fitsReason, crewFor, factoryOf, onSale, dateOf,
-    airportSize, airportRunways, runwayLength, runwayTaxiways, runwayCover, longestRunway, runwayNeed, attraction,
+    airportSize, airportRunways, runwayLength, runwayTaxiways, runwayCover, roundLine, longestRunway, runwayNeed, attraction,
     flightTrack, flightState, legTrack, cruiseFt, perf, windFrom, gateOf, apronOf, taxiwaysOf, drawnTaxiways, expansionPreview, terminalPiece,
     fmtMoney, fmtTime, fmtClock, fmtDuration,
 

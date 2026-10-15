@@ -54,6 +54,7 @@
     signin: false, // the GitHub sign-in form is open
     undo: [],     // [{ code, ops, paid }] before each change (paid: in build mode, what it cost in full)
     player: null, // build mode: the airport the player builds at (the changes go into the save game)
+    sharp: false, // a taxiway drawn by clicking keeps its corners (else they are rounded, RADIUS m)
     msg: '',
     bad: false,
   };
@@ -1234,13 +1235,16 @@
       if (dist(geom[0], geom[1]) < 100) { note('A runway is at least 100 m long: click its two ends.', true); d.pts = []; drawDraft(); return; }
       geom = [...geom[0], ...geom[1], old ? old[4] : defaultWidth(ed.code), old ? old[5] : 1];
     }
+    // a taxiway's bends are round, as real ones are (unless "Sharp corners" is ticked)
+    if (d.kind === 'taxiway' && !ed.sharp) geom = G.roundLine(geom, RADIUS);
     const code = d.replace ? d.replace.code : ed.code;
     const op = d.replace ? { op: 'set', kind: d.kind, from: d.replace.geom, geom } : { op: 'add', kind: d.kind, geom };
     ed.at = d.kind === 'runway' ? [(geom[0] + geom[2]) / 2, (geom[1] + geom[3]) / 2] : geom[geom.length - 1];
     stopDraw();
     commit(code, op, `${cap(NAMES[d.kind])} ${d.replace ? 'redrawn' : 'added'}.`);
     // a taxiway is drawn along its middle: the satellite picture gives its real middle and width
-    if (d.kind === 'taxiway' && FG.taxiFit) fitTaxiway({ code, kind: 'taxiway', geom }, true);
+    // (not in build mode: a new taxiway there is mostly built on grass, with nothing in the picture to fit to)
+    if (d.kind === 'taxiway' && FG.taxiFit && !ed.player) fitTaxiway({ code, kind: 'taxiway', geom }, true);
   }
   function cancel() {
     if (ed.draw) { stopDraw(); note('Drawing cancelled.'); drawLayer(); return true; }
@@ -1367,6 +1371,7 @@
     } else if (d.kind === 'runway' && pts.length === 2) {
       drawShape(draftLayer, 'runway', [...pts[0], ...pts[1], defaultWidth(ed.code), 1], STYLE.draw);
     } else if (RINGS.has(d.kind) && pts.length >= 3) L.polygon(pts, o).addTo(draftLayer);
+    else if (d.kind === 'taxiway' && !ed.sharp && pts.length >= 3) L.polyline(G.roundLine(pts, RADIUS), o).addTo(draftLayer);
     else if (pts.length >= 2) L.polyline(pts, o).addTo(draftLayer);
     for (const q of d.pts) L.circleMarker(q, Object.assign({}, o, { radius: 4, fillOpacity: 1 })).addTo(draftLayer);
   }
@@ -1510,6 +1515,7 @@
       let hint = d.kind === 'turn' ? HINT.turn : RINGS.has(d.kind) ? HINT.ring : HINT[d.kind];
       if (d.kind === 'curve' && d.replace) hint += ' on the yellow taxiway (the part between becomes the curve)';
       html = `<b>${name}:</b> ${hint}. ${d.kind === 'curve' && d.replace ? '' : '<span class="muted">Shift: no snapping.</span>'}
+        ${d.kind === 'taxiway' ? `<label class="small" title="Its bends stay corners instead of round curves"><input type="checkbox" data-ae="sharp"${ed.sharp ? ' checked' : ''}> Sharp corners</label>` : ''}
         ${d.kind !== 'turn' && d.kind !== 'runway' && d.kind !== 'curve' ? '<button class="primary" data-ae="finish">Done</button>' : ''}
         ${d.pts.length ? '<button data-ae="back">Remove last point</button>' : ''}<button data-ae="cancel">Cancel</button>`;
     } else if (ed.edit) {
@@ -1656,6 +1662,7 @@
       case 'cancel': cancel(); break;
       case 'finish': finishDraw(); break;
       case 'back': if (ed.draw) { ed.draw.pts.pop(); drawDraft(); banner(); } break;
+      case 'sharp': ed.sharp = b.checked; drawDraft(); break;
       case 'done': finishEdit(); break;
       case 'undo': undo(); break;
       case 'discard':
