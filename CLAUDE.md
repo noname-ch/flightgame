@@ -69,6 +69,8 @@ Play online: https://noname-ch.github.io/flightgame/ (GitHub Pages, deployed fro
   `#loading` in index.html shows a Reload message when a game file fails or the screen is up for 30 s.
 - Use `G.home()` and `G.bankruptcyLimit()`, not `C.startAirport` or `C.bankruptcyLimit`.
 - For anything animated, use `FG.ui.time` (exact fractional game time), not `G.state.time`.
+- The game ticks come from a worker's timer (ui.js `startTicks`), so the game runs on in a background tab.
+  While `document.hidden`, `loop()` only advances the game: nothing is drawn and newspapers wait.
 - 3D only repaints while something moves. Anything new that animates in 3D must trigger a repaint
   itself.
 - Airport layouts: 116 airports have files in `js/data/layouts`. Every other airport is read from the

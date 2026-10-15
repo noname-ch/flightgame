@@ -2740,6 +2740,9 @@
       ui.pendingMinutes -= whole;
       if (whole > 0) G.advance(whole);
     }
+    // In a background tab the game only runs: nothing is drawn, and news waits for the player
+    // (a newspaper pauses the game).
+    if (document.hidden) return;
     showNewspaper();
     renderHeader();
     if (!in3d()) {
@@ -2754,6 +2757,24 @@
     if (G.dirty && !sidebarBusy()) {
       G.dirty = false;
       renderAll();
+    }
+  }
+
+  // The ticks come from a worker's timer. In a background tab the browser slows the page's own timers to
+  // one a second (after a few minutes to one a minute), and as a tick moves the game on by at most
+  // MAX_STEP_MS, the game all but stopped. A worker's timer runs on. Where no worker starts (or it never
+  // ticks), the page's own timer takes over.
+  function startTicks() {
+    let ticked = false, page = null;
+    const usePage = () => { if (!page) page = setInterval(loop, TICK_MS); };
+    try {
+      const src = `setInterval(() => postMessage(0), ${TICK_MS});`;
+      const w = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
+      w.onmessage = () => { ticked = true; if (!page) loop(); };
+      w.onerror = () => { w.terminate(); usePage(); };
+      setTimeout(() => { if (!ticked) { w.terminate(); usePage(); } }, 3000);
+    } catch (e) {
+      usePage();
     }
   }
 
@@ -2777,7 +2798,7 @@
       openStart(saved && !G.state.gameOver);
       hideLoading();
     }
-    setInterval(loop, TICK_MS);
+    startTicks();
     requestAnimationFrame(frame);
     setInterval(() => { if (set.autosave) G.save(); }, 30000);
     // Hook for the 3D view (js/view3d.js).

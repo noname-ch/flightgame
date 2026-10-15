@@ -123,7 +123,8 @@ upgrades any more: you build terminals and stands yourself.
 
 7. **Events**: strikes, storms, volcanic ash, fuel price swings, festivals, bird strikes and
    crashes happen at random. Each one appears as a newspaper cutout (the game pauses until you
-   press Continue) and active events are listed above the tabs. Strikes and bad weather ground
+   press Continue; news that comes while the game runs in a background tab waits until you are back)
+   and active events are listed above the tabs. Strikes and bad weather ground
    flights, festivals boost demand, and a crash costs you the plane, compensation and weeks of
    bookings.
 
@@ -324,7 +325,7 @@ script errors) go with it unless you untick them. Signed in to GitHub (airport e
 the repo; from `./play.sh` it is written into `BUGS.md`; otherwise GitHub's new-issue page opens filled in (you
 need a GitHub account), or Copy puts it on the clipboard.
 
-Controls: Space = pause, 1/2/3 = speed. The game autosaves to the browser (localStorage; the airport layouts read off the map are kept apart, in IndexedDB).
+Controls: Space = pause, 1/2/3 = speed. The game keeps running in a background tab. It autosaves to the browser (localStorage; the airport layouts read off the map are kept apart, in IndexedDB).
 
 ## Extending
 

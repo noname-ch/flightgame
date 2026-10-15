@@ -528,6 +528,21 @@ try {
   if (!bug.open || !bug.form || !bug.stillForm || bug.kind !== 'idea') errors.push(`bug report panel: ${JSON.stringify({ ...bug, details: undefined })}`);
   if (!/Version: \d+/.test(bug.details) || !/Game: /.test(bug.details)) errors.push(`bug report details incomplete:\n${bug.details}`);
 
+  step('background tab: another tab in front, the game runs on (at 60×: 4 s are 4 game minutes)');
+  await evaluate(() => { // (a newspaper pauses the game: read them all first)
+    for (let i = 0; i < 50 && !document.getElementById('newspaper').hidden; i++) document.querySelector('[data-action=newsNext]').click();
+    if (FG.ui.speed === 0) document.getElementById('pause').click();
+  });
+  const front = await send('Target.createTarget', { url: 'about:blank' });
+  await sleep(500);
+  const bg = { t0: await evaluate(() => FG.ui.time), hidden: await evaluate(() => document.hidden) };
+  await sleep(4000);
+  bg.t1 = await evaluate(() => FG.ui.time);
+  await send('Target.closeTarget', { targetId: front.targetId });
+  await send('Target.activateTarget', { targetId });
+  step(`background tab: ${(bg.t1 - bg.t0).toFixed(1)} game minutes in 4 s${bg.hidden ? '' : ' (the page was not hidden)'}`);
+  if (bg.hidden && bg.t1 - bg.t0 < 3) errors.push(`background tab: the game slowed down (${(bg.t1 - bg.t0).toFixed(1)} game minutes in 4 s at 60×)`);
+
   step('save and reload');
   await evaluate(() => G.save());
   await cmd('Page.reload');
