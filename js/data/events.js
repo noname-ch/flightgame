@@ -96,7 +96,7 @@ FG.data.worldEvents = [
       if (!a) return null;
       const name = ctx.pick(['Anna', 'Bruno', 'Ciara', 'Dieter', 'Elsa', 'Franz', 'Greta', 'Hugo', 'Ingrid', 'Jules']);
       const winter = (ctx.state.time / 1440) % 365 > 270 || (ctx.state.time / 1440) % 365 < 60;
-      ctx.effect({ label: `Storm ${name}`, hours: 18, where: { near: a, radiusKm: 400 }, noFlights: true });
+      ctx.effect({ label: `Storm ${name}`, hours: 18, where: { near: a, radiusKm: 400 }, noFlights: true, weather: 'storm' });
       return {
         kind: 'bad', picture: 'storm',
         headline: `STORM ${name.toUpperCase()} BATTERS ${a.city.toUpperCase()}`,

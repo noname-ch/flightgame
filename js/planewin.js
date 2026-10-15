@@ -93,6 +93,7 @@
           <span>Speed</span><b>${st ? `${st.speedKmh} km/h` : '–'}</b><small>${st ? `${Math.round(st.speedKmh / 1.852)} kt` : ''}</small>
           <span>Height</span><b>${st && !st.ground ? `${(Math.round(st.altFt / 100) * 100).toLocaleString('de-CH')} ft` : 'on the ground'}</b><small>${st && !st.ground ? `${Math.round(st.altFt * 0.3048).toLocaleString('de-CH')} m` : ''}</small>
           <span>Left</span><b>${G.fmtDuration(Math.max(0, Math.round(f.arr - t)))}</b><small>${Math.round(G.dist(f.from, f.to) * (1 - frac))} km</small>
+          ${st && st.windKt != null ? `<span>Wind</span><b>${String(st.windFrom).padStart(3, '0')}° ${st.windKt} kt</b><small>${Math.abs(st.crab) >= 1 ? `crab ${Math.round(Math.abs(st.crab))}° ${st.crab > 0 ? 'right' : 'left'}` : ''}</small>` : ''}
           ${st && st.depRunway ? `<span>Runways</span><b>${st.depRunway} → ${st.arrRunway}</b><small>off · on</small>` : ''}
           ${f.pax != null ? `<span>On board</span><b>${f.pax} / ${ac.seats}</b><small>passengers</small>` : ''}
         </div>`;
@@ -103,6 +104,7 @@
       h += `<div class="pw-phase">${p.status === 'turnaround' ? 'Turnaround' : 'At the gate'}</div>
         <div class="pw-route"><span><b>${p.location}</b> ${esc(ap ? ap.city : '')}<small>stand ${esc(gate.name || '–')}</small></span>
           ${next ? `<span class="pw-arrow">→</span><span><b>${next.to}</b> ${esc(G.airportByCode[next.to].city)}<small>leaves ${clock(next.dep)}</small></span>` : ''}</div>
+        ${FG.weather ? `<div class="muted small pw-wx">${FG.weather.text(G.airportWeather(p.location))}</div>` : ''}
         <div class="pw-grid"><span>Speed</span><b>0 km/h</b><small></small><span>Next</span><b>${next ? `${next.from} → ${next.to} at ${clock(next.dep)}` : 'no timetable'}</b><small></small></div>`;
     }
     h += `<div class="muted small">${p.schedule.legs ? `${p.schedule.legs.length} flights a day${p.schedule.active ? '' : ' · paused'}` : 'No timetable yet'}

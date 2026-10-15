@@ -80,6 +80,13 @@ Play online: https://noname-ch.github.io/flightgame/ (GitHub Pages, deployed fro
   after a label, extrusion, circle or the planes costs another 22 MB per tile (six runs reached 2.6 GB low over the
   ground and iPhones reloaded the page; the smoke test checks the order). On touch devices `phoneDrapes` makes the
   textures 1024 px.
+- Weather (looks only, flights never wait for it): game.js `weatherAt(lat, lon, t, lite)` (noise drifting east by
+  `G.WX_DRIFT`, storm events with `weather: 'storm'` or a "Storm …" label), `G.windAt(lat, lon, t, altFt)`,
+  `G.airportWeather(code)`. `G.flightState` returns `crab` (heading = track + crab: ui.js planePosition and view3d
+  `attitude` add it), `windFrom`, `windKt`, `gusty`. js/weather.js draws it: `FG.weather.puffs(box, t, max)`, the 2D
+  canvas (an `L.Renderer` in the 'clouds' pane, the "Clouds and weather" overlay = `FG.weather.enabled()`), the
+  `#wx-fx` CSS overlay and chip; view3d.js draws the same puffs as one `THREE.Points` in planeLayer
+  (`cloudPoints`/`updateClouds`) and greys the sky (`weatherSky`, map.setSky, no layers).
 - 3D only repaints while something moves. Anything new that animates in 3D must trigger a repaint
   itself.
 - Airport layouts: 116 airports have files in `js/data/layouts`. Every other airport is read from the

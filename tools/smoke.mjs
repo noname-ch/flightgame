@@ -323,6 +323,19 @@ try {
   if (!ps.flights || ps.rows < 9 || !ps.recent) errors.push(`plane stats: ${JSON.stringify(ps)}`);
   else step(`plane stats: ${ps.flights} flights this year, profit ${ps.profit.toLocaleString('en')}, ${ps.bars} week bars, ${ps.recent} last flights`);
 
+  step('weather: clouds on the 2D map, the weather at home, the wind and crab of a plane in the air');
+  const wx = await evaluate(() => {
+    FG.ui.map.setView([47, 8], 5, { animate: false });
+    FG.weather.redraw();
+    const w = G.airportWeather(G.home());
+    const p = G.state.planes.find((q) => q.status === 'flying');
+    const st = p && G.flightState(p, G.state.time);
+    return { puffs: FG.weather.stats.puffs2d, line: FG.weather.text(w), canvas: !!document.querySelector('canvas.fg-clouds'),
+      crab: st ? st.crab : null, wind: st ? st.windKt : null, sane: !!w && w.tempC > -60 && w.tempC < 60 && w.windKt >= 0 };
+  });
+  if (!wx.canvas || !wx.line || !wx.sane || (wx.crab != null && !Number.isFinite(wx.crab))) errors.push(`weather: ${JSON.stringify(wx)}`);
+  else step(`weather at home: ${wx.line}; ${wx.puffs} cloud puffs in view${wx.crab != null ? `; a plane in the air crabs ${wx.crab}° in ${wx.wind} kt` : ''}`);
+
   step('Fleet: Ferry there (to the other slot airport) says when the plane leaves');
   const ferry = await evaluate(async () => {
     const p = G.state.planes[0];

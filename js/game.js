@@ -269,6 +269,115 @@
     return ((easterly ? 70 : 250) + (r - 0.5) * 120 + 360) % 360;
   }
 
+  // ---------- weather: clouds, rain, snow, thunderstorms, fog and wind ----------
+  // Made up but steady, the same for everyone at the same game time: smooth noise over the globe that drifts
+  // east (WX_DRIFT degrees of longitude a minute, ~30 km/h in the mid-latitudes) and changes shape over a day
+  // or two, drier in the subtropics, wetter at the equator, colder towards the poles, in winter and at night.
+  // It is for looks (js/weather.js draws it) and for the planes' crab angle: flights never wait for it. Storm
+  // events (js/data/events.js) still close airports, and are drawn as storms. Surface wind blows from windFrom
+  // (so the runways in use stay the same); its speed and the winds aloft come from the noise.
+  const WX_DRIFT = 0.0064;
+  const WX_MORPH = 2160; // minutes for the pattern to change shape (1.5 days)
+  // Integer lattice hash -> [0, 1), no allocations (the cloud layers call this thousands of times).
+  function wxHash(x, y, z, s) {
+    let h = Math.imul(x, 374761393) + Math.imul(y, 668265263) + Math.imul(z, 2147483647) + Math.imul(s, 1274126177);
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+  }
+  // Smooth value noise in [0, 1).
+  function wxNoise(x, y, z, s) {
+    const xi = Math.floor(x), yi = Math.floor(y), zi = Math.floor(z);
+    const fx = x - xi, fy = y - yi, fz = z - zi;
+    const u = fx * fx * (3 - 2 * fx), w = fy * fy * (3 - 2 * fy), q = fz * fz * (3 - 2 * fz);
+    const a0 = wxHash(xi, yi, zi, s), b0 = wxHash(xi + 1, yi, zi, s), c0 = wxHash(xi, yi + 1, zi, s), d0 = wxHash(xi + 1, yi + 1, zi, s);
+    const a1 = wxHash(xi, yi, zi + 1, s), b1 = wxHash(xi + 1, yi, zi + 1, s), c1 = wxHash(xi, yi + 1, zi + 1, s), d1 = wxHash(xi + 1, yi + 1, zi + 1, s);
+    const lo = a0 + (b0 - a0) * u + (c0 + (d0 - c0) * u - a0 - (b0 - a0) * u) * w;
+    const hi = a1 + (b1 - a1) * u + (c1 + (d1 - c1) * u - a1 - (b1 - a1) * u) * w;
+    return lo + (hi - lo) * q;
+  }
+  const smooth = (a, b, x) => { const k = Math.min(1, Math.max(0, (x - a) / (b - a))); return k * k * (3 - 2 * k); };
+  // Day of the year (0 = 1 January): the calendar in a story game, else day 0 is 1 January.
+  function dayOfYear(t) {
+    const d = dateOf(t);
+    if (!d) return Math.floor(t / DAY) % 365;
+    return Math.floor((d - Date.UTC(d.getUTCFullYear(), 0, 1)) / 86400000);
+  }
+  // Storm events under way, as { lat, lon, km } (old saves: their label starts with "Storm").
+  let wxStormKey = '';
+  let wxStorms = [];
+  function stormsNow() {
+    const s = Game.state;
+    if (!s) return [];
+    const key = `${s.effects.length}|${s.time}`;
+    if (key === wxStormKey) return wxStorms;
+    wxStormKey = key;
+    wxStorms = s.effects.filter((e) => e.until > s.time && e.where && e.where.near && (e.weather === 'storm' || /^Storm /.test(e.label || '')))
+      .map((e) => ({ lat: e.where.near.lat, lon: e.where.near.lon, km: e.where.radiusKm || 400 }));
+    return wxStorms;
+  }
+  // The weather at a place and time: cover (0 clear … 1 overcast), rain (0 … 1, snow when cold), storm
+  // (a thunderstorm or a storm event), fog, tempC, surface wind (windFrom °, windKt), name and icon.
+  // `lite`: only cover, rain and storm (the cloud layers draw thousands of these).
+  function weatherAt(lat, lon, t, lite) {
+    const x = lon - WX_DRIFT * t;
+    const z = t / WX_MORPH;
+    const n = 0.62 * wxNoise(x / 9, lat / 7, z, 1) + 0.38 * wxNoise(x / 2.6, lat / 2.2, z * 1.7, 2);
+    const a = Math.abs(lat);
+    const climate = (a < 9 ? 0.07 : 0) - 0.13 * smooth(14, 22, a) * (1 - smooth(30, 38, a)) + (a > 40 ? 0.03 : 0);
+    const wet = n + climate;
+    let cover = smooth(0.36, 0.64, wet);
+    let rain = smooth(0.6, 0.76, wet);
+    let storm = rain > 0.4 && wxNoise(x / 1.1, lat / 1.1, z * 3, 3) > 0.74 && a < 55;
+    let stormKm = 0;
+    for (const st of stormsNow()) {
+      const d = distanceKm({ lat, lon }, st);
+      if (d >= st.km) continue;
+      const k = 1 - d / st.km;
+      cover = Math.max(cover, Math.min(1, 0.4 + 1.2 * k));
+      rain = Math.max(rain, Math.min(1, 1.4 * k));
+      if (k > 0.2) { storm = true; stormKm = Math.max(stormKm, k); }
+    }
+    if (lite) return { cover, rain, storm };
+    // temperature: latitude, season (opposite in the south), time of day; storms cool it down
+    const doy = dayOfYear(t);
+    const season = Math.cos((2 * Math.PI * (doy - 200)) / 365) * (lat >= 0 ? 1 : -1);
+    const hour = ((t % DAY) + DAY) % DAY / 60;
+    const tempC = Math.round(29 - 0.007 * a * a - 0.1 * a + season * 0.25 * Math.min(a, 60) +
+      4 * Math.cos((2 * Math.PI * (hour - 15)) / 24) - 3 * rain);
+    const snow = rain > 0.15 && tempC <= 1;
+    const day = Math.floor(t / DAY);
+    let windKt = Math.round(4 + 16 * wxNoise(x / 5, lat / 5, z * 1.5, 4) + 10 * rain + (storm ? 12 : 0));
+    if (stormKm) windKt = Math.max(windKt, Math.round(30 + 25 * stormKm));
+    const gustKt = windKt >= 15 ? Math.round(windKt * 1.45) : 0;
+    const fog = !rain && !storm && windKt < 7 && cover > 0.55 && hour > 3 && hour < 10 && tempC < 14;
+    let name;
+    let icon;
+    if (storm && snow) [name, icon] = ['Blizzard', '🌨'];
+    else if (storm) [name, icon] = ['Thunderstorm', '⛈'];
+    else if (snow) [name, icon] = ['Snow', '🌨'];
+    else if (fog) [name, icon] = ['Fog', '🌫'];
+    else if (rain > 0.55) [name, icon] = ['Rain', '🌧'];
+    else if (rain > 0.15) [name, icon] = ['Showers', '🌦'];
+    else if (cover > 0.85) [name, icon] = ['Overcast', '☁️'];
+    else if (cover > 0.55) [name, icon] = ['Cloudy', '🌥'];
+    else if (cover > 0.2) [name, icon] = ['Some clouds', '⛅'];
+    else [name, icon] = ['Clear', hour > 6 && hour < 20 ? '☀️' : '🌙'];
+    return { cover, rain, storm, snow, fog, tempC, windFrom: Math.round(windFrom(lat, lon, day)), windKt, gustKt, name, icon };
+  }
+  // Wind at a height (ft above sea level): the surface wind (from windFrom) near the ground, turning to the
+  // westerly winds aloft (a jet stream in the mid-latitudes) and getting stronger with height.
+  function windAt(lat, lon, t, altFt = 0) {
+    const w = weatherAt(lat, lon, t);
+    const x = lon - WX_DRIFT * t;
+    const z = t / WX_MORPH;
+    const aloft = (lat >= -25 && lat <= 25 ? 90 : 270) + (wxNoise(x / 12, lat / 10, z, 5) - 0.5) * 100;
+    const k = smooth(2000, 12000, altFt);
+    const jet = 60 * Math.exp(-(((Math.abs(lat) - 40) / 12) ** 2)) * (0.6 + 0.8 * wxNoise(x / 8, lat / 8, z, 6));
+    const from = (w.windFrom + k * (((aloft - w.windFrom + 540) % 360) - 180) + 360) % 360;
+    const kt = w.windKt * (1 + 1.2 * k) + k * jet;
+    return { from: Math.round(from), kt: Math.round(kt), gusty: w.gustKt > 0 || w.storm, storm: w.storm };
+  }
+
   // A runway's key (its ends): what a plane's runway choice at an airport remembers (Game.setRunway).
   const runwayKey = (r) => r.slice(0, 4).map((v) => Number(v).toFixed(4)).join(',');
   // Runway end to use at an airport, into the day's wind. `need`: the type's { m, paved } (runwayNeed). `pick`:
@@ -2203,9 +2312,23 @@
     else phase = tr.altAt(sv + 0.5) >= alt ? 'climb' : 'descent';
     // airFrac: how far between lift-off (0) and touchdown (1) the plane is, for blending the two field elevations.
     const airFrac = Math.min(1, Math.max(0, (sv - sLift) / Math.max(0.001, sTouch - sLift)));
+    // Crab: in a crosswind the nose points partly into the wind so the plane still tracks its path (heading =
+    // track + crab). It builds up after lift-off and is kicked out with the rudder just before touchdown, so on
+    // the runway the nose is straight again.
+    const fieldFt = Math.round(tr.fieldAt(sv));
+    const ground = sv <= sLift || sv >= sTouch;
+    const wind = windAt(pos.lat, pos.lon, t, alt);
+    let crab = 0;
+    if (!ground) {
+      const kt = Math.max(60, speed / 1.852);
+      crab = Math.asin(Math.max(-0.6, Math.min(0.6, (wind.kt / kt) * Math.sin((wind.from - pos.heading) * Math.PI / 180)))) * 180 / Math.PI;
+      const agl = alt - fieldFt;
+      crab *= phase === 'takeoff' || phase === 'climb' && agl < 300 ? Math.min(1, Math.max(0, agl / 150)) : Math.min(1, Math.max(0, agl / 40));
+      crab = Math.round(crab * 10) / 10;
+    }
     // altFt: above sea level; fieldFt: the runways' height at this point (altFt - fieldFt = height above them).
-    return { lat: pos.lat, lon: pos.lon, heading: pos.heading, altFt: alt, fieldFt: Math.round(tr.fieldAt(sv)),
-      ground: sv <= sLift || sv >= sTouch, speedKmh: speed, phase, airFrac,
+    return { lat: pos.lat, lon: pos.lon, heading: pos.heading, altFt: alt, fieldFt,
+      ground, speedKmh: speed, phase, airFrac, crab, windFrom: wind.from, windKt: wind.kt, gusty: wind.gusty,
       cruiseFt: tr.cruiseAlt, depRunway: designatorOf(tr.depRunway.hdg), arrRunway: designatorOf(tr.arrRunway.hdg) };
   }
   const designatorOf = (h) => String(Math.round((((h % 360) + 360) % 360) / 10) || 36).padStart(2, '0');
@@ -2351,7 +2474,7 @@
     priceNew, fitsAirport, fitsReason, crewFor, factoryOf, onSale, dateOf,
     airportSize, baseSize, airportCategory, airportRunways, runwayLength, runwayTaxiways, runwayCover, roundLine,
     CLASSES, CLASS_ROOM, typeClass, standClassAt, maxClass, slotsFit, longestRunway, runwayNeed, attraction,
-    flightTrack, flightState, legTrack, cruiseFt, perf, windFrom, gateOf, apronOf, taxiwaysOf, drawnTaxiways, expansionPreview, terminalPiece,
+    flightTrack, flightState, legTrack, cruiseFt, perf, windFrom, weatherAt, windAt, WX_DRIFT, gateOf, apronOf, taxiwaysOf, drawnTaxiways, expansionPreview, terminalPiece,
     fmtMoney, fmtTime, fmtClock, fmtDuration,
 
     // opts: { mode, difficulty, airport, aircraft, company, story } from the start screen; all optional.
@@ -3316,6 +3439,12 @@
     home() { return this.state.home || C.startAirport; },
     makerMult(type) { return this.mode().makerCrashMult[D.aircraft[type].maker] || 1; },
     crashChance(type) { return C.events.crashPerFlight * this.makerMult(type); },
+
+    // The weather at an airport (weatherAt), now or at game time t.
+    airportWeather(code, t = this.state.time) {
+      const a = airportByCode[code];
+      return a ? weatherAt(a.lat, a.lon, t) : null;
+    },
 
     activeEffects() {
       const s = this.state;

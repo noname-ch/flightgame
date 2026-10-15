@@ -267,6 +267,7 @@
     map.createPane('runways').style.zIndex = 375;
     map.createPane('rivals').style.zIndex = 380;
     map.createPane('routes').style.zIndex = 390;
+    map.createPane('clouds').style.zIndex = 395; // (js/weather.js: over the routes, under the airports and planes)
 
     const base = {
       Standard: new TintedTiles(tileUrl('Canvas/World_Light_Gray_Base'), TILE_OPTS),
@@ -318,6 +319,7 @@
     ui.base = base;
     ui.baseName = baseName;
     ui.overlays = { Towns: ui.townLayer, Routes: ui.routeLayer, 'Rival airlines': ui.rivalLayer, 'Place names': names };
+    if (FG.weather) ui.overlays['Clouds and weather'] = FG.weather.layer2d(); // (also the 3D clouds, rain and snow)
     ui.names = names;
     addControl('topleft', () => {
       const bar = L.DomUtil.create('div', 'leaflet-bar');
@@ -889,7 +891,7 @@
   function planePosition(p, t = nowMinutes()) {
     if (p.status === 'flying') {
       const st = G.flightState(p, t);
-      return { latlng: [st.lat, st.lon], heading: st.heading, alt: st.altFt - (st.fieldFt || 0), ground: st.ground, st };
+      return { latlng: [st.lat, st.lon], heading: st.heading + (st.crab || 0), alt: st.altFt - (st.fieldFt || 0), ground: st.ground, st }; // (nose into a crosswind)
     }
     const g = G.gateOf(p.location, p.id);
     return { latlng: [g.lat, g.lon], heading: g.heading, alt: 0, ground: true, gate: g.name };
@@ -1102,7 +1104,8 @@
       <h3>${a.code} · ${a.name}</h3>
       <div class="muted">${a.city}, ${a.country} · ${categoryTag(code)} · size ${sizeDots(G.airportSize(code))}${a.minor ? ' · airfield' : ''}</div>
       <div>Catchment: <b>${fmtPop(G.catchment(code))}</b> people · landing fee ${G.fmtMoney(G.landingFee(code))}</div>
-      <div>${runwayText(code)}</div>${rivalsAt(code)}`;
+      <div>${runwayText(code)}</div>
+      ${FG.weather ? `<div title="Weather now (it drifts east and changes over a day or two)">${FG.weather.text(G.airportWeather(code))}</div>` : ''}${rivalsAt(code)}`;
     if (a.built && !a.open) {
       h += a.site ? '<div class="warn">🏗 Being built: open it once its checklist (Construction, below) is done.</div>'
         : `<div class="warn">🏗 Under construction – opens ${openDate(code)}.</div>`;
@@ -2146,6 +2149,7 @@
       drawRoutes();
       updatePlanes(true);
       updateRivalPlanes();
+      if (FG.weather) FG.weather.redraw();
     }
     updatePlanes(false);
   }

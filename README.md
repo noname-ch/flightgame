@@ -55,6 +55,17 @@ it left on time, incidents, ferry flights and its last 8 flights. A year is the 
 the airport editor and build panel, the bug report, the airport checklist and settings) and opens where it was
 left last time. On a phone a click shows the plane's card in Fleet instead.
 
+**Weather**: clouds drift over both maps, from fair-weather puffs to grey rain bands and thunderstorms, and the
+storms in the newspaper show up as real storms. It is made up but steady: it drifts east, changes over a day or two,
+is drier in the subtropics, wetter at the equator and colder towards the poles, in winter and at night. Zoomed in,
+rain, snow, fog and lightning show over the map, and a chip at the top says the weather there (also in the
+airport panel and the plane window). In 3D the sky greys over under cloud. Planes **crab** in a crosswind: the
+nose points partly into the wind so they still track their path, and the pilots kick it straight just before
+touchdown; in gusty wind and thunderstorms they bump about a little. The plane window shows the wind and the crab
+angle. The weather is for looks: flights don't wait for it (storm events still close airports). It is light on
+the computer (one half-resolution canvas in 2D, one batch of sprites in 3D, CSS for rain and snow);
+Settings → On the map → *Clouds and weather* turns it all off.
+
 **Main menu**: the very first start asks for a style, then the main menu offers *Continue*, *New game*,
 *Load game* (the last save in this browser, or a `.json` save file; ⋯ → *Save to file* makes one) and
 *Quick start*. A loading screen stays up until the map has its tiles. The 3D view asks once whether the device

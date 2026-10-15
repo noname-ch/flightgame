@@ -64,6 +64,7 @@ function attitude(p, st, t) {
   const moved = G.distanceKm(a, b) * 1000;
   let heading = st.heading || 0;
   if (st.phase !== 'pushback' && moved > 3) heading = G.bearing(a, b);
+  heading += st.crab || 0; // crabbing into a crosswind (G.flightState; straightened out before touchdown)
   const vMs = st.speedKmh / 3.6;
   const pf = G.perf(p.type);
   const vLift = pf.vLof; // the type's lift-off speed
@@ -79,6 +80,14 @@ function attitude(p, st, t) {
     const climbM = ((b.altFt || 0) - (a.altFt || 0)) * 0.3048;
     pitch = Math.atan2(climbM, Math.max(1, moved)) / DEG + 2.5;
     if (st.phase === 'approach' && agl < 150) pitch += 4 * (1 - agl / 150); // flare
+    // Gusty wind or a thunderstorm low down: the plane bumps about a little (looks only; js/weather.js wind).
+    if (st.gusty && agl < 10000) {
+      const k = Math.min(1, Math.max(0.15, (st.windKt - 12) / 25)) * (agl < 3000 ? 1 : 0.5);
+      const ph = p.id.charCodeAt(p.id.length - 1) * 0.7;
+      const s = performance.now() / 1000;
+      bank += k * 4 * (0.6 * Math.sin(s * 1.9 + ph) + 0.4 * Math.sin(s * 4.3 + ph * 2));
+      pitch += k * 1.2 * Math.sin(s * 2.7 + ph);
+    }
   } else if (st.phase === 'takeoff') {
     pitch = 9 * Math.max(0, Math.min(1, (st.speedKmh - vLift * 0.75) / (vLift * 0.25))); // rotation
   } else if (st.phase === 'landing') {
@@ -867,6 +876,130 @@ function placeModel(e, pose, altM, exag, globe, now, lineUp) {
   e.obj.matrixWorldNeedsUpdate = true;
 }
 
+// ---------- clouds (js/weather.js puffs) ----------
+// One batch of sprites in the planes' layer: one draw call however many clouds there are. Each puff is a point
+// with its size in metres; the vertex shader turns that into pixels from how far it is (clip w) compared with the
+// view centre, so they shrink with distance. Puffs the camera is right in fade out (and save the GPU the fill).
+const CLOUD_MAX = 2600;
+const CLOUD_VS = `
+uniform float uScale; uniform vec4 uClip; uniform float uClipOn; uniform float uMaxPx; uniform float uAlpha;
+attribute float size; attribute float shade; attribute float alpha; attribute float rot;
+varying float vShade; varying float vAlpha; varying float vRot;
+void main() {
+  vec4 c = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  gl_Position = c;
+  float px = c.w > 0.0 ? size * uScale / c.w : 0.0;
+  float a = alpha * uAlpha * clamp((uMaxPx - px) / (uMaxPx * 0.5), 0.0, 1.0);
+  if (uClipOn > 0.5 && dot(uClip.xyz, position) + uClip.w < -0.002) a = 0.0; // behind the globe
+  gl_PointSize = a > 0.0 ? px : 0.0;
+  vShade = shade; vAlpha = a; vRot = rot;
+}`;
+const CLOUD_FS = `
+uniform sampler2D uTex;
+varying float vShade; varying float vAlpha; varying float vRot;
+void main() {
+  vec2 q = gl_PointCoord - 0.5;
+  float cs = cos(vRot), sn = sin(vRot);
+  vec4 t = texture2D(uTex, vec2(cs * q.x - sn * q.y, sn * q.x + cs * q.y) + 0.5);
+  float a = t.a * vAlpha;
+  if (a < 0.01) discard;
+  vec3 col = mix(vec3(1.0), vec3(0.36, 0.4, 0.46), vShade) * (0.8 + 0.25 * (1.0 - gl_PointCoord.y)); // lit from above
+  gl_FragColor = vec4(col, a);
+}`;
+function cloudPoints() {
+  const g = new THREE.BufferGeometry();
+  const attr = (n) => new THREE.BufferAttribute(new Float32Array(CLOUD_MAX * n), n).setUsage(THREE.DynamicDrawUsage);
+  g.setAttribute('position', attr(3));
+  for (const a of ['size', 'shade', 'alpha', 'rot']) g.setAttribute(a, attr(1));
+  g.setDrawRange(0, 0);
+  const tex = new THREE.CanvasTexture(FG.weather.sprite());
+  const m = new THREE.ShaderMaterial({
+    uniforms: { uTex: { value: tex }, uScale: { value: 1 }, uClip: { value: new THREE.Vector4() }, uClipOn: { value: 0 }, uMaxPx: { value: 700 }, uAlpha: { value: 1 } },
+    vertexShader: CLOUD_VS, fragmentShader: CLOUD_FS, transparent: true, depthWrite: false, depthTest: true,
+  });
+  const pts = new THREE.Points(g, m);
+  pts.frustumCulled = false;
+  pts.renderOrder = 10;
+  return pts;
+}
+// The puffs round the view centre (about three screens wide), again when the view or the game time changed,
+// at most four times a second; the size uniform every frame.
+function updateClouds(layer, map, globe, mpp, centerW, now) {
+  const pts = layer.clouds;
+  const on = !!(pts && FG.weather && FG.weather.enabled());
+  if (!pts) return;
+  pts.visible = on;
+  if (!on) { FG.weather.n3d = 0; return; }
+  const u = pts.material.uniforms;
+  u.uScale.value = (centerW / mpp) * (window.devicePixelRatio || 1);
+  u.uClipOn.value = v.clip ? 1 : 0;
+  if (v.clip) u.uClip.value.set(v.clip[0], v.clip[1], v.clip[2], v.clip[3]);
+  u.uMaxPx.value = 700 * (window.devicePixelRatio || 1);
+  // close to an airport the clouds thin out, so it stays in view
+  u.uAlpha.value = Math.max(0.3, Math.min(1, 1 - (map.getZoom() - 9) * 0.25));
+  const c = map.getCenter();
+  const halfKm = Math.min(9000, (map.getCanvas().clientWidth * mpp / 1000) * 1.6);
+  const dLat = Math.min(85, halfKm / 111.32);
+  const dLon = Math.min(180, dLat / Math.max(0.2, Math.cos(c.lat * DEG)));
+  const t = G.state.time;
+  const key = `${c.lat.toFixed(2)},${c.lng.toFixed(2)},${dLat.toFixed(3)},${globe},${t}`;
+  if (key === v.cloudKey || now - (v.cloudAt || 0) < 250) return;
+  v.cloudKey = key;
+  v.cloudAt = now;
+  const list = FG.weather.puffs({ s: c.lat - dLat, n: c.lat + dLat, w: c.lng - dLon, e: c.lng + dLon }, t, 1800, true);
+  const g = pts.geometry;
+  const P = g.attributes.position.array;
+  const S = g.attributes.size.array;
+  const H = g.attributes.shade.array;
+  const A = g.attributes.alpha.array;
+  const R = g.attributes.rot.array;
+  const n = Math.min(CLOUD_MAX, list.length);
+  for (let i = 0; i < n; i++) {
+    const p = list[i];
+    frameAt(p.lat, p.lon, p.alt * TERRAIN_EXAG, globe);
+    P[i * 3] = tmp.pos.x; P[i * 3 + 1] = tmp.pos.y; P[i * 3 + 2] = tmp.pos.z;
+    S[i] = p.r * 2.4; // (the blob fills about 85% of its sprite)
+    H[i] = p.shade;
+    A[i] = Math.min(1, p.a * 0.75);
+    R[i] = p.rot;
+  }
+  for (const a of ['position', 'size', 'shade', 'alpha', 'rot']) g.attributes[a].needsUpdate = true;
+  g.setDrawRange(0, n);
+  FG.weather.n3d = n;
+}
+// The sky greys over under cloud and rain, and the haze comes closer in fog (map.setSky, only when it changes).
+const SKY = { sky: '#7fb4ec', horizon: '#dbe9f7', fog: '#e6eef7' };
+const GREY = { sky: '#8d99a6', horizon: '#c3cad2', fog: '#c9d0d7' };
+const STORMY = { sky: '#56606b', horizon: '#848d97', fog: '#8f979f' };
+function mixHex(a, b, k) {
+  const pa = parseInt(a.slice(1), 16);
+  const pb = parseInt(b.slice(1), 16);
+  const ch = (sh) => Math.round(((pa >> sh) & 255) * (1 - k) + ((pb >> sh) & 255) * k);
+  return `#${((ch(16) << 16) | (ch(8) << 8) | ch(0)).toString(16).padStart(6, '0')}`;
+}
+function skyOf(w) {
+  const grey = w ? Math.min(1, w.cover * 0.7 + w.rain * 0.4) : 0;
+  const storm = w && w.storm ? 0.8 : 0;
+  const col = (k) => mixHex(mixHex(SKY[k], GREY[k], grey), STORMY[k], storm);
+  return {
+    'sky-color': col('sky'), 'horizon-color': col('horizon'), 'fog-color': col('fog'),
+    'sky-horizon-blend': 0.6, 'horizon-fog-blend': 0.6, 'fog-ground-blend': w && w.fog ? 0.35 : w && w.rain > 0.5 ? 0.7 : 0.85,
+    'atmosphere-blend': ['interpolate', ['linear'], ['zoom'], 0, 1, 5, 1, 8, 0],
+  };
+}
+function weatherSky(map, now) {
+  if (now - (v.skyAt || 0) < 2000) return;
+  v.skyAt = now;
+  const on = FG.weather && FG.weather.enabled() && map.getZoom() >= 6;
+  const c = map.getCenter();
+  const w = on ? G.weatherAt(c.lat, c.lng, G.state.time) : null;
+  const sky = skyOf(w);
+  const key = JSON.stringify([sky['sky-color'], sky['fog-color'], sky['fog-ground-blend']]);
+  if (key === v.skyKey) return;
+  v.skyKey = key;
+  setTimeout(() => { if (v.map === map) map.setSky(sky); }, 0); // (not inside the layer's render)
+}
+
 const planeLayer = {
   id: 'fg-planes',
   type: 'custom',
@@ -880,6 +1013,8 @@ const planeLayer = {
     // Everything is drawn relative to the view centre (see render): the aircraft and the track live in here.
     this.world = new THREE.Group();
     this.scene.add(this.world);
+    if (FG.weather) { this.clouds = cloudPoints(); this.world.add(this.clouds); }
+    this.v4 = new THREE.Vector4();
     this.renderer = new THREE.WebGLRenderer({ canvas: map.getCanvas(), context: gl, antialias: true });
     this.renderer.autoClear = false;
     this.matrix = new THREE.Matrix4();
@@ -910,6 +1045,7 @@ const planeLayer = {
 
     // Light from above-left of the view centre.
     frameAt(center.lat, center.lng, 0, globe);
+    const centerW = this.v4.set(tmp.pos.x, tmp.pos.y, tmp.pos.z, 1).applyMatrix4(this.matrix).w; // (cloud sizes)
     this.sun.position.copy(tmp.pos).addScaledVector(tmp.up, 1).addScaledVector(tmp.east, -0.6).addScaledVector(tmp.north, 0.4);
     this.sun.target.position.copy(tmp.pos);
     // Draw relative to the view centre: world coordinates (mercator 0..1, or a sphere of radius 1) are
@@ -965,6 +1101,8 @@ const planeLayer = {
       if (!alive.has(id)) { this.world.remove(v.planes[id].obj); delete v.planes[id]; }
     }
     if (this.track && !(sel && v.planes[sel] && G.plane(sel) && G.plane(sel).status === 'flying')) this.track.visible = false;
+    updateClouds(this, map, globe, mpp, centerW, now);
+    weatherSky(map, now);
 
     this.renderer.resetState();
     // Own depth buffer for the planes: sharing MapLibre's lets the (exaggerated) terrain and the
