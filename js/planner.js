@@ -356,7 +356,15 @@
 
   function airportsTab() {
     let h = `<div class="panel"><h3>Your airports</h3><div class="muted">Click to open · double-click a slot row for its timetable.</div>`;
-    for (const code of myAirports()) {
+    // In the four categories (C.airports.categories), the biggest first.
+    const no = (code) => C.airports.categories.indexOf(G.airportCategory(code));
+    const mine = myAirports().sort((a, b) => no(b) - no(a));
+    let group = null;
+    for (const code of mine) {
+      if (G.airportCategory(code) !== group) {
+        group = G.airportCategory(code);
+        h += `<h4 class="ap-group">${group.plural} <span class="muted">${mine.filter((c) => G.airportCategory(c) === group).length}</span></h4>`;
+      }
       const a = G.airportByCode[code];
       const open = !!pl.open[code];
       const planes = G.state.planes.filter((p) => p.schedule.stops.includes(code) || p.location === code);

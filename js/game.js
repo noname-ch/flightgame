@@ -184,6 +184,8 @@
     sizeCache.set(code, { key, size });
     return size;
   }
+  // Which of the four categories (C.airports.categories) an airport is in, by its size.
+  const airportCategory = (code) => A.categories.find((c) => airportSize(code) <= c.upTo) || A.categories[A.categories.length - 1];
   // Small airfields without an IATA code get fewer passengers until they grow a terminal.
   // Every terminal expansion the player builds draws more passengers.
   const attraction = (code) => (airportByCode[code].minor && airportSize(code) < 2 ? A.minorFactor : 1) *
@@ -2304,7 +2306,7 @@
     airportByCode, distanceKm, dist, bearing, interpolate, catchment, dailyDemand,
     ticketPrice, routeKey, blockMinutes, turnaroundMin, landingFee, slotUpfront, slotWeekly,
     priceNew, fitsAirport, fitsReason, crewFor, factoryOf, onSale, dateOf,
-    airportSize, baseSize, airportRunways, runwayLength, runwayTaxiways, runwayCover, roundLine,
+    airportSize, baseSize, airportCategory, airportRunways, runwayLength, runwayTaxiways, runwayCover, roundLine,
     CLASSES, CLASS_ROOM, typeClass, standClassAt, maxClass, slotsFit, longestRunway, runwayNeed, attraction,
     flightTrack, flightState, legTrack, cruiseFt, perf, windFrom, gateOf, apronOf, taxiwaysOf, drawnTaxiways, expansionPreview, terminalPiece,
     fmtMoney, fmtTime, fmtClock, fmtDuration,

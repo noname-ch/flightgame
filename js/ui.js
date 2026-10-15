@@ -138,10 +138,17 @@
   const TOWN_STYLE = { color: '#fff', weight: 1, fillColor: COLORS.gray, fillOpacity: 0.75 };
   const TOWN_IN_CATCHMENT = { color: '#fff', weight: 1, fillColor: COLORS.orange, fillOpacity: 1 };
 
+  // The four airport categories with their sizes, for the legend.
+  const LEGEND_CATEGORIES = C.airports.categories.map((c, i, all) => {
+    const from = i ? all[i - 1].upTo + 1 : 0;
+    const sizes = !i ? `up to ${c.upTo}` : from === c.upTo ? from : `${from}–${c.upTo}`;
+    return `<div><span class="tag ap-cat cat-${c.id}">${c.name}</span> size ${sizes}</div>`;
+  }).join('\n    ');
   const LEGEND = `<details class="map-legend leaflet-bar"><summary>Legend</summary>
     <div><i class="dot own"></i>Your slot (★ home base)</div>
     <div><i class="dot stake"></i>You own shares (no slot)</div>
     <div><i class="dot ap"></i>Airport · bigger = larger hub</div>
+    ${LEGEND_CATEGORIES}
     <div><i class="dot town"></i>Town · bigger = more people</div>
     <div><i class="dot catch"></i>Town feeding the selected airport</div>
     <div><i class="line active"></i>Schedule running</div>
@@ -1093,7 +1100,7 @@
     let h = `<div class="panel airport">
       <button class="close" data-action="closeAirport" title="Close">×</button>
       <h3>${a.code} · ${a.name}</h3>
-      <div class="muted">${a.city}, ${a.country} · size ${sizeDots(G.airportSize(code))}${a.minor ? ' · airfield' : ''}</div>
+      <div class="muted">${a.city}, ${a.country} · ${categoryTag(code)} · size ${sizeDots(G.airportSize(code))}${a.minor ? ' · airfield' : ''}</div>
       <div>Catchment: <b>${fmtPop(G.catchment(code))}</b> people · landing fee ${G.fmtMoney(G.landingFee(code))}</div>
       <div>${runwayText(code)}</div>${rivalsAt(code)}`;
     if (a.built && !a.open) {
@@ -1339,6 +1346,8 @@
   // ---------- market (hangar overlay) ----------
   const fmtM = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(n >= 1e7 ? 0 : 1)}M` : `${Math.round(n / 1000)}k`);
   const sizeDots = (n) => `${'●'.repeat(n)}${'○'.repeat(5 - n)}`;
+  // The category of an airport (one of the four in C.airports.categories) as a small label.
+  const categoryTag = (code) => { const c = G.airportCategory(code); return `<span class="tag ap-cat cat-${c.id}">${c.name}</span>`; };
   const MARKET_SORTS = {
     price: ['Price', (a, b) => a.price - b.price],
     seats: ['Seats', (a, b) => D.aircraft[b.type].seats - D.aircraft[a.type].seats],
@@ -2364,7 +2373,7 @@
       <div class="st-label">Mode</div>${startChoices('mode', C.modes, st.mode)}
       <div class="st-label">Difficulty</div>${startChoices('difficulty', C.difficulties, st.difficulty)}
       <div class="st-label">Game</div>${startStory()}
-      <label class="st-label" for="st-airport">Home airport <span class="muted">${ap.name}, ${ap.city} · size ${G.airportSize(ap.code)}</span></label>
+      <label class="st-label" for="st-airport">Home airport <span class="muted">${ap.name}, ${ap.city} · ${G.airportCategory(ap.code).name.toLowerCase()}, size ${G.airportSize(ap.code)}</span></label>
       <select id="st-airport">${startAirportOptions()}</select>
       <div class="st-label">First aircraft <span class="muted">leased, with crew</span></div>
       <div class="st-planes">${startPlanes()}</div>

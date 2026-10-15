@@ -64,6 +64,14 @@ FG.config = {
 
   // Airports as investments: shares, dividends and construction projects
   airports: {
+    // The four categories of airports, by size (0-5): `upTo` is the largest size in each. They only name the
+    // sizes: prices, fees, slots and passengers all go by the size itself.
+    categories: [
+      { id: 'small', name: 'Small airport', plural: 'Small airports', upTo: 1 },
+      { id: 'regional', name: 'Regional airport', plural: 'Regional airports', upTo: 2 },
+      { id: 'large', name: 'Large airport', plural: 'Large airports', upTo: 4 },
+      { id: 'hub', name: 'Major hub', plural: 'Major hubs', upTo: 5 },
+    ],
     paxPerHead: [0, 0.3, 1, 2, 3, 4], // passengers per year per catchment inhabitant, by size
     minorFactor: 0.3,         // airfields without an IATA code (size 1) draw fewer passengers
     profitPerPax: 4,          // airport operating profit per passenger

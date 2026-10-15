@@ -322,6 +322,17 @@ try {
   if (ferry.err) errors.push(`ferry: ${ferry.err}`);
   else step(`ferry: "${ferry.text}"`);
 
+  step('airport categories: every airport in one of the four, named in the airport panel');
+  const cats = await evaluate((home) => {
+    const n = {};
+    for (const code of Object.keys(G.airportByCode)) { const id = G.airportCategory(code).id; n[id] = (n[id] || 0) + 1; }
+    document.querySelector('#rail [data-tab="airports"]').click();
+    FG.ui.showAirport(home);
+    return { n, name: G.airportCategory(home).name };
+  }, home);
+  if (Object.keys(cats.n).length !== 4) errors.push(`the airports fall into ${Object.keys(cats.n).length} categories, not 4: ${JSON.stringify(cats.n)}`);
+  await waitFor((name) => (document.querySelector('.panel.airport .ap-cat') || {}).textContent === name, 5000, 'the category in the airport panel', cats.name);
+
   step(`airport editor (F3): add a stand at ${home}, then drop it`);
   await waitFor((h) => FG.layouts.settled(h), 60000, null, home);
   const ed = await evaluate(async (code) => {
