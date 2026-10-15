@@ -75,6 +75,11 @@ Play online: https://noname-ch.github.io/flightgame/ (GitHub Pages, deployed fro
 - For anything animated, use `FG.ui.time` (exact fractional game time), not `G.state.time`.
 - The game ticks come from a worker's timer (ui.js `startTicks`), so the game runs on in a background tab.
   While `document.hidden`, `loop()` only advances the game: nothing is drawn and newspapers wait.
+- 3D layers: over terrain, MapLibre paints each run of flat layers (fill, line, raster, hillshade, background) into a
+  2048 px texture per terrain tile. `transformStyle` puts every flat layer first, so there is one run: a flat layer
+  after a label, extrusion, circle or the planes costs another 22 MB per tile (six runs reached 2.6 GB low over the
+  ground and iPhones reloaded the page; the smoke test checks the order). On touch devices `phoneDrapes` makes the
+  textures 1024 px.
 - 3D only repaints while something moves. Anything new that animates in 3D must trigger a repaint
   itself.
 - Airport layouts: 116 airports have files in `js/data/layouts`. Every other airport is read from the

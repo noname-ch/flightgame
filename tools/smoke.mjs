@@ -546,6 +546,15 @@ try {
     else await evaluate(() => document.querySelector('#warn3d [data-w3=yes]').click());
     const loaded = await waitFor(() => FG.view3d.map && FG.view3d.map.loaded(), 60000);
     if (!loaded) warnings.push('3D map did not finish loading in 60 s (tiles?)');
+    // Flat layers all come before labels, 3D buildings and planes: each flat layer after one of those costs
+    // another 22 MB texture per terrain tile (2.6 GB low over the ground, and iPhones reloaded the page).
+    const late = await evaluate(() => {
+      const flat = ['background', 'fill', 'line', 'raster', 'hillshade', 'color-relief'];
+      const ls = FG.view3d.map.getStyle().layers;
+      const first = ls.findIndex((l) => !flat.includes(l.type));
+      return first < 0 ? [] : ls.slice(first).filter((l) => flat.includes(l.type)).map((l) => `${l.id} (${l.type}) after ${ls[first].id}`);
+    });
+    if (late.length) errors.push(`3D: flat layers after labels or 3D layers (each adds a terrain texture per tile): ${late.join(', ')}`);
     // Switching keeps the place: 3D opens where the 2D map was, and 2D comes back where 3D was.
     const near = (a, lat, lon) => Math.abs(a.lat - lat) < 0.05 && Math.abs(a.lng - lon) < 0.05;
     const in3d = await evaluate(() => { const c = FG.view3d.map.getCenter(); return { lat: c.lat, lng: c.lng, z: FG.view3d.map.getZoom() }; });
