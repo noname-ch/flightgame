@@ -19,6 +19,10 @@ const v = {
   map: null,
   ready: false,
   follow: false,
+  cam: 'chase',        // while following: 'chase' (V, turn round it by dragging), 'flyby' (B) or 'wing' (N)
+  orbit: { yaw: 0, pitch: null, base: null }, // chase camera: angle to the plane's heading, tilt, eased heading
+  flyby: null,         // fly-by camera spot { id, lat, lon, alt, min }
+  wingSide: -1,        // wing camera: -1 left wing, 1 right
   satellite: false,
   planes: {},          // id -> { obj, world: Vector3, lngLat }
   sig: { airports: '', routes: '', gates: '' },
@@ -1042,6 +1046,8 @@ const planeLayer = {
     const mpp = EARTH_CIRC * Math.cos(center.lat * Math.PI / 180) / (512 * 2 ** zoom); // metres per pixel
     const px = PLANE_PX * 2 ** (-Math.max(0, zoom - 8) * 0.5); // shrink towards real size when close
     const sel = FG.ui && FG.ui.selectedPlane;
+    // Fly-by and wing cameras: the plane at its real size, always posed (the camera needs it), no flight path line.
+    const cine = v.follow && v.cam !== 'chase' ? sel : null;
 
     // Light from above-left of the view centre.
     frameAt(center.lat, center.lng, 0, globe);
@@ -1070,7 +1076,7 @@ const planeLayer = {
       const flying = p.status === 'flying';
       const n = flying ? 0 : (parked[p.location] = (parked[p.location] || 0) + 1) - 1;
       const st = flying && G.flightState ? G.flightState(p, t) : null;
-      if (view) {
+      if (view && p.id !== cine) {
         const at = st || (G.gateOf ? G.gateOf(p.location, p.id) : G.airportByCode[p.location]);
         if (at && !inBox(view, at.lat, at.lon)) {
           e.obj.visible = false;
@@ -1081,10 +1087,10 @@ const planeLayer = {
       const pose = planePose(p, t, st);
       if (st && st.speedKmh) moving = Math.max(moving, (st.speedKmh / 3.6) * (FG.ui ? FG.ui.speed : 0) / mpp);
       const len = e.obj.userData.len;
-      const exag = Math.max(1, px * mpp / len) * (p.id === sel ? 1.35 : 1);
+      const exag = p.id === cine ? 1 : Math.max(1, px * mpp / len) * (p.id === sel ? 1.35 : 1);
       // Shown height: real cruise height, but always clearly above the ground when zoomed out.
       const altM = drawnAlt(map, p, pose, len, exag);
-      if (p.id === sel) this.drawTrack(p, len, exag, globe);
+      if (p.id === sel && !cine) this.drawTrack(p, len, exag, globe);
       placeModel(e, pose, altM, exag, globe, now, n);
       const { pos } = tmp;
       e.world.copy(pos);
@@ -1100,7 +1106,7 @@ const planeLayer = {
     for (const id of Object.keys(v.planes)) {
       if (!alive.has(id)) { this.world.remove(v.planes[id].obj); delete v.planes[id]; }
     }
-    if (this.track && !(sel && v.planes[sel] && G.plane(sel) && G.plane(sel).status === 'flying')) this.track.visible = false;
+    if (this.track && (cine || !(sel && v.planes[sel] && G.plane(sel) && G.plane(sel).status === 'flying'))) this.track.visible = false;
     updateClouds(this, map, globe, mpp, centerW, now);
     weatherSky(map, now);
 
@@ -1259,6 +1265,7 @@ function updateHover() {
 }
 
 function onClick(e) {
+  if (performance.now() - (v.dragEnd || 0) < 400) return; // (the end of turning the camera round a plane)
   // "Build a new airport": the click picks the site, as on the 2D map.
   if (FG.ui.buildMode) { FG.ui.buildAt(e.lngLat.lat, e.lngLat.lng); return; }
   const best = planeAt(e.point);
@@ -1284,38 +1291,82 @@ function fitNetwork() {
   v.map.fitBounds(b, { padding: 80, maxZoom: 7, pitch: 45, duration: 1200 });
 }
 
-function setFollow(on) {
+function setFollow(on, cam) {
+  const wasCine = v.follow && v.cam !== 'chase';
   v.follow = on && !!(FG.ui && FG.ui.selectedPlane);
+  v.cam = v.follow ? cam || 'chase' : 'chase';
   v.followStart = v.follow;
-  document.querySelector('#view3d .follow')?.classList.toggle('active', v.follow);
+  v.flyby = null;
+  // (back from the fly-by or wing camera: the chase camera's usual tilt, not their view along the ground)
+  v.orbit = { yaw: 0, pitch: wasCine ? 62 : null, base: null };
+  camButtons();
+  const map = v.map;
+  if (!map) return;
   // While following, the camera centre floats at the plane's height instead of sitting on the ground.
-  if (v.map && v.map.setCenterClampedToGround) v.map.setCenterClampedToGround(!v.follow);
+  if (map.setCenterClampedToGround) map.setCenterClampedToGround(!v.follow);
+  // ... and a drag turns the camera round the plane (see createMap) instead of moving the map.
+  for (const h of [map.dragPan, map.dragRotate, map.touchPitch]) if (h) { if (v.follow) h.disable(); else h.enable(); }
+  if (map.touchZoomRotate) { if (v.follow) map.touchZoomRotate.disableRotation(); else map.touchZoomRotate.enableRotation(); }
+  // The fly-by camera looks up at planes passing over it and the wing camera rolls with the plane.
+  const cine = v.follow && v.cam !== 'chase';
+  map.setMaxPitch(cine ? 175 : 80);
+  if (!cine && map.getRoll && map.getRoll()) map.jumpTo({ roll: 0 });
+}
+function camButtons() {
+  for (const [cls, cam] of [['follow', 'chase'], ['flyby', 'flyby'], ['wing', 'wing']]) {
+    document.querySelector(`#view3d .${cls}`)?.classList.toggle('active', v.follow && v.cam === cam);
+  }
 }
 
-// Chase camera: behind the selected plane, turning with it. Starts close in; the wheel still zooms.
+// The cameras of DCS: V the chase camera (F2 there), B the fly-by (F3), N the wing camera (F4). They follow the
+// selected plane (the first one in the air if none is), and open the 3D view first. Pressed again, the fly-by
+// moves on ahead and the wing camera changes wings.
+function camera(mode) {
+  if (!FG.ui || !G.state.planes.length) return;
+  if (!G.plane(FG.ui.selectedPlane)) FG.ui.selectPlane((G.state.planes.find((p) => p.status === 'flying') || G.state.planes[0]).id);
+  const go = () => {
+    if (v.follow && v.cam === mode) {
+      if (mode === 'flyby') v.flyby = null;
+      if (mode === 'wing') v.wingSide = -v.wingSide;
+    } else setFollow(true, mode);
+    if (v.map) v.map.triggerRepaint();
+  };
+  if (v.on) go(); else confirm3d(() => { setOn(true); go(); });
+}
+
+// Following: the camera is put where the plane will be in the next frame, and the plane is drawn there (render
+// uses v.nextT): centring on the last frame's position left the plane running ahead of the camera. The next frame is
+// shown one frame interval after this one's timestamp: taking the clock whenever this code ran instead
+// made the steps uneven (one short, the next long), which shows as stutter.
 function followTick() {
   if (!v.follow) return;
   const p = G.plane(FG.ui.selectedPlane);
   const e = v.planes[FG.ui.selectedPlane];
   if (!p || !e) { setFollow(false); return; }
   const map = v.map;
-  // Centre on where the plane will be in the next frame, and draw it there (render uses v.nextT):
-  // centring on the last frame's position left the plane running ahead of the camera. The next frame is
-  // shown one frame interval after this one's timestamp: taking the clock whenever this code ran instead
-  // made the steps uneven (one short, the next long), which shows as stutter.
   const at = frameNow();
   if (v.lastFrameAt != null) v.frameMs = 0.9 * (v.frameMs || 16.7) + 0.1 * Math.min(100, Math.max(4, at - v.lastFrameAt));
   v.lastFrameAt = at;
   v.nextT = smoothTime(at + (v.frameMs || 16.7));
   v.nextAt = performance.now();
   const pose = planePose(p, v.nextT);
+  if (v.cam === 'flyby') flybyTick(map, p, e, pose);
+  else if (v.cam === 'wing') wingTick(map, p, e, pose);
+  else chaseTick(map, p, e, pose);
+}
+
+// Chase camera: behind the selected plane, turning with it; dragging turns it round the plane (it keeps that
+// angle to the plane as the plane turns). Starts close in; the wheel still zooms.
+function chaseTick(map, p, e, pose) {
   // (a plane that was out of view has no drawn heading and height yet)
   const drawn = e.obj.visible && e.altM != null;
   const heading = drawn ? e.heading : pose.heading;
-  const target = map.getBearing() + ((((heading - map.getBearing()) % 360) + 540) % 360 - 180) * (drawn ? 0.06 : 1);
-  const opts = { center: [pose.lon, pose.lat], bearing: target, pitch: Math.max(map.getPitch(), 62) };
+  const o = v.orbit;
+  if (o.base == null) o.base = drawn ? map.getBearing() : heading;
+  o.base += wrap180(heading - o.base) * (drawn ? 0.06 : 1);
+  const opts = { center: [pose.lon, pose.lat], bearing: o.base + o.yaw, pitch: o.pitch != null ? o.pitch : Math.max(map.getPitch(), 62) };
   if (v.followStart) {
-    opts.zoom = pose.altM > 300 ? 12 : 16;
+    opts.zoom = pose.altM > 300 ? 12 : 17; // (on the ground close enough to see the plane itself)
     v.followStart = false;
   } else {
     opts.zoom = Math.max(map.getZoom(), 6.5);
@@ -1324,6 +1375,72 @@ function followTick() {
   if (map.setCenterClampedToGround) opts.elevation = drawn ? drawnAlt(map, p, pose, e.obj.userData.len, e.exag) : pose.altM * TERRAIN_EXAG;
   map.jumpTo(opts);
 }
+
+// Where along its way the plane will be about a kilometre on (game minutes ahead, searched in growing steps);
+// null when it won't get that far (parked, or at the end of its flight).
+function poseAhead(p, t, km) {
+  const now = planePose(p, t);
+  for (let dt = 0.05; dt <= 30; dt *= 1.15) {
+    const q = planePose(p, t + dt);
+    if (G.distanceKm(now, q) >= km) return q;
+  }
+  return null;
+}
+const offsetLL = (lat, lon, east, north) => [lat + north / 111320, lon + east / (111320 * Math.cos(lat * DEG))];
+
+// Fly-by camera (B): it waits about a kilometre ahead on the plane's way, a little to the side (on the ground: at
+// eye height beside the taxiway or runway; in the air: just under its path), and turns to keep the plane in view
+// as it passes. Once the plane is well past, it moves on ahead again. Planes are drawn at their real size.
+function flybyTick(map, p, e, pose) {
+  const len = e.obj.userData.len;
+  const alt = drawnAlt(map, p, pose, len, 1);
+  let c = v.flyby;
+  const d = c && c.id === p.id ? G.distanceKm(pose, c) : Infinity;
+  if (c && d < c.min) c.min = d;
+  if (!c || c.id !== p.id || d > 3 || d > c.min + 0.6) {
+    const ahead = poseAhead(p, v.nextT, 1);
+    const q = ahead || pose;
+    const side = ahead ? 50 + len : 2 * len + 30; // metres to the right of its way (or of a parked plane)
+    const [lat, lon] = offsetLL(q.lat, q.lon, Math.cos(q.heading * DEG) * side, -Math.sin(q.heading * DEG) * side);
+    const ground = map.queryTerrainElevation([lon, lat]) || 0;
+    const qAlt = drawnAlt(map, p, q, len, 1);
+    c = v.flyby = { id: p.id, lat, lon, alt: Math.max(ground + 4, q.altM > 30 ? qAlt - 12 : ground + 4), min: Infinity };
+    c.min = G.distanceKm(pose, c);
+  }
+  // (the same point: nothing to look along)
+  if (G.distanceKm(pose, c) * 1000 < 1 && Math.abs(alt - c.alt) < 1) return;
+  const o = map.calculateCameraOptionsFromTo(new maplibregl.LngLat(c.lon, c.lat), c.alt, new maplibregl.LngLat(pose.lon, pose.lat), alt);
+  map.jumpTo({ ...o, roll: 0 });
+}
+
+// Wing camera (N): fixed on the plane above the wing, out towards the tip and behind it, looking ahead along the
+// plane; it turns, pitches and rolls with it (as drawn: the eased attitude of the last frame).
+function wingTick(map, p, e, pose) {
+  const len = e.obj.userData.len;
+  const look = D.looks && D.looks[p.type];
+  const span = (look && look.span) || len;
+  const att = e.att || pose;
+  const h = att.heading * DEG, th = (att.pitch || 0) * DEG, ph = (att.bank || 0) * DEG;
+  // Body axes in metres east, north, up (as placeModel turns the model).
+  const fwd = [Math.sin(h), Math.cos(h), 0], right = [Math.cos(h), -Math.sin(h), 0], up = [0, 0, 1];
+  const comb = (a, ka, b, kb) => [a[0] * ka + b[0] * kb, a[1] * ka + b[1] * kb, a[2] * ka + b[2] * kb];
+  const nose = comb(fwd, Math.cos(th), up, Math.sin(th));
+  const lift = comb(up, Math.cos(th), fwd, -Math.sin(th));
+  const wing = comb(right, Math.cos(ph), lift, -Math.sin(ph));
+  const top = comb(lift, Math.cos(ph), right, Math.sin(ph));
+  const at = (side, ahead, above) => [0, 1, 2].map((i) => wing[i] * side + nose[i] * ahead + top[i] * above);
+  const s = v.wingSide;
+  const cam = at(s * WING_CAM.out * span, -WING_CAM.back * len, WING_CAM.up * span + 1);
+  const aim = at(s * WING_CAM.aimOut * span, WING_CAM.aimAhead * len, -WING_CAM.aimDown * len);
+  const alt = drawnAlt(map, p, pose, len, 1);
+  const [cLat, cLon] = offsetLL(pose.lat, pose.lon, cam[0], cam[1]);
+  const [aLat, aLon] = offsetLL(pose.lat, pose.lon, aim[0], aim[1]);
+  const o = map.calculateCameraOptionsFromTo(new maplibregl.LngLat(cLon, cLat), alt + cam[2], new maplibregl.LngLat(aLon, aLat), alt + aim[2]);
+  map.jumpTo({ ...o, roll: att.bank || 0 });
+}
+// Wing camera spot (fractions of the span or length): out along the wing, behind the plane's centre, above the wing;
+// it looks at a point ahead of the nose and below it.
+const WING_CAM = { out: 0.3, back: 0.32, up: 0.08, aimOut: 0.12, aimAhead: 2.2, aimDown: 0.12 };
 
 // ---------- terrain for new airports ----------
 // FG.terrain.check(lat, lon): can an airport be built there? Resolves to null where the ground is fit for
@@ -1451,13 +1568,17 @@ function controls() {
   const box = document.createElement('div');
   box.className = 'view3d-controls';
   box.innerHTML = `<button class="home" title="Show my network">⌂</button>
-    <button class="follow" title="Follow the selected plane">🎥 Follow</button>
-    <button class="sat" title="Satellite imagery">🛰 Satellite</button>`;
+    <button class="follow" title="Follow the selected plane; drag to look round it (V)">🎥<span> Follow</span></button>
+    <button class="flyby" title="Fly-by: the camera waits ahead and watches the plane pass (B)">🎬<span> Fly-by</span></button>
+    <button class="wing" title="Wing camera, on the plane's wing; again for the other wing (N)">🪽<span> Wing</span></button>
+    <button class="sat" title="Satellite imagery">🛰<span> Satellite</span></button>`;
   box.querySelector('.home').onclick = () => { setFollow(false); fitNetwork(); };
   box.querySelector('.follow').onclick = () => {
     if (!FG.ui.selectedPlane) { FG.ui.selectPlane(G.state.planes[0] && G.state.planes[0].id); }
-    setFollow(!v.follow);
+    setFollow(!v.follow || v.cam !== 'chase');
   };
+  box.querySelector('.flyby').onclick = () => camera('flyby');
+  box.querySelector('.wing').onclick = () => camera('wing');
   box.querySelector('.sat').onclick = (ev) => {
     v.satellite = !v.satellite;
     ev.currentTarget.classList.toggle('active', v.satellite);
@@ -1511,6 +1632,33 @@ function createMap(fit) {
   map.on('mouseenter', 'fg-airports', () => { map.getCanvas().style.cursor = 'pointer'; });
   map.on('mouseleave', 'fg-airports', () => { map.getCanvas().style.cursor = ''; });
   map.on('dragstart', () => setFollow(false));
+  // Following, a drag (mouse, or one finger) turns the camera round the plane and tilts it, as in DCS's F2 view;
+  // from the fly-by or wing camera it goes back to that one. (MapLibre's own dragging is off while following.)
+  const touches = new Set();
+  let drag = null;
+  map.getCanvasContainer().addEventListener('pointerdown', (ev) => {
+    touches.add(ev.pointerId);
+    drag = v.follow && touches.size === 1 ? { x: ev.clientX, y: ev.clientY, moved: false } : null;
+  });
+  window.addEventListener('pointermove', (ev) => {
+    if (!drag || !v.follow || touches.size !== 1) return;
+    const dx = ev.clientX - drag.x, dy = ev.clientY - drag.y;
+    if (!drag.moved && Math.hypot(dx, dy) < 4) return;
+    drag.moved = true;
+    drag.x = ev.clientX;
+    drag.y = ev.clientY;
+    if (v.cam !== 'chase') setFollow(true, 'chase');
+    v.orbit.yaw = wrap180(v.orbit.yaw + dx * 0.35);
+    v.orbit.pitch = Math.max(5, Math.min(80, (v.orbit.pitch != null ? v.orbit.pitch : map.getPitch()) - dy * 0.25));
+    map.triggerRepaint();
+  });
+  const up = (ev) => {
+    touches.delete(ev.pointerId);
+    if (drag && drag.moved) v.dragEnd = performance.now();
+    if (!touches.size) drag = null;
+  };
+  window.addEventListener('pointerup', up);
+  window.addEventListener('pointercancel', up);
   map.on('moveend', () => { v.gatesDirty = true; });
   map.on('render', () => { if (v.ready && v.on) { refreshData(); followTick(); if (v.hoverId) updateHover(); } });
   // Keep mouse events away from the Leaflet map underneath.
@@ -1740,7 +1888,10 @@ function init() {
   document.addEventListener('keydown', (e) => {
     if (e.target.matches('input, select, textarea') || e.ctrlKey || e.metaKey || e.altKey) return;
     if (!document.getElementById('start-screen').hidden) return;
-    if (e.key === 'v' || e.key === 'V') toggle3d();
+    // V: back to the chase camera from the fly-by or wing camera, else 2D ⇄ 3D. B: fly-by, N: wing camera.
+    if (e.key === 'v' || e.key === 'V') { if (v.on && v.follow && v.cam !== 'chase') setFollow(true, 'chase'); else toggle3d(); }
+    if (e.key === 'b' || e.key === 'B') camera('flyby');
+    if (e.key === 'n' || e.key === 'N') camera('wing');
     if (e.key === 'Escape' && document.getElementById('warn3d')) document.getElementById('warn3d').remove();
   });
   // (back in 3D as last time only on a device where the warning was answered for good)

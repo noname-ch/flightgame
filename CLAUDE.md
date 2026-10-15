@@ -89,6 +89,10 @@ Play online: https://noname-ch.github.io/flightgame/ (GitHub Pages, deployed fro
   (`cloudPoints`/`updateClouds`) and greys the sky (`weatherSky`, map.setSky, no layers). Developer tools → Wind
   places winds by hand: `state.winds` via `G.placeWind/setWind/removeWind/clearWinds`; `placedWind(lat, lon)` blends
   them into weatherAt, windAt and `surfaceFrom` (what pickRunway uses); `G.windRev` keys the route-line tracks.
+- 3D cameras (view3d.js): following, `v.cam` is 'chase' (`chaseTick`; a drag turns it round the plane through
+  `v.orbit`, MapLibre's own dragging is off while following), 'flyby' (`flybyTick`, spot in `v.flyby`) or 'wing'
+  (`wingTick`, spot in `WING_CAM`). Keys V/B/N and `camera(mode)`. Fly-by and wing place the camera with
+  `map.calculateCameraOptionsFromTo` (pitch up to 175, roll), and draw the followed plane at real size, always posed.
 - 3D only repaints while something moves. Anything new that animates in 3D must trigger a repaint
   itself.
 - Airport layouts: 116 airports have files in `js/data/layouts`. Every other airport is read from the

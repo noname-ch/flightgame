@@ -2167,7 +2167,7 @@
       if (ed.draw) finishDraw(); else if (ed.edit) finishEdit(); else if (ed.found) useFound(); else if (ed.curve) applyCurve(); else used = false;
     } else if (e.key === 'Backspace' && ed.draw) { ed.draw.pts.pop(); drawDraft(); banner(); } else if ((e.key === 'z' || e.key === 'Z') && (e.ctrlKey || e.metaKey)) undo();
     else if (e.key === 'Delete' && ed.sel && !ed.draw && !ed.edit) del();
-    else if (e.key === 'v' || e.key === 'V') note('The editor works on the 2D map: close it (F3) for the 3D view.');
+    else if (['v', 'b', 'n'].includes(e.key.toLowerCase())) note('The editor works on the 2D map: close it (F3) for the 3D view.');
     else used = false;
     if (used) { e.preventDefault(); e.stopPropagation(); }
   }

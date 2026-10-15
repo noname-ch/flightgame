@@ -853,6 +853,9 @@ i.s-net { background: var(--muted); }
   cursor: pointer;
 }
 .view3d-controls button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+@media (max-width: 640px) {
+  .view3d-controls button span { display: none; } /* (phones: the icons only, the names are in the tooltips) */
+}
 
 /* ---------- developer tools ---------- */
 #devtools {
@@ -1511,6 +1514,7 @@ body { height: 100dvh; } /* the visible height, also while the phone's address b
   font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 #wx-fx .wx-chip[hidden] { display: none; }
+@media (max-width: 640px) { #wx-fx .wx-chip { top: 52px; } } /* (phones: under the 3D view's buttons, not over them) */
 
 /* winds placed with the developer tools (js/devtools.js Wind, drawn by js/weather.js) */
 #map.wind-pick, #map.wind-pick .leaflet-interactive, #map.wind-pick #view3d canvas { cursor: crosshair !important; }

@@ -282,8 +282,18 @@ back where you were in 3D. Aircraft are drawn as 3D models at their real altitud
 so you can see them. Planes really fly: they push back from their gate tail first, taxi
 (speeding up and slowing down), accelerate down the runway, rotate and lift off, bank into turns, pitch up
 to climb and down to descend, flare, brake after touchdown and taxi nose-in onto their stand. Hover a
-plane for its status, click it to select it. Drag with the right mouse button (or Ctrl + drag) to tilt and rotate. 🎥 Follow puts the camera
-behind the selected plane, 🛰 Satellite toggles the satellite imagery (on by default). The aircraft are glTF models from
+plane for its status, click it to select it. Drag with the right mouse button (or Ctrl + drag) to tilt and rotate.
+Cameras, as in DCS (on phones the buttons show only their icons):
+- 🎥 Follow (V): the chase camera behind the selected plane. Drag (or one finger) to turn it round the plane and
+  tilt it; it keeps that angle as the plane turns. The wheel or a pinch zooms.
+- 🎬 Fly-by (B, DCS's F3): the camera waits about a kilometre ahead on the plane's way, a little to the side, and
+  turns to keep the plane in view as it passes; then it moves on ahead. B again moves it on at once.
+- 🪽 Wing (N, DCS's F4): a camera on the wing, out towards the tip, looking ahead; it pitches and rolls with the
+  plane. N again: the other wing.
+
+V goes back to the chase camera from the fly-by or wing camera; otherwise it switches between 2D and 3D. B and N
+open the 3D view if needed and take the selected plane (or the first one in the air). 🛰 Satellite toggles the
+satellite imagery (on by default). The aircraft are glTF models from
 `models/` (Flightradar24's GPLv2 models, see `models/README.md`); `js/data/models.js` says which type uses
 which file; six more come from FlightGear aircraft, and the Saab 340 and Saab 2000 from 3D-print models on Thingiverse.
 The hangar marketplace shows the same models: the selected type as a live 3D
@@ -356,7 +366,7 @@ script errors) go with it unless you untick them. Signed in to GitHub (airport e
 the repo; from `./play.sh` it is written into `BUGS.md`; otherwise GitHub's new-issue page opens filled in (you
 need a GitHub account), or Copy puts it on the clipboard.
 
-Controls: Space = pause, 1/2/3 = speed. The game keeps running in a background tab. It autosaves to the browser (localStorage; the airport layouts read off the map are kept apart, in IndexedDB).
+Controls: Space = pause, 1/2/3 = speed, V = 2D/3D (and the chase camera), B = fly-by camera, N = wing camera. The game keeps running in a background tab. It autosaves to the browser (localStorage; the airport layouts read off the map are kept apart, in IndexedDB).
 
 ## Extending
 

@@ -589,6 +589,23 @@ try {
     if (!near(again, 46.91, 7.5) || Math.abs(again.z - 13) > 0.01) errors.push(`3D did not open again where the 2D map was (${JSON.stringify(again)})`);
     await evaluate(() => FG.ui.follow && FG.ui.follow(G.state.planes[0].id));
     await sleep(8000);
+    step('3D cameras: B fly-by, N wing camera (N again: the other wing), V back to the chase camera');
+    await evaluate(() => { if (!FG.ui.selectedPlane) FG.ui.selectPlane(G.state.planes[0].id); });
+    await key('b');
+    await sleep(2500);
+    const fly = await evaluate(() => ({ cam: FG.view3d.follow && FG.view3d.cam, spot: !!FG.view3d.flyby }));
+    await key('n');
+    await sleep(1500);
+    const side1 = await evaluate(() => FG.view3d.follow && FG.view3d.cam === 'wing' && FG.view3d.wingSide);
+    await key('n');
+    await sleep(1000);
+    const side2 = await evaluate(() => FG.view3d.wingSide);
+    await key('v');
+    await sleep(1000);
+    const back = await evaluate(() => ({ on: FG.view3d.on, follow: FG.view3d.follow, cam: FG.view3d.cam, pitch: FG.view3d.map.getPitch() }));
+    if (fly.cam !== 'flyby' || !fly.spot) errors.push(`3D fly-by camera (B) did not start: ${JSON.stringify(fly)}`);
+    if (!side1 || side2 !== -side1) errors.push(`3D wing camera (N, N again for the other wing) went wrong: ${side1} then ${side2}`);
+    if (!back.on || !back.follow || back.cam !== 'chase' || back.pitch > 80.01) errors.push(`V did not bring back the chase camera: ${JSON.stringify(back)}`);
     await key('v');
     await sleep(1000);
   }
