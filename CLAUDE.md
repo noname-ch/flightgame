@@ -166,6 +166,13 @@ Play online: https://noname-ch.github.io/flightgame/ (GitHub Pages, deployed fro
   wall ahead (terminal, hangar, other buildings on the ground; not jet bridges, roads, roofs), and shortens its
   pushback by as much (never under 15 m), so flights still start and end there. The smoke test checks Zurich.
 - Planning uses timetables only (`p.schedule.legs`). Slots are shared, and one slot equals one stand.
+- Ultra long-haul timetables: `p.schedule.days` > 1 (missing = 1, a daily one). Then `leg.dep` counts minutes from the
+  start of a round (0 … days × 1440, rising leg by leg; a daily one keeps the time of day) and `schedule.offset` says
+  where the plane's rounds start (`G.anchorRound`, on saving and starting). Every timetable call takes `days`
+  (`checkTimetable`, `setTimetable`, `groundTimes`, `slotFit`, `timetableSlots`, `crewsFor`; slotUsage's `draft.days`);
+  departures come from `legDue` (game.js), never from `nextAt(dep)` alone. Built by `G.buildLongTimetable`, round length
+  `G.cycleDays(type, legs)`, offered only where `G.ultraCapable(type)` (the planner's 🌏 checkbox, `draft.ultra`).
+  Show departures with `G.fmtLegDep(dep, days)` ("day 2 06:00") or `G.fmtDue(schedule.due)`.
 - The home base parks your planes off the stands: `G.parksAtBase(q, code)` (at `G.home()`, no running timetable) keeps
   them out of `staysUntil`, `slotFreeAt`, `slotOccupants` and `slotUsage`, so a plane can always be sent home and a
   parked one never blocks the slot (a friend's 787 got stuck in Las Vegas when Zurich's one small slot was taken).

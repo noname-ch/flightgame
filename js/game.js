@@ -220,8 +220,14 @@
 
   const ticketPrice = (d) => Math.round(C.ticket.base + C.ticket.perKm * d); // standard fare
   const routeKey = (a, b) => (a < b ? `${a}-${b}` : `${b}-${a}`); // same for both directions
-  // First moment at or after `after` (absolute minutes) that is `tod` minutes past midnight.
-  const nextAt = (tod, after) => after + ((((tod - (after % DAY)) % DAY) + DAY) % DAY);
+  // First moment at or after `after` (absolute minutes) that is `tod` minutes past midnight, or (period: an ultra
+  // long-haul timetable's days × DAY) `tod` minutes into one of its rounds, which start at multiples of the period.
+  const nextAt = (tod, after, period = DAY) => after + ((((tod - (after % period)) % period) + period) % period);
+  // The minutes a timetable takes to repeat: a day, or several (an ultra long-haul one, schedule.days).
+  const periodOf = (sch) => (sch.days || 1) * DAY;
+  // When a timetable's leg leaves next, at or after `after`. (An ultra long-haul plane's rounds start on its own
+  // day, schedule.offset minutes into the period: Game.anchorRound.)
+  const legDue = (sch, leg, after) => nextAt((leg.dep + (sch.offset || 0)) % periodOf(sch), after, periodOf(sch));
   const blockMinutes = (type, d) => Math.round((d / D.aircraft[type].speedKmh) * 60 + C.taxiMin);
   // Minutes a plane stands at the gate after landing before it can leave again: longer for bigger planes.
   function turnaroundMin(type) {
@@ -2485,10 +2491,12 @@
   const crewSets = (c) => c.sets || 1;
   const crewDutyMax = (c) => C.crewMaxDutyMin * crewSets(c);
   const crewWeekly = (c) => c.weeklySalary * crewSets(c);
-  // Crews a timetable day needs: one, or C.crewsMax when it has more block time than one crew may fly.
-  function crewsFor(type, legs) {
-    const duty = legs.reduce((n, l) => n + blockMinutes(type, dist(l.from, l.to)), 0);
-    return duty > C.crewMaxDutyMin ? C.crewsMax : 1;
+  // Crews a timetable day needs: one, or C.crewsMax when it has more block time than one crew may fly. Over several
+  // days (an ultra long-haul timetable, `days`), the busiest of them counts: flights by the day they leave.
+  function crewsFor(type, legs, days = 1) {
+    const duty = new Array(days).fill(0);
+    for (const l of legs) duty[days > 1 ? Math.floor(l.dep / DAY) % days : 0] += blockMinutes(type, dist(l.from, l.to));
+    return Math.max(...duty) > C.crewMaxDutyMin ? C.crewsMax : 1;
   }
 
   function randomUsedListing(n) {
@@ -2592,6 +2600,14 @@
     return `Day ${day + 1} (${WEEKDAYS[day % 7]}) ${fmtClock(t)}`;
   }
   const fmtDuration = (m) => `${Math.floor(m / 60)}h${pad(Math.round(m % 60))}`;
+  // A timetable departure: its time, with the day of the round on an ultra long-haul timetable (days > 1).
+  const fmtLegDep = (dep, days = 1) => (days > 1 ? `day ${Math.floor(dep / DAY) + 1} ${fmtClock(dep)}` : fmtClock(dep));
+  // A moment soon (absolute minutes): its time, "tomorrow" or the weekday in front when it isn't today.
+  function fmtDue(t) {
+    const day = Math.floor(t / DAY);
+    const today = Math.floor(((Game.state && Game.state.time) || 0) / DAY);
+    return day === today ? fmtClock(t) : day === today + 1 ? `tomorrow ${fmtClock(t)}` : `${WEEKDAYS[day % 7]} ${fmtClock(t)}`;
+  }
 
   // ---------- game ----------
   const Game = {
@@ -2604,7 +2620,7 @@
     airportSize, baseSize, airportCategory, airportRunways, runwayLength, runwayTaxiways, runwayCover, roundLine,
     CLASSES, CLASS_ROOM, typeClass, standClassAt, maxClass, slotsFit, longestRunway, runwayNeed, attraction,
     flightTrack, flightState, legTrack, cruiseFt, perf, windFrom, weatherAt, windAt, WX_DRIFT, gateOf, standSpot, apronOf, taxiwaysOf, drawnTaxiways, expansionPreview, terminalPiece,
-    fmtMoney, fmtTime, fmtClock, fmtDuration,
+    fmtMoney, fmtTime, fmtClock, fmtDuration, fmtLegDep, fmtDue,
 
     // opts: { mode, difficulty, airport, aircraft, company, story } from the start screen; all optional.
     // story = the year a story game starts in (C.story.years); without it the game plays today.
@@ -3540,7 +3556,7 @@
         if (leg.timed) {
           // punctual: within 15 minutes of the timetable
           if (t - p.schedule.due > 15) { s.rep.late++; record(p, { late: 1 }); } else { s.rep.onTime++; record(p, { onTime: 1 }); }
-          p.schedule.due = nextAt(p.schedule.legs[leg.nextIndex].dep, p.schedule.due + 1);
+          p.schedule.due = legDue(p.schedule, p.schedule.legs[leg.nextIndex], p.schedule.due + 1);
         }
       } else if (p.pendingFerry === leg.to) {
         p.pendingFerry = null;
@@ -4101,7 +4117,7 @@
       if (!crew) return 'once it has a crew';
       if (crew.dutyToday && crew.dutyToday + blockMinutes(p.type, dist(p.location, leg.to)) > crewDutyMax(crew)) return 'tomorrow (the crew has flown its hours today)';
       if (!this.slotFreeAt(leg.to, t + blockMinutes(p.type, dist(p.location, leg.to)), p.id)) return `as soon as a slot at ${leg.to} is free`;
-      if (leg.kind === 'scheduled' && t < p.schedule.due) return `at ${fmtClock(p.schedule.due % DAY)}`;
+      if (leg.kind === 'scheduled' && t < p.schedule.due) return `at ${fmtDue(p.schedule.due)}`;
       return null;
     },
 
@@ -4128,7 +4144,7 @@
       p.schedule.active = active;
       p.waitSlot = null;
       if (active) p.pendingFerry = null;
-      if (active && p.schedule.legs) this.syncTimetable(p);
+      if (active && p.schedule.legs) { this.anchorRound(p); this.syncTimetable(p); }
       this.log(`${nameOf(p)} schedule ${active ? 'started' : 'paused'}.`);
       return null;
     },
@@ -4704,7 +4720,53 @@
     // A timetable is a plane's day: legs { from, to, dep } with dep in minutes after midnight, each leg
     // starting where the one before ended and the last ending where the first starts, so it repeats
     // every day. Between two legs the plane stands at the airport and takes one of your slots there.
+    // Ultra long-haul (schedule.days > 1, for planes that can fly a round trip longer than a day: ultraCapable): the
+    // timetable repeats every `days` days instead, and dep counts the minutes from the start of such a round
+    // (0 … days × DAY, rising leg by leg). Rounds start on the days that are multiples of `days`.
     legBlock(type, from, to) { return blockMinutes(type, dist(from, to)); },
+
+    // Can this type fly a route whose round trip doesn't fit into a day (two flights as long as its range, with
+    // the turnarounds)? Only those get ultra long-haul timetables.
+    ultraCapable(type) {
+      return 2 * (blockMinutes(type, D.aircraft[type].rangeKm) + turnaroundMin(type)) > DAY;
+    },
+    // Days an ultra long-haul timetable takes before it starts again: its last flight's turnaround done by the
+    // time of the first departure.
+    cycleDays(type, legs) {
+      if (!legs.length) return 1;
+      const last = legs[legs.length - 1];
+      const ready = last.dep + this.legBlock(type, last.from, last.to) + turnaroundMin(type);
+      return Math.max(1, Math.ceil((ready - legs[0].dep) / DAY));
+    },
+    // An ultra long-haul timetable: the loop of stops flown `rounds` times from a first departure, each flight
+    // after the turnaround, the next morning where that would fall into the night curfew, or the next day where the
+    // crews have flown their hours (a rested crew always flies one flight, however long). Times as in cycleDays.
+    buildLongTimetable(type, stops, firstDep, rounds = 1) {
+      const legs = [];
+      if (stops.length < 2) return legs;
+      const maxDuty = C.crewMaxDutyMin * C.crewsMax;
+      let t = firstDep;
+      let day = -1;
+      let duty = 0;
+      for (let r = 0; r < Math.max(1, rounds); r++) {
+        stops.forEach((from, i) => {
+          const to = stops[(i + 1) % stops.length];
+          const block = this.legBlock(type, from, to);
+          for (let k = 0; k < 3; k++) {
+            const tod = t % DAY;
+            if (tod < C.curfew.start) t += C.curfew.start - tod;
+            else if (tod > C.curfew.end) t += DAY - tod + C.curfew.start;
+            if (Math.floor(t / DAY) !== day) { day = Math.floor(t / DAY); duty = 0; }
+            if (!duty || duty + block <= maxDuty) break;
+            t = (day + 1) * DAY + C.curfew.start; // the crews rest until tomorrow
+          }
+          legs.push({ from, to, dep: t });
+          duty += block;
+          t += block + turnaroundMin(type);
+        });
+      }
+      return legs;
+    },
 
     // Legs for a loop of stops, from a first departure, with the shortest turnarounds: the loop is
     // flown `rounds` times (0 = as often as fits into the day and the crew's duty).
@@ -4741,11 +4803,26 @@
     },
 
     // Where a plane stands during the day with these legs: [{ code, from, to }] in minutes after
-    // midnight, to > from; a stay over midnight is split in two.
-    groundTimes(type, legs) {
+    // midnight, to > from; a stay over midnight is split in two. An ultra long-haul timetable (days > 1) is laid
+    // over one day as if the plane stood there at those times every day (its slots are planned by the day), and a
+    // stay of a whole day or more takes the slot all day.
+    groundTimes(type, legs, days = 1) {
       const out = [];
       const n = legs.length;
       if (!n) return out;
+      if (days > 1) {
+        for (let i = 0; i < n; i++) {
+          const leg = legs[i];
+          const arr = leg.dep + this.legBlock(type, leg.from, leg.to);
+          const dep = i + 1 < n ? legs[i + 1].dep : legs[0].dep + days * DAY;
+          const base = { code: leg.to, arr: arr % DAY, dep: dep % DAY, day: Math.floor(arr / DAY) };
+          if (dep - arr >= DAY) { out.push({ ...base, from: 0, to: DAY, long: dep - arr }); continue; }
+          const a = arr % DAY;
+          if (a + dep - arr <= DAY) out.push({ ...base, from: a, to: a + dep - arr });
+          else out.push({ ...base, from: a, to: DAY }, { ...base, from: 0, to: a + dep - arr - DAY });
+        }
+        return out;
+      }
       for (let i = 0; i < n; i++) {
         const leg = legs[i];
         const next = legs[(i + 1) % n];
@@ -4764,13 +4841,15 @@
     },
 
     // What fills an airport's slots today: timetabled planes standing there, and planes without a
-    // timetable that sit there (all day). `draft` = { planeId, type, legs } replaces that plane's legs.
+    // timetable that sit there (all day). `draft` = { planeId, type, legs, days } replaces that plane's legs.
     slotUsage(code, draft) {
       const uses = [];
       for (const p of this.state.planes) {
-        const legs = draft && draft.planeId === p.id ? draft.legs : p.schedule.legs && p.schedule.active !== false ? p.schedule.legs : null;
+        const mine = draft && draft.planeId === p.id;
+        const legs = mine ? draft.legs : p.schedule.legs && p.schedule.active !== false ? p.schedule.legs : null;
         if (legs && legs.length) {
-          for (const g of this.groundTimes(p.type, legs)) if (g.code === code) uses.push({ planeId: p.id, ...g });
+          const days = mine ? draft.days || 1 : p.schedule.days || 1;
+          for (const g of this.groundTimes(p.type, legs, days)) if (g.code === code) uses.push({ planeId: p.id, ...g });
         } else if (!(draft && draft.planeId === p.id) && !(p.schedule.active && p.schedule.stops.length >= 2 && !p.schedule.legs)) {
           const at = p.status === 'flying' && p.flight ? p.flight.to : p.location;
           if (at === code && !this.parksAtBase(p, code)) uses.push({ planeId: p.id, code, from: 0, to: DAY, idle: true });
@@ -4800,29 +4879,51 @@
       return { uses, need: used + extra.length, have: this.slotCount(code), classes: cls };
     },
 
-    // Problems with a timetable for a plane: errors block saving.
-    checkTimetable(planeId, legs) {
+    // Problems with a timetable for a plane: errors block saving. days > 1: an ultra long-haul one.
+    checkTimetable(planeId, legs, days = 1) {
       const p = this.plane(planeId);
       const ac = D.aircraft[p.type];
       const errors = [];
       if (legs.length < 2) return ['A timetable needs at least two flights.'];
+      if (days > 1 && !this.ultraCapable(p.type)) {
+        errors.push(`The ${ac.name} can't fly ultra long-haul timetables: a timetable over several days is for planes with the range for flights longer than half a day.`);
+      }
       let duty = 0;
       legs.forEach((leg, i) => {
         const next = legs[(i + 1) % legs.length];
         const block = this.legBlock(p.type, leg.from, leg.to);
         duty += block;
-        const name = `${fmtClock(leg.dep)} ${leg.from}→${leg.to}`;
+        const name = `${fmtLegDep(leg.dep, days)} ${leg.from}→${leg.to}`;
         if (leg.to !== next.from) errors.push(`${name} ends at ${leg.to}, but the next flight leaves from ${next.from}.`);
         if (!this.ownsSlot(leg.from)) errors.push(`No slot at ${leg.from}.`);
         else if (!this.mySlotClasses(leg.from).some((n, c) => n && c >= typeClass(p.type))) {
           errors.push(`No slot at ${leg.from} big enough for the ${ac.name}: it needs class ${CLASSES[typeClass(p.type)]} or bigger.`);
         }
         if (leg.from === leg.to) errors.push(`${name} goes nowhere.`);
-        if (leg.dep < C.curfew.start || leg.dep > C.curfew.end) errors.push(`${name}: departures only ${fmtClock(C.curfew.start)}–${fmtClock(C.curfew.end)} (night curfew).`);
+        if (leg.dep % DAY < C.curfew.start || leg.dep % DAY > C.curfew.end) errors.push(`${name}: departures only ${fmtClock(C.curfew.start)}–${fmtClock(C.curfew.end)} (night curfew).`);
         if (dist(leg.from, leg.to) > ac.rangeKm) errors.push(`${name} is out of range.`);
         const unfit = fitsReason(p.type, leg.to);
         if (unfit) errors.push(unfit);
       });
+      if (days > 1) {
+        // The legs, one after the other with their turnarounds, must fit into the days of the round.
+        legs.forEach((leg, i) => {
+          const ready = leg.dep + this.legBlock(p.type, leg.from, leg.to) + turnaroundMin(p.type);
+          const nextDep = i + 1 < legs.length ? legs[i + 1].dep : legs[0].dep + days * DAY;
+          if (nextDep < ready) {
+            errors.push(i + 1 < legs.length
+              ? `After ${fmtLegDep(leg.dep, days)} ${leg.from}→${leg.to} the plane is ready at ${fmtLegDep(ready, days)} – too late for the next flight at ${fmtLegDep(nextDep, days)}.`
+              : `The last flight is back too late to start again after ${days} days.`);
+          }
+        });
+        const dutyDay = new Array(days).fill(0);
+        const flights = new Array(days).fill(0);
+        for (const l of legs) { const k = Math.floor(l.dep / DAY) % days; dutyDay[k] += this.legBlock(p.type, l.from, l.to); flights[k]++; }
+        dutyDay.forEach((m, k) => {
+          if (flights[k] > 1 && m > C.crewMaxDutyMin * C.crewsMax) errors.push(`Day ${k + 1}: ${fmtDuration(m)} in the air – ${C.crewsMax} crews may fly ${fmtDuration(C.crewMaxDutyMin * C.crewsMax)}.`);
+        });
+        return [...new Set(errors)];
+      }
       // The legs must fit into one day, each with a turnaround.
       let t = legs[0].dep;
       legs.forEach((leg, i) => {
@@ -4843,11 +4944,11 @@
     // Slot check for a timetable, per airport it stands at: [{ code, have, need, clash: [{ from, to, planes }] }].
     // A clash doesn't block the timetable: the plane that would find every slot taken waits at its gate
     // until a slot is free (a delay), so the player can share slots tightly or lease another one.
-    timetableSlots(planeId, legs) {
+    timetableSlots(planeId, legs, days = 1) {
       const p = this.plane(planeId);
       const out = [];
       for (const code of new Set(legs.map((l) => l.from))) {
-        const u = this.slotUsage(code, { planeId, type: p.type, legs });
+        const u = this.slotUsage(code, { planeId, type: p.type, legs, days });
         const clash = [];
         for (const x of u.uses) {
           if (x.planeId !== planeId || x.lane < u.have) continue;
@@ -4862,9 +4963,9 @@
     // How a timetable fits into the slots, airport by airport: when this plane stands there (mine), when your
     // other planes do (others) and when they need more slots than you have (over: the red parts). over is
     // only counted while this plane is there.
-    slotFit(planeId, legs) {
+    slotFit(planeId, legs, days = 1) {
       const p = this.plane(planeId);
-      const mine = this.groundTimes(p.type, legs);
+      const mine = this.groundTimes(p.type, legs, days);
       const out = [];
       let total = 0;
       for (const code of new Set(legs.map((l) => l.from))) {
@@ -4909,12 +5010,31 @@
     // The best day for a plane on a loop of stops: tries every first departure (5-minute steps), every
     // airport of the loop as the place it spends the night and (rounds 0 = as many as fit) fewer loops, and
     // keeps the one with the fewest minutes without a free slot, then the most flights, then the one closest
-    // to `around`. Returns { stops, first, rounds, legs, over } or null.
-    fitTimetable(planeId, stops, rounds, around) {
+    // to `around`. Returns { stops, first, rounds, legs, over } or null. `ultra`: an ultra long-haul timetable
+    // (buildLongTimetable, `rounds` loops, at least one): the fewest days first, then the fewest minutes without a slot.
+    fitTimetable(planeId, stops, rounds, around, ultra) {
       const p = this.plane(planeId);
       const busy = {};
       for (const c of new Set(stops)) busy[c] = this.slotBusy(c, planeId).busy;
       let best = null;
+      if (ultra) {
+        for (let r = 0; r < stops.length; r++) {
+          const rot = stops.slice(r).concat(stops.slice(0, r));
+          for (let first = C.curfew.start; first <= C.curfew.end; first += 5) {
+            const legs = this.buildLongTimetable(p.type, rot, first, rounds || 1);
+            const days = this.cycleDays(p.type, legs);
+            let over = 0;
+            for (const g of this.groundTimes(p.type, legs, days)) {
+              for (const x of this.overSpans(busy[g.code], [g], this.mySlotClasses(g.code), typeClass(p.type))) over += x.to - x.from;
+            }
+            const away = Math.abs(first - around) + (r ? 1 : 0);
+            if (!best || days < best.days || (days === best.days && (over < best.over || (over === best.over && away < best.away)))) {
+              best = { stops: rot, first, rounds: rounds || 1, legs, over, away, days };
+            }
+          }
+        }
+        return best;
+      }
       for (let r = 0; r < stops.length; r++) {
         const rot = stops.slice(r).concat(stops.slice(0, r));
         for (let first = C.curfew.start; first <= C.curfew.end; first += 5) {
@@ -4949,16 +5069,19 @@
       return null;
     },
 
-    // Put a plane on a timetable (and keep it running if it was).
-    setTimetable(planeId, legs) {
+    // Put a plane on a timetable (and keep it running if it was). days > 1: an ultra long-haul one, repeating every
+    // `days` days (dep counted from the start of a round).
+    setTimetable(planeId, legs, days = 1) {
       const p = this.plane(planeId);
-      const errors = this.checkTimetable(planeId, legs);
+      const errors = this.checkTimetable(planeId, legs, days);
       if (errors.length) return errors[0];
-      const sorted = legs.slice();
+      const sorted = legs.map((l) => ({ ...l, dep: days > 1 ? l.dep : l.dep % DAY }));
       p.schedule = { stops: sorted.map((l) => l.from), legs: sorted, index: 0, active: p.schedule.active, due: 0 };
+      if (days > 1) p.schedule.days = days;
+      this.anchorRound(p);
       this.syncTimetable(p);
-      this.log(`${nameOf(p)} timetable: ${sorted.map((l) => `${fmtClock(l.dep)} ${l.from}→${l.to}`).join(', ')}.`);
-      this.setCrews(p, crewsFor(p.type, sorted));
+      this.log(`${nameOf(p)} timetable${days > 1 ? ` (ultra long-haul, every ${days} days)` : ''}: ${sorted.map((l) => `${fmtLegDep(l.dep, days)} ${l.from}→${l.to}`).join(', ')}.`);
+      this.setCrews(p, crewsFor(p.type, sorted, days));
       this.dirty = true;
       return null;
     },
@@ -4975,6 +5098,18 @@
     crewDutyMax,
     crewWeekly,
 
+    // An ultra long-haul timetable's rounds start on the plane's own day: so that its first flight from where it is
+    // (or lands) leaves as soon as the plane is ready, instead of days later.
+    anchorRound(p) {
+      const sch = p.schedule;
+      if (!sch.legs || !sch.legs.length || (sch.days || 1) < 2) return;
+      const at = p.status === 'flying' && p.flight ? p.flight.to : p.location;
+      const from = Math.max(this.state.time, p.status === 'flying' && p.flight ? p.flight.arr + turnaroundMin(p.type) : 0);
+      const leg = sch.legs.find((l) => l.from === at) || sch.legs[0];
+      const start = Math.ceil((from - leg.dep) / DAY) * DAY; // (a midnight)
+      sch.offset = ((start % periodOf(sch)) + periodOf(sch)) % periodOf(sch);
+    },
+
     // Next leg to fly: the one leaving soonest from where the plane is (or will be).
     syncTimetable(p) {
       const sch = p.schedule;
@@ -4984,11 +5119,11 @@
       let best = 0;
       let bestDue = Infinity;
       sch.legs.forEach((l, i) => {
-        const due = nextAt(l.dep, from) + (l.from === at ? 0 : DAY / 2); // prefer legs from here
+        const due = legDue(sch, l, from) + (l.from === at ? 0 : periodOf(sch) / 2); // prefer legs from here
         if (due < bestDue) { bestDue = due; best = i; }
       });
       sch.index = best;
-      sch.due = nextAt(sch.legs[best].dep, from);
+      sch.due = legDue(sch, sch.legs[best], from);
     },
 
     // Rough forecast for a whole timetable day.
@@ -5010,7 +5145,7 @@
         profit += revenue - cost;
         pax += p;
         block += b;
-        return { ...l, block: b, arr: (l.dep + b) % DAY, pax: p, seats: ac.seats, result: revenue - cost };
+        return { ...l, block: b, arr: l.dep + b, pax: p, seats: ac.seats, result: revenue - cost };
       });
       return { rows, profit, pax, block };
     },

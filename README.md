@@ -113,7 +113,11 @@ airport over the day, what stands in them right now and the arrivals and departu
 room for your own planes: one without a running timetable parks there off the stands, without a slot, so you can
 always send a plane home and it never blocks the planes flying from there. A plane flying more than 12 h a day
 (long haul, e.g. Zurich – Las Vegas and back) gets a second crew, paid too. One round of a timetable, turnarounds
-included, has to fit into a day.
+included, has to fit into a day, except with **🌏 Ultra long-haul** (in the timetable, step 1): then the timetable
+repeats every few days instead (e.g. Los Angeles – Singapore every 2 days), each flight leaving after the turnaround,
+the next morning where it would land in the night curfew. Only planes with the range for flights longer than half a
+day (a round trip that can't fit into one day) get the option; the slots are planned as if the plane stood at those
+times every day.
 
 **Airport categories**: by their size the airports fall into four categories: small airports (size up to 1),
 regional airports (size 2), large airports (size 3–4) and major hubs (size 5). The airport panel and the map

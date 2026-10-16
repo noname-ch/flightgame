@@ -14,7 +14,7 @@
 
   const pl = {
     edit: null,       // plane whose timetable is open in the editor
-    draft: null,      // { stops, first, rounds, legs } being edited
+    draft: null,      // { stops, first, rounds, legs, ultra } being edited (ultra: an ultra long-haul timetable)
     slotAt: null,     // airport shown in the Slots section
     open: {},         // airport code -> expanded in the Airports section
     offer: {},        // 'code|holder' -> amount of the offer being made
@@ -35,8 +35,12 @@
       <i class="tl-now" style="left:${pct(now)}"></i>`;
   }
 
+  // Days a draft's timetable takes before it repeats (an ultra long-haul one can take several).
+  const daysOf = (p, d) => (d.ultra && d.legs.length ? G.cycleDays(p.type, d.legs) : 1);
+
   // Flight blocks and ground blocks of one plane's day.
-  function dayBlocks(p, legs, draft) {
+  function dayBlocks(p, legs, draft, days = 1) {
+    if (days > 1) return roundBlocks(p, legs, draft, days);
     let h = '';
     for (const g of G.groundTimes(p.type, legs)) {
       h += `<b class="tl-ground" style="left:${pct(g.from)};width:${pct(g.to - g.from)}" data-pl="slotAt" data-code="${g.code}"
@@ -44,12 +48,34 @@
     }
     for (const l of legs) {
       const block = G.legBlock(p.type, l.from, l.to);
-      const parts = l.dep + block > DAY ? [[l.dep, DAY - l.dep], [0, l.dep + block - DAY]] : [[l.dep, block]];
+      const dep = l.dep % DAY; // (an ultra long-haul draft that fits into a day can count past midnight)
+      const parts = dep + block > DAY ? [[dep, DAY - dep], [0, dep + block - DAY]] : [[dep, block]];
       for (const [s, w] of parts) {
         h += `<b class="tl-flight${draft ? ' draft' : ''}" style="left:${pct(s)};width:${pct(w)}"
           title="${clock(l.dep)} ${l.from} → ${l.to} ${clock(l.dep + block)} · ${G.fmtDuration(block)}">${w >= 70 ? `${l.from}›${l.to}` : ''}</b>`;
       }
     }
+    return h;
+  }
+  // An ultra long-haul timetable: each day of its round as a lane of its own (the first on top), on the same clock.
+  function roundBlocks(p, legs, draft, days) {
+    let h = '';
+    const piece = (cls, from, to, attrs, label) => {
+      for (let t = from; t < to;) {
+        const k = Math.floor(t / DAY) % days;
+        const end = Math.min(to, (Math.floor(t / DAY) + 1) * DAY);
+        const w = end - t;
+        h += `<b class="${cls}" style="--k:${k};left:${pct(t % DAY)};width:${pct(w)}" ${attrs}>${w >= 70 ? label : ''}</b>`;
+        t = end;
+      }
+    };
+    legs.forEach((l, i) => {
+      const block = G.legBlock(p.type, l.from, l.to);
+      const next = i + 1 < legs.length ? legs[i + 1].dep : legs[0].dep + days * DAY;
+      const arr = l.dep + block;
+      piece('tl-ground', arr + 0, next, `data-pl="slotAt" data-code="${l.to}" title="${l.to}: on the ground ${G.fmtLegDep(arr, days)}–${G.fmtLegDep(next % (days * DAY), days)} (takes a slot) · double-click for the slot"`, l.to);
+      piece(`tl-flight${draft ? ' draft' : ''}`, l.dep, arr, `title="${G.fmtLegDep(l.dep, days)} ${l.from} → ${l.to} ${clock(arr)} · ${G.fmtDuration(block)}"`, `${l.from}›${l.to}`);
+    });
     return h;
   }
 
@@ -69,13 +95,14 @@
       const sch = p.schedule;
       const editing = pl.edit === p.id;
       const legs = editing && pl.draft ? pl.draft.legs : sch.legs || [];
+      const days = editing && pl.draft ? daysOf(p, pl.draft) : sch.days || 1;
       let bar;
-      if (legs.length) bar = dayBlocks(p, legs, editing);
+      if (legs.length) bar = dayBlocks(p, legs, editing, days);
       else bar = `<span class="tl-text">no timetable · parked at ${p.status === 'flying' && p.flight ? p.flight.to : p.location} · click to plan</span>`;
       const state = !sch.legs && !editing ? '' : p.waitSlot ? '<em class="neg" title="Waiting for a free slot">⏳</em>' : sch.active ? '<em class="pos" title="Flying its timetable">●</em>' : '<em class="muted" title="Paused">⏸</em>';
       h += `<div class="tl-row${editing ? ' editing' : ''}" data-pl="edit" data-plane="${p.id}">
-        <div class="tl-label"><span class="type-icon">${ctx.planeGlyph(p.type)}</span>${G.planeName(p)} ${state}<small>${p.name ? `${p.id} · ` : ''}${p.type}</small></div>
-        <div class="tl-bar">${nightAndNow()}${bar}</div></div>`;
+        <div class="tl-label"><span class="type-icon">${ctx.planeGlyph(p.type)}</span>${G.planeName(p)} ${state}<small>${p.name ? `${p.id} · ` : ''}${p.type}${days > 1 ? ` · <span title="Ultra long-haul: repeats every ${days} days">🌏 ${days}d</span>` : ''}</small></div>
+        <div class="tl-bar${days > 1 ? ' days' : ''}" style="--n:${days}">${nightAndNow()}${bar}</div></div>`;
     }
     h += `</div></div>`;
     // (the timetable being planned is in its own window, js/planewin.js)
@@ -90,7 +117,7 @@
     const at = p.status === 'flying' && p.flight ? p.flight.to : p.location;
     const stops = sch.legs ? loopOf(sch.legs) : G.ownsSlot(at) ? [at] : [];
     const first = legs.length ? legs[0].dep : C.curfew.start + 60;
-    pl.draft = { stops, first, rounds: 0, legs };
+    pl.draft = { stops, first, rounds: 0, legs, ultra: (sch.days || 1) > 1 };
     if (!legs.length && stops.length >= 2) rebuild(p);
   }
 
@@ -105,15 +132,19 @@
 
   function rebuild(p) {
     const d = pl.draft;
-    d.legs = G.buildTimetable(p.type, d.stops, d.first, d.rounds);
+    d.legs = d.ultra ? G.buildLongTimetable(p.type, d.stops, d.first, d.rounds || 1) : G.buildTimetable(p.type, d.stops, d.first, d.rounds);
   }
+  // One round of the loop, turnarounds included (a daily timetable must fit it into the day).
+  const roundMin = (p, stops) => stops.reduce((n, c, i) => n + G.legBlock(p.type, c, stops[(i + 1) % stops.length]) + G.turnaroundMin(p.type), 0);
 
   function editor(p) {
     const d = pl.draft;
     const ac = D.aircraft[p.type];
     const owned = Object.keys(G.state.slots);
     const last = d.stops[d.stops.length - 1];
-    const errors = d.legs.length ? G.checkTimetable(p.id, d.legs) : [];
+    const days = daysOf(p, d);
+    const errors = d.legs.length ? G.checkTimetable(p.id, d.legs, days) : [];
+    const ultraOk = G.ultraCapable(p.type);
     // Airports you can add: every one with your slot; ones the plane can't reach or land at are shown greyed.
     const options = owned.filter((c) => c !== last).map((c) => {
       const why = !G.fitsAirport(p.type, c) ? 'runway too short' : last && G.dist(last, c) > ac.rangeKm ? 'out of range' : '';
@@ -128,40 +159,49 @@
         ${d.stops.length >= 2 ? `<span class="arrow">↺ ${d.stops[0]}</span>` : ''}
         <select id="pl-add"><option value="">+ add airport…</option>${options}</select></div>
       ${owned.length < 2 ? '<div class="hint">You only have one slot. Click another airport on the map and lease a slot there first.</div>' : ''}
-      <div class="label">2 · When does its day start? <span class="muted">(drag, and watch the slots below)</span></div>
+      ${ultraOk || d.ultra ? `<label class="row pl-ultra" title="For routes whose round trip takes longer than a day: the timetable repeats every few days instead of every day">
+        <input type="checkbox" id="pl-ultra"${d.ultra ? ' checked' : ''}> 🌏 <b>Ultra long-haul</b> <span class="muted">– the timetable may run over several days
+        ${d.ultra && d.legs.length ? `(this one: every ${days} day${days === 1 ? '' : 's'})` : ''}</span></label>` : ''}
+      <div class="label">2 · When does its ${d.ultra ? 'round' : 'day'} start? <span class="muted">(drag, and watch the slots below)</span></div>
       <div class="row pl-when"><button class="mini" data-pl="firstStep" data-by="-5" title="5 min earlier">−</button>
         <input type="range" id="pl-first-range" min="${C.curfew.start}" max="${C.curfew.end}" step="5" value="${d.first}">
         <button class="mini" data-pl="firstStep" data-by="5" title="5 min later">+</button>
         <input type="time" id="pl-first" step="300" value="${clock(d.first)}">
-        Loops <select id="pl-rounds"><option value="0"${d.rounds ? '' : ' selected'}>as many as fit</option>
-        ${[1, 2, 3, 4, 5, 6, 8].map((n) => `<option value="${n}"${d.rounds === n ? ' selected' : ''}>${n}×</option>`).join('')}</select></div>
+        Loops <select id="pl-rounds">${d.ultra ? '' : `<option value="0"${d.rounds ? '' : ' selected'}>as many as fit</option>`}
+        ${[1, 2, 3, 4, 5, 6, 8].map((n) => `<option value="${n}"${(d.rounds || (d.ultra ? 1 : 0)) === n ? ' selected' : ''}>${n}×</option>`).join('')}</select></div>
       ${d.stops.length >= 2 ? `<div class="row"><button class="primary" data-pl="fit" title="Tries every start time and every stop as the place it spends the night">✨ Find a time that fits the slots</button></div>` : ''}
       <div id="pl-fit">${fitView(p, d)}</div>`;
     if (d.legs.length) {
       const est = G.estimateTimetable(p.type, d.legs, G.costMult(p));
+      const dayOf = (m) => (days > 1 ? `<small class="muted">day ${Math.floor(m / DAY) + 1}</small> ` : '');
       h += `<table class="small legs"><tr><th>dep</th><th>flight</th><th>arr</th><th>pax</th><th>result</th><th></th></tr>`;
       est.rows.forEach((r, i) => {
-        h += `<tr><td class="nowrap"><button class="mini" data-pl="shift" data-i="${i}" data-by="-15">−</button>
+        h += `<tr><td class="nowrap">${dayOf(r.dep)}<button class="mini" data-pl="shift" data-i="${i}" data-by="-15">−</button>
           <input type="time" class="pl-dep" data-i="${i}" step="300" value="${clock(r.dep)}">
           <button class="mini" data-pl="shift" data-i="${i}" data-by="15">+</button></td>
-          <td>${r.from} → ${r.to} <span class="muted">${G.fmtDuration(r.block)}</span></td><td>${clock(r.arr)}</td>
+          <td>${r.from} → ${r.to} <span class="muted">${G.fmtDuration(r.block)}</span></td><td class="nowrap">${dayOf(r.arr)}${clock(r.arr)}</td>
           <td>${r.pax}/${r.seats}</td><td class="${r.result >= 0 ? 'pos' : 'neg'}">${G.fmtMoney(r.result)}</td>
           <td><button class="mini" data-pl="legDel" data-i="${i}" title="Drop this flight and the ones after it on this loop">✕</button></td></tr>`;
       });
-      h += `</table><div class="muted">${d.legs.length} flights · ${G.fmtDuration(est.block)} in the air · about
-        <b class="${est.profit >= 0 ? 'pos' : 'neg'}">${G.fmtMoney(est.profit)}</b> a day before fixed costs ·
-        − / + moves a flight by 15 min and the ones after it.</div>`;
-      const crews = G.crewsFor(p.type, d.legs);
+      h += days > 1
+        ? `</table><div class="muted">${d.legs.length} flights every ${days} days · ${G.fmtDuration(est.block)} in the air · about
+          <b class="${est.profit >= 0 ? 'pos' : 'neg'}">${G.fmtMoney(est.profit)}</b> a round (${G.fmtMoney(est.profit / days)} a day) before fixed costs ·
+          − / + moves a flight by 15 min and the ones after it.</div>`
+        : `</table><div class="muted">${d.legs.length} flights · ${G.fmtDuration(est.block)} in the air · about
+          <b class="${est.profit >= 0 ? 'pos' : 'neg'}">${G.fmtMoney(est.profit)}</b> a day before fixed costs ·
+          − / + moves a flight by 15 min and the ones after it.</div>`;
+      const crews = G.crewsFor(p.type, d.legs, days);
       if (crews > 1) {
         h += `<div class="hint">👥 More than ${G.fmtDuration(C.crewMaxDutyMin)} in the air a day: a second crew flies with it
           (+${G.fmtMoney(G.crewFor(p.type).weeklySalary * (crews - 1))} a week).</div>`;
       }
     } else if (d.stops.length >= 2) {
       // (a timetable repeats every day: one round, turnarounds included, must fit into one)
-      const round = d.stops.reduce((n, c, i) => n + G.legBlock(p.type, c, d.stops[(i + 1) % d.stops.length]) + G.turnaroundMin(p.type), 0);
+      const round = roundMin(p, d.stops);
       h += round > DAY
         ? `<div class="warn">Nothing fits: one round ${d.stops.join(' → ')} → ${d.stops[0]} takes ${G.fmtDuration(round)} with the
-          turnarounds, and a timetable repeats every day. Pick an airport closer by.</div>`
+          turnarounds, and a timetable repeats every day. ${ultraOk ? '<b>Tick 🌏 Ultra long-haul</b> above: then it repeats every few days.'
+            : `Pick an airport closer by: only planes with the range for flights longer than half a day fly ultra long-haul timetables over several days.`}</div>`
         : `<div class="warn">Nothing fits: move the first departure into ${clock(C.curfew.start)}–${clock(C.curfew.end)} or shorten the route.</div>`;
     } else {
       h += `<div class="hint">Add ${d.stops.length ? 'a second airport' : 'two airports'} where you hold a slot.</div>`;
@@ -181,7 +221,7 @@
   // grey = the others, red = all your slots there are taken then (whoever comes last waits at its gate).
   function fitView(p, d) {
     if (!d.legs.length) return '';
-    const fit = G.slotFit(p.id, d.legs);
+    const fit = G.slotFit(p.id, d.legs, daysOf(p, d));
     let h = `<div class="pl-fit">${axis()}`;
     for (const a of fit.airports) {
       h += `<div class="tl-row"><div class="tl-label" data-pl="slotAt" data-code="${a.code}" title="Open the slots at ${a.code}">${a.code}
@@ -425,9 +465,10 @@
 
   function shift(i, by) {
     const d = pl.draft;
-    // Move this flight and every later one by the same amount.
-    for (let k = i; k < d.legs.length; k++) d.legs[k].dep = (d.legs[k].dep + by + DAY) % DAY;
-    if (i === 0) d.first = d.legs[0].dep;
+    // Move this flight and every later one by the same amount (on an ultra long-haul timetable, across midnight to
+    // the day before or after).
+    for (let k = i; k < d.legs.length; k++) d.legs[k].dep = d.ultra ? Math.max(0, d.legs[k].dep + by) : (d.legs[k].dep + by + DAY) % DAY;
+    if (i === 0) d.first = d.legs[0].dep % DAY;
   }
 
   function action(el) {
@@ -450,17 +491,18 @@
       case 'rebuild': rebuild(p); break;
       case 'firstStep': d.first = Math.min(C.curfew.end, Math.max(C.curfew.start, d.first + Number(el.dataset.by))); rebuild(p); break;
       case 'fit': {
-        const best = G.fitTimetable(p.id, d.stops, d.rounds, d.first);
-        if (!best) { err = 'Nothing fits into the day: shorten the route.'; break; }
+        const best = G.fitTimetable(p.id, d.stops, d.rounds, d.first, d.ultra);
+        if (!best) { err = G.ultraCapable(p.type) && !d.ultra ? 'Nothing fits into the day: shorten the route, or tick 🌏 Ultra long-haul.' : 'Nothing fits into the day: shorten the route.'; break; }
         Object.assign(d, { stops: best.stops, first: best.first, rounds: best.rounds, legs: best.legs });
-        ctx.toast(best.over ? `Best there is: ${clock(best.first)} from ${best.stops[0]}, ${best.legs.length} flights, but still ${G.fmtDuration(best.over)} without a free slot – lease another one.`
-          : `Fits: first departure ${clock(best.first)} from ${best.stops[0]}, ${best.legs.length} flights a day.`, !!best.over);
+        const often = best.days > 1 ? `every ${best.days} days` : 'a day';
+        ctx.toast(best.over ? `Best there is: ${clock(best.first)} from ${best.stops[0]}, ${best.legs.length} flights ${often}, but still ${G.fmtDuration(best.over)} without a free slot – lease another one.`
+          : `Fits: first departure ${clock(best.first)} from ${best.stops[0]}, ${best.legs.length} flights ${often}.`, !!best.over);
         break;
       }
       case 'shift': shift(i, Number(el.dataset.by)); break;
       case 'legDel': d.legs.splice(i, d.legs.length - i); break;
       case 'save': {
-        err = G.setTimetable(p.id, d.legs);
+        err = G.setTimetable(p.id, d.legs, daysOf(p, d));
         if (!err && el.dataset.start) err = G.setScheduleActive(p.id, true);
         if (!err) ctx.toast(el.dataset.start ? `${G.planeName(p)} flies its new timetable.` : 'Timetable saved.');
         break;
@@ -510,7 +552,8 @@
     }
     else if (el.id === 'pl-first' || el.id === 'pl-first-range') { d.first = el.id === 'pl-first' ? parseClock(el.value) : Number(el.value); rebuild(p); }
     else if (el.id === 'pl-rounds') { d.rounds = Number(el.value); rebuild(p); }
-    else if (el.classList.contains('pl-dep')) { const i = Number(el.dataset.i); shift(i, parseClock(el.value) - d.legs[i].dep); }
+    else if (el.id === 'pl-ultra') { d.ultra = el.checked; d.rounds = d.ultra ? Math.max(1, d.rounds) : 0; rebuild(p); }
+    else if (el.classList.contains('pl-dep')) { const i = Number(el.dataset.i); shift(i, parseClock(el.value) - (d.legs[i].dep % DAY)); }
     else return false;
     G.dirty = true;
     return true;

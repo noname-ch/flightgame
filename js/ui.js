@@ -1297,7 +1297,7 @@
     if (leg && crew && crew.dutyToday >= G.crewDutyMax(crew) - 60) return `At ${p.location} ${gate} · crew resting`;
     if (leg && sch.legs && !p.pendingFerry) {
       const l = sch.legs[sch.index % sch.legs.length];
-      if (l.from === p.location) return `At ${p.location} ${gate} · next ${G.fmtClock(l.dep)} to ${l.to}`;
+      if (l.from === p.location) return `At ${p.location} ${gate} · next ${(sch.days || 1) > 1 ? G.fmtDue(sch.due) : G.fmtClock(l.dep)} to ${l.to}`;
     }
     if (leg) {
       const when = G.departNote(p);
@@ -1339,8 +1339,8 @@
       h += `</select><button data-action="sendSelect" data-plane="${p.id}">Ferry there</button></div>`;
 
       if (sch.legs) {
-        h += `<div class="label">Timetable ${sch.active ? '<span class="pos">● running</span>' : '<span class="muted">⏸ paused</span>'}</div>
-          <div class="route">${sch.legs.map((l, i) => `<span class="${i === sch.index % sch.legs.length && p.status !== 'flying' ? 'here' : ''}">${G.fmtClock(l.dep)} ${l.from}→${l.to}</span>`).join(' ')}</div>`;
+        h += `<div class="label">Timetable ${(sch.days || 1) > 1 ? `<span class="muted">🌏 every ${sch.days} days</span> ` : ''}${sch.active ? '<span class="pos">● running</span>' : '<span class="muted">⏸ paused</span>'}</div>
+          <div class="route">${sch.legs.map((l, i) => `<span class="${i === sch.index % sch.legs.length && p.status !== 'flying' ? 'here' : ''}">${G.fmtLegDep(l.dep, sch.days)} ${l.from}→${l.to}</span>`).join(' ')}</div>`;
         h += fareTable(sch.stops);
         h += `<div class="row">${sch.active ? `<button data-action="pause" data-plane="${p.id}">⏸ Pause</button>`
             : `<button class="primary" data-action="start" data-plane="${p.id}">▶ Start timetable</button>`}
@@ -1914,7 +1914,7 @@
       let next = '';
       if (sch.active && sch.legs) {
         const l = sch.legs[sch.index % sch.legs.length];
-        next = `next ${l.from}→${l.to} at ${G.fmtClock(l.dep)}`;
+        next = `next ${l.from}→${l.to} at ${(sch.days || 1) > 1 ? G.fmtDue(sch.due) : G.fmtClock(l.dep)}`;
       } else if (sch.active && sch.stops.length >= 2) next = `next to ${sch.stops[(sch.index + 1) % sch.stops.length]}`;
       h += `<div class="tt-route"><span>${p.location}<small>${G.airportByCode[p.location].city}</small></span></div>
         <div>${planeStatus(p)}</div>${next ? `<div class="muted">${next}</div>` : ''}`;

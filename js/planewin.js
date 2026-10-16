@@ -107,7 +107,7 @@
         ${FG.weather ? `<div class="muted small pw-wx">${FG.weather.text(G.airportWeather(p.location))}</div>` : ''}
         <div class="pw-grid"><span>Speed</span><b>0 km/h</b><small></small><span>Next</span><b>${next ? `${next.from} → ${next.to} at ${clock(next.dep)}` : 'no timetable'}</b><small></small></div>`;
     }
-    h += `<div class="muted small">${p.schedule.legs ? `${p.schedule.legs.length} flights a day${p.schedule.active ? '' : ' · paused'}` : 'No timetable yet'}
+    h += `<div class="muted small">${p.schedule.legs ? `${p.schedule.legs.length} flights ${(p.schedule.days || 1) > 1 ? `every ${p.schedule.days} days (ultra long-haul)` : 'a day'}${p.schedule.active ? '' : ' · paused'}` : 'No timetable yet'}
       · ${p.stats.flights} flights flown · ${p.ownership === 'owned' ? 'owned' : 'leased'}
       · <span title="${D.looks[p.type].span} m wingspan: it needs stands and slots of this class or bigger">class ${G.CLASSES[G.typeClass(p.type)]}</span></div>`;
     pw.win.body.querySelector('.pw-stats').innerHTML = h;
@@ -157,6 +157,10 @@
   function nextLeg(p, t) {
     const legs = p.schedule.legs;
     if (!legs || !legs.length) return null;
+    if ((p.schedule.days || 1) > 1) { // (ultra long-haul: the one it waits for, at the time it is due)
+      const l = legs[p.schedule.index % legs.length];
+      return l.from === p.location ? { ...l, dep: p.schedule.due } : null;
+    }
     const now = ((t % DAY) + DAY) % DAY;
     const later = legs.filter((l) => l.from === p.location).sort((x, y) => ((x.dep - now + DAY) % DAY) - ((y.dep - now + DAY) % DAY));
     return later[0] || null;

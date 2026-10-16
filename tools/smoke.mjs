@@ -544,6 +544,22 @@ try {
   if (lh.err) errors.push(`long haul: ${lh.err}`);
   else step(`long haul: ${lh.legs}`);
 
+  step('ultra long-haul: Los Angeles – Singapore with an A350-1000 repeats every 2 days (an A320neo gets no such timetable)');
+  const ul = await evaluate(() => {
+    if (!G.ultraCapable('A350-1000') || G.ultraCapable('A320neo')) return { err: 'the wrong planes can fly ultra long-haul timetables' };
+    if (G.buildTimetable('A350-1000', ['LAX', 'SIN'], 9 * 60).length) return { err: 'LAX–SIN fits into a day?' };
+    const legs = G.buildLongTimetable('A350-1000', ['LAX', 'SIN'], 9 * 60, 1);
+    const days = G.cycleDays('A350-1000', legs);
+    if (legs.length !== 2 || days !== 2) return { err: `${legs.length} flights over ${days} days, not 2 over 2` };
+    // (each flight leaves outside the night curfew, after the one before has landed and turned round)
+    const late = legs.find((l, i) => i && l.dep < legs[i - 1].dep + G.legBlock('A350-1000', legs[i - 1].from, legs[i - 1].to) + G.turnaroundMin('A350-1000'));
+    const night = legs.find((l) => l.dep % 1440 < FG.config.curfew.start || l.dep % 1440 > FG.config.curfew.end);
+    if (late || night) return { err: `bad departure ${JSON.stringify(late || night)}` };
+    return { legs: legs.map((l) => `${G.fmtLegDep(l.dep, days)} ${l.from}→${l.to}`).join(', ') };
+  });
+  if (ul.err) errors.push(`ultra long-haul: ${ul.err}`);
+  else step(`ultra long-haul: ${ul.legs}`);
+
   step('airport categories: every airport in one of the four, named in the airport panel');
   const cats = await evaluate((home) => {
     const n = {};
