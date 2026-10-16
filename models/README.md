@@ -51,7 +51,8 @@ models have none. They have no landing gear.
 `icons/` holds the top view of every aircraft type as a plain shape; the 2D map uses it as the aircraft's icon
 (`planeGlyph` in `js/ui.js`). `tools/hangar_shots.html` makes these too.
 
-In 3D the wings bend and the propellers turn in the shader (`js/livery.js`), so the files need no animation.
-Propellers are found as pieces thin along the nose in front of the engines; on the Twin Otter, the DC-3 and the
-Ju 52 they are one piece with their engines and stay still. To make them turn, separate each propeller in
-Blender (Edit Mode, select it, `P` → Selection) and export the `.glb` again (glTF Binary, +Y Up, no Draco).
+In 3D the wings bend, the propellers and fans turn and the control surfaces (ailerons, flaps, elevators, rudder)
+move in the shader (`js/livery.js`), so the files need no animation. Propellers are found as pieces thin along the
+nose in front of the engines and the surfaces as the rear of the wing's, tailplane's and fin's chord. A model edited
+in Blender keeps working as long as it stays 1 unit long and centred (export glTF Binary, +Y Up, no Draco); a
+propeller only turns when it is its own piece (Edit Mode, select it, `P` → Selection).

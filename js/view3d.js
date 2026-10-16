@@ -190,7 +190,8 @@ function planeModel(type) {
 }
 
 // Gives a clone of a model its own copies of the shared livery materials (same shader program), so its wings
-// bend and its propellers turn on their own. Returns their userData: livFlex and livSpin uniforms (js/livery.js).
+// bend, its propellers turn and its control surfaces move on their own. Returns their userData: the
+// OWN_UNIFORMS of js/livery.js.
 function ownMaterials(model) {
   const copies = new Map();
   model.traverse((o) => {
@@ -206,13 +207,36 @@ function ownMaterials(model) {
   return [...copies.values()].map((m) => m.userData);
 }
 
-// How fast the propellers turn (rad/s): off at the gate, slow while taxiing, fastest for take-off and climb. Jets
-// have none (some of their fans are found as propellers too, js/livery.js, but stay still).
+// How fast the propellers and fans turn (rad/s, js/livery.js livHub): off at the gate, slow while taxiing, fastest
+// for take-off and climb.
 const PROP_RATE = { pushback: 5, 'taxi-out': 7, takeoff: 15, climb: 14, cruise: 12, descent: 9, approach: 10, landing: 9, 'taxi-in': 7 };
-function propRate(type, pose) {
-  const look = D.looks && D.looks[type];
-  if (!pose.st || !look || !/^(prop|radial)/.test(look.eng || '') || !(FG.ui && FG.ui.speed > 0)) return 0; // (paused: still)
+function propRate(pose) {
+  if (!pose.st || !(FG.ui && FG.ui.speed > 0)) return 0; // (paused: still)
   return PROP_RATE[pose.st.phase] || 0;
+}
+
+// Where the control surfaces go (radians; js/livery.js livSurf): flaps out for take-off and further for landing;
+// ailerons, elevators and rudder while the plane still rolls, pitches or turns towards its attitude (`toGo`, in
+// degrees), which includes the bumps in gusts and the steering on the ground.
+const MAX_AIL = 18 * DEG, MAX_ELEV = 15 * DEG, MAX_RUD = 20 * DEG;
+function surfaceAngles(pose, toGo) {
+  const st = pose.st;
+  let flap = 0;
+  if (st) {
+    const agl = (st.altFt || 0) - (st.fieldFt || 0);
+    if (st.phase === 'taxi-out' || st.phase === 'takeoff') flap = 12;
+    else if (st.phase === 'climb') flap = agl < 1500 ? 12 : agl < 3000 ? 5 : 0;
+    else if (st.phase === 'approach') flap = agl < 1500 ? 35 : agl < 4000 ? 20 : 8;
+    else if (st.phase === 'landing') flap = 35;
+  }
+  const clamp = (v, m) => Math.max(-m, Math.min(m, v));
+  const ground = !st || st.ground || st.phase === 'landing' || st.phase === 'taxi-in' || st.phase === 'taxi-out' || st.phase === 'pushback';
+  return {
+    flap: flap * DEG,
+    ail: ground ? 0 : clamp(toGo.bank * 1.5 * DEG, MAX_AIL),
+    elev: clamp(-toGo.pitch * 3 * DEG, MAX_ELEV),
+    rud: clamp(toGo.heading * (ground ? 4 : 1.5) * DEG, ground ? MAX_RUD : MAX_RUD / 2),
+  };
 }
 
 // How far the wing tips are bent up, in half spans (looks only). On the ground they droop under their own
@@ -972,6 +996,8 @@ function placeModel(e, pose, altM, exag, globe, now, lineUp) {
   // smoothly instead of snapping (frame-rate independent).
   const k = e.att ? 1 - Math.exp(-Math.min(0.25, (now - e.lastFrame) / 1000) / 0.35) : 1;
   if (!e.att) e.att = { heading: pose.heading, bank: 0, pitch: 0 };
+  // (how far the attitude still has to go: what the control surfaces are doing, see surfaceAngles())
+  const toGo = { bank: (pose.bank || 0) - e.att.bank, pitch: (pose.pitch || 0) - e.att.pitch, heading: wrap180(pose.heading - e.att.heading) };
   e.att.heading = (e.att.heading + wrap180(pose.heading - e.att.heading) * k + 360) % 360;
   e.att.bank += ((pose.bank || 0) - e.att.bank) * k;
   e.att.pitch += ((pose.pitch || 0) - e.att.pitch) * k;
@@ -979,11 +1005,24 @@ function placeModel(e, pose, altM, exag, globe, now, lineUp) {
   if (liv && liv.length) {
     const target = wingFlex(e.type, pose, e.obj.id * 1.7);
     e.flex = e.flex == null ? target : e.flex + (target - e.flex) * k;
-    // propellers spin up and down with the engines (looks only: slow enough not to strobe)
+    // propellers and fans spin up and down with the engines (looks only: slow enough not to strobe)
     const dt = e.lastFrame == null ? 0 : Math.min(0.25, Math.max(0, (now - e.lastFrame) / 1000));
-    e.spinRate = (e.spinRate || 0) + (propRate(e.type, pose) - (e.spinRate || 0)) * (1 - Math.exp(-dt / 1.5));
+    e.spinRate = (e.spinRate || 0) + (propRate(pose) - (e.spinRate || 0)) * (1 - Math.exp(-dt / 1.5));
     e.spin = ((e.spin || 0) + e.spinRate * dt) % (2 * Math.PI);
-    for (const u of liv) { u.livFlex.value = e.flex; u.livSpin.value = e.spin; }
+    // control surfaces move over a few tenths of a second, flaps over a few seconds
+    const c = surfaceAngles(pose, toGo);
+    if (!e.ctl) e.ctl = c;
+    const kq = 1 - Math.exp(-dt / 0.3), kf = 1 - Math.exp(-dt / 3);
+    for (const n of ['ail', 'elev', 'rud']) e.ctl[n] += (c[n] - e.ctl[n]) * kq;
+    e.ctl.flap += (c.flap - e.ctl.flap) * kf;
+    for (const u of liv) {
+      u.livFlex.value = e.flex;
+      u.livSpin.value = e.spin;
+      u.livAil.value = e.ctl.ail;
+      u.livFlap.value = e.ctl.flap;
+      u.livElev.value = e.ctl.elev;
+      u.livRud.value = e.ctl.rud;
+    }
   }
   e.lastFrame = now;
   const h = e.att.heading * DEG;

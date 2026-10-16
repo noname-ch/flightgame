@@ -809,7 +809,7 @@ try {
     if (!side1 || side2 !== -side1) errors.push(`3D wing camera (N, N again for the other wing) went wrong: ${side1} then ${side2}`);
     if (!back.on || !back.follow || back.cam !== 'chase' || back.pitch > 80.01) errors.push(`V did not bring back the chase camera: ${JSON.stringify(back)}`);
 
-    step('3D wing bending and propellers: every drawn aircraft has its own livFlex, up in the air and drooping on the ground; turboprops have 2 propellers');
+    step('3D wing bending and propellers: every drawn aircraft has its own livFlex, up in the air and drooping on the ground; propellers and control surfaces found');
     const flex = await evaluate(() => {
       const out = { air: [], ground: [], shared: 0 };
       const seen = new Set();
@@ -828,17 +828,23 @@ try {
     if (flex.air.some((f) => !(f > 0.01 && f < 0.1))) errors.push(`3D wing bending: wings in the air not bent up a little: ${flex.air.join(', ')}`);
     if (flex.ground.some((f) => !(f < 0 && f > -0.03))) errors.push(`3D wing bending: parked wings not drooping a little: ${flex.ground.join(', ')}`);
     if (!flex.air.length && !flex.ground.length) warnings.push('3D wing bending: no aircraft model drawn to check');
-    // (the Q400's and the ATR's propellers are found and turn: livHub, js/livery.js)
-    const props = await evaluate(async () => {
+    // (the Q400's and the ATR's propellers are found and turn: livHub; the A320's and the ATR's ailerons, flaps,
+    // elevators and rudder are found: livSurf, js/livery.js)
+    const parts = await evaluate(async () => {
       const m = await import('/js/models3d.js');
       const out = {};
-      for (const file of ['q400', 'atr42']) {
+      for (const file of ['q400', 'atr42', 'a320']) {
         const type = Object.keys(FG.data.models).find((t) => FG.data.models[t] === file);
-        out[file] = (await m.loadModel(type)).userData.props;
+        const s = await m.loadModel(type);
+        out[file] = { props: s.userData.props, surfaces: s.userData.surfaces };
       }
       return out;
     });
-    for (const [file, n] of Object.entries(props)) if (n !== 2) errors.push(`3D propellers: ${file} has ${n} propellers found, not 2`);
+    for (const file of ['q400', 'atr42']) if (parts[file].props !== 2) errors.push(`3D propellers: ${file} has ${parts[file].props} propellers found, not 2`);
+    for (const file of ['atr42', 'a320']) {
+      const missing = ['aileron', 'flap', 'elevator', 'rudder'].filter((_, i) => !(parts[file].surfaces && parts[file].surfaces[i + 1] > 0));
+      if (missing.length) errors.push(`3D control surfaces: ${file} has no ${missing.join(', ')}`);
+    }
 
     step('3D satellite: 🛰 not under the plane window while following; Settings → Map style switches the 3D ground too');
     const sat = await evaluate(async () => {

@@ -258,12 +258,13 @@ function markEngines(scene, hw, file) {
     if (cowl) engine.set(p, cowl.box);
   }
   scene.userData.engines = cowlings.length;
-  // Propellers: blades are pieces thin along the nose, off the fuselage. Touching ones (or one alone) make a
+  // Propellers: blades are pieces thin along the nose, off the fuselage or in front of it (a Ju 52's nose
+  // engine). Touching ones (or one alone) make a
   // propeller when together they are about as wide as high; its middle is the hub. Their vertices
   // get the hub in livHub (x, z, 1), so the shader can turn them (livSpin).
   const thin = pieces.filter(({ box: b }) => {
     const wide = Math.max(b[1] - b[0], b[5] - b[4]);
-    return b[3] - b[2] < 0.3 * wide && wide > 0.15 * d && Math.abs(b[0] + b[1]) / 2 > 1.2 * hw;
+    return b[3] - b[2] < 0.3 * wide && wide > 0.15 * d && (Math.abs(b[0] + b[1]) / 2 > 1.2 * hw || b[2] > 0.43);
   });
   const group = thin.map((_, i) => i);
   const top = (i) => { while (group[i] !== i) { group[i] = group[group[i]]; i = group[i]; } return i; };
@@ -280,14 +281,12 @@ function markEngines(scene, hw, file) {
     groups.set(top(i), g);
   });
   const hubs = new Map(meshes.map((m) => [m, new Map()])); // mesh -> root -> [x, z]
-  let props = 0;
   for (const { box: b, parts } of groups.values()) {
     const dx = b[1] - b[0], dz = b[5] - b[4];
     if (dx / dz < 0.6 || dx / dz > 1.6 || b[3] - b[2] > 0.3 * Math.max(dx, dz)) continue;
     for (const p of parts) hubs.get(p.mesh).set(p.root, [(b[0] + b[1]) / 2, (b[4] + b[5]) / 2]);
-    props++;
+    parts[0].mesh.geometry.userData.livProps = (parts[0].mesh.geometry.userData.livProps || 0) + 1;
   }
-  scene.userData.props = props;
   // A jet's cowling says how far back along it each vertex is: 1.01 at the inlet lip to 1.98 at the exhaust
   // (the shader paints the lip bare metal and the exhaust grey); what is inside it (fan, spinner) is 5 and keeps
   // the model's own colours. A turboprop's nacelle is plain 1.
@@ -322,11 +321,170 @@ function markEngines(scene, hw, file) {
     m.geometry.setAttribute('livHub', new THREE.BufferAttribute(hub, 3));
   }
   // (a model in one piece has no propellers to turn)
+  scene.userData.props = 0;
   scene.traverse((o) => {
-    if (o.isMesh && !o.geometry.attributes.livHub) {
+    if (!o.isMesh) return;
+    if (!o.geometry.attributes.livHub) {
       o.geometry.setAttribute('livHub', new THREE.BufferAttribute(new Float32Array(o.geometry.attributes.position.count * 3), 3));
     }
+    scene.userData.props += o.geometry.userData.livProps || 0;
   });
+}
+
+// The control surfaces of a model, so that the shader can move them: every vertex gets the attribute livSurf
+// (kind: 1 aileron, 2 flap, 3 elevator, 4 rudder; then the hinge's y and z, for the rudder its y). They are read
+// off the geometry: across the span in strips, the flat vertices (not engines or propellers) make the wing and,
+// behind a gap, the tailplane; the rear of their chord moves (ailerons on the outer third, flaps inboard). The
+// fin is read height by height in the same way.
+const STRIPS = 32;
+const SURF_CHORD = { 1: 0.27, 3: 0.32, 4: 0.32 }; // share of the chord that moves (wing, tailplane, fin)
+function markSurfaces(scene, m) {
+  const meshes = [];
+  scene.traverse((o) => { if (o.isMesh && o.geometry.attributes.position && !o.geometry.userData.livSurfaced) meshes.push(o); });
+  if (meshes.length) findSurfaces(meshes, m);
+  scene.userData.surfaces = { 1: 0, 2: 0, 3: 0, 4: 0 };
+  scene.traverse((o) => {
+    const c = o.isMesh && o.geometry.userData.livSurfaces;
+    if (c) for (const k in c) scene.userData.surfaces[k] += c[k];
+  });
+}
+function findSurfaces(meshes, m) {
+  const hw = m.halfWidth, span = m.span;
+  const x0 = 1.25 * hw, xw = (span - x0) / STRIPS;
+  const finOn = m.finTop != null;
+  const finX = 1.5 * m.fin.z, finZ0 = m.fin.y, finZ1 = finOn ? m.finTop : 0, zw = (finZ1 - finZ0) / STRIPS;
+  const wing = Array.from({ length: STRIPS }, () => []); // [y, z] of flat vertices in each strip
+  const fin = Array.from({ length: STRIPS }, () => []);  // y of upright vertices of the fin at each height
+  const each = (fn) => {
+    for (const o of meshes) {
+      const g = o.geometry;
+      const pos = g.attributes.position, part = g.attributes.livPart, hub = g.attributes.livHub;
+      for (let i = 0; i < pos.count; i++) {
+        if ((part && part.getX(i) > 0.5) || (hub && hub.getZ(i) > 0.5)) continue;
+        fn(o, i, pos.getX(i), pos.getY(i), pos.getZ(i));
+      }
+    }
+  };
+  // (by the faces: on a coarse model most vertices are on the leading and trailing edges, where they face
+  // forwards or backwards, but the faces between them are flat)
+  const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), n = new THREE.Vector3();
+  const faces = new Map(); // mesh -> per vertex: 1 on a flat face, 2 on an upright one (both: 3)
+  let engZ0 = Infinity, engZ1 = -Infinity; // height of engines on the rear fuselage (not to be taken for the tailplane)
+  for (const o of meshes) {
+    const pos = o.geometry.attributes.position, part = o.geometry.attributes.livPart;
+    if (part) for (let i = 0; i < pos.count; i++) if (part.getX(i) > 0.5 && pos.getY(i) < -0.1) { engZ0 = Math.min(engZ0, pos.getZ(i)); engZ1 = Math.max(engZ1, pos.getZ(i)); }
+  }
+  for (const o of meshes) {
+    const g = o.geometry;
+    const pos = g.attributes.position, idx = g.index, part = g.attributes.livPart, hub = g.attributes.livHub;
+    const count = idx ? idx.count : pos.count;
+    const skip = (i) => (part && part.getX(i) > 0.5) || (hub && hub.getZ(i) > 0.5);
+    const face = new Uint8Array(pos.count);
+    faces.set(o, face);
+    for (let t = 0; t < count; t += 3) {
+      const ia = idx ? idx.getX(t) : t, ib = idx ? idx.getX(t + 1) : t + 1, ic = idx ? idx.getX(t + 2) : t + 2;
+      if (skip(ia) || skip(ib) || skip(ic)) continue;
+      a.fromBufferAttribute(pos, ia); b.fromBufferAttribute(pos, ib); c.fromBufferAttribute(pos, ic);
+      n.subVectors(b, a).cross(c.clone().sub(a));
+      const len = n.length();
+      if (len < 1e-12) continue;
+      const nx = Math.abs(n.x) / len, nz = Math.abs(n.z) / len;
+      for (const i of [ia, ib, ic]) face[i] |= (nz > 0.6 ? 1 : 0) | (nx > 0.5 ? 2 : 0);
+      for (const p of [a, b, c]) {
+        const ax = Math.abs(p.x);
+        if (nz > 0.6 && ax >= x0 && ax < span && !(p.y < -0.1 && p.z > engZ0 - 0.01 && p.z < engZ1 + 0.01)) wing[Math.min(STRIPS - 1, Math.floor((ax - x0) / xw))].push(p.y, p.z);
+        if (nx > 0.5 && finOn && ax < finX && p.y < -0.15 && p.z > finZ0 && p.z < finZ1) fin[Math.min(STRIPS - 1, Math.floor((p.z - finZ0) / zw))].push(p.y);
+      }
+    }
+  }
+  // Wing and tailplane: split where, over the whole span, no flat vertex lies between them (the widest empty
+  // stretch behind the middle; none on a delta wing).
+  const BINS = 200, occupied = new Uint8Array(BINS);
+  for (const pts of wing) for (let i = 0; i < pts.length; i += 2) occupied[Math.max(0, Math.min(BINS - 1, Math.floor((pts[i] + 0.5) * BINS)))] = 1;
+  let split = -Infinity, best = 0;
+  for (let i = 0; i < BINS / 2; i++) {
+    if (occupied[i]) continue;
+    let j = i;
+    while (j < BINS && !occupied[j]) j++;
+    const before = occupied.slice(0, i).some((v) => v), after = j < BINS;
+    if (before && after && j - i > best && (i + j) / 2 / BINS - 0.5 < 0 && j - i >= 0.04 * BINS) { best = j - i; split = (i + j) / 2 / BINS - 0.5; }
+    i = j;
+  }
+  // (a nacelle or a fairing in a few strips would bend the line: each edge is the median of five strips)
+  const median = (vals) => vals.map((_, i) => {
+    const v = [];
+    for (let j = Math.max(0, i - 2); j <= Math.min(STRIPS - 1, i + 2); j++) if (vals[j] != null) v.push(vals[j]);
+    v.sort((x, y) => x - y);
+    return v.length ? v[v.length >> 1] : null;
+  });
+  const edges = (keep) => {
+    const sets = wing.map((pts) => {
+      const out = [];
+      for (let i = 0; i < pts.length; i += 2) if (keep(pts[i])) out.push(pts[i], pts[i + 1]);
+      return out;
+    });
+    const ext = (fn) => sets.map((pts) => { let v = null; for (let i = 0; i < pts.length; i += 2) v = v == null ? pts[i] : fn(v, pts[i]); return v; });
+    const le = median(ext(Math.max)), te = median(ext(Math.min));
+    return sets.map((zs, i) => (le[i] != null && te[i] != null && le[i] - te[i] > 0.01 && zs.length ? { le: le[i], te: te[i], zs } : null));
+  };
+  const wingE = edges((y) => y > split);
+  const tailE = split > -Infinity ? edges((y) => y < split) : wing.map(() => null);
+  // The hinge: at its share of the chord from the trailing edge, at the middle height of the wing there; what
+  // moves is within a thin airfoil's thickness of it (not a nacelle or the landing gear above or below).
+  const hinge = (e, kind) => {
+    const c = e.le - e.te, y = e.te + SURF_CHORD[kind] * c;
+    const zs = [];
+    for (let i = 0; i < e.zs.length; i += 2) if (Math.abs(e.zs[i] - y) < 0.15 * c) zs.push(e.zs[i + 1]);
+    if (!zs.length) for (let i = 0; i < e.zs.length; i += 2) zs.push(e.zs[i + 1]); // (coarse: only its edges)
+    zs.sort((p, q) => p - q);
+    return { y, z: zs[zs.length >> 1], half: 0.05 * c + 0.003, te: e.te };
+  };
+  const wingH = wingE.map((e) => { const h = e && hinge(e, 1); return h ? { kind: 1, ...h } : null; });
+  const tailH = tailE.map((e) => { const h = e && hinge(e, 3); return h ? { kind: 3, ...h } : null; });
+  // (strips without a vertex of their own, between two that have: the hinge runs straight from one to the other)
+  const fill = (hs) => {
+    let last = -1;
+    hs.forEach((h, i) => {
+      if (!h) return;
+      if (last >= 0 && i - last > 1 && hs[last].kind === h.kind) {
+        for (let j = last + 1; j < i; j++) {
+          const f = (j - last) / (i - last), p = hs[last];
+          hs[j] = { kind: h.kind, y: p.y + (h.y - p.y) * f, z: p.z + (h.z - p.z) * f, half: p.half + (h.half - p.half) * f, te: p.te + (h.te - p.te) * f };
+        }
+      }
+      last = i;
+    });
+    return hs;
+  };
+  fill(wingH);
+  fill(tailH);
+  const finH = fill(fin.map((ys) => {
+    if (ys.length < 2) return null;
+    const le = Math.max(...ys), te = Math.min(...ys);
+    return le - te > 0.01 ? { kind: 4, y: te + SURF_CHORD[4] * (le - te), z: 0, half: 0, te } : null;
+  }));
+  const surf = new Map(meshes.map((o) => [o, new Float32Array(o.geometry.attributes.position.count * 4)]));
+  for (const o of meshes) o.geometry.userData.livSurfaces = { 1: 0, 2: 0, 3: 0, 4: 0 };
+  each((o, i, x, y, z) => {
+    const ax = Math.abs(x);
+    let h = null;
+    if (ax >= x0 && ax < span) {
+      const s = Math.min(STRIPS - 1, Math.floor((ax - x0) / xw));
+      if (faces.get(o)[i] & 1) for (const c of [wingH[s], tailH[s]]) if (c && y < c.y && y > c.te - 0.01 && Math.abs(z - c.z) < c.half) h = c;
+      // (on the wing: ailerons on the outer third, out to the tip; flaps inboard of them)
+      if (h && h.kind === 1) h = ax > 0.66 * span ? h : ax < 0.63 * span ? { ...h, kind: 2 } : null;
+    } else if (finOn && ax < finX && z > finZ0 && z < finZ1) {
+      const c = finH[Math.min(STRIPS - 1, Math.floor((z - finZ0) / zw))];
+      if (c && faces.get(o)[i] & 2 && y < c.y && y > c.te - 0.01) h = c;
+    }
+    if (!h) return;
+    surf.get(o).set([h.kind, h.y, h.kind === 4 ? 0 : h.z, 1], i * 4);
+    o.geometry.userData.livSurfaces[h.kind]++;
+  });
+  for (const [o, a] of surf) {
+    o.geometry.setAttribute('livSurf', new THREE.BufferAttribute(a, 4));
+    o.geometry.userData.livSurfaced = true;
+  }
 }
 
 // Where the fuselage and the fin of this model are, and where the title ({ aspect, at, height, length }) and
@@ -353,6 +511,14 @@ export function measure(scene, file, stretch = 1, title = { aspect: 4.3 }, finMa
     hw = Math.max(hw, Math.abs(p.x));
     top = Math.max(top, p.z);
   });
+  // (where the engine nacelles or propellers reach that far forward, as on a DC-3, the widest point there is
+  // one of them: then only what is near the fuselage's real width counts, FG.data.modelSize)
+  const real = FG.data.modelSize && FG.data.modelSize[file];
+  const expect = real ? real[1] / real[0] / 2 : 0;
+  if (expect && hw > 1.6 * expect) {
+    hw = 0;
+    eachVertex((p) => { if (p.y >= 0.27 && p.y <= 0.36 && Math.abs(p.x) < 1.4 * expect) hw = Math.max(hw, Math.abs(p.x)); });
+  }
   const d = 2 * hw;
   // Crown of the rear fuselage, ahead of the fin.
   let crown = -Infinity;
@@ -412,6 +578,7 @@ export function measure(scene, file, stretch = 1, title = { aspect: 4.3 }, finMa
     finAngle: angle,
     tail: found ? new THREE.Vector2(y1 + (crossZ - fin.z) * slope, slope) : new THREE.Vector2(-99, 0),
     halfWidth: hw,
+    finTop: found ? finTop : null,
     top,
     width: d,
     span,
@@ -422,14 +589,19 @@ export function measure(scene, file, stretch = 1, title = { aspect: 4.3 }, finMa
 
 const VERT_HEAD = `attribute float livPart;
 attribute vec3 livHub;     // of a propeller: its hub (x, z), 1 (else 0, 0, 0)
+attribute vec4 livSurf;    // of a control surface: kind (1 aileron, 2 flap, 3 elevator, 4 rudder), hinge y, z
 uniform float livSpin;     // how far the propellers have turned (radians)
+uniform float livAil;      // aileron (radians, rolling right: the right one up)
+uniform float livFlap;     // flaps (radians, down)
+uniform float livElev;     // elevators (radians, trailing edge down)
+uniform float livRud;      // rudder (radians, trailing edge to the right)
 varying vec3 vLivPos;
 varying vec3 vLivNor;
 varying float vLivPart;
 uniform float livFlex;     // how far the wing tips are bent up (down: below 0), in half spans
 uniform float livSpan;     // half span
 uniform float livHalfW;    // half width of the fuselage`;
-// The propellers turn about their hubs, and the wings bend from the fuselage side out, most at the tips (the
+// The propellers turn about their hubs, the control surfaces about their hinges, and the wings bend from the fuselage side out, most at the tips (the
 // paint stays where it was: vLivPos). The tailplanes bend too, but being short hardly at all.
 const VERT_BODY = `vLivPos = position;
 vLivNor = normal;
@@ -439,6 +611,19 @@ if (livHub.z > 0.5) {
   float livC = cos(livSpin);
   float livS = sin(livSpin);
   transformed.xz = livHub.xy + vec2(livC * livR.x - livS * livR.y, livS * livR.x + livC * livR.y);
+}
+if (livSurf.x > 0.5) {
+  float livA = livSurf.x < 1.5 ? -livAil * sign(position.x) : livSurf.x < 2.5 ? livFlap : livSurf.x < 3.5 ? livElev : -livRud;
+  float livC = cos(livA);
+  float livS = sin(livA);
+  if (livSurf.x < 3.5) {
+    vec2 livR = transformed.yz - livSurf.yz;
+    transformed.yz = livSurf.yz + vec2(livC * livR.x - livS * livR.y, livS * livR.x + livC * livR.y);
+  } else {
+    vec2 livR = vec2(transformed.y - livSurf.y, transformed.x);
+    vec2 livQ = vec2(livC * livR.x - livS * livR.y, livS * livR.x + livC * livR.y);
+    transformed.xy = vec2(livQ.y, livSurf.y + livQ.x);
+  }
 }
 {
   float livOut = max(abs(position.x) - 1.1 * livHalfW, 0.0) / max(livSpan - 1.1 * livHalfW, 0.001);
@@ -564,6 +749,9 @@ const FRAG_BODY = `
   diffuseColor.rgb = mix(paint, own, detail);
 }`;
 
+// Uniforms each material has its own of (in its userData), for the aircraft drawn with it.
+export const OWN_UNIFORMS = ['livFlex', 'livSpin', 'livAil', 'livFlap', 'livElev', 'livRud'];
+
 // Paints a loaded model in a livery (its materials are changed in place; clones of the model share them).
 // `extra(shader)` can patch the shader further.
 export function paintLivery(scene, file, extra, stretch = 1, livery = FG.livery()) {
@@ -575,6 +763,7 @@ export function paintLivery(scene, file, extra, stretch = 1, livery = FG.livery(
     { aspect: finText.aspect, angle: mark.angle, size: mark.size });
   if (POCKET_WINDOWS[file]) flushWindows(scene, m.halfWidth);
   markEngines(scene, m.halfWidth, file);
+  markSurfaces(scene, m);
   const prop = FG.data.props && FG.data.props[file];   // its propellers, if it has any
   const belly = livery.belly;
   const color = (c) => new THREE.Color(c);
@@ -625,15 +814,13 @@ export function paintLivery(scene, file, extra, stretch = 1, livery = FG.livery(
   scene.traverse((o) => {
     if (!o.isMesh || seen.has(o.material) || o.material.transparent) return;
     seen.add(o.material);
-    // (each material has its own livFlex and livSpin, so an aircraft drawn with copies of them bends and turns
-    // its propellers on its own:
+    // (each material has its own OWN_UNIFORMS, so an aircraft drawn with copies of them bends, turns its
+    // propellers and moves its control surfaces on its own:
     // js/view3d.js ownMaterials)
-    o.material.userData.livFlex = { value: 0 };
-    o.material.userData.livSpin = { value: 0 };
+    for (const k of OWN_UNIFORMS) o.material.userData[k] = { value: 0 };
     o.material.onBeforeCompile = function (shader) {
       Object.assign(shader.uniforms, uniforms);
-      shader.uniforms.livFlex = this.userData.livFlex;
-      shader.uniforms.livSpin = this.userData.livSpin;
+      for (const k of OWN_UNIFORMS) shader.uniforms[k] = this.userData[k];
       if (extra) extra(shader);
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>', `#include <common>\n${VERT_HEAD}`)
