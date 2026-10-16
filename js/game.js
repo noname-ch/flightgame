@@ -2480,6 +2480,16 @@
     const cabin = seats < 20 ? 0 : Math.ceil(seats / 50);
     return { pilots, cabin, weeklySalary: pilots * M.pilotSalary + cabin * M.cabinSalary };
   }
+  // A plane has one crew, or two (crew.sets) when its timetable flies it more than one crew's day
+  // (C.crewMaxDutyMin): the second one is paid too. weeklySalary is one crew's.
+  const crewSets = (c) => c.sets || 1;
+  const crewDutyMax = (c) => C.crewMaxDutyMin * crewSets(c);
+  const crewWeekly = (c) => c.weeklySalary * crewSets(c);
+  // Crews a timetable day needs: one, or C.crewsMax when it has more block time than one crew may fly.
+  function crewsFor(type, legs) {
+    const duty = legs.reduce((n, l) => n + blockMinutes(type, dist(l.from, l.to)), 0);
+    return duty > C.crewMaxDutyMin ? C.crewsMax : 1;
+  }
 
   function randomUsedListing(n) {
     // (in story mode: types that have flown for at least a year and are still around, no older than the type)
@@ -3014,7 +3024,7 @@
       const s = this.state;
       const planes = s.planes.reduce((sum, p) =>
         sum + (p.ownership === 'owned' ? 0 : D.aircraft[p.type].leasePerWeek), 0);
-      const crews = s.crews.reduce((sum, c) => sum + c.weeklySalary, 0);
+      const crews = s.crews.reduce((sum, c) => sum + crewWeekly(c), 0);
       const slots = Object.keys(s.slots).reduce((sum, code) => sum + this.slotFee(code) * this.slotCount(code), 0);
       return { planes, crews, slots, total: planes + crews + slots };
     },
@@ -3388,7 +3398,7 @@
         // each plane's own share (its lease and its crew), counted in the week just ended
         for (const p of s.planes) {
           const crew = this.crewOf(p);
-          const fixed = (p.ownership === 'owned' ? 0 : D.aircraft[p.type].leasePerWeek) + (crew ? crew.weeklySalary : 0);
+          const fixed = (p.ownership === 'owned' ? 0 : D.aircraft[p.type].leasePerWeek) + (crew ? crewWeekly(crew) : 0);
           if (fixed) record(p, { fixed }, s.time - 1);
         }
         this.payDividends();
@@ -3509,7 +3519,9 @@
       if (tod < C.curfew.start || tod > C.curfew.end) return; // night curfew
       if (this.holdReason(p, leg.to)) return; // strike, weather, repairs
       const block = blockMinutes(p.type, d);
-      if (crew.dutyToday + block > C.crewMaxDutyMin) return; // crew rests until tomorrow
+      // The crew rests until tomorrow. A rested crew can always fly one leg, however long (relief pilots come
+      // along), or a ferry longer than a crew's day would wait for ever.
+      if (crew.dutyToday && crew.dutyToday + block > crewDutyMax(crew)) return;
       // Every slot at the destination taken when we would land: wait at the gate until one frees up.
       const full = !this.slotFreeAt(leg.to, t + block, p.id);
       if (full !== (p.waitSlot === leg.to)) { p.waitSlot = full ? leg.to : null; this.dirty = true; }
@@ -3631,7 +3643,7 @@
     // Will plane q still stand at `code` at time t? Planes that fly on (a running timetable due before
     // t, or a ferry) let their slot go; parked and paused planes keep it.
     staysUntil(q, code, t) {
-      if (q.status === 'flying' || q.location !== code) return false;
+      if (q.status === 'flying' || q.location !== code || this.parksAtBase(q, code)) return false;
       if (q.pendingFerry && q.pendingFerry !== code) return q.status === 'turnaround' && q.readyAt > t;
       const sch = q.schedule;
       if (!sch.active || sch.stops.length < 2) return true;
@@ -3643,11 +3655,21 @@
       return (q.readyAt || 0) > t;
     },
 
+    // Your home base has room for your own planes off the stands (hangars, the maintenance apron): a plane there
+    // without a running timetable parks without a slot. So a plane can always be sent home, and one parked there
+    // never keeps the planes that fly from there out of their slots.
+    parksAtBase(q, code) { return code === this.home() && !(q.schedule.active && q.schedule.stops.length >= 2); },
+    // Your planes parked at your base off the stands (see parksAtBase).
+    parkedAtBase(code) {
+      return this.state.planes.filter((q) => q.status !== 'flying' && q.location === code && this.parksAtBase(q, code));
+    },
+
     // Your planes in or heading for a slot at an airport: [{ p, how: 'parked' | 'turnaround' | 'leaving' | 'inbound' }].
     slotOccupants(code) {
       const out = [];
       const t = this.state.time;
       for (const q of this.state.planes) {
+        if (this.parksAtBase(q, code)) continue;
         if (q.status === 'flying' && q.flight && q.flight.to === code) out.push({ p: q, how: 'inbound' });
         else if (q.status !== 'flying' && q.location === code) {
           out.push({ p: q, how: !this.staysUntil(q, code, t + 30) ? 'leaving' : q.status === 'turnaround' ? 'turnaround' : 'parked' });
@@ -3659,8 +3681,10 @@
     // Is one of your slots at `code` free for a plane landing at time t (not counting plane `planeId`)?
     slotFreeAt(code, t, planeId) {
       const used = [];
+      const me = this.plane(planeId);
+      if (me && this.parksAtBase(me, code)) return true;
       for (const q of this.state.planes) {
-        if (q.id === planeId) continue;
+        if (q.id === planeId || this.parksAtBase(q, code)) continue;
         if (q.status === 'flying' && q.flight && q.flight.to === code) {
           // Lands before us but flies on (its timetable) before we arrive: it doesn't need the slot then.
           const sch = q.schedule;
@@ -3669,7 +3693,6 @@
           if (!gone) used.push(typeClass(q.type));
         } else if (this.staysUntil(q, code, t)) used.push(typeClass(q.type));
       }
-      const me = this.plane(planeId);
       used.push(me ? typeClass(me.type) : 0);
       return slotsFit(this.mySlotClasses(code), used);
     },
@@ -4032,25 +4055,33 @@
       if (p.location === code && p.status !== 'flying') return `${nameOf(p)} is already at ${code}.`;
       if (!fitsAirport(p.type, code)) return fitsReason(p.type, code);
       if (dist(p.location, code) > D.aircraft[p.type].rangeKm) return 'Out of range.';
-      // It must be able to stand there: a slot of its class or bigger, not filled by planes that stay for good
-      // (else it would wait at its gate for ever).
-      const need = typeClass(p.type);
+      const room = this.roomReason(p.type, code, p.id);
+      if (room) return room;
+      p.schedule.active = false;
+      p.pendingFerry = code;
+      this.log(`${nameOf(p)} will ferry to ${code}${p.status === 'idle' ? '' : ' when ready'}.`);
+      return null;
+    },
+
+    // Why a plane of this type couldn't stand at `code` (else null): it needs one of your slots there of its class or
+    // bigger that isn't filled by planes parked there for good, or it would wait at its gate for ever. Your home
+    // base always has room (parksAtBase). planeId: the plane itself (not counted among the others).
+    roomReason(type, code, planeId = null) {
+      if (code === this.home()) return null;
+      const need = typeClass(type);
       const mine = this.mySlotClasses(code);
       if (!slotsFit(mine, [need])) {
         const have = mine.map((n, c) => (n ? `${n}× class ${CLASSES[c]}` : '')).filter(Boolean).join(', ');
-        return `Your slot at ${code} is too small (${have}): the ${D.aircraft[p.type].name} needs a class ${CLASSES[need]} ` +
+        return `Your slot at ${code} is too small (${have}): the ${D.aircraft[type].name} needs a class ${CLASSES[need]} ` +
           'stand or bigger. Lease one there first.';
       }
-      const stay = this.state.planes.filter((q) => q !== p && (q.status === 'flying' && q.flight && q.flight.to === code
+      const stay = this.state.planes.filter((q) => q.id !== planeId && (q.status === 'flying' && q.flight && q.flight.to === code
         ? !(q.schedule.active && q.schedule.legs && q.schedule.legs.length) && (!q.pendingFerry || q.pendingFerry === code)
         : this.staysUntil(q, code, Infinity)));
       if (!slotsFit(mine, [...stay.map((q) => typeClass(q.type)), need])) {
         return `Every slot at ${code} it fits in is taken by ${stay.map(nameOf).join(', ')}, parked there with no running ` +
           'timetable. Move one of them away or lease another slot first.';
       }
-      p.schedule.active = false;
-      p.pendingFerry = code;
-      this.log(`${nameOf(p)} will ferry to ${code}${p.status === 'idle' ? '' : ' when ready'}.`);
       return null;
     },
 
@@ -4068,7 +4099,7 @@
       if (tod < C.curfew.start || tod > C.curfew.end) return `at ${fmtClock(C.curfew.start)} (night curfew)`;
       const crew = this.crewOf(p);
       if (!crew) return 'once it has a crew';
-      if (crew.dutyToday + blockMinutes(p.type, dist(p.location, leg.to)) > C.crewMaxDutyMin) return 'tomorrow (the crew has flown its hours today)';
+      if (crew.dutyToday && crew.dutyToday + blockMinutes(p.type, dist(p.location, leg.to)) > crewDutyMax(crew)) return 'tomorrow (the crew has flown its hours today)';
       if (!this.slotFreeAt(leg.to, t + blockMinutes(p.type, dist(p.location, leg.to)), p.id)) return `as soon as a slot at ${leg.to} is free`;
       if (leg.kind === 'scheduled' && t < p.schedule.due) return `at ${fmtClock(p.schedule.due % DAY)}`;
       return null;
@@ -4164,6 +4195,8 @@
     checkDelivery(type, code, cost) {
       if (!this.ownsSlot(code)) return `You need a slot at ${code} for the delivery.`;
       if (!fitsAirport(type, code)) return fitsReason(type, code);
+      const room = this.roomReason(type, code);
+      if (room) return room.replace(/^Your slot/, 'For the delivery: your slot');
       if (this.state.money < cost) return `Not enough money (${fmtMoney(cost)} needed).`;
       return null;
     },
@@ -4680,6 +4713,10 @@
       if (stops.length < 2) return legs;
       let t = firstDep;
       let duty = 0;
+      // As many loops as one crew may fly; with a second crew (crewsFor) when even one loop is longer (long haul)
+      // or the loops are chosen.
+      const loopDuty = stops.reduce((n, from, i) => n + this.legBlock(type, from, stops[(i + 1) % stops.length]), 0);
+      const maxDuty = C.crewMaxDutyMin * (rounds || loopDuty > C.crewMaxDutyMin ? C.crewsMax : 1);
       for (let r = 0; rounds ? r < rounds : true; r++) {
         const loop = [];
         let tt = t;
@@ -4688,7 +4725,7 @@
         stops.forEach((from, i) => {
           const to = stops[(i + 1) % stops.length];
           const block = this.legBlock(type, from, to);
-          if (tt < C.curfew.start || tt > C.curfew.end || dd + block > C.crewMaxDutyMin) ok = false;
+          if (tt < C.curfew.start || tt > C.curfew.end || dd + block > maxDuty) ok = false;
           loop.push({ from, to, dep: tt % DAY });
           tt += block + turnaroundMin(type);
           dd += block;
@@ -4736,7 +4773,7 @@
           for (const g of this.groundTimes(p.type, legs)) if (g.code === code) uses.push({ planeId: p.id, ...g });
         } else if (!(draft && draft.planeId === p.id) && !(p.schedule.active && p.schedule.stops.length >= 2 && !p.schedule.legs)) {
           const at = p.status === 'flying' && p.flight ? p.flight.to : p.location;
-          if (at === code) uses.push({ planeId: p.id, code, from: 0, to: DAY, idle: true });
+          if (at === code && !this.parksAtBase(p, code)) uses.push({ planeId: p.id, code, from: 0, to: DAY, idle: true });
         }
       }
       // Lanes: each of your slots is a row (the biggest class first); a stay goes into the smallest one free for
@@ -4799,7 +4836,7 @@
         const nextDep = i + 1 < legs.length ? (() => { let d = legs[i + 1].dep; while (d < t) d += DAY; return d; })() : legs[0].dep + DAY;
         if (nextDep < ready) errors.push(`After ${fmtClock(leg.dep)} ${leg.from}→${leg.to} the plane is ready at ${fmtClock(ready % DAY)} – too late for the next flight at ${fmtClock(nextDep % DAY)}.`);
       });
-      if (duty > C.crewMaxDutyMin) errors.push(`${fmtDuration(duty)} in the air a day – the crew may fly ${fmtDuration(C.crewMaxDutyMin)}.`);
+      if (duty > C.crewMaxDutyMin * C.crewsMax) errors.push(`${fmtDuration(duty)} in the air a day – ${C.crewsMax} crews may fly ${fmtDuration(C.crewMaxDutyMin * C.crewsMax)}.`);
       return [...new Set(errors)];
     },
 
@@ -4907,6 +4944,7 @@
       p.schedule = { stops: [], index: 0, active: false };
       p.waitSlot = null;
       this.log(`${nameOf(p)} has no timetable any more and stays at ${p.status === 'flying' && p.flight ? p.flight.to : p.location}.`);
+      this.setCrews(p, 1);
       this.dirty = true;
       return null;
     },
@@ -4920,9 +4958,22 @@
       p.schedule = { stops: sorted.map((l) => l.from), legs: sorted, index: 0, active: p.schedule.active, due: 0 };
       this.syncTimetable(p);
       this.log(`${nameOf(p)} timetable: ${sorted.map((l) => `${fmtClock(l.dep)} ${l.from}→${l.to}`).join(', ')}.`);
+      this.setCrews(p, crewsFor(p.type, sorted));
       this.dirty = true;
       return null;
     },
+
+    // One or two crews for a plane (a long-haul day); the second one is paid from now on.
+    setCrews(p, n) {
+      const crew = this.crewOf(p);
+      if (!crew || crewSets(crew) === n) return;
+      crew.sets = n;
+      this.log(n > 1 ? `${nameOf(p)} flies more than ${fmtDuration(C.crewMaxDutyMin)} a day: a second crew joins it ` +
+        `(+${fmtMoney(crew.weeklySalary * (n - 1))}/week).` : `${nameOf(p)} needs only one crew again.`, n > 1 ? 'cost' : undefined);
+    },
+    crewsFor,
+    crewDutyMax,
+    crewWeekly,
 
     // Next leg to fly: the one leaving soonest from where the plane is (or will be).
     syncTimetable(p) {

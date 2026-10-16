@@ -151,8 +151,18 @@
       h += `</table><div class="muted">${d.legs.length} flights · ${G.fmtDuration(est.block)} in the air · about
         <b class="${est.profit >= 0 ? 'pos' : 'neg'}">${G.fmtMoney(est.profit)}</b> a day before fixed costs ·
         − / + moves a flight by 15 min and the ones after it.</div>`;
+      const crews = G.crewsFor(p.type, d.legs);
+      if (crews > 1) {
+        h += `<div class="hint">👥 More than ${G.fmtDuration(C.crewMaxDutyMin)} in the air a day: a second crew flies with it
+          (+${G.fmtMoney(G.crewFor(p.type).weeklySalary * (crews - 1))} a week).</div>`;
+      }
     } else if (d.stops.length >= 2) {
-      h += `<div class="warn">Nothing fits: move the first departure into ${clock(C.curfew.start)}–${clock(C.curfew.end)} or shorten the route.</div>`;
+      // (a timetable repeats every day: one round, turnarounds included, must fit into one)
+      const round = d.stops.reduce((n, c, i) => n + G.legBlock(p.type, c, d.stops[(i + 1) % d.stops.length]) + G.turnaroundMin(p.type), 0);
+      h += round > DAY
+        ? `<div class="warn">Nothing fits: one round ${d.stops.join(' → ')} → ${d.stops[0]} takes ${G.fmtDuration(round)} with the
+          turnarounds, and a timetable repeats every day. Pick an airport closer by.</div>`
+        : `<div class="warn">Nothing fits: move the first departure into ${clock(C.curfew.start)}–${clock(C.curfew.end)} or shorten the route.</div>`;
     } else {
       h += `<div class="hint">Add ${d.stops.length ? 'a second airport' : 'two airports'} where you hold a slot.</div>`;
     }
@@ -301,6 +311,8 @@
     h += occ.length ? `<ul>${occ.map((o) => `<li class="click" data-pl="edit" data-plane="${o.p.id}"><b>${o.p.id}</b> <span class="muted">${o.p.type} · ${label[o.how]}</span></li>`).join('')}</ul>`
       : '<div class="muted">No plane here: every slot is free.</div>';
     if (waiting.length) h += `<div class="neg">⏳ Waiting elsewhere for a slot here: ${waiting.join(', ')}</div>`;
+    const base = G.parkedAtBase(code);
+    if (base.length) h += `<div class="muted">🏠 Parked at your base without a slot: ${base.map((q) => q.id).join(', ')}</div>`;
     return h + '</div>';
   }
 

@@ -46,6 +46,7 @@ FG.config = {
   turnaround: { base: 10, perSeat: 0.11, min: 15, max: 60 },
   curfew: { start: 6 * 60, end: 22 * 60 }, // departures only allowed in this window
   crewMaxDutyMin: 12 * 60,  // max block time per crew per day
+  crewsMax: 2,              // a plane flying more than that a day (long haul) takes a second crew along, paid too
 
   // Aircraft market
   market: {

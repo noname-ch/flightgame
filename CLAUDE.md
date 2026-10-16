@@ -166,6 +166,14 @@ Play online: https://noname-ch.github.io/flightgame/ (GitHub Pages, deployed fro
   wall ahead (terminal, hangar, other buildings on the ground; not jet bridges, roads, roofs), and shortens its
   pushback by as much (never under 15 m), so flights still start and end there. The smoke test checks Zurich.
 - Planning uses timetables only (`p.schedule.legs`). Slots are shared, and one slot equals one stand.
+- The home base parks your planes off the stands: `G.parksAtBase(q, code)` (at `G.home()`, no running timetable) keeps
+  them out of `staysUntil`, `slotFreeAt`, `slotOccupants` and `slotUsage`, so a plane can always be sent home and a
+  parked one never blocks the slot (a friend's 787 got stuck in Las Vegas when Zurich's one small slot was taken).
+  Elsewhere a plane needs room: `G.roomReason(type, code, planeId)` (a slot of its class not filled by parked planes),
+  used by sendPlane and the market's deliveries.
+- Crews: a timetable with more than `C.crewMaxDutyMin` block time a day gets `C.crewsMax` crews (`crew.sets`,
+  `G.crewsFor(type, legs)`, set in setTimetable/clearTimetable, paid through `G.crewWeekly`); a rested crew always
+  flies one leg however long. One round of a timetable, turnarounds included, still has to fit into a day.
 - Stand classes (game.js): `typeClass(type)` from `FG.data.looks[type].span`; `classifyStands` sets `st.cls`/`st.room`
   on every apron once (apronOf wraps layApron). Slots by class: `G.mySlotClasses(code)` (`state.slots[code].byClass`,
   guessed for old saves), `G.slotTable(code)` { cap, mine, held, free }, `G.leaseSlot(code, cls)`, `G.dropSlot(code, cls)`;

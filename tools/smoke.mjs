@@ -528,6 +528,22 @@ try {
   if (!pac.n || pac.jump > 90 || !pac.lax || !pac.tokyo) errors.push(`Pacific route: ${JSON.stringify(pac)} (wanted lines from LAX west and from Tokyo east past ±180°, no jumps)`);
   else step(`Pacific route: ${pac.n} lines, largest step ${pac.jump}°`);
 
+  step('long haul: Zurich – Las Vegas fits a day with a second crew; a plane parked at home takes no slot there');
+  const lh = await evaluate((home) => {
+    const legs = G.buildTimetable('B787-9', ['ZRH', 'LAS'], 7 * 60);
+    if (legs.length !== 2) return { err: `ZRH–LAS gave ${legs.length} flights a day, not 2` };
+    if (G.crewsFor('B787-9', legs) !== 2) return { err: 'ZRH–LAS without a second crew' };
+    // (a friend's 787 couldn't come home to Zurich: the base's one small slot was taken)
+    const id = G.addPlane('B787-9', home, 'leased', 0);
+    const p = G.plane(id);
+    const err = G.roomReason(p.type, home, id) || (!G.slotFreeAt(home, G.state.time + 60, id) && 'no room to come home')
+      || (G.slotOccupants(home).some((o) => o.p === p) && 'parked at home in a slot');
+    G.disposePlane(id);
+    return err ? { err } : { legs: legs.map((l) => `${G.fmtClock(l.dep)} ${l.from}→${l.to}`).join(', ') };
+  }, home);
+  if (lh.err) errors.push(`long haul: ${lh.err}`);
+  else step(`long haul: ${lh.legs}`);
+
   step('airport categories: every airport in one of the four, named in the airport panel');
   const cats = await evaluate((home) => {
     const n = {};

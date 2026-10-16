@@ -1294,7 +1294,7 @@
     const hold = leg && G.holdReason(p, nextTo);
     if (hold) return `At ${p.location} ${gate} · ⛔ ${hold}`;
     if (p.waitSlot) return `At ${p.location} ${gate} · ⏳ waiting for a free slot at ${p.waitSlot}`;
-    if (leg && crew && crew.dutyToday >= C.crewMaxDutyMin - 60) return `At ${p.location} ${gate} · crew resting`;
+    if (leg && crew && crew.dutyToday >= G.crewDutyMax(crew) - 60) return `At ${p.location} ${gate} · crew resting`;
     if (leg && sch.legs && !p.pendingFerry) {
       const l = sch.legs[sch.index % sch.legs.length];
       if (l.from === p.location) return `At ${p.location} ${gate} · next ${G.fmtClock(l.dep)} to ${l.to}`;
@@ -1327,8 +1327,8 @@
         <div class="muted">${ac.seats} seats · range ${ac.rangeKm} km · ${ac.speedKmh} km/h · ${ownershipText(p)}</div>
         <div class="status">${planeStatus(p)}</div>`;
       if (crew) {
-        h += `<div>👥 ${crew.name}: ${crew.pilots} pilots, ${crew.cabin} cabin crew ·
-          duty today ${G.fmtDuration(crew.dutyToday)} / ${G.fmtDuration(C.crewMaxDutyMin)}</div>`;
+        h += `<div>👥 ${crew.name}: ${crew.sets > 1 ? `${crew.sets} crews of ` : ''}${crew.pilots} pilots, ${crew.cabin} cabin crew ·
+          duty today ${G.fmtDuration(crew.dutyToday)} / ${G.fmtDuration(G.crewDutyMax(crew))}</div>`;
       }
       h += `<div class="muted">Totals: ${p.stats.flights} flights · ${p.stats.pax} pax · ${G.fmtMoney(p.stats.profit)}</div>
         <div class="row"><button data-action="follow" data-plane="${p.id}">🎥 Follow</button>
@@ -1409,7 +1409,10 @@
   function mkShowcase(o, at) {
     const ac = D.aircraft[o.type];
     const look = D.looks[o.type] || {};
-    const fits = G.fitsAirport(o.type, at);
+    // (it must be able to stand there too: a slot of its class, or the home base, where it can always park)
+    const room = G.fitsAirport(o.type, at) ? G.roomReason(o.type, at) : null;
+    const fits = G.fitsAirport(o.type, at) && !room;
+    const noSlot = at === G.home() && !G.mySlotClasses(at).some((n, c) => n && c >= G.typeClass(o.type));
     const inFleet = G.state.planes.filter((p) => p.type === o.type).length;
     const mult = o.used ? 1 + C.market.agingCostPerYear * o.used.age : 1;
     let h = `<section class="mk-show">
@@ -1430,7 +1433,9 @@
           <div><dt>Runway</dt><dd>${G.runwayNeed(o.type).m.toLocaleString('de-CH')} m${G.runwayNeed(o.type).paved ? '' : ' (grass ok)'}</dd></div>
           <div><dt>Lease rate</dt><dd>${G.fmtMoney(ac.leasePerWeek)}/wk</dd></div>
         </dl>
-        <div class="mk-delivery">${fits ? mkDelivery(o, at) : `<span class="neg">${G.fitsReason(o.type, at)} Deliver to a larger airport.</span>`}</div>
+        <div class="mk-delivery">${fits ? mkDelivery(o, at) : room ? `<span class="neg">${room}</span>`
+    : `<span class="neg">${G.fitsReason(o.type, at)} Deliver to a larger airport.</span>`}
+          ${fits && noSlot ? `<div class="muted">It parks at your base. To fly a timetable from ${at} it needs a class ${G.CLASSES[G.typeClass(o.type)]} slot there.</div>` : ''}</div>
         <div class="mk-buy">`;
     if (o.used) {
       h += `<button class="primary big" data-mk="buyUsed" data-id="${o.used.id}" data-cost="${o.price}" data-fits="${fits}">Buy ${G.fmtMoney(o.price)}</button>`;

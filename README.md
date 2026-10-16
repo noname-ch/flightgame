@@ -109,7 +109,11 @@ the first departure and how many loops, then move single flights with − / + or
 slot holds one plane on the ground at a time, from landing until departure; when it is empty any of
 your planes can use it, and a plane that would find every slot at its destination taken waits at its
 gate (a timetable that plans that is only warned about). The Slots section shows every slot of an
-airport over the day, what stands in them right now and the arrivals and departures.
+airport over the day, what stands in them right now and the arrivals and departures. Your **home base** always has
+room for your own planes: one without a running timetable parks there off the stands, without a slot, so you can
+always send a plane home and it never blocks the planes flying from there. A plane flying more than 12 h a day
+(long haul, e.g. Zurich – Las Vegas and back) gets a second crew, paid too. One round of a timetable, turnarounds
+included, has to fit into a day.
 
 **Airport categories**: by their size the airports fall into four categories: small airports (size up to 1),
 regional airports (size 2), large airports (size 3–4) and major hubs (size 5). The airport panel and the map
@@ -157,7 +161,8 @@ upgrades any more: you build terminals and stands yourself.
    Twin Otter to the A380 and Concorde, each shown in the hangar. Buy new, lease (deposit + weekly
    rate) or buy pre-owned (new offers every Monday; older planes are cheaper but cost more to run).
    New planes fly a delivery flight from their factory (🏭 on the map) to your airport, e.g. Boeings from Everett or Renton in the US.
-   Each plane gets its own crew. Big jets need a big enough airport. Sell owned planes or return
+   Each plane gets its own crew. Big jets need a big enough airport, and away from your home base a slot
+   of their class to stand in. Sell owned planes or return
    leased ones from the **Fleet** tab, and give a plane its own name with ✏️ next to its registration.
 
 7. **Events**: strikes, storms, volcanic ash, fuel price swings, festivals, bird strikes and
@@ -214,7 +219,8 @@ Difficulty: **Easy** (CHF 5M, +25% passengers, −15% flight costs, bankrupt bel
 (CHF 1.5M, bankrupt below −500k) or **Hard** (CHF 750k, −15% passengers, +15% flight costs,
 bankrupt below −250k). Both are set in `config.js` (`modes`, `difficulties`, `starterAircraft`).
 
-Rules: departures only 06:00–22:00, crew max 12h block time per day, each route has a limited
+Rules: departures only 06:00–22:00, crew max 12h block time per day (a second crew for long-haul days; a rested
+crew always flies one leg, however long), each route has a limited
 daily demand shared by all your flights on it that day. After landing a plane turns around at the gate
 for 15–60 minutes by its size (Twin Otter 15, ATR 72 20, A320 30, A330 40, A380 60; `turnaround` in config.js).
 

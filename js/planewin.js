@@ -263,7 +263,7 @@
         <span>Size</span><b>class ${G.CLASSES[G.typeClass(p.type)]} · ${D.looks[p.type].span} m wingspan</b>
         <span>Runway</span><b>${num(need.m)} m${need.paved ? ', paved' : ''}</b>
         <span>Running cost</span><b>${money(perHour)} per block hour${aging > 1.005 ? ` <small>(+${Math.round((aging - 1) * 100)}% for its age)</small>` : ''}</b>
-        ${crew ? `<span>Crew</span><b>${crew.pilots} pilots, ${crew.cabin} cabin · ${money(crew.weeklySalary)} a week</b>` : ''}
+        ${crew ? `<span>Crew</span><b>${crew.sets > 1 ? `${crew.sets} crews of ` : ''}${crew.pilots} pilots, ${crew.cabin} cabin · ${money(G.crewWeekly(crew))} a week</b>` : ''}
       </div>`;
 
     // this year, last year (from the second year on) and since it joined
