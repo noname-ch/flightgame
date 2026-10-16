@@ -49,6 +49,7 @@ const chrome = spawn(findChrome(), [
   '--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run',
   '--no-sandbox', '--window-size=1400,900', '--use-angle=swiftshader', '--enable-unsafe-swiftshader',
   '--autoplay-policy=no-user-gesture-required', // (the aircraft sounds start without a real click)
+  '--mute-audio', // (... and are measured, not heard: the meter and spectrum still work)
   'about:blank',
 ], { stdio: ['ignore', 'ignore', 'pipe'] });
 const wsUrl = await new Promise((resolve, reject) => {
@@ -351,7 +352,11 @@ try {
     document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); // (sound starts with the first click)
     // (one with half an hour of its flight still to go: one about to land parks for the night at a curfew, quiet)
     const flying = () => G.state.planes.find((q) => q.status === 'flying' && q.flight.kind === 'scheduled' && q.flight.arr - G.state.time > 30);
-    for (let i = 0; i < 1440 && !flying(); i++) G.advance(1); // (all at their gates: on until one leaves)
+    // (at 10× first: still at full speed, the plane landed in the first wait (0.4 s were 4 game hours); in the day: at
+    // night a flight can be parked for the night at a curfew, quiet; then on until one leaves)
+    document.querySelector('#speed-pop [data-speed="10"]').click();
+    for (let i = 0; i < 1440 && (G.state.time % 1440 < 480 || G.state.time % 1440 > 1080); i++) G.advance(1);
+    for (let i = 0; i < 1440 && !flying(); i++) G.advance(1);
     const p = flying();
     if (!p) return { none: true };
     const f = p.flight;
@@ -368,17 +373,18 @@ try {
       if (e.phase === 'landing' && e.rev) seen.rev = true;
     }
     // heard: follow it on the 2D map, close in, at 10×
-    FG.ui.follow(p.id);
-    FG.ui.map.setZoom(16, { animate: false });
-    // (a newspaper pauses the game: read them all first)
-    for (let k = 0; k < 4; k++) {
+    const heard = () => FG.ui.speed > 0 && FG.sound.playing.some((v) => v.id === p.id);
+    // (a newspaper pauses the game: read them all first; until the followed plane itself plays)
+    for (let k = 0; k < 8 && !heard(); k++) {
+      FG.ui.follow(p.id);
+      FG.ui.map.setZoom(16, { animate: false });
+      document.querySelector('#speed-pop [data-speed="10"]').click();
       await sleep(400);
       for (let i = 0; i < 50 && !document.getElementById('newspaper').hidden; i++) document.querySelector('[data-action=newsNext]').click();
       document.querySelector('#speed-pop [data-speed="10"]').click();
       await sleep(1100);
-      if (FG.ui.speed > 0 && FG.sound.playing.length) break;
     }
-    const out = { kind: pr.kind, state: FG.sound.state, playing: FG.sound.playing.some((v) => v.id === p.id), db: FG.sound.meter(), sp: FG.sound.spectrum(), ...seen, bad: seen.bad.slice(0, 3) };
+    const out = { kind: pr.kind, state: FG.sound.state, playing: heard(), db: FG.sound.meter(), sp: await FG.sound.spectrumOver(8), ...seen, bad: seen.bad.slice(0, 3) };
     document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'm', bubbles: true }));
     out.mOff = !FG.sound.on && document.getElementById('sound-toggle').classList.contains('off');
     document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'm', bubbles: true }));
@@ -399,7 +405,7 @@ try {
     step(`sound: ${snd.kind} engines; take-off power ${snd.takeoff.toFixed(2)}, climb/cruise ${snd.cruise.toFixed(2)}; heard at ${snd.db == null ? '-∞' : snd.db.toFixed(1)} dB (${snd.state})`);
   }
 
-  step('sound styles: Settings → Sound → ▶ Preview plays paused, every style and kind heard at take-off power, Stop');
+  step('sound styles: Settings → Sound → ▶ Preview plays paused, every style and kind heard at take-off power, the recordings in, Stop');
   const pv = await evaluate(async () => {
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const q = (sel) => document.querySelector(`#settings ${sel}`);
@@ -410,12 +416,13 @@ try {
     out.playing = FG.sound.previewing && q('[data-set="preview"]').textContent.includes('Stop');
     await sleep(2500);
     out.label = FG.sound.previewPhase; // (on to the engine start by now)
+    out.recorded = FG.sound.recorded; // (sounds/: the jets' rumble, the far wash)
     for (const kind of ['jet', 'turboprop', 'piston']) {
       for (const id of out.styles) {
         q(`[data-set="soundStyle"][data-v="${id}"]`).click();
         FG.sound.preview({ kind, from: 'takeoff', hold: 'takeoff' });
-        await sleep(1200);
-        const sp = FG.sound.spectrum();
+        await sleep(800);
+        const sp = await FG.sound.spectrumOver(8);
         const db = FG.sound.meter();
         out.heard[`${kind} ${id}`] = { db: Math.round(db), c: sp && sp.centroid, hf: sp && sp.hf };
         if (out.state === 'running' && (!(db > -120) || !sp || sp.hf > 0.3)) out.bad.push(`${kind} ${id}: ${Math.round(db)} dB ${JSON.stringify(sp)}`);
@@ -433,6 +440,7 @@ try {
   else {
     const h = pv.heard;
     if (!pv.playing || !pv.stopped || pv.style !== 'standard' || !pv.label || pv.bad.length) errors.push(`sound styles: ${JSON.stringify(pv)}`);
+    if (pv.state === 'running' && !(pv.recorded.includes('rumble') && pv.recorded.includes('far'))) errors.push(`sound: the recordings (sounds/) did not all load: ${pv.recorded}`);
     if (pv.state !== 'running') warnings.push(`sound styles: no audio in this browser (${pv.state}): not heard`);
     else if (!(h['jet deep'].c < h['jet standard'].c && h['jet standard'].c < h['jet open'].c)) errors.push(`sound styles: Deep should be darker and Open brighter than Standard: ${JSON.stringify(h)}`);
     step(`sound styles: ${Object.entries(h).filter(([k]) => k.startsWith('jet')).map(([k, x]) => `${k.slice(4)} ${x.db} dB ~${x.c} Hz`).join(', ')}`);

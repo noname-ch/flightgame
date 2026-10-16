@@ -1,4 +1,7 @@
-// Aircraft sounds, made up as they play with Web Audio (no sound files). Each engine kind has its own voice:
+// Aircraft sounds, made up as they play with Web Audio, and three recordings made with ElevenLabs Sound Effects
+// (RECORDINGS): the jets' deep rumble, a jet's starter whistling up, and a distant airliner's wash that planes far
+// away turn into. Until they have loaded, or where they can't be, it is all made up. Each engine kind has its own
+// voice:
 // - jets: the core whining up on the starter, the igniters ticking, light-off, the fan whine at idle, a burst of
 //   thrust to get rolling, the roar at take-off power (and from behind the rumble, ahead of a big fan the buzz-saw),
 //   climb and cruise power, quiet on the descent, spooling up again on the approach, reverse thrust after
@@ -27,13 +30,21 @@
   const REF = 40;       // metres: as loud as it gets from here in
   const IDLE = 0.21;    // jet fan speed at idle
   const SPEED_OF_SOUND = 343;
+  // Recorded loops (16 kHz mono WAV: an MP3 starts with a little silence, which would stutter in a loop), each at the
+  // rms it plays at. rumble (10 s): the jets' rumble at power, all its weight where it is heard (40-160 Hz), so at
+  // 0.24 a little heavier than the brown noise at 0.3 was. far (15 s): an airliner drifting over far away. start (9 s,
+  // once, not a loop): a jet's starter whistling up from 1 to 1.5 kHz (the hiss above 6 kHz taken out).
+  const RECORDINGS = { rumble: ['sounds/jet-rumble.wav', 0.24], far: ['sounds/far-wash.wav', 0.3], start: ['sounds/jet-start.wav', 0.3] };
+  const START_LEVEL = 0.3;  // the start recording × the plane's size × the style's whine
+  const FAR = [800, 4000]; // metres: from here the made-up voice gives way to the far recording, all of it by there
+  const FAR_LEVEL = 2.5;   // the far recording × the engines' power: about as loud as the made-up voice it takes over from
   const DEG = Math.PI / 180;
 
   // ---------- the styles ----------
   // The same voices with other numbers (Settings → Sound). 'standard' is the sound as tuned with the user (the user:
   // "that is a good sound but it needs more bass"); its numbers are the ones the others are measured against.
   // Jets: shelf (dB of bass below shelfHz), roar (level; its low-pass from roarLo at no power + roarHi × N1^roarPow,
-  // the second one roarSpread times higher), rumble (brown noise below rumbleHz), crackle (the rumble jumping about
+  // the second one roarSpread times higher), rumble (the recording below rumbleHz), crackle (the rumble jumping about
   // at take-off power), drone (the fan shaft's hum), fan and core (the whines; tone: their pitch, also the APU's and
   // the turboprop's), saw (the buzz-saw ahead of a big fan), air (the air rushing past: level, airHz × its low-pass,
   // airHp a high-pass so it rushes instead of rumbling, gust), top (a low-pass on it all: muffled), spool (× the
@@ -71,7 +82,7 @@
   if (!STYLES[prefs.style]) prefs.style = 'standard';
   const savePrefs = () => { try { localStorage.setItem(KEY, JSON.stringify(prefs)); } catch (e) { /* private mode */ } };
 
-  const s = { ctx: null, master: null, noise: null, wobble: null, wave: null, voices: new Map(), picked: [], tick: 0, last: 0, timer: null, demo: null };
+  const s = { ctx: null, master: null, noise: null, wobble: null, wave: null, rec: {}, voices: new Map(), picked: [], tick: 0, last: 0, timer: null, demo: null };
 
   const clamp01 = (x) => Math.max(0, Math.min(1, x));
   const smooth = (a, b, x) => { const k = clamp01((x - a) / (b - a)); return k * k * (3 - 2 * k); };
@@ -311,6 +322,7 @@
     const im = new Float32Array(H);
     for (let k = 1; k < H; k++) im[k] = (k < 7 ? 0.25 : 1) * (k % 7 === 0 ? 2.5 : k % 7 === 3 || k % 7 === 4 ? 1.4 : 1) / Math.sqrt(k);
     s.wave = ctx.createPeriodicWave(re, im);
+    for (const name in RECORDINGS) load(ctx, name);
     clearInterval(s.timer);
     s.timer = setInterval(update, TICK);
     return true;
@@ -350,6 +362,24 @@
     return buf;
   }
 
+  // A recording (RECORDINGS) into s.rec. Once it is in, the voices are built again with it.
+  function load(ctx, name) {
+    const [url, rms] = RECORDINGS[name];
+    fetch(url)
+      .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(`${url}: ${r.status}`))))
+      .then((data) => new Promise((ok, no) => ctx.decodeAudioData(data, ok, no))) // (old Safari: no promise)
+      .then((buf) => {
+        let sq = 0;
+        const d0 = buf.getChannelData(0);
+        for (let i = 0; i < d0.length; i++) sq += d0[i] * d0[i];
+        const g = rms / Math.sqrt(sq / d0.length || 1);
+        for (let c = 0; c < buf.numberOfChannels; c++) { const d = buf.getChannelData(c); for (let i = 0; i < d.length; i++) d[i] *= g; }
+        s.rec[name] = buf;
+        restyle();
+      })
+      .catch((e) => console.warn(`sound: no recording ${name}, made up instead`, e)); // (offline, file://)
+  }
+
   function makeVoice(pr) {
     const ctx = s.ctx;
     const S = STYLES[prefs.style];
@@ -367,7 +397,7 @@
       b.buffer = buffer;
       b.loop = true;
       b.playbackRate.value = rate;
-      b.start(0, Math.random() * 2.5);
+      b.start(0, Math.random() * 0.8 * buffer.duration);
       v.srcs.push(b);
       return b;
     };
@@ -383,7 +413,8 @@
     const gain = (to = v.mix) => { const g = ctx.createGain(); g.gain.value = 0; g.connect(to); return g; };
     const L = v.L;
     L.noise = src(s.pink); // (roar, APU, wind)
-    L.deep = src(s.brown); // (rumble)
+    v.rec = pr.kind === 'jet' && !!s.rec.rumble;
+    L.deep = src(v.rec ? s.rec.rumble : s.brown); // (rumble)
     const lp2 = (f, q = 0.7) => { const a = filter('lowpass', f, q); const b = filter('lowpass', f, q); a.connect(b); return [a, b]; };
     if (pr.kind === 'jet') {
       [L.roarF, L.roarF2] = lp2(400);
@@ -474,6 +505,12 @@
     L.wind = ctx.createGain();
     L.wind.gain.value = 0;
     L.noise.connect(L.windF).connect(L.wind).connect(v.pan);
+    // Far away: the recording of a distant airliner (after the bass shelf: it is low enough).
+    if (s.rec.far) {
+      L.farG = gain(v.air);
+      L.far = src(s.rec.far);
+      L.far.connect(L.farG);
+    }
     return v;
   }
 
@@ -498,6 +535,19 @@
     b.connect(fl).connect(g).connect(v.mix);
     b.start(at, Math.random() * 2, dur + 0.05);
     b.onended = () => g.disconnect();
+  }
+
+  // A recording played once into a voice (stopped with it); returns its gain.
+  function oneShot(v, buffer, lv, at) {
+    const b = s.ctx.createBufferSource();
+    b.buffer = buffer;
+    const g = s.ctx.createGain();
+    g.gain.value = lv;
+    b.connect(g).connect(v.mix);
+    b.start(at);
+    v.srcs.push(b);
+    b.onended = () => { g.disconnect(); v.srcs.splice(v.srcs.indexOf(b), 1); };
+    return g;
   }
 
   // ---------- every TICK ----------
@@ -587,10 +637,17 @@
     const dop = g.dop;
     const run = sm.run;
     T(v.out.gain, distGain(g.d) * fade * S.level, 0.08);
+    // Far away the made-up voice gives way to the recording (FAR), as loud as the engines' power.
+    const far = L2.far ? smooth(FAR[0], FAR[1], g.d) : 0;
+    T(v.mix.gain, 1 - 0.85 * far, 0.3);
+    if (L2.far) {
+      T(L2.farG.gain, far * FAR_LEVEL * sz * run * (0.05 + 0.95 * sm.pw * sm.pw), 0.3); // (not an APU, hardly idle)
+      L2.far.playbackRate.setTargetAtTime(dop, at, 0.06);
+    }
     T(v.air.frequency, Math.min(S.top, g.near ? 16000 : Math.min(16000, 16000 / (1 + g.d / 300))));
     T(v.pan.pan, g.pan * 0.8);
     L2.noise.playbackRate.setTargetAtTime(dop, at, 0.06);
-    L2.deep.playbackRate.setTargetAtTime(dop, at, 0.06);
+    L2.deep.playbackRate.setTargetAtTime(dop * (v.rec ? 0.78 + 0.24 * sm.pw : 1), at, 0.06); // (recorded: lower at less power)
     if (pr.kind === 'jet') {
       const n1 = sm.pw;
       const n2 = sm.n2;
@@ -672,7 +729,13 @@
       }
       if (e.pops && Math.random() < 0.22) burst(v, at + Math.random() * 0.04, { type: 'lowpass', f: 380, q: 1, dur: 0.14, level: sz * 1.5 }); // a cough
     }
-    v.last = { lit: !!e.lit, phase: e.phase };
+    // A jet's start: the recording of its starter whistling up, once, from the start of it (faded out if the start is
+    // over sooner, fast-forwarded).
+    if (pr.kind === 'jet' && s.rec.start) {
+      if (e.start != null && was.start == null && e.start < 0.3 && speed <= 60 && !v.startRec) v.startRec = oneShot(v, s.rec.start, sz * START_LEVEL * Math.max(S.fan, S.core), at);
+      if (v.startRec && e.start == null) { v.startRec.gain.setTargetAtTime(0, at, 0.4); v.startRec = null; }
+    }
+    v.last = { lit: !!e.lit, phase: e.phase, start: e.start };
   }
 
   // A new style: every voice is built again in it (keeping where its engines are), the old one fades out.
@@ -712,6 +775,7 @@
     ['takeoff', 'Take-off power', 5, (u, pr) => ({ e: running(pr, fs('takeoff', 290 * u)), ms: 80 * u })],
     ['climb', 'Climb', 3.5, (u, pr) => ({ e: running(pr, fs('climb', 300, 1000 + 8000 * u)), ms: 85 + 60 * u })],
     ['cruise', 'Cruise', 3, (u, pr) => ({ e: running(pr, fs('cruise', 830, 35000)), ms: 230 })],
+    ['far', 'Climbing, far away', 4, (u, pr) => ({ e: running(pr, fs('climb', 600, 20000)), ms: 180, d: 6000 })],
     ['descent', 'Descent', 2.5, (u, pr) => ({ e: running(pr, fs('descent', 700, 20000)), ms: 200 })],
     ['approach', 'Approach: gear and flaps', 3.5, (u, pr) => ({ e: running(pr, fs('approach', 260, 3000 * (1 - u) + 60)), ms: 72 })],
     ['flare', 'Over the threshold', 0.7, (u, pr) => ({ e: running(pr, fs('approach', 250, 20)), ms: 70 })],
@@ -734,19 +798,23 @@
     const x = seg[3](u, d.v.pr);
     const e = { ...OFF, ...x.e };
     const fade = Math.min(1, d.age / 0.3) * (seg[0] === 'end' ? 1 - smooth(0.2, 1, u) : 1);
-    // (a flight quicker than a real one: so are the engines)
-    sound(d.v, e, PREVIEW_HEARD, x.ms || 0, 0, at, dt * 2, 1, fade);
+    // (a flight quicker than a real one: so are the engines. The far part is heard from x.d away, made louder than it
+    // would be so it is heard at all; preview({ d }) hears all of it from d away, as loud as in the game.)
+    const dist = x.d || d.d;
+    const heard = dist ? { ...PREVIEW_HEARD, d: dist, ahead: 0 } : PREVIEW_HEARD;
+    const boost = x.d && !d.d ? 0.4 * distGain(PREVIEW_HEARD.d) / distGain(x.d) : 1;
+    sound(d.v, e, heard, x.ms || 0, 0, at, dt * 2, 1, fade * boost);
     if (d.seg !== seg[0]) { d.seg = seg[0]; d.label = seg[1]; showPreview(); }
   }
-  // (from: a DEMO id to start at, or a time in s; hold: a DEMO id to stay at, three quarters through it)
-  function startPreview(hold, from = 0) {
+  // (from: a DEMO id to start at, or a time in s; hold: a DEMO id to stay at, three quarters through it; dist: m)
+  function startPreview(hold, from = 0, dist = 0) {
     if (s.demo) fadeDrop(s.demo.v, 0.03);
     const kind = PREVIEW_TYPES[prefs.preview] ? prefs.preview : 'jet';
     let t = typeof from === 'number' ? from : 0;
     if (typeof from === 'string') {
       for (const x of DEMO) { if (x[0] === from) { t += x[0] === hold ? 0.75 * x[2] : 0; break; } t += x[2]; }
     }
-    s.demo = { kind, t, age: 0, hold, seg: null, label: '', v: makeVoice(profile(PREVIEW_TYPES[kind])) };
+    s.demo = { kind, t, age: 0, hold, d: dist, seg: null, label: '', v: makeVoice(profile(PREVIEW_TYPES[kind])) };
     showPreview();
   }
   function stopPreview() {
@@ -818,14 +886,14 @@
       if (prefs.on) unlock();
       else stopPreview();
       if (restyled) restyle();
-      if (rekind && s.demo) startPreview(s.demo.hold, s.demo.t); // (on where it was)
+      if (rekind && s.demo) startPreview(s.demo.hold, s.demo.t, s.demo.d); // (on where it was)
       apply();
     },
     toggle() { this.set({ on: !prefs.on }); },
     // ▶ Preview: a whole flight in about 40 s on its own voice (a second call stops it). It turns the sound on (the
     // click lets the browser play it). o: false stops it; { kind } as set({ preview }); to measure, { from, hold }:
     // start at that part of the flight, stay three quarters through that one (DEMO ids: idle, takeoff, climb, cruise,
-    // descent, approach, …). Returns whether it plays.
+    // descent, approach, far, …); { d }: heard from d metres away. Returns whether it plays.
     preview(o) {
       const opt = o && typeof o === 'object' ? o : {};
       if (o === false || (o == null && s.demo)) { stopPreview(); return false; }
@@ -833,7 +901,7 @@
       if (!prefs.on) this.set({ on: true });
       else unlock();
       if (!s.ctx) return false;
-      startPreview(opt.hold, opt.from);
+      startPreview(opt.hold, opt.from, opt.d);
       return true;
     },
     get previewing() { return !!s.demo; },
@@ -843,6 +911,7 @@
     heardFrom: listener, // where it is heard from now
     profile,
     get state() { return s.ctx ? s.ctx.state : 'off'; },
+    get recorded() { return Object.keys(s.rec); }, // (the RECORDINGS that have loaded: 'rumble', 'far', 'start')
     get pickMs() { return s.pickMs || 0; }, // (time to find the loudest planes, 4 times a second)
     // The planes playing now: [{ id, kind, gain }] (smoke test).
     get playing() { return [...s.voices.values()].filter((v) => !v.kill).map((v) => ({ id: v.id, kind: v.pr.kind, gain: v.out.gain.value })); },
@@ -870,6 +939,18 @@
       }
       if (!sum) return null;
       return { centroid: Math.round(sf / sum), flat: Math.round(100 * Math.exp(logs / n) / (band / n)) / 100, hf: Math.round(100 * hi / sum) / 100, bass: Math.round(100 * lo / sum) / 100 };
+    },
+    // The same, each the median of n readings 0.1 s apart (one reading of noise jumps about: ±100 Hz at take-off).
+    async spectrumOver(n = 8) {
+      const all = [];
+      for (let i = 0; i < n; i++) {
+        if (i) await new Promise((r) => setTimeout(r, 100));
+        const x = this.spectrum();
+        if (x) all.push(x);
+      }
+      if (!all.length) return null;
+      const med = (k) => all.map((x) => x[k]).sort((a, b) => a - b)[all.length >> 1];
+      return { centroid: med('centroid'), flat: med('flat'), hf: med('hf'), bass: med('bass') };
     },
     // How loud it is coming out now, in dB (-Infinity: quiet; smoke test).
     meter() {

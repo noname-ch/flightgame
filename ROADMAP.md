@@ -116,7 +116,8 @@ realistic flight tracks in 2D and 3D, AI rival airlines, random events and a dev
 Recent milestones, newest first (see `git log` for the rest):
 
 - Aircraft sounds (off until turned on, M): engine start, idle, take-off power, climb, cruise, approach, reverse
-  thrust and run-down for jets, turboprops and piston radials, heard from where you look (Web Audio, no files)
+  thrust and run-down for jets, turboprops and piston radials, heard from where you look (Web Audio; the jets'
+  deep rumble, engine start and planes far away are recordings made with ElevenLabs)
 - Weather: clouds in 2D and 3D, rain, snow, fog and lightning up close, a grey sky under cloud, storms from the
   newspaper drawn as storms, and planes crabbing into crosswinds (straightened before touchdown)
 - Plane stats as in OpenTTD: every plane keeps its records (this year, last year, all time, the last 12 weeks,

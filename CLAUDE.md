@@ -90,16 +90,23 @@ Play online: https://noname-ch.github.io/flightgame/ (GitHub Pages, deployed fro
   places winds by hand: `state.winds` via `G.placeWind/setWind/removeWind/clearWinds`; `placedWind(lat, lon)` blends
   them into weatherAt, windAt and `surfaceFrom` (what pickRunway uses); `G.windRev` keys the route-line tracks.
 - Sound (js/sound.js, `FG.sound`, off until turned on; prefs in localStorage `flightgame.sound`): Web Audio voices
-  made up as they play, no files. `engines(p, t)` says what a plane's engines do from its `G.flightState` phase and
-  the game clock (start over `START` game minutes from the pushback, the levers by phase, run-down after `land`
+  made up as they play, plus `RECORDINGS` in `sounds/` (loops from ElevenLabs Sound Effects, 16 kHz mono WAV: an MP3's
+  lead-in silence would stutter in a loop): `rumble` replaces the jets' brown-noise rumble, `far` (a distant
+  airliner's wash) takes over from the made-up voice between `FAR` metres (`FAR_LEVEL`), `start` (not a loop) plays
+  once over a jet's made-up start (`oneShot`, `START_LEVEL` × the style's whine). `load` brings each in after the
+  first click and rebuilds the voices; made up until then or if it fails (`FG.sound.recorded` lists what loaded).
+  ▶ Preview has a 'far' part (heard from 6 km, made louder); `preview({ d })` hears it all from d metres. `engines(p, t)` says
+  what a plane's engines do from its `G.flightState` phase and the game clock (start over `START` game minutes from the pushback, the levers by phase, run-down after `land`
   from `p.readyAt - G.turnaroundMin`), smoothed in game time (`SPOOL`). `listener()` is where it is heard from: the
   3D camera (`cameraAt`: back from the centre by the tilt, up from `map.getCenterElevation()`; MapLibre 6 has no
   getFreeCameraOptions), the fly-by spot, or above the 2D map's centre (`mpp * 60`); the followed plane
   (`v3.follow`, `FG.ui.following`, `FG.planeWin.id`) is heard as from close by. `pick` gives the `VOICES` loudest
-  planes a voice (4×/s), `play` sets them (20×/s). Roar and air are pink noise, rumble brown (white noise filtered
+  planes a voice (4×/s), `play` sets them (20×/s). Roar and air are pink noise, rumble the recording (white noise filtered
   sounded like static to the user); whines stay within about an octave (high pitches while throttling bothered
-  them); a low shelf adds bass. `FG.sound.spectrum()` measures centroid, flatness, hiss (hf) and bass. The smoke
-  test runs Chrome with `--autoplay-policy=no-user-gesture-required`, reads `FG.sound.meter()` and fails on hiss.
+  them); a low shelf adds bass. `FG.sound.spectrum()` measures centroid, flatness, hiss (hf) and bass (one reading of
+  noise jumps about: compare `await FG.sound.spectrumOver(n)`, the median of n). The smoke test runs Chrome with
+  `--autoplay-policy=no-user-gesture-required` and `--mute-audio` (measured, never heard on the speakers: test
+  silently), reads `FG.sound.meter()` and fails on hiss.
   Styles (`STYLES`: standard, deep, open, soft; `FG.sound.set({ style })`) are the same voices with other numbers,
   read when a voice is made (`v.S`; a new style rebuilds the playing voices, `restyle`). ▶ Preview (`FG.sound.preview()`,
   `DEMO` segments, `demoTick`) plays a made-up flight on its own voice through the same `sound()` as the game's planes,
