@@ -6,7 +6,8 @@
 //   thrust to get rolling, the roar at take-off power (and from behind the rumble, ahead of a big fan the buzz-saw),
 //   climb and cruise power, quiet on the descent, spooling up again on the approach, reverse thrust after
 //   touchdown, and the whine running down at the gate;
-// - turboprops: two propellers buzzing a little out of tune (they beat against each other), the turbine whistle;
+// - turboprops: two propellers a little out of tune (they swell against each other), the air they chop (a rasp at
+//   the blade rate), a rumble, the turbine's whistle (noise in a narrow band);
 // - piston radials: the starter cranking, coughs as they catch, a rough idle that smooths out, the growl at full power.
 // Also the APU at the gate, the tyres chirping on touchdown and the wind on the wing camera.
 // Heard from where you look: the 3D camera, or a point above the 2D map's centre (higher the further out it is
@@ -98,8 +99,8 @@
   };
   const KIND_PARTS = {
     jet: ['bass', 'roar', 'screech', 'whine', 'air', 'start', 'far', 'apu'],
-    turboprop: ['prop', 'roar', 'whine', 'air', 'far', 'apu'],
-    piston: ['engine', 'prop', 'roar', 'air', 'far'],
+    turboprop: ['bass', 'prop', 'roar', 'whine', 'air', 'far', 'apu'],
+    piston: ['bass', 'engine', 'prop', 'roar', 'air', 'far'],
   };
   const mixOf = (type, kind) => {
     const m = {};
@@ -352,6 +353,10 @@
     const im = new Float32Array(H);
     for (let k = 1; k < H; k++) im[k] = (k < 7 ? 0.25 : 1) * (k % 7 === 0 ? 2.5 : k % 7 === 3 || k % 7 === 4 ? 1.4 : 1) / Math.sqrt(k);
     s.wave = ctx.createPeriodicWave(re, im);
+    // A propeller's blades going by: a soft pulse, its overtones falling off fast (a sawtooth's buzzed like a hum).
+    const bi = new Float32Array(24);
+    for (let k = 1; k < 24; k++) bi[k] = 1 / k ** 1.5;
+    s.blade = ctx.createPeriodicWave(new Float32Array(24), bi);
     for (const name in RECORDINGS) load(ctx, name);
     clearInterval(s.timer);
     s.timer = setInterval(update, TICK);
@@ -416,7 +421,7 @@
     const v = { pr, S, M: mixOf(pr.type, pr.kind), srcs: [], L: {}, sm: null, last: {}, nextClick: 0, kill: 0 };
     const osc = (type, f) => {
       const o = ctx.createOscillator();
-      if (type === 'radial') o.setPeriodicWave(s.wave); else o.type = type;
+      if (type === 'radial') o.setPeriodicWave(s.wave); else if (type === 'blade') o.setPeriodicWave(s.blade); else o.type = type;
       o.frequency.value = f;
       o.start();
       v.srcs.push(o);
@@ -446,6 +451,33 @@
     v.rec = pr.kind === 'jet' && !!s.rec.rumble;
     L.deep = src(v.rec ? s.rec.rumble : s.brown); // (rumble)
     const lp2 = (f, q = 0.7) => { const a = filter('lowpass', f, q); const b = filter('lowpass', f, q); a.connect(b); return [a, b]; };
+    // Propellers (turboprops, pistons): the blades' tone (n of them, a little apart: they swell against each other),
+    // the air they chop (noise pulsing at the blade rate: the rasp, which a tone alone hasn't got) and the rumble.
+    const propeller = (n) => {
+      L.propF = filter('lowpass', 600, 0.7);
+      L.prop = gain();
+      L.prop1 = osc('blade', 50);
+      L.prop1.connect(L.propF);
+      if (n > 1) {
+        L.prop2 = osc('blade', 50);
+        const half = ctx.createGain();
+        half.gain.value = 0.7;
+        L.prop2.connect(half).connect(L.propF);
+      }
+      L.propF.connect(L.prop);
+      L.chopF = filter('bandpass', 600, 0.6);
+      L.chopAm = ctx.createGain(); // (its level: 0.3 ± 0.7 × a sine at the blade rate)
+      L.chopAm.gain.value = 0.3;
+      L.chop = gain();
+      L.noise.connect(L.chopF).connect(L.chopAm).connect(L.chop);
+      L.chop1 = osc('sine', 50);
+      const depth = ctx.createGain();
+      depth.gain.value = 0.7;
+      L.chop1.connect(depth).connect(L.chopAm.gain);
+      L.rumbleF = filter('lowpass', 140, 0.8);
+      L.rumble = gain();
+      L.deep.connect(L.rumbleF).connect(L.rumble);
+    };
     if (pr.kind === 'jet') {
       [L.roarF, L.roarF2] = lp2(400);
       L.roar = gain();
@@ -486,21 +518,17 @@
       L.saw1 = osc('sawtooth', 50);
       L.saw1.connect(L.sawF).connect(L.saw);
     } else if (pr.kind === 'turboprop') {
-      L.propF = filter('lowpass', 600, 0.8);
-      L.prop = gain();
-      L.prop1 = osc('sawtooth', 50);
-      L.prop2 = osc('sawtooth', 50);
-      L.prop1.connect(L.propF);
-      const half = ctx.createGain();
-      half.gain.value = 0.7;
-      L.prop2.connect(half).connect(L.propF);
-      L.propF.connect(L.prop);
+      propeller(2);
       L.roarF = filter('bandpass', 500, 0.5);
       L.roar = gain();
       L.noise.connect(L.roarF).connect(L.roar);
+      // The turbine's whistle: mostly noise in a narrow band (a bare sine was a test tone), a little of the tone.
       L.core = gain();
       L.core1 = osc('sine', 100);
       L.core1.connect(L.core);
+      L.whF = filter('bandpass', 2000, 9);
+      L.wh = gain();
+      L.noise.connect(L.whF).connect(L.wh);
     } else {
       L.engF = filter('lowpass', 800, 0.8);
       L.eng = gain();
@@ -511,10 +539,7 @@
       L.engF.connect(L.eng);
       L.rough = gain(L.eng.gain); // (the beat's level jumps about: a rough idle)
       src(s.wobble, 1).connect(L.rough);
-      L.propF = filter('lowpass', 500, 0.7);
-      L.prop = gain();
-      L.prop1 = osc('sawtooth', 20);
-      L.prop1.connect(L.propF).connect(L.prop);
+      propeller(1);
       L.roarF = filter('bandpass', 400, 0.5);
       L.roar = gain();
       L.noise.connect(L.roarF).connect(L.roar);
@@ -719,14 +744,25 @@
     } else if (pr.kind === 'turboprop') {
       const pw = sm.pw;
       const np = sm.np;
-      T(L2.prop.gain, M.prop * sz * S.prop * (0.05 + 0.55 * pw ** 1.3) * smooth(0.05, 0.4, np) * (1 + 0.3 * front));
-      T(L2.prop1.frequency, Math.max(5, pr.prop * np * dop));
-      T(L2.prop2.frequency, Math.max(5, pr.prop * np * dop * 1.007));
-      T(L2.propF.frequency, (250 + 1400 * pw + 300 * np) * dop * S.bright);
+      const blades = pr.prop * np * dop;
+      const turning = smooth(0.05, 0.4, np);
+      T(L2.prop.gain, M.prop * sz * S.prop * 0.6 * (0.05 + 0.5 * pw ** 1.3) * turning * (1 + 0.3 * front));
+      T(L2.prop1.frequency, Math.max(5, blades));
+      T(L2.prop2.frequency, Math.max(5, blades * 1.004));
+      T(L2.propF.frequency, (250 + 900 * pw + 200 * np) * dop * S.bright);
+      // The chopped air: louder and brighter with power and propeller speed, most of all beside and behind the discs.
+      T(L2.chop.gain, M.prop * sz * S.prop * 7 * (0.04 + 0.6 * pw ** 1.5) * turning * (1 + 0.3 * behind));
+      T(L2.chop1.frequency, Math.max(5, blades));
+      T(L2.chopF.frequency, (350 + 1300 * pw) * dop * S.bright);
+      T(L2.rumble.gain, M.bass * run * sz * S.rumble * 0.9 * (0.1 + 0.9 * pw ** 2) * (0.6 + 0.6 * behind));
       T(L2.roar.gain, M.roar * run * sz * S.roar * (0.04 + 0.5 * pw * pw) * (1 + 0.6 * behind) * (1 + 0.5 * sm.rev));
       T(L2.roarF.frequency, (300 + 900 * pw) * S.bright);
-      T(L2.core.gain, M.whine * sz * 0.04 * S.core * pr.whineGain * smooth(0.03, 0.15, sm.n2) * (1 - 0.4 * pw));
-      T(L2.core1.frequency, Math.max(20, pr.whine * S.tone * sm.n2 * dop));
+      const whine = M.whine * sz * S.core * pr.whineGain * smooth(0.03, 0.15, sm.n2) * (1 - 0.5 * pw);
+      const whHz = Math.max(20, pr.whine * S.tone * sm.n2 * dop);
+      T(L2.core.gain, whine * 0.012);
+      T(L2.core1.frequency, whHz);
+      T(L2.wh.gain, whine * 1.2);
+      T(L2.whF.frequency, whHz);
     } else {
       const pw = sm.pw;
       const np = sm.np;
@@ -736,9 +772,14 @@
       T(L2.eng1.frequency, Math.max(1, pr.crank * np * dop));
       T(L2.eng2.frequency, Math.max(1, pr.crank * np * dop * 1.013));
       T(L2.engF.frequency, (250 + 1600 * np ** 1.2) * S.bright);
-      T(L2.prop.gain, M.prop * sz * S.prop * smooth(0.1, 0.3, np) * (0.03 + 0.3 * pw));
+      const turning = smooth(0.1, 0.3, np);
+      T(L2.prop.gain, M.prop * sz * S.prop * 0.6 * turning * (0.03 + 0.3 * pw));
       T(L2.prop1.frequency, Math.max(5, pr.prop * np * dop));
-      T(L2.propF.frequency, (300 + 1400 * pw) * S.bright);
+      T(L2.propF.frequency, (300 + 900 * pw) * S.bright);
+      T(L2.chop.gain, M.prop * sz * S.prop * 4 * turning * (0.03 + 0.4 * pw ** 1.5) * (1 + 0.3 * behind));
+      T(L2.chop1.frequency, Math.max(5, pr.prop * np * dop));
+      T(L2.chopF.frequency, (300 + 1000 * pw) * S.bright);
+      T(L2.rumble.gain, M.bass * run * sz * S.rumble * 0.7 * (0.15 + 0.85 * pw ** 2));
       T(L2.roar.gain, M.roar * run * sz * S.roar * (0.025 + 0.2 * pw));
       T(L2.roarF.frequency, (250 + 600 * pw) * S.bright);
       T(L2.starter.gain, M.engine * sz * 0.05 * sm.crank);

@@ -397,16 +397,19 @@
     return { cover, rain, storm, snow, fog, tempC, windFrom: Math.round(from) % 360, windKt, gustKt, name, icon };
   }
   // Wind at a height (ft above sea level): the surface wind (from windFrom) near the ground, turning to the
-  // westerly winds aloft (a jet stream in the mid-latitudes) and getting stronger with height.
+  // westerly winds aloft and getting stronger with height. The jet stream of the mid-latitudes only blows up high
+  // (from FL150, all of it by FL330): with all of it from 12,000 ft, planes descending through FL100 met 120 kt
+  // and crabbed 20-25° (GitHub issue #2, "Planes too much wind angle").
   function windAt(lat, lon, t, altFt = 0) {
     const w = weatherAt(lat, lon, t);
     const x = lon - WX_DRIFT * t;
     const z = t / WX_MORPH;
     const aloft = (lat >= -25 && lat <= 25 ? 90 : 270) + (wxNoise(x / 12, lat / 10, z, 5) - 0.5) * 100;
     const k = smooth(2000, 12000, altFt);
+    const kJet = smooth(15000, 33000, altFt);
     const jet = 60 * Math.exp(-(((Math.abs(lat) - 40) / 12) ** 2)) * (0.6 + 0.8 * wxNoise(x / 8, lat / 8, z, 6));
     let from = (w.windFrom + k * (((aloft - w.windFrom + 540) % 360) - 180) + 360) % 360;
-    let kt = w.windKt * (1 + 1.2 * k) + k * jet;
+    let kt = w.windKt * (1 + 0.6 * k) + kJet * jet;
     const pw = placedWind(lat, lon); // (a placed wind blows at every height)
     if (pw) { from = blendDir(from, pw.from, pw.k); kt += (pw.kt - kt) * pw.k; }
     return { from: Math.round(from) % 360, kt: Math.round(kt), gusty: w.gustKt > 0 || w.storm, storm: w.storm };
@@ -2440,7 +2443,7 @@
     const airFrac = Math.min(1, Math.max(0, (sv - sLift) / Math.max(0.001, sTouch - sLift)));
     // Crab: in a crosswind the nose points partly into the wind so the plane still tracks its path (heading =
     // track + crab). It builds up after lift-off and is kicked out with the rudder just before touchdown, so on
-    // the runway the nose is straight again.
+    // the runway the nose is straight again. At most MAX_CRAB (a placed 120 kt wind would turn them 37° sideways).
     const fieldFt = Math.round(tr.fieldAt(sv));
     const ground = sv <= sLift || sv >= sTouch;
     // rollT: how far through its takeoff run the plane is in time (0 brakes off, 1 lift-off); with an even push the
@@ -2451,7 +2454,8 @@
     let crab = 0;
     if (!ground) {
       const kt = Math.max(60, speed / 1.852);
-      crab = Math.asin(Math.max(-0.6, Math.min(0.6, (wind.kt / kt) * Math.sin((wind.from - pos.heading) * Math.PI / 180)))) * 180 / Math.PI;
+      crab = Math.asin(Math.max(-1, Math.min(1, (wind.kt / kt) * Math.sin((wind.from - pos.heading) * Math.PI / 180)))) * 180 / Math.PI;
+      crab = Math.max(-MAX_CRAB, Math.min(MAX_CRAB, crab));
       const agl = alt - fieldFt;
       crab *= phase === 'takeoff' || phase === 'climb' && agl < 300 ? Math.min(1, Math.max(0, agl / 150)) : Math.min(1, Math.max(0, agl / 40));
       crab = Math.round(crab * 10) / 10;
@@ -2461,6 +2465,7 @@
       ground, speedKmh: speed, phase, airFrac, rollT, crab, windFrom: wind.from, windKt: wind.kt, gusty: wind.gusty,
       cruiseFt: tr.cruiseAlt, depRunway: designatorOf(tr.depRunway.hdg), arrRunway: designatorOf(tr.arrRunway.hdg) };
   }
+  const MAX_CRAB = 15; // degrees: about the most an airliner crabs (35 kt across a 135 kt approach)
   const designatorOf = (h) => String(Math.round((((h % 360) + 360) % 360) / 10) || 36).padStart(2, '0');
 
   // ---------- aircraft market ----------
