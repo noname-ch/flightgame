@@ -794,7 +794,8 @@ try {
     step('3D cameras: B fly-by, N wing camera (N again: the other wing), V back to the chase camera');
     await evaluate(() => { if (!FG.ui.selectedPlane) FG.ui.selectPlane(G.state.planes[0].id); });
     await key('b');
-    await sleep(2500);
+    // (the spot is chosen in the next 3D frame: headless that can be 2 s or more away, so wait for it)
+    await waitFor(() => !!FG.view3d.flyby, 10000);
     const fly = await evaluate(() => ({ cam: FG.view3d.follow && FG.view3d.cam, spot: !!FG.view3d.flyby }));
     await key('n');
     await sleep(1500);
