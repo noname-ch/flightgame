@@ -75,7 +75,10 @@ cough, catch and run rough until warm. APUs hum at the gates. You hear what you 
 planes, zoomed out nothing; the plane you follow (2D or 3D, or the plane window's camera) from close behind, the
 wing camera right by the engines with the wind, and the fly-by camera hears it pass with the Doppler drop. Engines
 follow the game clock, so fast-forwarded it all goes quicker; above 300× it fades out, paused it is quiet. It is off
-until you turn it on: the 🔇 button in the top bar, **M**, or Settings → Sound (with the volume).
+until you turn it on: the 🔇 button in the top bar, **M**, or Settings → Sound (with the volume). Settings → Sound
+also has four styles of the same engines (Standard; Deep: darker and heavier; Open: brighter with more rushing air;
+Soft: muffled, for long sessions) and **▶ Preview**, a whole jet, turboprop or piston flight in about 40 s heard from
+a chase camera, also while paused, so you can compare them (a style picked during the preview changes it at once).
 
 **Main menu**: the very first start asks for a style, then the main menu offers *Continue*, *New game*,
 *Load game* (the last save in this browser, or a `.json` save file; ⋯ → *Save to file* makes one) and

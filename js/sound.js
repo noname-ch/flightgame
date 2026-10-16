@@ -13,6 +13,8 @@
 // Engine power follows the flight (G.flightState phases) in game time: at real time a start takes over a minute,
 // fast-forwarded it is quick; above 300× it fades out, paused it is quiet, in a background tab it stops.
 // Off until turned on (remembered): the 🔇/🔊 button in the top bar, M, or Settings → Sound. FG.sound.
+// Four styles of the same voices (STYLES: Standard, Deep, Open, Soft; Settings → Sound), and a preview that plays
+// a whole flight in about 35 s on its own voice to compare them (▶ Preview; it plays paused or in the menu too).
 (function () {
   const G = FG.game;
   const D = FG.data;
@@ -27,11 +29,49 @@
   const SPEED_OF_SOUND = 343;
   const DEG = Math.PI / 180;
 
-  const prefs = { on: false, volume: 0.6 }; // (off until turned on: ROADMAP)
+  // ---------- the styles ----------
+  // The same voices with other numbers (Settings → Sound). 'standard' is the sound as tuned with the user (the user:
+  // "that is a good sound but it needs more bass"); its numbers are the ones the others are measured against.
+  // Jets: shelf (dB of bass below shelfHz), roar (level; its low-pass from roarLo at no power + roarHi × N1^roarPow,
+  // the second one roarSpread times higher), rumble (brown noise below rumbleHz), crackle (the rumble jumping about
+  // at take-off power), drone (the fan shaft's hum), fan and core (the whines; tone: their pitch, also the APU's and
+  // the turboprop's), saw (the buzz-saw ahead of a big fan), air (the air rushing past: level, airHz × its low-pass,
+  // airHp a high-pass so it rushes instead of rumbling, gust), top (a low-pass on it all: muffled), spool (× the
+  // time the engines take to follow the levers), level. Turboprops and pistons: prop (the propeller and engine
+  // tones) and bright (× their filters), and roar, core, tone, air, shelf, top and level as above.
+  const STYLES = {
+    standard: {
+      name: 'Standard', about: 'The full roar and rumble, the air rushing past.',
+      shelf: 6, shelfHz: 220, roar: 1, roarLo: 200, roarHi: 1900, roarPow: 1.6, roarSpread: 2, rumble: 1, rumbleHz: 180,
+      crackle: 1, drone: 1, fan: 1, core: 1, tone: 1, saw: 1, air: 1, airHz: 1, airHp: 0, gust: 0.3, top: 16000, spool: 1,
+      level: 1, prop: 1, bright: 1,
+    },
+    deep: {
+      name: 'Deep', about: 'Heavier and darker, cinematic: more rumble and low drone, a dark roar, hardly any whine.',
+      shelf: 10, shelfHz: 180, roar: 1.05, roarLo: 150, roarHi: 1000, roarPow: 1.6, roarSpread: 1.5, rumble: 2, rumbleHz: 150,
+      crackle: 1.4, drone: 2.5, fan: 0.2, core: 0.15, tone: 0.68, saw: 0.6, air: 0.8, airHz: 0.65, airHp: 0, gust: 0.3, top: 5000, spool: 1,
+      level: 1, prop: 1.1, bright: 0.7,
+    },
+    open: {
+      name: 'Open', about: 'Brighter and more open at full power, a strong rush of air, the bass kept.',
+      shelf: 6, shelfHz: 220, roar: 1.15, roarLo: 260, roarHi: 2900, roarPow: 2, roarSpread: 2.6, rumble: 1, rumbleHz: 180,
+      crackle: 1.5, drone: 1, fan: 0.6, core: 0.5, tone: 0.68, saw: 1.1, air: 2.6, airHz: 1.25, airHp: 350, gust: 0.45, top: 16000, spool: 1,
+      level: 1, prop: 1, bright: 1.3,
+    },
+    soft: {
+      name: 'Soft', about: 'Smooth and relaxed for long sessions: muffled, as from further away or inside, gentle air, almost no whine.',
+      shelf: 4, shelfHz: 200, roar: 0.9, roarLo: 180, roarHi: 1200, roarPow: 1.6, roarSpread: 1.6, rumble: 0.75, rumbleHz: 160,
+      crackle: 0, drone: 0.5, fan: 0.12, core: 0.08, tone: 0.68, saw: 0, air: 0.7, airHz: 0.7, airHp: 0, gust: 0.15, top: 1300, spool: 1.5,
+      level: 0.7, prop: 0.8, bright: 0.6,
+    },
+  };
+
+  const prefs = { on: false, volume: 0.6, style: 'standard', preview: 'jet' }; // (off until turned on: ROADMAP)
   try { Object.assign(prefs, JSON.parse(localStorage.getItem(KEY)) || {}); } catch (e) { /* private mode */ }
+  if (!STYLES[prefs.style]) prefs.style = 'standard';
   const savePrefs = () => { try { localStorage.setItem(KEY, JSON.stringify(prefs)); } catch (e) { /* private mode */ } };
 
-  const s = { ctx: null, master: null, noise: null, wobble: null, wave: null, voices: new Map(), picked: [], tick: 0, last: 0, timer: null };
+  const s = { ctx: null, master: null, noise: null, wobble: null, wave: null, voices: new Map(), picked: [], tick: 0, last: 0, timer: null, demo: null };
 
   const clamp01 = (x) => Math.max(0, Math.min(1, x));
   const smooth = (a, b, x) => { const k = clamp01((x - a) / (b - a)); return k * k * (3 - 2 * k); };
@@ -115,9 +155,15 @@
 
   // What the engines of plane p do at game time t: { run (burning fuel, 0..1), pw, np, n2 (core speed: the whine),
   // rev, apu, crank, rough, pops, ign, phase }. st: its G.flightState at t when at hand.
+  const OFF = { run: 0, pw: 0, np: 0, n2: 0, rev: 0, apu: 0, crank: 0, rough: 0 };
+  // Running, with the levers set for flight state st.
+  function running(pr, st, accel = 0) {
+    const lv = levers(pr, st, accel);
+    return { ...OFF, run: 1, ...lv, n2: core(pr, lv.pw), phase: st.phase };
+  }
   function engines(p, t, st, accel = 0) {
     const pr = profile(p.type);
-    const off = { run: 0, pw: 0, np: 0, n2: 0, rev: 0, apu: 0, crank: 0, rough: 0, phase: p.status };
+    const off = { ...OFF, phase: p.status };
     if (p.status === 'flying' && p.flight) {
       st = st || G.flightState(p, t);
       const tr = G.flightTrack(p);
@@ -126,8 +172,7 @@
       if (m < tr.boarding) return { ...off, phase: 'boarding', apu: pr.apu ? 1 : 0 };
       const u = (m - tr.boarding) / START;
       if (u < 1) return { ...off, ...startup(pr, u), phase: st.phase, start: u, apu: pr.apu ? 1 : 0 };
-      const lv = levers(pr, st, accel);
-      return { ...off, run: 1, ...lv, n2: core(pr, lv.pw), phase: st.phase };
+      return running(pr, st, accel);
     }
     if (p.status === 'turnaround' && !p.repair) {
       const since = t - (p.readyAt - G.turnaroundMin(p.type)); // (minutes since it pulled up at the gate)
@@ -307,7 +352,8 @@
 
   function makeVoice(pr) {
     const ctx = s.ctx;
-    const v = { pr, srcs: [], L: {}, sm: null, last: {}, nextClick: 0, kill: 0 };
+    const S = STYLES[prefs.style];
+    const v = { pr, S, srcs: [], L: {}, sm: null, last: {}, nextClick: 0, kill: 0 };
     const osc = (type, f) => {
       const o = ctx.createOscillator();
       if (type === 'radial') o.setPeriodicWave(s.wave); else o.type = type;
@@ -331,8 +377,8 @@
     v.pan = ctx.createStereoPanner();
     v.air = filter('lowpass', 16000, 0.5); // the air takes the highs out with distance
     v.mix = ctx.createGain();
-    v.bass = filter('lowshelf', 220, 0.7); // (more weight low down)
-    v.bass.gain.value = 6;
+    v.bass = filter('lowshelf', S.shelfHz, 0.7); // (more weight low down)
+    v.bass.gain.value = S.shelf;
     v.mix.connect(v.bass).connect(v.air).connect(v.pan).connect(v.out).connect(s.master);
     const gain = (to = v.mix) => { const g = ctx.createGain(); g.gain.value = 0; g.connect(to); return g; };
     const L = v.L;
@@ -344,7 +390,7 @@
       L.roar = gain();
       L.noise.connect(L.roarF);
       L.roarF2.connect(L.roar);
-      L.rumbleF = filter('lowpass', 180, 0.8);
+      L.rumbleF = filter('lowpass', S.rumbleHz, 0.8);
       L.rumble = gain();
       L.deep.connect(L.rumbleF).connect(L.rumble);
       L.crackle = gain(L.rumble.gain); // (crackle at take-off power: the rumble's level jumps about)
@@ -410,7 +456,7 @@
     }
     if (pr.apu) {
       L.apu = gain();
-      L.apu1 = osc('sine', 1900 * (0.97 + 0.06 * Math.random()));
+      L.apu1 = osc('sine', 1900 * S.tone * (0.97 + 0.06 * Math.random()));
       L.apu1.connect(L.apu);
       L.apuF = filter('bandpass', 700, 1);
       L.noise.connect(L.apuF).connect(L.apu);
@@ -419,7 +465,8 @@
     [L.airF, L.airF2] = lp2(800, 0.6);
     L.air = gain();
     L.noise.connect(L.airF);
-    L.airF2.connect(L.air);
+    if (S.airHp) L.airF2.connect(filter('highpass', S.airHp, 0.6)).connect(L.air); // (a rush, not a rumble)
+    else L.airF2.connect(L.air);
     L.gust = gain(L.air.gain);
     src(s.wobble, 0.2).connect(L.gust);
     // The wind past the wing camera (not muffled by distance).
@@ -456,16 +503,19 @@
   // ---------- every TICK ----------
   function update() {
     const ctx = s.ctx;
-    if (!ctx || ctx.state !== 'running' || !G.state || !FG.ui) return;
+    if (!ctx || ctx.state !== 'running') return;
     const now = performance.now();
     const dt = Math.min(0.25, (now - (s.last || now)) / 1000);
     s.last = now;
+    const at = ctx.currentTime;
+    if (s.demo) demoTick(dt, at);
+    if (!G.state || !FG.ui) return;
     const speed = FG.ui.speed; // (0 paused or in the menu)
     const dtGame = dt * speed;
     const t = FG.ui.time;
-    const at = ctx.currentTime;
-    // Faster than 300× the sound fades out (a flight in a few seconds is only noise); paused it is quiet.
-    const fade = speed === 0 ? 0 : speed <= 300 ? 1 : clamp01(1 - Math.log(speed / 300) / Math.log(12));
+    // Faster than 300× the sound fades out (a flight in a few seconds is only noise); paused it is quiet; the
+    // preview plays alone.
+    const fade = speed === 0 || s.demo ? 0 : speed <= 300 ? 1 : clamp01(1 - Math.log(speed / 300) / Math.log(12));
     const L = fade ? listener() : null;
     if (L && s.tick++ % 4 === 0) { const a = performance.now(); s.picked = pick(L, t); s.pickMs = 0.8 * (s.pickMs || 0) + 0.2 * (performance.now() - a); }
     const want = new Set(L ? s.picked : []);
@@ -503,10 +553,8 @@
     return out.sort((a, b) => b[0] - a[0]).slice(0, VOICES).map((x) => x[1]);
   }
 
+  // Plane p (at P) heard from L.
   function play(v, p, P, L, t, at, dtGame, speed, fade) {
-    const pr = v.pr;
-    const L2 = v.L;
-    const T = (param, val, tau = 0.06) => param.setTargetAtTime(Number.isFinite(val) ? val : 0, at, tau);
     // A burst of thrust to get rolling: on a taxiway, slow and getting faster.
     let accel = 0;
     const st = P.st;
@@ -515,19 +563,31 @@
       if (st2 && st2.speedKmh > st.speedKmh + 0.2) accel = 1 - st.speedKmh / 12;
     }
     const e = engines(p, t, st, accel);
+    const g = geometry(L, P, p);
+    // The wind on the wing camera.
+    const wind = L.follow === p.id && L.cam === 'wing' ? 0.5 * Math.min(1.4, (P.ms / 230) ** 2) : 0;
+    sound(v, e, g, P.ms, wind, at, dtGame, speed, fade);
+  }
+
+  // Sets voice v (in its style v.S): engines e (as engines() gives), heard as g (geometry()), the plane at speedMs
+  // (m/s), wind on the wing camera.
+  function sound(v, e, g, speedMs, wind, at, dtGame, speed, fade) {
+    const pr = v.pr;
+    const S = v.S;
+    const L2 = v.L;
+    const T = (param, val, tau = 0.06) => param.setTargetAtTime(Number.isFinite(val) ? val : 0, at, tau);
     // The engines follow the levers with a lag (in game time).
     const sm = v.sm || (v.sm = { ...e });
-    const k = 1 - Math.exp(-dtGame / SPOOL);
+    const k = 1 - Math.exp(-dtGame / (SPOOL * S.spool));
     for (const f of ['pw', 'np', 'n2', 'rev']) sm[f] += ((e[f] || 0) - sm[f]) * (e.start != null || e.phase === 'shutdown' ? Math.max(k, 0.5) : k);
     for (const f of ['run', 'apu', 'crank', 'rough']) sm[f] = e[f] || 0;
-    const g = geometry(L, P, p);
     const sz = pr.size;
     const front = Math.max(0, g.ahead);
     const behind = Math.max(0, -g.ahead);
     const dop = g.dop;
     const run = sm.run;
-    T(v.out.gain, distGain(g.d) * fade, 0.08);
-    T(v.air.frequency, g.near ? 16000 : Math.min(16000, 16000 / (1 + g.d / 300)));
+    T(v.out.gain, distGain(g.d) * fade * S.level, 0.08);
+    T(v.air.frequency, Math.min(S.top, g.near ? 16000 : Math.min(16000, 16000 / (1 + g.d / 300))));
     T(v.pan.pan, g.pan * 0.8);
     L2.noise.playbackRate.setTargetAtTime(dop, at, 0.06);
     L2.deep.playbackRate.setTargetAtTime(dop, at, 0.06);
@@ -536,67 +596,65 @@
       const n2 = sm.n2;
       const old = pr.old ? 1.5 : 1;
       // The roar: low and full (pink noise through two low-passes), brighter with power and from behind.
-      T(L2.roar.gain, run * sz * (0.1 + 1.6 * n1 ** 3) * (1 + 0.6 * behind) * (1 - 0.2 * front) * old * (1 + 0.5 * sm.rev));
-      const fc = (200 + 1900 * n1 ** 1.6) * (1 + 0.25 * behind + 0.4 * sm.rev) * (pr.old ? 1.2 : 1);
+      T(L2.roar.gain, run * sz * S.roar * (0.1 + 1.6 * n1 ** 3) * (1 + 0.6 * behind) * (1 - 0.2 * front) * old * (1 + 0.5 * sm.rev));
+      const fc = (S.roarLo + S.roarHi * n1 ** S.roarPow) * (1 + 0.25 * behind + 0.4 * sm.rev) * (pr.old ? 1.2 : 1);
       T(L2.roarF.frequency, fc);
-      T(L2.roarF2.frequency, fc * 2);
-      const rumble = run * sz * (0.08 + 1.2 * n1 ** 3) * (0.5 + 1.0 * behind) * (pr.afterburner && e.phase === 'takeoff' ? 2 : 1);
+      T(L2.roarF2.frequency, fc * S.roarSpread);
+      const rumble = run * sz * S.rumble * (0.08 + 1.2 * n1 ** 3) * (0.5 + 1.0 * behind) * (pr.afterburner && e.phase === 'takeoff' ? 2 : 1);
       T(L2.rumble.gain, rumble);
-      T(L2.crackle.gain, rumble * 0.5 * behind * smooth(0.85, 0.92, n1));
-      T(L2.drone.gain, run * sz * 0.16 * smooth(0.25, 0.9, n1));
+      T(L2.crackle.gain, rumble * 0.5 * S.crackle * behind * smooth(0.85, 0.92, n1));
+      T(L2.drone.gain, run * sz * 0.16 * S.drone * smooth(0.25, 0.9, n1));
       T(L2.drone1.frequency, Math.max(5, pr.shaft * n1 * dop));
       T(L2.drone2.frequency, Math.max(5, pr.shaft * n1 * dop * 1.004));
       T(L2.droneF.frequency, 150 + 350 * n1);
       // The whine: clear at idle, it fades under the roar as the power comes up.
       const fanHz = n1 < IDLE ? pr.fanLo * n1 / IDLE : pr.fanLo + (pr.fanHi - pr.fanLo) * (n1 - IDLE) / (1 - IDLE);
-      T(L2.fan.gain, sz * 0.16 * smooth(0.04, 0.18, n1) * (0.6 + 0.9 * front) * (pr.old ? 0.35 : 1) * (1 - 0.75 * smooth(0.3, 0.9, n1)));
+      T(L2.fan.gain, sz * 0.16 * S.fan * smooth(0.04, 0.18, n1) * (0.6 + 0.9 * front) * (pr.old ? 0.35 : 1) * (1 - 0.75 * smooth(0.3, 0.9, n1)));
       T(L2.fan1.frequency, Math.max(20, fanHz * dop));
       T(L2.fan2.frequency, Math.max(20, fanHz * dop * 1.006));
-      T(L2.core.gain, sz * 0.035 * smooth(0.02, 0.12, n2) * (pr.old ? 2 : 1) * (1 - 0.8 * n1));
-      T(L2.core1.frequency, Math.max(20, pr.core * n2 * dop));
-      T(L2.saw.gain, pr.old ? 0 : sz * 1.2 * smooth(0.82, 0.92, n1) * front ** 1.5);
+      T(L2.core.gain, sz * 0.035 * S.core * smooth(0.02, 0.12, n2) * (pr.old ? 2 : 1) * (1 - 0.8 * n1));
+      T(L2.core1.frequency, Math.max(20, pr.core * S.tone * n2 * dop));
+      T(L2.saw.gain, pr.old ? 0 : sz * 1.2 * S.saw * smooth(0.82, 0.92, n1) * front ** 1.5);
       T(L2.saw1.frequency, Math.max(20, pr.shaft * n1 * dop));
     } else if (pr.kind === 'turboprop') {
       const pw = sm.pw;
       const np = sm.np;
-      T(L2.prop.gain, sz * (0.05 + 0.55 * pw ** 1.3) * smooth(0.05, 0.4, np) * (1 + 0.3 * front));
+      T(L2.prop.gain, sz * S.prop * (0.05 + 0.55 * pw ** 1.3) * smooth(0.05, 0.4, np) * (1 + 0.3 * front));
       T(L2.prop1.frequency, Math.max(5, pr.prop * np * dop));
       T(L2.prop2.frequency, Math.max(5, pr.prop * np * dop * 1.007));
-      T(L2.propF.frequency, (250 + 1400 * pw + 300 * np) * dop);
-      T(L2.roar.gain, run * sz * (0.04 + 0.5 * pw * pw) * (1 + 0.6 * behind) * (1 + 0.5 * sm.rev));
-      T(L2.roarF.frequency, 300 + 900 * pw);
-      T(L2.core.gain, sz * 0.04 * pr.whineGain * smooth(0.03, 0.15, sm.n2) * (1 - 0.4 * pw));
-      T(L2.core1.frequency, Math.max(20, pr.whine * sm.n2 * dop));
+      T(L2.propF.frequency, (250 + 1400 * pw + 300 * np) * dop * S.bright);
+      T(L2.roar.gain, run * sz * S.roar * (0.04 + 0.5 * pw * pw) * (1 + 0.6 * behind) * (1 + 0.5 * sm.rev));
+      T(L2.roarF.frequency, (300 + 900 * pw) * S.bright);
+      T(L2.core.gain, sz * 0.04 * S.core * pr.whineGain * smooth(0.03, 0.15, sm.n2) * (1 - 0.4 * pw));
+      T(L2.core1.frequency, Math.max(20, pr.whine * S.tone * sm.n2 * dop));
     } else {
       const pw = sm.pw;
       const np = sm.np;
-      const base = sz * (sm.crank ? 0.2 * sm.crank : 0) + run * sz * (0.2 + 1.0 * pw);
+      const base = (sz * (sm.crank ? 0.2 * sm.crank : 0) + run * sz * (0.2 + 1.0 * pw)) * S.prop;
       T(L2.eng.gain, base);
       T(L2.rough.gain, base * (0.2 + 0.6 * sm.rough + (sm.crank ? 0.5 : 0)));
       T(L2.eng1.frequency, Math.max(1, pr.crank * np * dop));
       T(L2.eng2.frequency, Math.max(1, pr.crank * np * dop * 1.013));
-      T(L2.engF.frequency, 250 + 1600 * np ** 1.2);
-      T(L2.prop.gain, sz * smooth(0.1, 0.3, np) * (0.03 + 0.3 * pw));
+      T(L2.engF.frequency, (250 + 1600 * np ** 1.2) * S.bright);
+      T(L2.prop.gain, sz * S.prop * smooth(0.1, 0.3, np) * (0.03 + 0.3 * pw));
       T(L2.prop1.frequency, Math.max(5, pr.prop * np * dop));
-      T(L2.propF.frequency, 300 + 1400 * pw);
-      T(L2.roar.gain, run * sz * (0.025 + 0.2 * pw));
-      T(L2.roarF.frequency, 250 + 600 * pw);
+      T(L2.propF.frequency, (300 + 1400 * pw) * S.bright);
+      T(L2.roar.gain, run * sz * S.roar * (0.025 + 0.2 * pw));
+      T(L2.roarF.frequency, (250 + 600 * pw) * S.bright);
       T(L2.starter.gain, sz * 0.05 * sm.crank);
       T(L2.starter1.frequency, 260 + 260 * clamp01((e.start || 0) / 0.4));
     }
     if (L2.apu) T(L2.apu.gain, sz * 0.02 * sm.apu, 0.4);
     // The air past the plane: grows with speed; gear and flaps out on the approach add to it.
-    const ms = Math.min(P.ms, 270);
+    const ms = Math.min(speedMs, 270);
     const dirty = (e.phase === 'approach' || (e.phase === 'landing' && ms > 40)) ? 0.12 : 0;
-    const air = sz * (0.45 * (ms / 200) ** 1.5 + dirty);
+    const air = sz * S.air * (0.45 * (ms / 200) ** 1.5 + dirty);
     T(L2.air.gain, air, 0.15);
-    T(L2.gust.gain, air * 0.3, 0.15);
-    T(L2.airF.frequency, (350 + 4.5 * ms) * dop);
-    T(L2.airF2.frequency, (350 + 4.5 * ms) * dop * 1.6);
-    // The wind on the wing camera.
-    const wind = L.follow === p.id && L.cam === 'wing' ? 0.5 * Math.min(1.4, (P.ms / 230) ** 2) : 0;
+    T(L2.gust.gain, air * S.gust, 0.15);
+    T(L2.airF.frequency, (350 + 4.5 * ms) * dop * S.airHz);
+    T(L2.airF2.frequency, (350 + 4.5 * ms) * dop * S.airHz * 1.6);
     T(L2.wind.gain, wind * fade, 0.2);
-    T(L2.windF.frequency, 400 + 1.2 * P.ms);
+    T(L2.windF.frequency, 400 + 1.2 * speedMs);
 
     // One-off sounds (not when fast-forwarded: they would rattle).
     const was = v.last;
@@ -615,6 +673,95 @@
       if (e.pops && Math.random() < 0.22) burst(v, at + Math.random() * 0.04, { type: 'lowpass', f: 380, q: 1, dur: 0.14, level: sz * 1.5 }); // a cough
     }
     v.last = { lit: !!e.lit, phase: e.phase };
+  }
+
+  // A new style: every voice is built again in it (keeping where its engines are), the old one fades out.
+  function restyle() {
+    if (!s.ctx) return;
+    const again = (v) => {
+      const nv = makeVoice(v.pr);
+      Object.assign(nv, { id: v.id, sm: v.sm, last: v.last, nextClick: v.nextClick });
+      fadeDrop(v, 0.03);
+      return nv;
+    };
+    for (const [key, v] of s.voices) {
+      if (v.kill) { dropVoice(v); s.voices.delete(key); } else s.voices.set(key, again(v));
+    }
+    if (s.demo) s.demo.v = again(s.demo.v);
+  }
+  function fadeDrop(v, tau) {
+    const at = s.ctx.currentTime;
+    v.out.gain.setTargetAtTime(0, at, tau);
+    v.L.wind.gain.setTargetAtTime(0, at, tau);
+    setTimeout(() => dropVoice(v), tau * 8000);
+  }
+
+  // ---------- the preview (Settings → Sound → ▶ Preview) ----------
+  // A whole flight in about 40 s, as heard from a chase camera 100 m behind (a little above), on its own voice:
+  // the game's planes go quiet meanwhile, and it plays paused or in the menu too. DEMO: [id, label, seconds,
+  // (u: 0..1 through it, pr) -> { e: what the engines do, ms: speed (m/s) }]; the levers are levers()'s for a
+  // made-up flight state, so it sounds as a plane in the game does.
+  const PREVIEW_TYPES = { jet: 'A320neo', turboprop: 'ATR72-600', piston: 'DC-3' };
+  const PREVIEW_HEARD = { d: 100, ahead: -0.9, pan: 0, dop: 1, near: false };
+  const fs = (phase, speedKmh = 0, altFt = 0) => ({ phase, speedKmh, altFt, fieldFt: 0 });
+  const DEMO = [
+    ['apu', 'APU', 1.5, (u, pr) => ({ e: { phase: 'boarding', apu: pr.apu ? 1 : 0 } })],
+    ['start', 'Engine start', 6, (u, pr) => ({ e: { ...startup(pr, u), phase: 'pushback', start: u, apu: pr.apu ? 1 : 0 }, ms: 0.8 })],
+    ['idle', 'Idle', 2, (u, pr) => ({ e: running(pr, fs('taxi-out')) })],
+    ['taxi', 'Thrust to taxi', 2.5, (u, pr) => ({ e: running(pr, fs('taxi-out', 25 * u), 1 - smooth(0.5, 0.9, u)), ms: 7 * u })],
+    ['takeoff', 'Take-off power', 5, (u, pr) => ({ e: running(pr, fs('takeoff', 290 * u)), ms: 80 * u })],
+    ['climb', 'Climb', 3.5, (u, pr) => ({ e: running(pr, fs('climb', 300, 1000 + 8000 * u)), ms: 85 + 60 * u })],
+    ['cruise', 'Cruise', 3, (u, pr) => ({ e: running(pr, fs('cruise', 830, 35000)), ms: 230 })],
+    ['descent', 'Descent', 2.5, (u, pr) => ({ e: running(pr, fs('descent', 700, 20000)), ms: 200 })],
+    ['approach', 'Approach: gear and flaps', 3.5, (u, pr) => ({ e: running(pr, fs('approach', 260, 3000 * (1 - u) + 60)), ms: 72 })],
+    ['flare', 'Over the threshold', 0.7, (u, pr) => ({ e: running(pr, fs('approach', 250, 20)), ms: 70 })],
+    ['landing', 'Touchdown, reverse thrust', 3.5, (u, pr) => ({ e: running(pr, fs('landing', 250 * (1 - u) + 30)), ms: 69 * (1 - u) + 8 })],
+    ['taxi-in', 'Idle', 1.5, (u, pr) => ({ e: running(pr, fs('taxi-in', 25)), ms: 7 })],
+    ['shutdown', 'Run-down', 3.5, (u, pr) => ({ e: { ...rundown(pr, u), phase: 'shutdown', apu: pr.apu && u > 0.35 ? 1 : 0 } })],
+    ['end', '', 1.2, (u, pr) => ({ e: { phase: 'turnaround', apu: pr.apu ? 1 : 0 } })],
+  ];
+
+  function demoTick(dt, at) {
+    const d = s.demo;
+    let t0 = 0;
+    let seg = null;
+    for (const x of DEMO) { if (d.t < t0 + x[2]) { seg = x; break; } t0 += x[2]; }
+    if (!seg) { stopPreview(); return; }
+    let u = (d.t - t0) / seg[2];
+    if (d.hold === seg[0] && u >= 0.75) u = 0.75; // (FG.sound.preview({ hold }): it stays there, to be measured)
+    else d.t += dt;
+    d.age += dt;
+    const x = seg[3](u, d.v.pr);
+    const e = { ...OFF, ...x.e };
+    const fade = Math.min(1, d.age / 0.3) * (seg[0] === 'end' ? 1 - smooth(0.2, 1, u) : 1);
+    // (a flight quicker than a real one: so are the engines)
+    sound(d.v, e, PREVIEW_HEARD, x.ms || 0, 0, at, dt * 2, 1, fade);
+    if (d.seg !== seg[0]) { d.seg = seg[0]; d.label = seg[1]; showPreview(); }
+  }
+  // (from: a DEMO id to start at, or a time in s; hold: a DEMO id to stay at, three quarters through it)
+  function startPreview(hold, from = 0) {
+    if (s.demo) fadeDrop(s.demo.v, 0.03);
+    const kind = PREVIEW_TYPES[prefs.preview] ? prefs.preview : 'jet';
+    let t = typeof from === 'number' ? from : 0;
+    if (typeof from === 'string') {
+      for (const x of DEMO) { if (x[0] === from) { t += x[0] === hold ? 0.75 * x[2] : 0; break; } t += x[2]; }
+    }
+    s.demo = { kind, t, age: 0, hold, seg: null, label: '', v: makeVoice(profile(PREVIEW_TYPES[kind])) };
+    showPreview();
+  }
+  function stopPreview() {
+    if (!s.demo) return;
+    fadeDrop(s.demo.v, 0.05);
+    s.demo = null;
+    showPreview();
+  }
+  // The ▶ Preview button (Settings → Sound) shows whether it plays, and where in the flight it is.
+  function showPreview() {
+    for (const b of document.querySelectorAll('[data-set="preview"]')) {
+      b.textContent = s.demo ? '■ Stop' : '▶ Preview';
+      b.classList.toggle('on', !!s.demo);
+    }
+    for (const el of document.querySelectorAll('[data-preview-status]')) el.textContent = s.demo ? s.demo.label : '';
   }
 
   // ---------- on, off, volume ----------
@@ -656,14 +803,42 @@
   FG.sound = {
     get on() { return prefs.on; },
     get volume() { return prefs.volume; },
+    get style() { return prefs.style; },
+    styles: Object.entries(STYLES).map(([id, x]) => ({ id, name: x.name, about: x.about })), // (Settings → Sound)
+    get previewKind() { return prefs.preview; }, // 'jet', 'turboprop' or 'piston'
+    // { on, volume (0..1), style (a STYLES key: the voices playing change at once), preview (the preview's kind) }
     set(o) {
       if (o.on != null) prefs.on = !!o.on;
       if (o.volume != null) prefs.volume = clamp01(Number(o.volume));
+      const restyled = o.style && STYLES[o.style] && o.style !== prefs.style;
+      if (restyled) prefs.style = o.style;
+      const rekind = o.preview && PREVIEW_TYPES[o.preview] && o.preview !== prefs.preview;
+      if (rekind) prefs.preview = o.preview;
       savePrefs();
       if (prefs.on) unlock();
+      else stopPreview();
+      if (restyled) restyle();
+      if (rekind && s.demo) startPreview(s.demo.hold, s.demo.t); // (on where it was)
       apply();
     },
     toggle() { this.set({ on: !prefs.on }); },
+    // ▶ Preview: a whole flight in about 40 s on its own voice (a second call stops it). It turns the sound on (the
+    // click lets the browser play it). o: false stops it; { kind } as set({ preview }); to measure, { from, hold }:
+    // start at that part of the flight, stay three quarters through that one (DEMO ids: idle, takeoff, climb, cruise,
+    // descent, approach, …). Returns whether it plays.
+    preview(o) {
+      const opt = o && typeof o === 'object' ? o : {};
+      if (o === false || (o == null && s.demo)) { stopPreview(); return false; }
+      if (opt.kind) this.set({ preview: opt.kind });
+      if (!prefs.on) this.set({ on: true });
+      else unlock();
+      if (!s.ctx) return false;
+      startPreview(opt.hold, opt.from);
+      return true;
+    },
+    get previewing() { return !!s.demo; },
+    get previewPhase() { return s.demo ? s.demo.label : ''; },
+    get previewSeconds() { return DEMO.reduce((a, x) => a + x[2], 0); },
     engines, // (p, t) -> what its engines do now (developer tools, smoke test)
     heardFrom: listener, // where it is heard from now
     profile,

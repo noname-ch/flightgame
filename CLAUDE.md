@@ -100,6 +100,10 @@ Play online: https://noname-ch.github.io/flightgame/ (GitHub Pages, deployed fro
   sounded like static to the user); whines stay within about an octave (high pitches while throttling bothered
   them); a low shelf adds bass. `FG.sound.spectrum()` measures centroid, flatness, hiss (hf) and bass. The smoke
   test runs Chrome with `--autoplay-policy=no-user-gesture-required`, reads `FG.sound.meter()` and fails on hiss.
+  Styles (`STYLES`: standard, deep, open, soft; `FG.sound.set({ style })`) are the same voices with other numbers,
+  read when a voice is made (`v.S`; a new style rebuilds the playing voices, `restyle`). ▶ Preview (`FG.sound.preview()`,
+  `DEMO` segments, `demoTick`) plays a made-up flight on its own voice through the same `sound()` as the game's planes,
+  paused or not; `FG.sound.preview({ kind, from, hold })` holds a segment to measure it (the smoke test does).
 - 3D cameras (view3d.js): following, `v.cam` is 'chase' (`chaseTick`; a drag turns it round the plane through
   `v.orbit`, MapLibre's own dragging is off while following), 'flyby' (`flybyTick`, spot in `v.flyby`) or 'wing'
   (`wingTick`, spot in `WING_CAM`). Keys V/B/N and `camera(mode)`. Fly-by and wing place the camera with

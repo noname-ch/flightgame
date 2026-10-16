@@ -349,7 +349,8 @@ try {
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     FG.sound.set({ on: true }); // (off until turned on)
     document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); // (sound starts with the first click)
-    const flying = () => G.state.planes.find((q) => q.status === 'flying' && q.flight.kind === 'scheduled');
+    // (one with half an hour of its flight still to go: one about to land parks for the night at a curfew, quiet)
+    const flying = () => G.state.planes.find((q) => q.status === 'flying' && q.flight.kind === 'scheduled' && q.flight.arr - G.state.time > 30);
     for (let i = 0; i < 1440 && !flying(); i++) G.advance(1); // (all at their gates: on until one leaves)
     const p = flying();
     if (!p) return { none: true };
@@ -396,6 +397,45 @@ try {
     if (snd.state !== 'running') warnings.push(`sound: no audio in this browser (${snd.state}): not heard`);
     else if (!snd.playing || !(snd.db > -120) || !Number.isFinite(snd.db)) errors.push(`sound: the followed plane was not heard: ${JSON.stringify(snd)}`);
     step(`sound: ${snd.kind} engines; take-off power ${snd.takeoff.toFixed(2)}, climb/cruise ${snd.cruise.toFixed(2)}; heard at ${snd.db == null ? '-∞' : snd.db.toFixed(1)} dB (${snd.state})`);
+  }
+
+  step('sound styles: Settings → Sound → ▶ Preview plays paused, every style and kind heard at take-off power, Stop');
+  const pv = await evaluate(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const q = (sel) => document.querySelector(`#settings ${sel}`);
+    if (document.getElementById('settings').hidden) document.getElementById('settings-btn').click();
+    const out = { state: FG.sound.state, styles: FG.sound.styles.map((x) => x.id), heard: {}, bad: [] };
+    if (!q('[data-set="preview"]') || out.styles.some((id) => !q(`[data-set="soundStyle"][data-v="${id}"]`))) return { ...out, noButtons: true };
+    q('[data-set="preview"]').click();
+    out.playing = FG.sound.previewing && q('[data-set="preview"]').textContent.includes('Stop');
+    await sleep(2500);
+    out.label = FG.sound.previewPhase; // (on to the engine start by now)
+    for (const kind of ['jet', 'turboprop', 'piston']) {
+      for (const id of out.styles) {
+        q(`[data-set="soundStyle"][data-v="${id}"]`).click();
+        FG.sound.preview({ kind, from: 'takeoff', hold: 'takeoff' });
+        await sleep(1200);
+        const sp = FG.sound.spectrum();
+        const db = FG.sound.meter();
+        out.heard[`${kind} ${id}`] = { db: Math.round(db), c: sp && sp.centroid, hf: sp && sp.hf };
+        if (out.state === 'running' && (!(db > -120) || !sp || sp.hf > 0.3)) out.bad.push(`${kind} ${id}: ${Math.round(db)} dB ${JSON.stringify(sp)}`);
+      }
+    }
+    q('[data-set="soundStyle"][data-v="standard"]').click();
+    q('[data-set="previewKind"][data-v="jet"]').click();
+    q('[data-set="preview"]').click();
+    out.stopped = !FG.sound.previewing && q('[data-set="preview"]').textContent.includes('Preview');
+    out.style = FG.sound.style;
+    document.getElementById('settings').hidden = true;
+    return out;
+  });
+  if (pv.noButtons) errors.push(`sound styles: Settings has no style or preview buttons: ${JSON.stringify(pv)}`);
+  else {
+    const h = pv.heard;
+    if (!pv.playing || !pv.stopped || pv.style !== 'standard' || !pv.label || pv.bad.length) errors.push(`sound styles: ${JSON.stringify(pv)}`);
+    if (pv.state !== 'running') warnings.push(`sound styles: no audio in this browser (${pv.state}): not heard`);
+    else if (!(h['jet deep'].c < h['jet standard'].c && h['jet standard'].c < h['jet open'].c)) errors.push(`sound styles: Deep should be darker and Open brighter than Standard: ${JSON.stringify(h)}`);
+    step(`sound styles: ${Object.entries(h).filter(([k]) => k.startsWith('jet')).map(([k, x]) => `${k.slice(4)} ${x.db} dB ~${x.c} Hz`).join(', ')}`);
   }
 
   step('parking: at Zurich an A320neo and a 777 (where it fits) stop short of the buildings (before: 31 of 42 noses of 777s were in one)');

@@ -2057,7 +2057,14 @@
       <h4>Game</h4>
       <label class="check"><input type="checkbox" data-set="autosave" ${set.autosave ? 'checked' : ''}> Save automatically every 30 s</label>
       ${FG.sound ? `<h4>Sound</h4><label class="check"><input type="checkbox" data-set="sound" ${FG.sound.on ? 'checked' : ''}> Aircraft sounds <span class="muted">M</span></label>
-      <label class="set-volume">Volume <input type="range" data-set="volume" min="0" max="100" value="${Math.round(FG.sound.volume * 100)}"></label>` : ''}
+      <label class="set-volume">Volume <input type="range" data-set="volume" min="0" max="100" value="${Math.round(FG.sound.volume * 100)}"></label>
+      <div class="chips">${FG.sound.styles.map((x) =>
+        `<button class="${x.id === FG.sound.style ? 'on' : ''}" data-set="soundStyle" data-v="${x.id}" title="${x.about}">${x.name}</button>`).join('')}</div>
+      <p class="muted set-sound-about">${(FG.sound.styles.find((x) => x.id === FG.sound.style) || {}).about || ''}</p>
+      <div class="row set-preview"><button class="${FG.sound.previewing ? 'on' : ''}" data-set="preview" title="A whole flight in about 40 s, as from a chase camera">${FG.sound.previewing ? '■ Stop' : '▶ Preview'}</button>
+        <div class="chips">${[['jet', 'Jet'], ['turboprop', 'Turboprop'], ['piston', 'Piston']].map(([k, n]) =>
+          `<button class="${k === FG.sound.previewKind ? 'on' : ''}" data-set="previewKind" data-v="${k}">${n}</button>`).join('')}</div>
+        <span class="muted" data-preview-status>${FG.sound.previewPhase}</span></div>` : ''}
       <h4>3D view</h4><p class="muted">Made for strong devices: a gaming PC, or a recent laptop or Mac.</p><div class="row"><button data-set="3d">${FG.view3d && FG.view3d.on ? 'Back to 2D' : 'Open 3D view'} <span class="muted">V</span></button></div>
       <h4 class="keys-help">Keys</h4><div class="muted keys-help">Space pause · ← → speed · V 3D · M sound · F2 developer tools · F3 airport editor · F8 airport checklist · Esc menu</div></div>`;
     if (FG.win) FG.win.movable(el.querySelector('.set-card'), '.side-head', 'settings'); // (dragged by its title)
@@ -2074,6 +2081,9 @@
     if (k === 'autosave') set.autosave = t.checked;
     if (k === 'sound') FG.sound.set({ on: t.checked });
     if (k === 'volume') FG.sound.set({ volume: t.value / 100, on: true }); // (while dragged: the input listener)
+    if (k === 'soundStyle') FG.sound.set({ style: t.dataset.v }); // (a preview playing changes at once: compare them)
+    if (k === 'previewKind') FG.sound.set({ preview: t.dataset.v });
+    if (k === 'preview') FG.sound.preview(); // (a second click stops it)
     if (k === 'livery') { G.state.livery = t.dataset.v; G.dirty = true; } // every aircraft of the airline is repainted
     if (k === '3d') { $('view3d-toggle').click(); }
     saveSettings();
