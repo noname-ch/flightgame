@@ -119,6 +119,11 @@ Play online: https://noname-ch.github.io/flightgame/ (GitHub Pages, deployed fro
   Settings → Map style sets 2D and 3D) switches the satellite layer, the map layers under it (`v.underSatellite`) and
   the background (`LOADING_GROUND`, dark, where pictures are still loading) on the 3D map and the plane windows'
   cameras. The 3D buttons sit at the bottom centre: top left, the plane window covered them.
+- Wing bending and propellers (looks only): the livery's vertex shader (js/livery.js `VERT_BODY`) bends the wings by
+  the uniform `livFlex` (tip rise in half spans) and turns the vertices with the attribute `livHub` (x, z of a hub, 1;
+  found by `markEngines`: blades thin along the nose, grouped) by `livSpin`. Each drawn aircraft gets its own copies of
+  the materials (view3d.js `ownMaterials`), and `placeModel` sets them from `wingFlex` and `propRate` (propeller
+  types only: `looks[type].eng` prop… or radial…).
 - 3D only repaints while something moves. Anything new that animates in 3D must trigger a repaint
   itself.
 - Airport layouts: 116 airports have files in `js/data/layouts`. Every other airport is read from the

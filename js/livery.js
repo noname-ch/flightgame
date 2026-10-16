@@ -96,7 +96,13 @@ function markEngines(scene, hw) {
     const own = o.isMesh && o.geometry.attributes._livpart;
     if (own && !o.geometry.attributes.livPart) o.geometry.setAttribute('livPart', own);
   });
-  scene.traverse((o) => { if (o.isMesh && o.geometry.attributes.position && !o.geometry.attributes.livPart) meshes.push(o); });
+  // (a model that marks its engines itself keeps its marks, but is searched for propellers too)
+  const ownMarks = new Set();
+  scene.traverse((o) => {
+    if (!o.isMesh || !o.geometry.attributes.position || o.geometry.userData.livSearched) return;
+    if (o.geometry.attributes.livPart) ownMarks.add(o);
+    meshes.push(o);
+  });
   const pieces = []; // { box: [x0, x1, y0, y1, z0, z1], mesh, root }
   const roots = new Map();
   for (const m of meshes) {
@@ -147,6 +153,36 @@ function markEngines(scene, hw) {
     if (cowlings.some(({ box: e }) => c[0] > e[0] && c[0] < e[1] && c[1] > e[2] - 0.1 * (e[3] - e[2]) && c[1] < e[3] + 0.1 * (e[3] - e[2]) && c[2] > e[4] && c[2] < e[5])) engine.add(p);
   }
   scene.userData.engines = cowlings.length;
+  // Propellers: blades are pieces thin along the nose, off the fuselage. Touching ones (or one alone) make a
+  // propeller when together they are about as wide as high; its middle is the hub. Their vertices
+  // get the hub in livHub (x, z, 1), so the shader can turn them (livSpin).
+  const thin = pieces.filter(({ box: b }) => {
+    const wide = Math.max(b[1] - b[0], b[5] - b[4]);
+    return b[3] - b[2] < 0.3 * wide && wide > 0.15 * d && Math.abs(b[0] + b[1]) / 2 > 1.2 * hw;
+  });
+  const group = thin.map((_, i) => i);
+  const top = (i) => { while (group[i] !== i) { group[i] = group[group[i]]; i = group[i]; } return i; };
+  const gap = 0.15 * d;
+  for (let i = 0; i < thin.length; i++) for (let j = i + 1; j < thin.length; j++) {
+    const p = thin[i].box, q = thin[j].box;
+    if (p[0] < q[1] + gap && q[0] < p[1] + gap && p[2] < q[3] + gap && q[2] < p[3] + gap && p[4] < q[5] + gap && q[4] < p[5] + gap) group[top(i)] = top(j);
+  }
+  const groups = new Map();
+  thin.forEach((p, i) => {
+    const g = groups.get(top(i)) || { box: [Infinity, -Infinity, Infinity, -Infinity, Infinity, -Infinity], parts: [] };
+    for (let k = 0; k < 6; k += 2) { g.box[k] = Math.min(g.box[k], p.box[k]); g.box[k + 1] = Math.max(g.box[k + 1], p.box[k + 1]); }
+    g.parts.push(p);
+    groups.set(top(i), g);
+  });
+  const hubs = new Map(meshes.map((m) => [m, new Map()])); // mesh -> root -> [x, z]
+  let props = 0;
+  for (const { box: b, parts } of groups.values()) {
+    const dx = b[1] - b[0], dz = b[5] - b[4];
+    if (dx / dz < 0.6 || dx / dz > 1.6 || b[3] - b[2] > 0.3 * Math.max(dx, dz)) continue;
+    for (const p of parts) hubs.get(p.mesh).set(p.root, [(b[0] + b[1]) / 2, (b[4] + b[5]) / 2]);
+    props++;
+  }
+  scene.userData.props = props;
   const marked = new Map(meshes.map((m) => [m, new Set()]));
   for (const p of engine) marked.get(p.mesh).add(p.root);
   for (const m of meshes) {
@@ -154,8 +190,22 @@ function markEngines(scene, hw) {
     const part = new Float32Array(root.length);
     const set = marked.get(m);
     if (set.size) for (let i = 0; i < root.length; i++) part[i] = set.has(root[i]) ? 1 : 0;
-    m.geometry.setAttribute('livPart', new THREE.BufferAttribute(part, 1));
+    if (!ownMarks.has(m)) m.geometry.setAttribute('livPart', new THREE.BufferAttribute(part, 1));
+    m.geometry.userData.livSearched = true;
+    const hub = new Float32Array(root.length * 3);
+    const at = hubs.get(m);
+    if (at.size) for (let i = 0; i < root.length; i++) {
+      const h = at.get(root[i]);
+      if (h) hub.set([h[0], h[1], 1], i * 3);
+    }
+    m.geometry.setAttribute('livHub', new THREE.BufferAttribute(hub, 3));
   }
+  // (a model in one piece has no propellers to turn)
+  scene.traverse((o) => {
+    if (o.isMesh && !o.geometry.attributes.livHub) {
+      o.geometry.setAttribute('livHub', new THREE.BufferAttribute(new Float32Array(o.geometry.attributes.position.count * 3), 3));
+    }
+  });
 }
 
 // Where the fuselage and the fin of this model are, and where the title ({ aspect, at, height, length }) and
@@ -249,8 +299,30 @@ export function measure(scene, file, stretch = 1, title = { aspect: 4.3 }, finMa
   };
 }
 
-const VERT_HEAD = 'attribute float livPart;\nvarying vec3 vLivPos;\nvarying vec3 vLivNor;\nvarying float vLivPart;';
-const VERT_BODY = 'vLivPos = position;\nvLivNor = normal;\nvLivPart = livPart;';
+const VERT_HEAD = `attribute float livPart;
+attribute vec3 livHub;     // of a propeller: its hub (x, z), 1 (else 0, 0, 0)
+uniform float livSpin;     // how far the propellers have turned (radians)
+varying vec3 vLivPos;
+varying vec3 vLivNor;
+varying float vLivPart;
+uniform float livFlex;     // how far the wing tips are bent up (down: below 0), in half spans
+uniform float livSpan;     // half span
+uniform float livHalfW;    // half width of the fuselage`;
+// The propellers turn about their hubs, and the wings bend from the fuselage side out, most at the tips (the
+// paint stays where it was: vLivPos). The tailplanes bend too, but being short hardly at all.
+const VERT_BODY = `vLivPos = position;
+vLivNor = normal;
+vLivPart = livPart;
+if (livHub.z > 0.5) {
+  vec2 livR = transformed.xz - livHub.xy;
+  float livC = cos(livSpin);
+  float livS = sin(livSpin);
+  transformed.xz = livHub.xy + vec2(livC * livR.x - livS * livR.y, livS * livR.x + livC * livR.y);
+}
+{
+  float livOut = max(abs(position.x) - 1.1 * livHalfW, 0.0) / max(livSpan - 1.1 * livHalfW, 0.001);
+  transformed.z += livFlex * livSpan * livOut * livOut;
+}`;
 const FRAG_HEAD = `
 uniform vec3 livBody;
 uniform vec3 livWing;
@@ -377,13 +449,22 @@ export function paintLivery(scene, file, extra, stretch = 1, livery = FG.livery(
     livClean: { value: m.clean },
     livStretch: { value: stretch },
     livHalfWidth: { value: m.halfWidth },
+    livHalfW: { value: m.halfWidth },
+    livSpan: { value: m.span },
   };
   const seen = new Set();
   scene.traverse((o) => {
     if (!o.isMesh || seen.has(o.material) || o.material.transparent) return;
     seen.add(o.material);
-    o.material.onBeforeCompile = (shader) => {
+    // (each material has its own livFlex and livSpin, so an aircraft drawn with copies of them bends and turns
+    // its propellers on its own:
+    // js/view3d.js ownMaterials)
+    o.material.userData.livFlex = { value: 0 };
+    o.material.userData.livSpin = { value: 0 };
+    o.material.onBeforeCompile = function (shader) {
       Object.assign(shader.uniforms, uniforms);
+      shader.uniforms.livFlex = this.userData.livFlex;
+      shader.uniforms.livSpin = this.userData.livSpin;
       if (extra) extra(shader);
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>', `#include <common>\n${VERT_HEAD}`)

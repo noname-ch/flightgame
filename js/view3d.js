@@ -158,10 +158,60 @@ function planeModel(type) {
     const model = scene.clone();
     const size = modelSize(type);
     model.scale.set(size.wide, size.len, size.wide);
+    g.userData.liv = ownMaterials(model);
     g.clear();
     g.add(model);
   }, () => {});
   return g;
+}
+
+// Gives a clone of a model its own copies of the shared livery materials (same shader program), so its wings
+// bend and its propellers turn on their own. Returns their userData: livFlex and livSpin uniforms (js/livery.js).
+function ownMaterials(model) {
+  const copies = new Map();
+  model.traverse((o) => {
+    if (!o.isMesh || !o.material.userData.livFlex) return;
+    if (!copies.has(o.material)) {
+      const m = o.material.clone();
+      m.onBeforeCompile = o.material.onBeforeCompile;
+      m.customProgramCacheKey = o.material.customProgramCacheKey;
+      copies.set(o.material, m);
+    }
+    o.material = copies.get(o.material);
+  });
+  return [...copies.values()].map((m) => m.userData);
+}
+
+// How fast the propellers turn (rad/s): off at the gate, slow while taxiing, fastest for take-off and climb. Jets
+// have none (some of their fans are found as propellers too, js/livery.js, but stay still).
+const PROP_RATE = { pushback: 5, 'taxi-out': 7, takeoff: 15, climb: 14, cruise: 12, descent: 9, approach: 10, landing: 9, 'taxi-in': 7 };
+function propRate(type, pose) {
+  const look = D.looks && D.looks[type];
+  if (!pose.st || !look || !/^(prop|radial)/.test(look.eng || '') || !(FG.ui && FG.ui.speed > 0)) return 0; // (paused: still)
+  return PROP_RATE[pose.st.phase] || 0;
+}
+
+// How far the wing tips are bent up, in half spans (looks only). On the ground they droop under their own
+// weight; as the lift builds on the take-off run they come up, more in turns, pulling up into a climb and in
+// gusts, less in a descent. Bigger aircraft have the softer wings. `ph`: the plane's own phase of the flutter.
+function wingFlex(type, pose, ph) {
+  const st = pose.st;
+  const look = D.looks && D.looks[type];
+  const soft = 0.6 + 0.4 * Math.min(1, (look ? look.len : 40) / 60);
+  if (!st) return -0.012 * soft;
+  const vLift = G.perf(type).vLof;
+  const air = AIRBORNE[st.phase] || (st.phase === 'takeoff' && !st.ground);
+  const lift = air ? 1 : Math.min(1, (st.speedKmh / Math.max(1, vLift)) ** 2);
+  let g = 1 / Math.cos(Math.min(60, Math.abs(pose.bank || 0)) * DEG) + 0.03 * ((pose.pitch || 0) - 2.5);
+  const agl = (st.altFt || 0) - (st.fieldFt || 0);
+  const s = performance.now() / 1000;
+  if (st.windKt > 8) {
+    // wind: a little flutter, gusts (js/weather.js) bump the wings up and down
+    const k = Math.min(1, (st.windKt - 8) / 30) * (st.gusty && agl < 10000 ? 1 : 0.3);
+    g += k * 0.35 * (0.6 * Math.sin(s * 2.3 + ph) + 0.4 * Math.sin(s * 5.1 + ph * 1.7));
+  }
+  g = Math.max(0.5, Math.min(1.8, g));
+  return soft * (-0.012 * (1 - lift) + 0.045 * g * lift);
 }
 
 // Placeholder low-poly aircraft, about real size in metres. Local axes: x = right wing, y = nose, z = up.
@@ -900,6 +950,16 @@ function placeModel(e, pose, altM, exag, globe, now, lineUp) {
   e.att.heading = (e.att.heading + wrap180(pose.heading - e.att.heading) * k + 360) % 360;
   e.att.bank += ((pose.bank || 0) - e.att.bank) * k;
   e.att.pitch += ((pose.pitch || 0) - e.att.pitch) * k;
+  const liv = e.obj.userData.liv;
+  if (liv && liv.length) {
+    const target = wingFlex(e.type, pose, e.obj.id * 1.7);
+    e.flex = e.flex == null ? target : e.flex + (target - e.flex) * k;
+    // propellers spin up and down with the engines (looks only: slow enough not to strobe)
+    const dt = e.lastFrame == null ? 0 : Math.min(0.25, Math.max(0, (now - e.lastFrame) / 1000));
+    e.spinRate = (e.spinRate || 0) + (propRate(e.type, pose) - (e.spinRate || 0)) * (1 - Math.exp(-dt / 1.5));
+    e.spin = ((e.spin || 0) + e.spinRate * dt) % (2 * Math.PI);
+    for (const u of liv) { u.livFlex.value = e.flex; u.livSpin.value = e.spin; }
+  }
   e.lastFrame = now;
   const h = e.att.heading * DEG;
   const pitch = e.att.pitch * DEG;
@@ -1106,6 +1166,7 @@ const planeLayer = {
     const view = zoom >= 5 ? viewBox(map) : null;
     const parked = {}; // airport code -> planes on the ground there so far
     let moving = 0; // fastest plane in view, in pixels per second
+    let animating = false; // a plane in view, big enough to see, turns its propellers or flutters its wings
     const alive = new Set();
     const livery = FG.livery().id;
     for (const p of G.state.planes) {
@@ -1136,6 +1197,7 @@ const planeLayer = {
       const altM = drawnAlt(map, p, pose, len, exag);
       if (p.id === sel && !cine) this.drawTrack(p, len, exag, globe);
       placeModel(e, pose, altM, exag, globe, now, n);
+      if ((e.spinRate > 0.3 || (st && st.windKt > 8)) && len * exag / mpp > 40) animating = true;
       const { pos } = tmp;
       e.world.copy(pos);
       e.lngLat = [pose.lon, pose.lat];
@@ -1168,7 +1230,7 @@ const planeLayer = {
     // Next frame: right away while a plane in view visibly moves or the camera follows one; planes that
     // crawl across the screen less often; when nothing in view moves (paused), once a second for the
     // planes that come into view.
-    if (v.follow || moving > 30) map.triggerRepaint();
+    if (v.follow || moving > 30 || (animating && FG.ui && FG.ui.speed > 0)) map.triggerRepaint();
     else repaintIn(moving > 0 ? Math.min(250, 1000 / moving) : 1000);
   },
 };

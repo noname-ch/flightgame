@@ -62,7 +62,10 @@ rain, snow, fog and lightning show over the map, and a chip at the top says the 
 airport panel and the plane window). In 3D the sky greys over under cloud. Planes **crab** in a crosswind: the
 nose points partly into the wind so they still track their path, and the pilots kick it straight just before
 touchdown; in gusty wind and thunderstorms they bump about a little. The plane window shows the wind and the crab
-angle. The weather is for looks: flights don't wait for it (storm events still close airports). It is light on
+angle. In 3D the wings bend a little: they droop on the ground, come up as the lift builds on the take-off run (more
+in turns and climbs, less in descents) and flutter in the wind. The propellers of turboprops turn while their
+engines run (not yet on the Twin Otter, DC-3 and Ju 52, whose propellers are one piece with the engines in their
+models). The weather is for looks: flights don't wait for it (storm events still close airports). It is light on
 the computer (one half-resolution canvas in 2D, one batch of sprites in 3D, CSS for rain and snow);
 Settings → On the map → *Clouds and weather* turns it all off.
 
