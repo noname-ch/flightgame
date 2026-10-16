@@ -402,7 +402,7 @@ script errors) go with it unless you untick them. Signed in to GitHub (airport e
 the repo; from `./play.sh` it is written into `BUGS.md`; otherwise GitHub's new-issue page opens filled in (you
 need a GitHub account), or Copy puts it on the clipboard.
 
-Controls: Space = pause, 1/2/3 = speed, V = 2D/3D (and the chase camera), B = fly-by camera, N = wing camera. M = sound on/off, F6 = sound mixer (or 🎚 in the ⋯ menu, or Settings → Sound): how loud each part is (bass, roar, screech, whine, air, engine start, far away, APU), for all planes, jets, turboprops, pistons or one aircraft type, with ▶ to hear that type. The game keeps running in a background tab. It autosaves to the browser (localStorage; the airport layouts read off the map are kept apart, in IndexedDB).
+Controls: Space = pause, 1/2/3 = speed, V = 2D/3D (and the chase camera), B = fly-by camera, N = wing camera. M = sound on/off, F6 = sound mixer (or 🎚 in the ⋯ menu, or Settings → Sound): how loud each part is (bass, roar, screech, whine, air, engine start, far away, APU) and the screech's pitch and speed, for all planes, jets, turboprops, pistons or one aircraft type, with ▶ to hear that type. The game keeps running in a background tab. It autosaves to the browser (localStorage; the airport layouts read off the map are kept apart, in IndexedDB).
 
 ## Extending
 

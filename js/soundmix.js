@@ -1,5 +1,5 @@
 // The sound mixer (F6, or 🎚 in the ⋯ menu): how loud each part of the planes' sound is (bass, roar, screech, whine,
-// air, …), for all planes, one engine kind or one aircraft type. A type takes what is set for it, else its kind's,
+// air, …) and the screech's pitch and speed, for all planes, one engine kind or one aircraft type. A type takes what is set for it, else its kind's,
 // else all planes'. The planes playing change at once; ▶ plays the chosen type's flight (FG.sound.preview). The
 // numbers live in sound.js (FG.sound.mix / setMix, kept with the sound settings).
 (function () {
@@ -43,7 +43,7 @@
       const note = own ? '' : from ? `from ${esc(nameOf(from))}` : '';
       return `<div class="mix-row${own ? ' own' : ''}">
         <label for="mix-${part}">${esc(FG.sound.parts[part])}</label>
-        <input id="mix-${part}" type="range" min="0" max="3" step="0.05" value="${x}" data-part="${part}">
+        <input id="mix-${part}" type="range" min="${FG.sound.range(part)[0]}" max="${FG.sound.range(part)[1]}" step="0.05" value="${x}" data-part="${part}">
         <span class="mix-val">${pct(x)}</span>
         <button class="mini" data-reset="${part}" title="${own ? 'Back to what the planes above set' : 'Not changed here'}"${own ? '' : ' disabled'}>↺</button>
         ${note ? `<div class="mix-note muted">${note}</div>` : ''}</div>`;
@@ -52,7 +52,7 @@
     mx.win.body.innerHTML = `
       <div class="mix-pick"><select data-target>${options()}</select>
         <button class="mini${FG.sound.previewing ? ' on' : ''}" data-play title="Play a whole flight of ${esc(nameOf(type || (KINDS[t] ? t : 'jet')))}">${FG.sound.previewing ? '■' : '▶'}</button></div>
-      <p class="muted mix-help">Each part ×0 to ×3. A type follows its kind and all planes until you change it here.${FG.sound.on ? '' : ' Sound is off: ▶ turns it on.'}</p>
+      <p class="muted mix-help">Each part ×0 to ×3, the screech's pitch ×0.5 to ×2 and speed ×0.25 to ×2. A type follows its kind and all planes until you change it here.${FG.sound.on ? '' : ' Sound is off: ▶ turns it on.'}</p>
       ${rows}
       <div class="mix-foot"><button class="mini" data-resetall${Object.keys(FG.sound.mix(t)).length ? '' : ' disabled'}>Reset ${esc(nameOf(t))}</button></div>`;
   }
