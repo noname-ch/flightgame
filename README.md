@@ -317,8 +317,10 @@ Cameras, as in DCS (on phones the buttons show only their icons):
   plane. N again: the other wing.
 
 V goes back to the chase camera from the fly-by or wing camera; otherwise it switches between 2D and 3D. B and N
-open the 3D view if needed and take the selected plane (or the first one in the air). 🛰 Satellite toggles the
-satellite imagery (on by default). The aircraft are glTF models from
+open the 3D view if needed and take the selected plane (or the first one in the air). The camera buttons and
+🛰 Satellite sit at the bottom of the 3D view. 🛰 Satellite toggles the satellite imagery (on by default);
+Settings → Map style sets it too (Satellite, or the map for Standard and Dark). Where the pictures are still
+loading, the ground is dark. The aircraft are glTF models from
 `models/` (Flightradar24's GPLv2 models, see `models/README.md`); `js/data/models.js` says which type uses
 which file; six more come from FlightGear aircraft, and the Saab 340 and Saab 2000 from 3D-print models on Thingiverse.
 The hangar marketplace shows the same models: the selected type as a live 3D

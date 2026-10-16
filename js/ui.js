@@ -2035,7 +2035,10 @@
     if (ui.legend) ui.legend.style.display = set.legend ? '' : 'none';
   }
   function setBasemap(name) {
-    if (!ui.base[name] || name === ui.baseName) return;
+    if (!ui.base[name]) return;
+    // (the 3D view's ground too: satellite pictures, or the map; picked again, it brings the 3D satellite back)
+    if (FG.view3d && FG.view3d.setSatellite) FG.view3d.setSatellite(name === 'Satellite');
+    if (name === ui.baseName) return;
     ui.map.removeLayer(ui.base[ui.baseName]);
     ui.base[name].addTo(ui.map);
     ui.baseName = name;

@@ -797,6 +797,30 @@ try {
     if (fly.cam !== 'flyby' || !fly.spot) errors.push(`3D fly-by camera (B) did not start: ${JSON.stringify(fly)}`);
     if (!side1 || side2 !== -side1) errors.push(`3D wing camera (N, N again for the other wing) went wrong: ${side1} then ${side2}`);
     if (!back.on || !back.follow || back.cam !== 'chase' || back.pitch > 80.01) errors.push(`V did not bring back the chase camera: ${JSON.stringify(back)}`);
+
+    step('3D satellite: 🛰 not under the plane window while following; Settings → Map style switches the 3D ground too');
+    const sat = await evaluate(async () => {
+      const v = FG.view3d;
+      const shown = () => ({ sat: v.satellite, layer: v.map.getLayoutProperty('satellite', 'visibility'),
+        bg: v.map.getPaintProperty(v.map.getStyle().layers.find((l) => l.type === 'background').id, 'background-color') });
+      FG.planeWin.open(G.state.planes[0].id);
+      await new Promise((r) => setTimeout(r, 300));
+      // (the plane window opens top left, where the 3D buttons were; other popups the test left open don't count)
+      const b = document.querySelector('#view3d .sat').getBoundingClientRect();
+      const w = document.querySelector('.plane-win').getBoundingClientRect();
+      const covered = b.width && w.width && b.left < w.right && w.left < b.right && b.top < w.bottom && w.top < b.bottom
+        ? `the plane window (${Math.round(w.left)},${Math.round(w.top)} ${Math.round(w.width)}×${Math.round(w.height)})` : !b.width ? 'not shown' : null;
+      document.getElementById('settings-btn').click();
+      document.querySelector('[data-set="base"][data-v="Standard"]').click();
+      const std = shown();
+      document.querySelector('[data-set="base"][data-v="Satellite"]').click();
+      const back = shown();
+      document.getElementById('settings').hidden = true;
+      return { covered, std, back };
+    });
+    if (sat.covered) errors.push(`3D: the 🛰 Satellite button is covered (by ${sat.covered}) while following`);
+    if (sat.std.sat || sat.std.layer !== 'none') errors.push(`3D: Settings → Map style → Standard did not switch the 3D satellite off (${JSON.stringify(sat.std)})`);
+    if (!sat.back.sat || sat.back.layer !== 'visible' || sat.back.bg === sat.std.bg) errors.push(`3D: Settings → Map style → Satellite did not bring the 3D satellite back (${JSON.stringify(sat.back)})`);
     await key('v');
     await sleep(1000);
   }

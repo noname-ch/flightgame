@@ -845,8 +845,9 @@ i.s-net { background: var(--muted); }
 #view3d .maplibregl-canvas { outline: none; }
 .view3d-controls {
   position: absolute;
-  top: 10px;
-  left: 60px; /* next to the zoom/compass buttons; the right side is where the sidebar opens */
+  bottom: 40px; /* (above the map credits, which reach the middle on a wide screen) */
+  left: 50%; /* (bottom centre: the plane window opens top left, where they were hidden under it; the right side is where the sidebar opens) */
+  transform: translateX(-50%);
   z-index: 2;
   display: flex;
   gap: 6px;

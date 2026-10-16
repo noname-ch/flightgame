@@ -671,6 +671,7 @@ function phoneDrapes(map) {
   map.terrain.qualityFactor = 1;
   rtt.rttSize = map.terrain.tileManager.tileSize;
 }
+const LOADING_GROUND = '#3a4236'; // under the satellite pictures where they are still loading
 function transformStyle(_prev, style) {
   style.projection = { type: 'globe' };
   // Terrain heights from zoom 12 on are only made larger, not loaded finer: runways are flat, and the
@@ -691,10 +692,17 @@ function transformStyle(_prev, style) {
   };
   const firstSymbol = style.layers.findIndex((l) => l.type === 'symbol');
   // The map's own land, water and roads lie under the satellite picture: not drawn (nor their tiles
-  // read) while it shows. The background stays for where an aerial tile is still loading.
+  // read) while it shows. The background stays for where an aerial tile is still loading, dark then: the
+  // map's cream land with the labels on it looked like the plain map had come back (following a plane, the
+  // tiles near it are often still on their way).
   v.underSatellite = style.layers.slice(0, firstSymbol).filter((l) => l.type !== 'background').map((l) => l.id);
   for (const l of style.layers.slice(0, firstSymbol)) {
     if (v.underSatellite.includes(l.id)) l.layout = { ...l.layout, visibility: v.satellite ? 'none' : (l.layout && l.layout.visibility) || 'visible' };
+  }
+  const bg = style.layers.find((l) => l.type === 'background');
+  if (bg) {
+    v.landColor = (bg.paint && bg.paint['background-color']) || '#f8f4f0';
+    bg.paint = { ...bg.paint, 'background-color': v.satellite ? LOADING_GROUND : v.landColor };
   }
   style.layers.splice(firstSymbol, 0,
     { id: 'satellite', type: 'raster', source: 'satellite', layout: { visibility: v.satellite ? 'visible' : 'none' } },
@@ -1592,17 +1600,25 @@ function controls() {
   };
   box.querySelector('.flyby').onclick = () => camera('flyby');
   box.querySelector('.wing').onclick = () => camera('wing');
-  box.querySelector('.sat').onclick = (ev) => {
-    v.satellite = !v.satellite;
-    ev.currentTarget.classList.toggle('active', v.satellite);
-    if (v.map.getLayer('satellite')) {
-      v.map.setLayoutProperty('satellite', 'visibility', v.satellite ? 'visible' : 'none');
-      for (const id of v.underSatellite || []) v.map.setLayoutProperty(id, 'visibility', v.satellite ? 'none' : 'visible');
-    }
-    savePrefs();
-  };
+  box.querySelector('.sat').onclick = () => setSatellite(!v.satellite);
   box.querySelector('.sat').classList.toggle('active', v.satellite);
   return box;
+}
+
+// Satellite pictures or the map's own land, water and roads as the ground: the 🛰 button, and Settings → Map style
+// (FG.view3d.setSatellite). On the 3D map and the plane windows' cameras alike.
+const chaseMaps = new Set();
+function setSatellite(on) {
+  v.satellite = !!on;
+  document.querySelector('#view3d .sat')?.classList.toggle('active', v.satellite);
+  for (const map of [v.map, ...chaseMaps]) {
+    if (!map || !map.getLayer('satellite')) continue;
+    map.setLayoutProperty('satellite', 'visibility', v.satellite ? 'visible' : 'none');
+    for (const id of v.underSatellite || []) if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', v.satellite ? 'none' : 'visible');
+    const bg = map.getStyle().layers.find((l) => l.type === 'background');
+    if (bg) map.setPaintProperty(bg.id, 'background-color', v.satellite ? LOADING_GROUND : v.landColor);
+  }
+  savePrefs();
 }
 
 function createMap(fit) {
@@ -1759,6 +1775,7 @@ function chase(container, id) {
     dragPan: false, dragRotate: false, keyboard: false, doubleClickZoom: false, touchZoomRotate: false, boxZoom: false,
   });
   map.setStyle('https://tiles.openfreemap.org/styles/liberty', { transformStyle });
+  chaseMaps.add(map);
   if (map.setCenterClampedToGround) map.setCenterClampedToGround(false);
   map.once('style.load', () => {
     map.setSourceTileLodParams(LOD.zoomLevels, LOD.tileRatio);
@@ -1801,7 +1818,7 @@ function chase(container, id) {
   return {
     setPlane(n) { if (n !== cam.id) { cam.id = n; cam.bearing = null; cam.zoom = null; cam.userZoom = false; } },
     resize() { map.resize(); },
-    destroy() { cam.dead = true; cancelAnimationFrame(cam.raf); map.remove(); },
+    destroy() { cam.dead = true; cancelAnimationFrame(cam.raf); chaseMaps.delete(map); map.remove(); },
   };
 }
 v.chase = chase;
@@ -1918,5 +1935,6 @@ else window.addEventListener('fg-ui-ready', init, { once: true });
 // Used by the plane strip in ui.js: double-click a plane to follow it.
 v.setFollow = (on) => setFollow(on);
 v.setOn = (on) => setOn(on);
+v.setSatellite = (on) => setSatellite(on); // Settings → Map style
 v.from2d = () => from2d(); // the 2D map moved while 3D is open (a new game, a loaded save)
 FG.view3d = v; // for debugging

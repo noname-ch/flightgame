@@ -108,6 +108,10 @@ Play online: https://noname-ch.github.io/flightgame/ (GitHub Pages, deployed fro
   `v.orbit`, MapLibre's own dragging is off while following), 'flyby' (`flybyTick`, spot in `v.flyby`) or 'wing'
   (`wingTick`, spot in `WING_CAM`). Keys V/B/N and `camera(mode)`. Fly-by and wing place the camera with
   `map.calculateCameraOptionsFromTo` (pitch up to 175, roll), and draw the followed plane at real size, always posed.
+- 3D ground: `setSatellite(on)` in view3d.js (🛰 button, and ui.js `setBasemap` through `FG.view3d.setSatellite`:
+  Settings → Map style sets 2D and 3D) switches the satellite layer, the map layers under it (`v.underSatellite`) and
+  the background (`LOADING_GROUND`, dark, where pictures are still loading) on the 3D map and the plane windows'
+  cameras. The 3D buttons sit at the bottom centre: top left, the plane window covered them.
 - 3D only repaints while something moves. Anything new that animates in 3D must trigger a repaint
   itself.
 - Airport layouts: 116 airports have files in `js/data/layouts`. Every other airport is read from the
