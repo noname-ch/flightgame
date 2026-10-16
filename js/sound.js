@@ -83,9 +83,32 @@
     },
   };
 
-  const prefs = { on: false, volume: 0.6, style: 'standard', preview: 'jet' }; // (off until turned on: ROADMAP)
+  const prefs = { on: false, volume: 0.6, style: 'standard', preview: 'jet', mix: {} }; // (off until turned on: ROADMAP)
   try { Object.assign(prefs, JSON.parse(localStorage.getItem(KEY)) || {}); } catch (e) { /* private mode */ }
   if (!STYLES[prefs.style]) prefs.style = 'standard';
+  if (!prefs.mix || typeof prefs.mix !== 'object') prefs.mix = {};
+
+  // ---------- the mixer (F6, js/soundmix.js) ----------
+  // How loud each part of a plane's sound is (× 0..3), set for all planes ('all'), an engine kind ('jet', 'turboprop',
+  // 'piston') or one type ('A320neo'): prefs.mix[target][part]. A plane takes its type's, else its kind's, else all
+  // planes' (else 1).
+  const PARTS = {
+    bass: 'Bass and rumble', roar: 'Roar', screech: 'Screech', whine: 'Whine', prop: 'Propellers',
+    engine: 'Engine (pistons)', air: 'Air rushing past', start: 'Engine start', far: 'Far away', apu: 'APU',
+  };
+  const KIND_PARTS = {
+    jet: ['bass', 'roar', 'screech', 'whine', 'air', 'start', 'far', 'apu'],
+    turboprop: ['prop', 'roar', 'whine', 'air', 'far', 'apu'],
+    piston: ['engine', 'prop', 'roar', 'air', 'far'],
+  };
+  const mixOf = (type, kind) => {
+    const m = {};
+    for (const part in PARTS) {
+      const x = [type, kind, 'all'].map((k) => prefs.mix[k] && prefs.mix[k][part]).find((y) => y != null);
+      m[part] = x == null ? 1 : x;
+    }
+    return m;
+  };
   const savePrefs = () => { try { localStorage.setItem(KEY, JSON.stringify(prefs)); } catch (e) { /* private mode */ } };
 
   const s = { ctx: null, master: null, noise: null, wobble: null, wave: null, rec: {}, voices: new Map(), picked: [], tick: 0, last: 0, timer: null, demo: null };
@@ -122,6 +145,7 @@
       pr = { kind: 'jet', old, fan, fanLo: fan * 0.26, fanHi: fan * 0.5, shaft: fan / (look.bigFan ? 20 : 30), core: (old ? 2600 : 2200) * j, apu: true, afterburner: eng === 'concorde' };
     }
     pr.size = Math.min(1.25, 0.5 + Math.sqrt(ac.seats || 100) / 25) * (four ? 1.1 : 1);
+    pr.type = type;
     return (profiles[type] = pr);
   }
 
@@ -389,7 +413,7 @@
   function makeVoice(pr) {
     const ctx = s.ctx;
     const S = STYLES[prefs.style];
-    const v = { pr, S, srcs: [], L: {}, sm: null, last: {}, nextClick: 0, kill: 0 };
+    const v = { pr, S, M: mixOf(pr.type, pr.kind), srcs: [], L: {}, sm: null, last: {}, nextClick: 0, kill: 0 };
     const osc = (type, f) => {
       const o = ctx.createOscillator();
       if (type === 'radial') o.setPeriodicWave(s.wave); else o.type = type;
@@ -637,6 +661,7 @@
   function sound(v, e, g, speedMs, wind, at, dtGame, speed, fade) {
     const pr = v.pr;
     const S = v.S;
+    const M = v.M;
     const L2 = v.L;
     const T = (param, val, tau = 0.06) => param.setTargetAtTime(Number.isFinite(val) ? val : 0, at, tau);
     // The engines follow the levers with a lag (in game time).
@@ -654,7 +679,7 @@
     const far = L2.far ? smooth(FAR[0], FAR[1], g.d) : 0;
     T(v.mix.gain, 1 - 0.85 * far, 0.3);
     if (L2.far) {
-      T(L2.farG.gain, far * FAR_LEVEL * sz * run * (0.05 + 0.95 * sm.pw * sm.pw), 0.3); // (not an APU, hardly idle)
+      T(L2.farG.gain, M.far * far * FAR_LEVEL * sz * run * (0.05 + 0.95 * sm.pw * sm.pw), 0.3); // (not an APU, hardly idle)
       L2.far.playbackRate.setTargetAtTime(dop, at, 0.06);
     }
     T(v.air.frequency, Math.min(S.top, g.near ? 16000 : Math.min(16000, 16000 / (1 + g.d / 300))));
@@ -666,64 +691,64 @@
       const n2 = sm.n2;
       const old = pr.old ? 1.5 : 1;
       // The roar: low and full (pink noise through two low-passes), brighter with power and from behind.
-      T(L2.roar.gain, run * sz * S.roar * (0.1 + 1.6 * n1 ** 3) * (1 + 0.6 * behind) * (1 - 0.2 * front) * old * (1 + 0.5 * sm.rev));
+      T(L2.roar.gain, M.roar * run * sz * S.roar * (0.1 + 1.6 * n1 ** 3) * (1 + 0.6 * behind) * (1 - 0.2 * front) * old * (1 + 0.5 * sm.rev));
       const fc = (S.roarLo + S.roarHi * n1 ** S.roarPow) * (1 + 0.25 * behind + 0.4 * sm.rev) * (pr.old ? 1.2 : 1);
       T(L2.roarF.frequency, fc);
       T(L2.roarF2.frequency, fc * S.roarSpread);
-      const rumble = run * sz * S.rumble * (0.08 + 1.2 * n1 ** 3) * (0.5 + 1.0 * behind) * (pr.afterburner && e.phase === 'takeoff' ? 2 : 1);
+      const rumble = M.bass * run * sz * S.rumble * (0.08 + 1.2 * n1 ** 3) * (0.5 + 1.0 * behind) * (pr.afterburner && e.phase === 'takeoff' ? 2 : 1);
       T(L2.rumble.gain, rumble);
       T(L2.crackle.gain, rumble * 0.5 * S.crackle * behind * smooth(0.85, 0.92, n1));
-      T(L2.drone.gain, run * sz * 0.16 * S.drone * smooth(0.25, 0.9, n1));
+      T(L2.drone.gain, M.bass * run * sz * 0.16 * S.drone * smooth(0.25, 0.9, n1));
       T(L2.drone1.frequency, Math.max(5, pr.shaft * n1 * dop));
       T(L2.drone2.frequency, Math.max(5, pr.shaft * n1 * dop * 1.001));
       T(L2.droneF.frequency, 150 + 350 * n1);
       // The whine: clear at idle, it fades under the roar as the power comes up.
       const fanHz = n1 < IDLE ? pr.fanLo * n1 / IDLE : pr.fanLo + (pr.fanHi - pr.fanLo) * (n1 - IDLE) / (1 - IDLE);
-      T(L2.fan.gain, sz * 0.16 * S.fan * smooth(0.04, 0.18, n1) * (0.6 + 0.9 * front) * (pr.old ? 0.35 : 1) * (1 - 0.75 * smooth(0.3, 0.9, n1)));
+      T(L2.fan.gain, M.whine * sz * 0.16 * S.fan * smooth(0.04, 0.18, n1) * (0.6 + 0.9 * front) * (pr.old ? 0.35 : 1) * (1 - 0.75 * smooth(0.3, 0.9, n1)));
       T(L2.fan1.frequency, Math.max(20, fanHz * dop));
       T(L2.fan2.frequency, Math.max(20, fanHz * dop * 1.0012));
-      T(L2.core.gain, sz * 0.035 * S.core * smooth(0.02, 0.12, n2) * (pr.old ? 2 : 1) * (1 - 0.8 * n1));
+      T(L2.core.gain, M.whine * sz * 0.035 * S.core * smooth(0.02, 0.12, n2) * (pr.old ? 2 : 1) * (1 - 0.8 * n1));
       T(L2.core1.frequency, Math.max(20, pr.core * S.tone * n2 * dop));
       T(L2.saw.gain, pr.old ? 0 : sz * 1.2 * S.saw * smooth(0.82, 0.92, n1) * front ** 1.5);
       // The screech: up with the power, from all round (a little more ahead), old jets more.
       const scrHz = Math.min(2000, 1.5 * pr.fan * (0.55 + 0.45 * n1)) * dop; // (higher was a hiss: small fans)
-      T(L2.screech.gain, run * sz * SCREECH * S.screech * (0.04 + 0.96 * smooth(0.25, 0.9, n1)) * (0.8 + 0.4 * front) * (pr.old ? 1.3 : 1));
+      T(L2.screech.gain, M.screech * run * sz * SCREECH * S.screech * (0.04 + 0.96 * smooth(0.25, 0.9, n1)) * (0.8 + 0.4 * front) * (pr.old ? 1.3 : 1));
       T(L2.scrF1.frequency, scrHz);
       T(L2.scrF2.frequency, scrHz * 1.25);
       T(L2.saw1.frequency, Math.max(20, pr.shaft * n1 * dop));
     } else if (pr.kind === 'turboprop') {
       const pw = sm.pw;
       const np = sm.np;
-      T(L2.prop.gain, sz * S.prop * (0.05 + 0.55 * pw ** 1.3) * smooth(0.05, 0.4, np) * (1 + 0.3 * front));
+      T(L2.prop.gain, M.prop * sz * S.prop * (0.05 + 0.55 * pw ** 1.3) * smooth(0.05, 0.4, np) * (1 + 0.3 * front));
       T(L2.prop1.frequency, Math.max(5, pr.prop * np * dop));
       T(L2.prop2.frequency, Math.max(5, pr.prop * np * dop * 1.007));
       T(L2.propF.frequency, (250 + 1400 * pw + 300 * np) * dop * S.bright);
-      T(L2.roar.gain, run * sz * S.roar * (0.04 + 0.5 * pw * pw) * (1 + 0.6 * behind) * (1 + 0.5 * sm.rev));
+      T(L2.roar.gain, M.roar * run * sz * S.roar * (0.04 + 0.5 * pw * pw) * (1 + 0.6 * behind) * (1 + 0.5 * sm.rev));
       T(L2.roarF.frequency, (300 + 900 * pw) * S.bright);
-      T(L2.core.gain, sz * 0.04 * S.core * pr.whineGain * smooth(0.03, 0.15, sm.n2) * (1 - 0.4 * pw));
+      T(L2.core.gain, M.whine * sz * 0.04 * S.core * pr.whineGain * smooth(0.03, 0.15, sm.n2) * (1 - 0.4 * pw));
       T(L2.core1.frequency, Math.max(20, pr.whine * S.tone * sm.n2 * dop));
     } else {
       const pw = sm.pw;
       const np = sm.np;
-      const base = (sz * (sm.crank ? 0.2 * sm.crank : 0) + run * sz * (0.2 + 1.0 * pw)) * S.prop;
+      const base = M.engine * (sz * (sm.crank ? 0.2 * sm.crank : 0) + run * sz * (0.2 + 1.0 * pw)) * S.prop;
       T(L2.eng.gain, base);
       T(L2.rough.gain, base * (0.2 + 0.6 * sm.rough + (sm.crank ? 0.5 : 0)));
       T(L2.eng1.frequency, Math.max(1, pr.crank * np * dop));
       T(L2.eng2.frequency, Math.max(1, pr.crank * np * dop * 1.013));
       T(L2.engF.frequency, (250 + 1600 * np ** 1.2) * S.bright);
-      T(L2.prop.gain, sz * S.prop * smooth(0.1, 0.3, np) * (0.03 + 0.3 * pw));
+      T(L2.prop.gain, M.prop * sz * S.prop * smooth(0.1, 0.3, np) * (0.03 + 0.3 * pw));
       T(L2.prop1.frequency, Math.max(5, pr.prop * np * dop));
       T(L2.propF.frequency, (300 + 1400 * pw) * S.bright);
-      T(L2.roar.gain, run * sz * S.roar * (0.025 + 0.2 * pw));
+      T(L2.roar.gain, M.roar * run * sz * S.roar * (0.025 + 0.2 * pw));
       T(L2.roarF.frequency, (250 + 600 * pw) * S.bright);
-      T(L2.starter.gain, sz * 0.05 * sm.crank);
+      T(L2.starter.gain, M.engine * sz * 0.05 * sm.crank);
       T(L2.starter1.frequency, 260 + 260 * clamp01((e.start || 0) / 0.4));
     }
-    if (L2.apu) T(L2.apu.gain, sz * 0.02 * sm.apu, 0.4);
+    if (L2.apu) T(L2.apu.gain, M.apu * sz * 0.02 * sm.apu, 0.4);
     // The air past the plane: grows with speed; gear and flaps out on the approach add to it.
     const ms = Math.min(speedMs, 270);
     const dirty = (e.phase === 'approach' || (e.phase === 'landing' && ms > 40)) ? 0.12 : 0;
-    const air = sz * S.air * (0.45 * (ms / 200) ** 1.5 + dirty);
+    const air = M.air * sz * S.air * (0.45 * (ms / 200) ** 1.5 + dirty);
     T(L2.air.gain, air, 0.15);
     T(L2.gust.gain, air * S.gust, 0.15);
     T(L2.airF.frequency, (350 + 4.5 * ms) * dop * S.airHz);
@@ -750,10 +775,17 @@
     // A jet's start: the recording of its starter whistling up, once, from the start of it (faded out if the start is
     // over sooner, fast-forwarded).
     if (pr.kind === 'jet' && s.rec.start) {
-      if (e.start != null && was.start == null && e.start < 0.3 && speed <= 60 && !v.startRec) v.startRec = oneShot(v, s.rec.start, sz * START_LEVEL * Math.max(S.fan, S.core), at);
+      if (e.start != null && was.start == null && e.start < 0.3 && speed <= 60 && !v.startRec) v.startRec = oneShot(v, s.rec.start, M.start * sz * START_LEVEL * Math.max(S.fan, S.core), at);
       if (v.startRec && e.start == null) { v.startRec.gain.setTargetAtTime(0, at, 0.4); v.startRec = null; }
     }
     v.last = { lit: !!e.lit, phase: e.phase, start: e.start };
+  }
+
+  // The mixer changed: every voice takes its parts' levels again (kept with the settings).
+  function remix() {
+    savePrefs();
+    for (const v of s.voices.values()) v.M = mixOf(v.pr.type, v.pr.kind);
+    if (s.demo) s.demo.v.M = mixOf(s.demo.v.pr.type, s.demo.v.pr.kind);
   }
 
   // A new style: every voice is built again in it (keeping where its engines are), the old one fades out.
@@ -825,14 +857,15 @@
     if (d.seg !== seg[0]) { d.seg = seg[0]; d.label = seg[1]; showPreview(); }
   }
   // (from: a DEMO id to start at, or a time in s; hold: a DEMO id to stay at, three quarters through it; dist: m)
-  function startPreview(hold, from = 0, dist = 0) {
+  function startPreview(hold, from = 0, dist = 0, type = null) {
     if (s.demo) fadeDrop(s.demo.v, 0.03);
     const kind = PREVIEW_TYPES[prefs.preview] ? prefs.preview : 'jet';
+    const pt = type && D.aircraft[type] ? type : PREVIEW_TYPES[kind]; // (the mixer previews the type it sets)
     let t = typeof from === 'number' ? from : 0;
     if (typeof from === 'string') {
       for (const x of DEMO) { if (x[0] === from) { t += x[0] === hold ? 0.75 * x[2] : 0; break; } t += x[2]; }
     }
-    s.demo = { kind, t, age: 0, hold, d: dist, seg: null, label: '', v: makeVoice(profile(PREVIEW_TYPES[kind])) };
+    s.demo = { kind, type: type && pt, t, age: 0, hold, d: dist, seg: null, label: '', v: makeVoice(profile(pt)) };
     showPreview();
   }
   function stopPreview() {
@@ -904,14 +937,15 @@
       if (prefs.on) unlock();
       else stopPreview();
       if (restyled) restyle();
-      if (rekind && s.demo) startPreview(s.demo.hold, s.demo.t, s.demo.d); // (on where it was)
+      if (rekind && s.demo) startPreview(s.demo.hold, s.demo.t, s.demo.d, s.demo.type); // (on where it was)
       apply();
     },
     toggle() { this.set({ on: !prefs.on }); },
     // ▶ Preview: a whole flight in about 40 s on its own voice (a second call stops it). It turns the sound on (the
     // click lets the browser play it). o: false stops it; { kind } as set({ preview }); to measure, { from, hold }:
     // start at that part of the flight, stay three quarters through that one (DEMO ids: idle, takeoff, climb, cruise,
-    // descent, approach, far, …); { d }: heard from d metres away. Returns whether it plays.
+    // descent, approach, far, …); { d }: heard from d metres away; { type }: that aircraft type. Returns whether it
+    // plays.
     preview(o) {
       const opt = o && typeof o === 'object' ? o : {};
       if (o === false || (o == null && s.demo)) { stopPreview(); return false; }
@@ -919,10 +953,25 @@
       if (!prefs.on) this.set({ on: true });
       else unlock();
       if (!s.ctx) return false;
-      startPreview(opt.hold, opt.from, opt.d);
+      startPreview(opt.hold, opt.from, opt.d, opt.type);
       return true;
     },
     get previewing() { return !!s.demo; },
+    get previewType() { return s.demo ? s.demo.v.pr.type : null; },
+    // The mixer (F6): parts { id: label }, kindParts { kind: [part ids] }; mix(target) is what is set for 'all', a kind
+    // or a type ({ part: × }); mixFor(type) what a plane of that type plays with; setMix(target, part, × or null to
+    // take it from the next level again); resetMix(target). Planes playing change at once; kept with the settings.
+    parts: PARTS,
+    kindParts: KIND_PARTS,
+    mix(target) { return { ...(prefs.mix[target] || {}) }; },
+    mixFor(type) { const pr = profile(type); return mixOf(type, pr.kind); },
+    setMix(target, part, x) {
+      const m = prefs.mix[target] || (prefs.mix[target] = {});
+      if (x == null || !Number.isFinite(Number(x))) delete m[part]; else m[part] = Math.max(0, Math.min(3, Number(x)));
+      if (!Object.keys(m).length) delete prefs.mix[target];
+      remix();
+    },
+    resetMix(target) { delete prefs.mix[target]; remix(); },
     get previewPhase() { return s.demo ? s.demo.label : ''; },
     get previewSeconds() { return DEMO.reduce((a, x) => a + x[2], 0); },
     engines, // (p, t) -> what its engines do now (developer tools, smoke test)

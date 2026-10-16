@@ -2093,9 +2093,10 @@
       <div class="row set-preview"><button class="${FG.sound.previewing ? 'on' : ''}" data-set="preview" title="A whole flight in about 40 s, as from a chase camera">${FG.sound.previewing ? '■ Stop' : '▶ Preview'}</button>
         <div class="chips">${[['jet', 'Jet'], ['turboprop', 'Turboprop'], ['piston', 'Piston']].map(([k, n]) =>
           `<button class="${k === FG.sound.previewKind ? 'on' : ''}" data-set="previewKind" data-v="${k}">${n}</button>`).join('')}</div>
-        <span class="muted" data-preview-status>${FG.sound.previewPhase}</span></div>` : ''}
+        <span class="muted" data-preview-status>${FG.sound.previewPhase}</span></div>
+      ${FG.soundMix ? '<div class="row"><button data-set="soundMix" title="How loud each part is (bass, roar, screech, air, …), for all planes, a kind or one type">🎚 Sound mixer <span class="muted">F6</span></button></div>' : ''}` : ''}
       <h4>3D view</h4><p class="muted">Made for strong devices: a gaming PC, or a recent laptop or Mac.</p><div class="row"><button data-set="3d">${FG.view3d && FG.view3d.on ? 'Back to 2D' : 'Open 3D view'} <span class="muted">V</span></button></div>
-      <h4 class="keys-help">Keys</h4><div class="muted keys-help">Space pause · ← → speed · V 3D · M sound · F2 developer tools · F3 airport editor · F8 airport checklist · Esc menu</div></div>`;
+      <h4 class="keys-help">Keys</h4><div class="muted keys-help">Space pause · ← → speed · V 3D · M sound · F2 developer tools · F3 airport editor · F6 sound mixer · F8 airport checklist · Esc menu</div></div>`;
     if (FG.win) FG.win.movable(el.querySelector('.set-card'), '.side-head', 'settings'); // (dragged by its title)
   }
   function onSettings(e) {
@@ -2113,6 +2114,7 @@
     if (k === 'soundStyle') FG.sound.set({ style: t.dataset.v }); // (a preview playing changes at once: compare them)
     if (k === 'previewKind') FG.sound.set({ preview: t.dataset.v });
     if (k === 'preview') FG.sound.preview(); // (a second click stops it)
+    if (k === 'soundMix') FG.soundMix.open();
     if (k === 'livery') { G.state.livery = t.dataset.v; G.dirty = true; } // every aircraft of the airline is repainted
     if (k === '3d') { $('view3d-toggle').click(); }
     saveSettings();

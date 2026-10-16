@@ -1446,6 +1446,17 @@ body { height: 100dvh; } /* the visible height, also while the phone's address b
 .fg-win-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fg-win-title .muted { font-weight: 400; color: var(--muted); }
 .fg-win-body { padding: 8px 10px 10px; overflow-y: auto; }
+/* the sound mixer (F6, js/soundmix.js) */
+.mix-pick { display: flex; gap: 6px; align-items: center; }
+.mix-pick select { flex: 1; min-width: 0; }
+.mix-help { margin: 6px 0 8px; font-size: 12px; }
+.mix-row { display: grid; grid-template-columns: 9.5em 1fr 3.2em auto; gap: 4px 8px; align-items: center; padding: 3px 0; }
+.mix-row label { color: var(--muted); }
+.mix-row.own label { color: inherit; font-weight: 600; }
+.mix-row input[type=range] { width: 100%; min-width: 0; }
+.mix-val { text-align: right; font-variant-numeric: tabular-nums; }
+.mix-note { grid-column: 2 / -1; font-size: 11px; margin-top: -3px; }
+.mix-foot { margin-top: 8px; display: flex; justify-content: flex-end; }
 .tt-win .fg-win-body .panel { margin: 0; padding: 0; border: none; background: none; box-shadow: none; }
 .pw-cam { position: relative; height: 200px; margin: -8px -10px 8px; background: #1e293b; overflow: hidden; }
 .pw-cam-map { position: absolute; inset: 0; }
