@@ -42,7 +42,9 @@
 
   // ---------- the styles ----------
   // The same voices with other numbers (Settings → Sound). 'standard' is the sound as tuned with the user (the user:
-  // "that is a good sound but it needs more bass"); its numbers are the ones the others are measured against.
+  // "that is a good sound but it needs more bass"; later "it sounds like a tractor, it should have really strong bass
+  // and air sounds" and, on the wing camera, "a fast repeating electric beat": no crackle, a quarter of the buzz-saw,
+  // more bass and air); its numbers are the ones the others are measured against.
   // Jets: shelf (dB of bass below shelfHz), roar (level; its low-pass from roarLo at no power + roarHi × N1^roarPow,
   // the second one roarSpread times higher), rumble (the recording below rumbleHz), crackle (the rumble jumping about
   // at take-off power), drone (the fan shaft's hum), fan and core (the whines; tone: their pitch, also the APU's and
@@ -53,20 +55,20 @@
   const STYLES = {
     standard: {
       name: 'Standard', about: 'The full roar and rumble, the air rushing past.',
-      shelf: 6, shelfHz: 220, roar: 1, roarLo: 200, roarHi: 1900, roarPow: 1.6, roarSpread: 2, rumble: 1, rumbleHz: 180,
-      crackle: 1, drone: 1, fan: 1, core: 1, tone: 1, saw: 1, air: 1, airHz: 1, airHp: 0, gust: 0.3, top: 16000, spool: 1,
+      shelf: 9, shelfHz: 220, roar: 1, roarLo: 200, roarHi: 1900, roarPow: 1.6, roarSpread: 2, rumble: 1.3, rumbleHz: 180,
+      crackle: 0, drone: 0.7, fan: 1, core: 1, tone: 1, saw: 0.25, air: 1.8, airHz: 1, airHp: 0, gust: 0.3, top: 16000, spool: 1,
       level: 1, prop: 1, bright: 1,
     },
     deep: {
       name: 'Deep', about: 'Heavier and darker, cinematic: more rumble and low drone, a dark roar, hardly any whine.',
       shelf: 10, shelfHz: 180, roar: 1.05, roarLo: 150, roarHi: 1000, roarPow: 1.6, roarSpread: 1.5, rumble: 2, rumbleHz: 150,
-      crackle: 1.4, drone: 2.5, fan: 0.2, core: 0.15, tone: 0.68, saw: 0.6, air: 0.8, airHz: 0.65, airHp: 0, gust: 0.3, top: 5000, spool: 1,
+      crackle: 0, drone: 1.5, fan: 0.2, core: 0.15, tone: 0.68, saw: 0.15, air: 1.2, airHz: 0.65, airHp: 0, gust: 0.3, top: 5000, spool: 1,
       level: 1, prop: 1.1, bright: 0.7,
     },
     open: {
       name: 'Open', about: 'Brighter and more open at full power, a strong rush of air, the bass kept.',
       shelf: 6, shelfHz: 220, roar: 1.15, roarLo: 260, roarHi: 2900, roarPow: 2, roarSpread: 2.6, rumble: 1, rumbleHz: 180,
-      crackle: 1.5, drone: 1, fan: 0.6, core: 0.5, tone: 0.68, saw: 1.1, air: 2.6, airHz: 1.25, airHp: 350, gust: 0.45, top: 16000, spool: 1,
+      crackle: 0, drone: 0.7, fan: 0.6, core: 0.5, tone: 0.68, saw: 0.35, air: 3.2, airHz: 1.25, airHp: 350, gust: 0.45, top: 16000, spool: 1,
       level: 1, prop: 1, bright: 1.3,
     },
     soft: {
@@ -429,14 +431,14 @@
       // The drone: the fan shaft's turn and its harmonics, both engines a little apart (they throb).
       L.droneF = filter('lowpass', 300, 1.2);
       L.drone = gain();
-      L.drone1 = osc('triangle', 50);
-      L.drone2 = osc('triangle', 50);
+      L.drone1 = osc('sine', 50);
+      L.drone2 = osc('sine', 50);
       L.drone1.connect(L.droneF);
       L.drone2.connect(L.droneF);
       L.droneF.connect(L.drone);
       L.fan = gain();
-      L.fan1 = osc('triangle', 100);
-      L.fan2 = osc('triangle', 100); // the other engine, a little apart: they beat
+      L.fan1 = osc('sine', 100); // (sines: a triangle's overtones at 3-5 kHz beat as an electric buzz)
+      L.fan2 = osc('sine', 100); // the other engine, a little apart: they swell slowly
       L.fan1.connect(L.fan);
       const half = ctx.createGain();
       half.gain.value = 0.6;
@@ -647,7 +649,7 @@
     T(v.air.frequency, Math.min(S.top, g.near ? 16000 : Math.min(16000, 16000 / (1 + g.d / 300))));
     T(v.pan.pan, g.pan * 0.8);
     L2.noise.playbackRate.setTargetAtTime(dop, at, 0.06);
-    L2.deep.playbackRate.setTargetAtTime(dop * (v.rec ? 0.78 + 0.24 * sm.pw : 1), at, 0.06); // (recorded: lower at less power)
+    L2.deep.playbackRate.setTargetAtTime(dop, at, 0.06); // (not with the power: it revved like a tractor)
     if (pr.kind === 'jet') {
       const n1 = sm.pw;
       const n2 = sm.n2;
@@ -662,13 +664,13 @@
       T(L2.crackle.gain, rumble * 0.5 * S.crackle * behind * smooth(0.85, 0.92, n1));
       T(L2.drone.gain, run * sz * 0.16 * S.drone * smooth(0.25, 0.9, n1));
       T(L2.drone1.frequency, Math.max(5, pr.shaft * n1 * dop));
-      T(L2.drone2.frequency, Math.max(5, pr.shaft * n1 * dop * 1.004));
+      T(L2.drone2.frequency, Math.max(5, pr.shaft * n1 * dop * 1.001));
       T(L2.droneF.frequency, 150 + 350 * n1);
       // The whine: clear at idle, it fades under the roar as the power comes up.
       const fanHz = n1 < IDLE ? pr.fanLo * n1 / IDLE : pr.fanLo + (pr.fanHi - pr.fanLo) * (n1 - IDLE) / (1 - IDLE);
       T(L2.fan.gain, sz * 0.16 * S.fan * smooth(0.04, 0.18, n1) * (0.6 + 0.9 * front) * (pr.old ? 0.35 : 1) * (1 - 0.75 * smooth(0.3, 0.9, n1)));
       T(L2.fan1.frequency, Math.max(20, fanHz * dop));
-      T(L2.fan2.frequency, Math.max(20, fanHz * dop * 1.006));
+      T(L2.fan2.frequency, Math.max(20, fanHz * dop * 1.0012));
       T(L2.core.gain, sz * 0.035 * S.core * smooth(0.02, 0.12, n2) * (pr.old ? 2 : 1) * (1 - 0.8 * n1));
       T(L2.core1.frequency, Math.max(20, pr.core * S.tone * n2 * dop));
       T(L2.saw.gain, pr.old ? 0 : sz * 1.2 * S.saw * smooth(0.82, 0.92, n1) * front ** 1.5);
