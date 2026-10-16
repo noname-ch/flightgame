@@ -819,8 +819,12 @@ function shownAlt(altM, len, exag) {
 
 const tmp = { up: new THREE.Vector3(), east: new THREE.Vector3(), north: new THREE.Vector3(), fwd: new THREE.Vector3(), right: new THREE.Vector3(), pos: new THREE.Vector3() };
 
-// World frame for a point: sphere (radius 1) on the globe, mercator 0..1 otherwise.
-function frameAt(lat, lon, altM, globe) {
+// The longitude of the view being drawn (set by each layer's render before it places anything): flat, points are
+// put in the copy of the world nearest it, so a plane over the Pacific beyond ±180° isn't drawn a world away.
+let lonRef = 0;
+// World frame for a point: sphere (radius 1) on the globe, mercator 0..1 otherwise (`keep`: the longitude as it is,
+// for a line already unwrapped).
+function frameAt(lat, lon, altM, globe, keep) {
   const { up, east, north, pos } = tmp;
   if (globe) {
     const la = lat * Math.PI / 180;
@@ -831,6 +835,7 @@ function frameAt(lat, lon, altM, globe) {
     pos.copy(up).multiplyScalar(1 + altM / EARTH_R);
     return 1 / EARTH_R; // world units per metre
   }
+  if (!keep) lon += 360 * Math.round((lonRef - lon) / 360);
   const mc = maplibregl.MercatorCoordinate.fromLngLat([lon, lat], altM);
   pos.set(mc.x, mc.y, mc.z);
   east.set(1, 0, 0);
@@ -1050,6 +1055,7 @@ const planeLayer = {
     const cine = v.follow && v.cam !== 'chase' ? sel : null;
 
     // Light from above-left of the view centre.
+    lonRef = center.lng;
     frameAt(center.lat, center.lng, 0, globe);
     const centerW = this.v4.set(tmp.pos.x, tmp.pos.y, tmp.pos.z, 1).applyMatrix4(this.matrix).w; // (cloud sizes)
     this.sun.position.copy(tmp.pos).addScaledVector(tmp.up, 1).addScaledVector(tmp.east, -0.6).addScaledVector(tmp.north, 0.4);
@@ -1157,6 +1163,7 @@ function inBox(box, lat, lon) {
 }
 
 // The selected plane's whole flight path as a line in the air (needs G.flightTrack).
+const trackLons = new WeakMap(); // track -> its longitudes unwrapped
 planeLayer.drawTrack = function (p, len, exag, globe) {
   const tr = p.status === 'flying' && G.flightTrack ? G.flightTrack(p) : null;
   if (!this.track) {
@@ -1168,7 +1175,12 @@ planeLayer.drawTrack = function (p, len, exag, globe) {
   const map = v.map;
   const e0 = fieldElevation(map, p.flight.from);
   const e1 = fieldElevation(map, p.flight.to);
-  const key = `${p.id}|${p.flight.dep}|${Math.round(Math.log2(exag) * 4)}|${globe}|${Math.round(e0)}|${Math.round(e1)}|${tr.pts.length}|${tr.cruiseAlt}`;
+  // (flat: unwrapped at ±180°, and as a whole in the copy of the world nearest the view, like the plane)
+  if (!trackLons.has(tr)) trackLons.set(tr, unwrap(tr.pts).map((c) => c[0]));
+  const lons = trackLons.get(tr);
+  const mid = lons[lons.length >> 1];
+  const shift = globe ? 0 : 360 * Math.round((lonRef - mid) / 360);
+  const key = `${p.id}|${p.flight.dep}|${Math.round(Math.log2(exag) * 4)}|${globe}|${shift}|${Math.round(e0)}|${Math.round(e1)}|${tr.pts.length}|${tr.cruiseAlt}`;
   this.track.visible = true;
   if (this.track.userData.key === key) return;
   this.track.userData.key = key;
@@ -1177,14 +1189,15 @@ planeLayer.drawTrack = function (p, len, exag, globe) {
   const sTouch = tr.cum[tr.idx.touch];
   const pts = [];
   for (let i = 0; i < tr.pts.length; i++) {
-    const [lat, lon] = tr.pts[i];
+    const lat = tr.pts[i][0];
+    const lon = lons[i] + shift;
     const air = tr.cum[i] > sLift && tr.cum[i] < sTouch;
     const altM = air ? Math.max(0, tr.altAt(tr.cum[i]) - (tr.fieldAt ? tr.fieldAt(tr.cum[i]) : 0)) * 0.3048 : 0;
-    const under = map.queryTerrainElevation([lon, lat]) || 0;
+    const under = map.queryTerrainElevation([wrap180(lon), lat]) || 0;
     const f = Math.min(1, Math.max(0, (tr.cum[i] - sLift) / Math.max(0.001, sTouch - sLift)));
     const rise = shownAlt(altM * TERRAIN_EXAG, len, exag);
     const base = air ? e0 * (1 - f) + e1 * f : under;
-    frameAt(lat, lon, Math.max(base + rise, under + Math.min(rise, 150 * TERRAIN_EXAG)), globe);
+    frameAt(lat, lon, Math.max(base + rise, under + Math.min(rise, 150 * TERRAIN_EXAG)), globe, true);
     pts.push(tmp.pos.clone());
   }
   this.track.geometry.dispose();
@@ -1701,6 +1714,7 @@ function chaseLayer(cam) {
       const now = performance.now();
       const t = cam.t != null ? cam.t : smoothTime(frameNow());
       const center = map.getCenter();
+      lonRef = center.lng;
       frameAt(center.lat, center.lng, 0, globe);
       this.sun.position.copy(tmp.pos).addScaledVector(tmp.up, 1).addScaledVector(tmp.east, -0.6).addScaledVector(tmp.north, 0.4);
       this.sun.target.position.copy(tmp.pos);

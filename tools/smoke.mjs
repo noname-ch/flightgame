@@ -499,6 +499,35 @@ try {
   if (ferry.err) errors.push(`ferry: ${ferry.err}`);
   else step(`ferry: "${ferry.text}"`);
 
+  step('Pacific route: LAX–HND drawn over the Pacific from both ends, never back across the map (it once ran through Europe)');
+  const pac = await evaluate(async () => {
+    const p = G.state.planes[G.state.planes.length - 1];
+    const stops = p.schedule.stops;
+    document.getElementById('pause').click();
+    p.schedule.stops = ['LAX', 'HND']; // (only while paused: the route line is all that is looked at)
+    G.dirty = true;
+    await new Promise((r) => setTimeout(r, 600));
+    const lines = [];
+    FG.ui.map.eachLayer((l) => {
+      if (!(l instanceof L.Polyline) || l.options.pane !== 'routes') return;
+      const ll = l.getLatLngs();
+      for (const r of Array.isArray(ll[0]) ? ll : [ll]) lines.push(r.map((q) => q.lng));
+    });
+    p.schedule.stops = stops;
+    G.dirty = true;
+    document.getElementById('pause').click();
+    const at = (r, lon) => r.some((x) => Math.abs(x - lon) < 1);
+    const ours = lines.filter((r) => [-118.4, 139.8, -220.2, 241.6].some((lon) => at(r, lon)));
+    let jump = 0;
+    for (const r of ours) for (let i = 1; i < r.length; i++) jump = Math.max(jump, Math.abs(r[i] - r[i - 1]));
+    return {
+      n: ours.length, jump: Math.round(jump),
+      lax: ours.some((r) => at(r, -118.4) && Math.min(...r) < -180), tokyo: ours.some((r) => at(r, 139.8) && Math.max(...r) > 180),
+    };
+  });
+  if (!pac.n || pac.jump > 90 || !pac.lax || !pac.tokyo) errors.push(`Pacific route: ${JSON.stringify(pac)} (wanted lines from LAX west and from Tokyo east past ±180°, no jumps)`);
+  else step(`Pacific route: ${pac.n} lines, largest step ${pac.jump}°`);
+
   step('airport categories: every airport in one of the four, named in the airport panel');
   const cats = await evaluate((home) => {
     const n = {};

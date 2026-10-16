@@ -191,6 +191,23 @@
     }
     return out;
   }
+  // An unwrapped line for L.polyline (as a multi-line): with a copy one world over where it runs past ±180°, as
+  // the map shows longitudes -220…220, so a Pacific crossing is there on both sides of the map.
+  function worldCopies(pts) {
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (const p of pts) { lo = Math.min(lo, p[1]); hi = Math.max(hi, p[1]); }
+    const out = [pts];
+    if (lo < -180) out.push(pts.map((p) => [p[0], p[1] + 360]));
+    if (hi > 180) out.push(pts.map((p) => [p[0], p[1] - 360]));
+    return out;
+  }
+  // A point in the copy of the world nearest the map's centre (planes over the Pacific, beyond ±180°).
+  function nearView(latlng) {
+    const c = ui.map.getCenter().lng;
+    return [latlng[0], latlng[1] + 360 * Math.round((c - latlng[1]) / 360)];
+  }
+  const wrapLon = (lon) => ((((lon + 180) % 360) + 360) % 360) - 180;
 
   function arc(a, b) {
     const n = Math.max(2, Math.ceil(G.distanceKm(a, b) / 150));
@@ -835,13 +852,13 @@
       const stops = draft || p.schedule.stops;
       const selected = ui.selectedPlane === p.id;
       if (stops.length >= 2) {
-        const pts = [];
         // Each leg as today's real track: the runways it takes (into the wind, or the ones chosen for it), climb,
-        // cruise, approach.
-        stops.forEach((c, i) => {
+        // cruise, approach. (Unwrapped as one line: each leg starts where the one before ended, even after a
+        // Pacific crossing, instead of jumping back across the whole map.)
+        const pts = worldCopies(unwrapped(stops.flatMap((c, i) => {
           const to = stops[(i + 1) % stops.length];
-          pts.push(...(c === to ? [] : unwrapped(G.legTrack(p.type, c, to, G.legRunways(p, c, to)).pts)));
-        });
+          return c === to ? [] : G.legTrack(p.type, c, to, G.legRunways(p, c, to)).pts;
+        })));
         const weight = (selected ? 5 : 3) * (ui.map.getZoom() >= 13 ? 0.5 : 1); // thin near runways
         const active = p.schedule.active;
         // Solid routes get a darker casing, drafts are a row of dots.
@@ -861,14 +878,14 @@
       }
       if (selected && p.status === 'flying') drawTrack(p);
       if (p.flight && p.flight.kind === 'delivery') {
-        L.polyline(unwrapped(G.flightTrack(p).pts), { pane: 'routes', interactive: false, color: '#16a34a', weight: 2.5, dashArray: '2 7' })
+        L.polyline(worldCopies(unwrapped(G.flightTrack(p).pts)), { pane: 'routes', interactive: false, color: '#16a34a', weight: 2.5, dashArray: '2 7' })
           .addTo(ui.routeLayer);
       }
       const ferryTo = p.pendingFerry || (p.flight && p.flight.kind === 'ferry' ? p.flight.to : null);
       if (ferryTo) {
         const ferryPts = p.flight && p.flight.kind === 'ferry' ? unwrapped(G.flightTrack(p).pts)
           : arc(ap(p.flight ? p.flight.from : p.location), ap(ferryTo));
-        L.polyline(ferryPts, {
+        L.polyline(worldCopies(ferryPts), {
           pane: 'routes', bubblingMouseEvents: false,
           color: COLORS.purple, weight: selected ? 4 : 2.5, opacity: 1, dashArray: '7 7',
         }).bindTooltip(`${G.planeLabel(p)}: ferry to ${ferryTo}`, { sticky: true })
@@ -945,7 +962,7 @@
     let runBand = null;
     const flush = () => {
       if (run.length > 1) {
-        L.polyline(run, { pane: 'routes', interactive: false, color: altColor(runBand * 2000), weight: ui.map.getZoom() >= 13 ? 2.5 : 3.5, opacity: 0.95 })
+        L.polyline(worldCopies(run), { pane: 'routes', interactive: false, color: altColor(runBand * 2000), weight: ui.map.getZoom() >= 13 ? 2.5 : 3.5, opacity: 0.95 })
           .addTo(ui.routeLayer);
       }
     };
@@ -1004,7 +1021,10 @@
       const flying = p.status === 'flying';
       if (!flying && !tick) continue;
       const pos = planePosition(p, t);
-      if (ui.follow === p.id && !(map._panAnim && map._panAnim._inProgress)) map.panTo(pos.latlng, { animate: false });
+      // (followed over the Pacific, the view jumps a world over at ±180°, where the map looks the same: else it
+      // would run into the map's edge)
+      if (ui.follow === p.id && !(map._panAnim && map._panAnim._inProgress)) map.panTo([pos.latlng[0], wrapLon(pos.latlng[1])], { animate: false });
+      pos.latlng = nearView(pos.latlng);
       // Zoomed in on an airport, planes on the ground are drawn at their gate at real size;
       // further out, parked planes line up above their airport so it stays clickable.
       const close = pos.ground && z >= GATE_ZOOM;
@@ -1564,7 +1584,7 @@
       const sel = ui.selectedRival === r.id;
       const dim = ui.selectedRival && !sel;
       for (const rt of r.routes) {
-        L.polyline(arc(G.airportByCode[rt.a], G.airportByCode[rt.b]), {
+        L.polyline(worldCopies(arc(G.airportByCode[rt.a], G.airportByCode[rt.b])), {
           pane: 'rivals', renderer: ui.rivalRenderer, color: r.color,
           weight: sel ? 2.5 : 1.2, opacity: dim ? 0.12 : sel ? 0.95 : 0.4,
         }).bindTooltip(`<b>${r.name}</b> · ${rt.a}–${rt.b} · ${rt.perDay}× a day · ${D.aircraft[rt.type].name} · fares ${pct(rt.fare)}`,
@@ -1583,6 +1603,7 @@
     if (ui.rivalTick % 3) return;
     const view = ui.map.getBounds().pad(0.1);
     const flights = G.rivalFlights(nowMinutes())
+      .map((f) => { [f.lat, f.lon] = nearView([f.lat, f.lon]); return f; })
       .filter((f) => view.contains([f.lat, f.lon]) && (!ui.selectedRival || f.r.id === ui.selectedRival));
     const pool = ui.rivalDots;
     flights.forEach((f, i) => {
@@ -1930,7 +1951,7 @@
       if (!(FG.view3d && FG.view3d.on)) {
         const pos = planePosition(G.plane(id));
         if (ui.follow && ui.follow !== id) setFollow2d(null);
-        panIntoView(pos.latlng);
+        panIntoView(nearView(pos.latlng));
       }
     });
     // Mouse only: on a touch screen the tip would stay up after the tap, and the Fleet tab shows the same.
