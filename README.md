@@ -66,8 +66,8 @@ angle. The weather is for looks: flights don't wait for it (storm events still c
 the computer (one half-resolution canvas in 2D, one batch of sprites in 3D, CSS for rain and snow);
 Settings → On the map → *Clouds and weather* turns it all off.
 
-**Sound**: the aircraft are heard, made up as they play, with three recordings made with ElevenLabs Sound Effects (in
-`sounds/`: the jets' deep rumble at power, a jet's starter whistling up, and the wash of an airliner far away, which
+**Sound**: the aircraft are heard, made up as they play, with four recordings made with ElevenLabs Sound Effects (in
+`sounds/`: the jets' deep rumble at power, their screech (played faster with the fan), a jet's starter whistling up, and the wash of an airliner far away, which
 planes more than about a kilometre off turn into): jets whine up on the starter during the
 pushback, the igniters tick, the engines light and settle to idle; a burst of thrust gets them rolling on the
 taxiway, take-off power roars (deep, rumbling from behind, buzzing ahead of a big fan), then climb and cruise power

@@ -1,6 +1,6 @@
-// Aircraft sounds, made up as they play with Web Audio, and three recordings made with ElevenLabs Sound Effects
-// (RECORDINGS): the jets' deep rumble, a jet's starter whistling up, and a distant airliner's wash that planes far
-// away turn into. Until they have loaded, or where they can't be, it is all made up. Each engine kind has its own
+// Aircraft sounds, made up as they play with Web Audio, and four recordings made with ElevenLabs Sound Effects
+// (RECORDINGS): the jets' deep rumble, their screech, a jet's starter whistling up, and a distant airliner's wash
+// that planes far away turn into. Until they have loaded, or where they can't be, it is all made up. Each engine kind has its own
 // voice:
 // - jets: the core whining up on the starter, the igniters ticking, light-off, the fan whine at idle, a burst of
 //   thrust to get rolling, the roar at take-off power (and from behind the rumble, ahead of a big fan the buzz-saw),
@@ -34,9 +34,15 @@
   // Recorded loops (16 kHz mono WAV: an MP3 starts with a little silence, which would stutter in a loop), each at the
   // rms it plays at. rumble (10 s): the jets' rumble at power, all its weight where it is heard (40-160 Hz), so at
   // 0.24 a little heavier than the brown noise at 0.3 was. far (15 s): an airliner drifting over far away. start (9 s,
-  // once, not a loop): a jet's starter whistling up from 1 to 1.5 kHz (the hiss above 6 kHz taken out).
-  const RECORDINGS = { rumble: ['sounds/jet-rumble.wav', 0.24], far: ['sounds/far-wash.wav', 0.3], start: ['sounds/jet-start.wav', 0.3] };
+  // once, not a loop): a jet's starter whistling up from 1 to 1.5 kHz (the hiss above 6 kHz taken out). screech
+  // (2.3 s): a turbofan's rough scream at power, wavering about SCREECH_HZ (400 Hz-5 kHz kept; the user: the noise
+  // screech before it was "just static"), played faster or slower with the fan.
+  const RECORDINGS = {
+    rumble: ['sounds/jet-rumble.wav', 0.24], far: ['sounds/far-wash.wav', 0.3], start: ['sounds/jet-start.wav', 0.3],
+    screech: ['sounds/jet-screech.wav', 0.13],
+  };
   const SCREECH = 5;        // the screech's level (× size, power, style)
+  const SCREECH_HZ = 1360;  // the screech recording's pitch
   const START_LEVEL = 0.3;  // the start recording × the plane's size × the style's whine
   const FAR = [800, 4000]; // metres: from here the made-up voice gives way to the far recording, all of it by there
   const FAR_LEVEL = 2.5;   // the far recording × the engines' power: about as loud as the made-up voice it takes over from
@@ -52,8 +58,8 @@
   // Jets: shelf (dB of bass below shelfHz), roar (level; its low-pass from roarLo at no power + roarHi × N1^roarPow,
   // the second one roarSpread times higher), rumble (the recording below rumbleHz), crackle (the rumble jumping about
   // at take-off power), drone (the fan shaft's hum), fan and core (the whines; tone: their pitch, also the APU's and
-  // the turboprop's), saw (the buzz-saw ahead of a big fan), screech (the fan's rough screech: noise in two narrow
-  // bands at its blade pitch, all round the plane), air (the air rushing past: level, airHz × its low-pass,
+  // the turboprop's), saw (the buzz-saw ahead of a big fan), screech (the fan's rough screech: the recording at its
+  // blade pitch, all round the plane), air (the air rushing past: level, airHz × its low-pass,
   // airHp a high-pass so it rushes instead of rumbling, gust), top (a low-pass on it all: muffled), spool (× the
   // time the engines take to follow the levers), level. Turboprops and pistons: prop (the propeller and engine
   // tones) and bright (× their filters), and roar, core, tone, air, shelf, top and level as above.
@@ -506,13 +512,23 @@
       L.core = gain();
       L.core1 = osc('sine', 100);
       L.core1.connect(L.core);
-      // The screech: white noise in two narrow bands at the fan's blade pitch (rough, not a tone).
-      L.scrSrc = src(s.noise);
-      L.scrF1 = filter('bandpass', 2000, 5);
-      L.scrF2 = filter('bandpass', 2900, 7);
+      // The screech: the recording, both engines (from other places in it: they don't beat), or until it is in,
+      // white noise in two narrow bands at the fan's blade pitch.
       L.screech = gain();
-      L.scrSrc.connect(L.scrF1).connect(L.screech);
-      L.scrSrc.connect(L.scrF2).connect(L.screech);
+      if (s.rec.screech) {
+        L.scr1 = src(s.rec.screech);
+        L.scr2 = src(s.rec.screech);
+        L.scr1.connect(L.screech);
+        const other = ctx.createGain();
+        other.gain.value = 0.7;
+        L.scr2.connect(other).connect(L.screech);
+      } else {
+        L.scrSrc = src(s.noise);
+        L.scrF1 = filter('bandpass', 2000, 5);
+        L.scrF2 = filter('bandpass', 2900, 7);
+        L.scrSrc.connect(L.scrF1).connect(L.screech);
+        L.scrSrc.connect(L.scrF2).connect(L.screech);
+      }
       L.sawF = filter('bandpass', 1100, 0.6);
       L.saw = gain();
       L.saw1 = osc('sawtooth', 50);
@@ -738,8 +754,13 @@
       // The screech: up with the power, from all round (a little more ahead), old jets more.
       const scrHz = Math.min(2000, 1.5 * pr.fan * (0.55 + 0.45 * n1)) * dop; // (higher was a hiss: small fans)
       T(L2.screech.gain, M.screech * run * sz * SCREECH * S.screech * (0.04 + 0.96 * smooth(0.25, 0.9, n1)) * (0.8 + 0.4 * front) * (pr.old ? 1.3 : 1));
-      T(L2.scrF1.frequency, scrHz);
-      T(L2.scrF2.frequency, scrHz * 1.25);
+      if (L2.scr1) {
+        L2.scr1.playbackRate.setTargetAtTime(scrHz / SCREECH_HZ, at, 0.06);
+        L2.scr2.playbackRate.setTargetAtTime(scrHz / SCREECH_HZ, at, 0.06);
+      } else {
+        T(L2.scrF1.frequency, scrHz);
+        T(L2.scrF2.frequency, scrHz * 1.25);
+      }
       T(L2.saw1.frequency, Math.max(20, pr.shaft * n1 * dop));
     } else if (pr.kind === 'turboprop') {
       const pw = sm.pw;
@@ -1019,7 +1040,7 @@
     heardFrom: listener, // where it is heard from now
     profile,
     get state() { return s.ctx ? s.ctx.state : 'off'; },
-    get recorded() { return Object.keys(s.rec); }, // (the RECORDINGS that have loaded: 'rumble', 'far', 'start')
+    get recorded() { return Object.keys(s.rec); }, // (the RECORDINGS that have loaded: 'rumble', 'far', 'start', 'screech')
     get pickMs() { return s.pickMs || 0; }, // (time to find the loudest planes, 4 times a second)
     // The planes playing now: [{ id, kind, gain }] (smoke test).
     get playing() { return [...s.voices.values()].filter((v) => !v.kill).map((v) => ({ id: v.id, kind: v.pr.kind, gain: v.out.gain.value })); },
