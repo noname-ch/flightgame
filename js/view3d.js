@@ -4,6 +4,7 @@
 import * as maplibregl from 'maplibre-gl';
 import * as THREE from 'three';
 import { loadModel, modelSize, facing, patchFacing } from './models3d.js';
+import { setGear } from './gear3d.js';
 
 const G = FG.game;
 const D = FG.data;
@@ -58,6 +59,24 @@ const DEG = Math.PI / 180;
 const wrap180 = (d) => ((((d % 360) + 540) % 360) - 180);
 const AIRBORNE = { climb: 1, cruise: 1, descent: 1, approach: 1 };
 const ROTATE_DEG = 8; // nose up at lift-off
+
+// The landing gear (js/gear3d.js): down on the ground; after lift-off it folds away between 300 and 700 ft,
+// on the way down it comes out between 2200 and 1800 ft. From the height, so it moves at any game speed.
+function gearFor(e, pose) {
+  const gear = e.obj.userData.gear;
+  const st = pose.st;
+  if (!gear) return;
+  const agl = st ? (st.altFt || 0) - (st.fieldFt || 0) : 0;
+  let f = 1;
+  if (pose.flying && (!st || AIRBORNE[st.phase])) {
+    if (!st || st.phase === 'cruise') f = 0;
+    else if (st.phase === 'climb') f = 1 - (agl - 300) / 400;
+    else f = (2200 - agl) / 400;
+  }
+  setGear(gear, Math.max(0, Math.min(1, f)));
+  // a tail-wheel aircraft sits nose up on the ground and flies level
+  if (e.obj.userData.sit) gear.parent.rotation.x = f >= 1 && pose.altM < 1 ? e.obj.userData.sit : 0;
+}
 
 // Flight attitude from the track around time t: heading along the actual motion (so corners are
 // flown as curves), bank from the turn rate, pitch from the climb or descent angle, plus the
@@ -159,6 +178,11 @@ function planeModel(type) {
     const size = modelSize(type);
     model.scale.set(size.wide, size.len, size.wide);
     g.userData.liv = ownMaterials(model);
+    // On the ground it stands on its wheels: how far they are below its middle (m), and the gear to raise.
+    model.updateMatrixWorld(true);
+    g.userData.lift = -new THREE.Box3().setFromObject(model).min.z;
+    g.userData.gear = model.getObjectByName('gear');
+    g.userData.sit = scene.userData.sit || 0;
     g.clear();
     g.add(model);
   }, () => {});
@@ -889,7 +913,7 @@ function fieldBase(map, p) {
 // to the arrival runway's, stretched like the hills, and never below the terrain under the plane; always
 // clearly above the ground when zoomed out (shownAlt). The clearance kept over the terrain grows with the
 // height, so leaving the runway is not a jump.
-function drawnAlt(map, p, pose, len, exag) {
+function drawnAlt(map, p, pose, len, exag, lift) {
   const under = map.queryTerrainElevation([pose.lon, pose.lat]) || 0;
   let base = under;
   if (pose.st && pose.altM > 0) {
@@ -897,11 +921,12 @@ function drawnAlt(map, p, pose, len, exag) {
     const { e0, e1 } = fieldBase(map, p);
     base = e0 * (1 - f) + e1 * f;
   }
-  const rise = shownAlt(pose.altM * TERRAIN_EXAG, len, exag);
+  const rise = shownAlt(pose.altM * TERRAIN_EXAG, len, exag, lift);
   return Math.max(base + rise, under + Math.min(rise, 150 * TERRAIN_EXAG) + Math.min(len * exag * 0.12, pose.altM * TERRAIN_EXAG));
 }
-function shownAlt(altM, len, exag) {
-  return Math.max(altM, (altM / 11000) * len * exag * 1.2) + len * exag * 0.12;
+// `lift` (m): how far the model's wheels are below its middle (planeModel); the placeholder hovers.
+function shownAlt(altM, len, exag, lift = 0.12 * len) {
+  return Math.max(altM, (altM / 11000) * len * exag * 1.2) + lift * exag;
 }
 
 const tmp = { up: new THREE.Vector3(), east: new THREE.Vector3(), north: new THREE.Vector3(), fwd: new THREE.Vector3(), right: new THREE.Vector3(), pos: new THREE.Vector3() };
@@ -1194,8 +1219,9 @@ const planeLayer = {
       // (the selected plane a little bigger where all are drawn enlarged; close up, real size like the others)
       const exag = p.id === cine ? 1 : Math.max(1, px * mpp / len * (p.id === sel ? 1.35 : 1));
       // Shown height: real cruise height, but always clearly above the ground when zoomed out.
-      const altM = drawnAlt(map, p, pose, len, exag);
-      if (p.id === sel && !cine) this.drawTrack(p, len, exag, globe);
+      const altM = drawnAlt(map, p, pose, len, exag, e.obj.userData.lift);
+      gearFor(e, pose);
+      if (p.id === sel && !cine) this.drawTrack(p, len, exag, globe, e.obj.userData.lift);
       placeModel(e, pose, altM, exag, globe, now, n);
       if ((e.spinRate > 0.3 || (st && st.windKt > 8)) && len * exag / mpp > 40) animating = true;
       const { pos } = tmp;
@@ -1264,7 +1290,7 @@ function inBox(box, lat, lon) {
 
 // The selected plane's whole flight path as a line in the air (needs G.flightTrack).
 const trackLons = new WeakMap(); // track -> its longitudes unwrapped
-planeLayer.drawTrack = function (p, len, exag, globe) {
+planeLayer.drawTrack = function (p, len, exag, globe, lift) {
   const tr = p.status === 'flying' && G.flightTrack ? G.flightTrack(p) : null;
   if (!this.track) {
     this.track = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0xff9500 }));
@@ -1294,7 +1320,7 @@ planeLayer.drawTrack = function (p, len, exag, globe) {
     const altM = air ? Math.max(0, tr.altAt(tr.cum[i]) - (tr.fieldAt ? tr.fieldAt(tr.cum[i]) : 0)) * 0.3048 : 0;
     const under = map.queryTerrainElevation([wrap180(lon), lat]) || 0;
     const f = Math.min(1, Math.max(0, (tr.cum[i] - sLift) / Math.max(0.001, sTouch - sLift)));
-    const rise = shownAlt(altM * TERRAIN_EXAG, len, exag);
+    const rise = shownAlt(altM * TERRAIN_EXAG, len, exag, lift);
     const base = air ? e0 * (1 - f) + e1 * f : under;
     frameAt(lat, lon, Math.max(base + rise, under + Math.min(rise, 150 * TERRAIN_EXAG)), globe, true);
     pts.push(tmp.pos.clone());
@@ -1484,7 +1510,7 @@ function chaseTick(map, p, e, pose) {
     opts.zoom = Math.max(map.getZoom(), 6.5);
   }
   // (at the height it is drawn at in that frame, not the last one: else a climbing plane bobs up and down)
-  if (map.setCenterClampedToGround) opts.elevation = drawn ? drawnAlt(map, p, pose, e.obj.userData.len, e.exag) : pose.altM * TERRAIN_EXAG;
+  if (map.setCenterClampedToGround) opts.elevation = drawn ? drawnAlt(map, p, pose, e.obj.userData.len, e.exag, e.obj.userData.lift) : pose.altM * TERRAIN_EXAG;
   map.jumpTo(opts);
 }
 
@@ -1505,7 +1531,7 @@ const offsetLL = (lat, lon, east, north) => [lat + north / 111320, lon + east / 
 // as it passes. Once the plane is well past, it moves on ahead again. Planes are drawn at their real size.
 function flybyTick(map, p, e, pose) {
   const len = e.obj.userData.len;
-  const alt = drawnAlt(map, p, pose, len, 1);
+  const alt = drawnAlt(map, p, pose, len, 1, e.obj.userData.lift);
   let c = v.flyby;
   const d = c && c.id === p.id ? G.distanceKm(pose, c) : Infinity;
   if (c && d < c.min) c.min = d;
@@ -1515,7 +1541,7 @@ function flybyTick(map, p, e, pose) {
     const side = ahead ? 50 + len : 2 * len + 30; // metres to the right of its way (or of a parked plane)
     const [lat, lon] = offsetLL(q.lat, q.lon, Math.cos(q.heading * DEG) * side, -Math.sin(q.heading * DEG) * side);
     const ground = map.queryTerrainElevation([lon, lat]) || 0;
-    const qAlt = drawnAlt(map, p, q, len, 1);
+    const qAlt = drawnAlt(map, p, q, len, 1, e.obj.userData.lift);
     c = v.flyby = { id: p.id, lat, lon, alt: Math.max(ground + 4, q.altM > 30 ? qAlt - 12 : ground + 4), min: Infinity };
     c.min = G.distanceKm(pose, c);
   }
@@ -1544,7 +1570,7 @@ function wingTick(map, p, e, pose) {
   const s = v.wingSide;
   const cam = at(s * WING_CAM.out * span, -WING_CAM.back * len, WING_CAM.up * span + 1);
   const aim = at(s * WING_CAM.aimOut * span, WING_CAM.aimAhead * len, -WING_CAM.aimDown * len);
-  const alt = drawnAlt(map, p, pose, len, 1);
+  const alt = drawnAlt(map, p, pose, len, 1, e.obj.userData.lift);
   const [cLat, cLon] = offsetLL(pose.lat, pose.lon, cam[0], cam[1]);
   const [aLat, aLon] = offsetLL(pose.lat, pose.lon, aim[0], aim[1]);
   const o = map.calculateCameraOptionsFromTo(new maplibregl.LngLat(cLon, cLat), alt + cam[2], new maplibregl.LngLat(aLon, aLat), alt + aim[2]);
@@ -1843,7 +1869,8 @@ function chaseLayer(cam) {
           this.world.add(e.obj);
         }
         e.obj.visible = true;
-        e.altM = drawnAlt(map, p, pose, e.obj.userData.len, 1);
+        e.altM = drawnAlt(map, p, pose, e.obj.userData.len, 1, e.obj.userData.lift);
+        gearFor(e, pose);
         placeModel(e, pose, e.altM, 1, globe, now, null);
       }
       for (const id of Object.keys(cam.planes)) {

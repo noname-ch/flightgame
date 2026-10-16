@@ -17,6 +17,109 @@ const CLEAN = {
   b752: { y: [-1, 1], z: [-1, 9] },   // dark stripes and numbers all over the fuselage and fin
 };
 
+// Models whose cabin windows are deep pockets in the fuselage skin, which look like dents: flushWindows moves
+// the pockets' floors out level with the skin, and they are painted as glass.
+const POCKET_WINDOWS = { atr42: true };
+
+// The window pockets of a model: patches of the skin inside sharp edges, on the fuselage sides, facing sideways,
+// as big as each other and in a row of at least five at one height. Their floors are moved out to the skin
+// around them; markEngines then marks them as glass (livPart 6). Once per geometry.
+function flushWindows(scene, hw) {
+  const meshes = [];
+  scene.traverse((o) => { if (o.isMesh && o.geometry.attributes.position && !o.geometry.userData.windows) meshes.push(o); });
+  const tris = [];   // [mesh, a, b, c] by vertex index
+  const ids = new Map();
+  const corner = [];
+  const v = new THREE.Vector3();
+  const at = (m, i) => v.fromBufferAttribute(m.geometry.attributes.position, i).clone();
+  for (const m of meshes) {
+    const pos = m.geometry.attributes.position;
+    const idx = m.geometry.index;
+    const n = idx ? idx.count : pos.count;
+    for (let i = 0; i < n; i += 3) {
+      const t = [m];
+      for (let k = 0; k < 3; k++) {
+        const j = idx ? idx.getX(i + k) : i + k;
+        t.push(j);
+        const key = `${Math.round(pos.getX(j) * 2e5)},${Math.round(pos.getY(j) * 2e5)},${Math.round(pos.getZ(j) * 2e5)}`;
+        let id = ids.get(key);
+        if (id === undefined) { id = ids.size; ids.set(key, id); }
+        corner.push(id);
+      }
+      tris.push(t);
+    }
+  }
+  const n = tris.length;
+  const normal = [];
+  const area = new Float32Array(n);
+  tris.forEach(([m, a, b, c], i) => {
+    const p = at(m, a);
+    const q = new THREE.Vector3().subVectors(at(m, b), p).cross(new THREE.Vector3().subVectors(at(m, c), p));
+    area[i] = q.length() / 2;
+    normal.push(q.normalize());
+  });
+  const group = Int32Array.from({ length: n }, (_, i) => i);
+  const root = (a) => { while (group[a] !== a) { group[a] = group[group[a]]; a = group[a]; } return a; };
+  const edges = new Map();
+  for (let i = 0; i < n; i++) {
+    for (let k = 0; k < 3; k++) {
+      const a = corner[i * 3 + k], b = corner[i * 3 + (k + 1) % 3];
+      if (a === b) continue;
+      const key = a < b ? a * ids.size + b : b * ids.size + a;
+      const o = edges.get(key);
+      if (o === undefined) edges.set(key, i);
+      else if (normal[i].dot(normal[o]) > 0.82 && root(i) !== root(o)) group[root(i)] = root(o);
+    }
+  }
+  const patches = new Map();
+  for (let i = 0; i < n; i++) {
+    let p = patches.get(root(i));
+    if (!p) { p = { area: 0, c: new THREE.Vector3(), n: new THREE.Vector3(), tris: [] }; patches.set(root(i), p); }
+    const [m, a, b, c] = tris[i];
+    p.area += area[i];
+    p.c.addScaledVector(at(m, a).add(at(m, b)).add(at(m, c)), area[i] / 3);
+    p.n.addScaledVector(normal[i], area[i]);
+    p.tris.push(i);
+  }
+  const sides = [...patches.values()].filter((p) => {
+    p.c.divideScalar(p.area);
+    p.n.normalize();
+    return Math.abs(p.c.x) > 0.6 * hw && Math.abs(p.c.x) < 1.15 * hw && Math.abs(p.n.x) > 0.9 && p.area > 4e-5 && p.area < 1e-3;
+  });
+  // (a row: the same size at the same height, on the same side)
+  const rows = new Map();
+  for (const p of sides) {
+    const key = `${Math.sign(p.c.x)}|${Math.round(p.c.z / 0.004)}|${Math.round(Math.log(p.area) / 0.15)}`;
+    if (!rows.has(key)) rows.set(key, []);
+    rows.get(key).push(p);
+  }
+  const windows = [].concat(...[...rows.values()].filter((r) => r.length >= 5));
+  // every vertex of the skin, to find how deep each pocket is
+  const skin = [];
+  for (const m of meshes) for (let i = 0; i < m.geometry.attributes.position.count; i++) skin.push(at(m, i));
+  const moved = new Map(meshes.map((m) => [m, new Set()]));
+  for (const p of windows) {
+    const reach = Math.sqrt(p.area) * 1.1;
+    let depth = 0;
+    for (const s of skin) if (s.distanceTo(p.c) < reach) depth = Math.max(depth, s.clone().sub(p.c).dot(p.n));
+    depth = Math.min(depth, 0.4 * Math.sqrt(p.area));
+    for (const i of p.tris) {
+      const [m, ...corners] = tris[i];
+      const pos = m.geometry.attributes.position;
+      for (const j of corners) {
+        if (moved.get(m).has(j)) continue;
+        moved.get(m).add(j);
+        pos.setXYZ(j, pos.getX(j) + p.n.x * depth, pos.getY(j) + p.n.y * depth, pos.getZ(j) + p.n.z * depth);
+      }
+    }
+  }
+  for (const m of meshes) {
+    m.geometry.userData.windows = moved.get(m);
+    m.geometry.attributes.position.needsUpdate = true;
+    m.geometry.computeBoundingSphere();
+  }
+}
+
 const MARKS = { cross: 1, disc: 2, ring: 3, chevron: 4, triangle: 5, text: 6, logo: 6, split: 7 };
 // Where a title goes: its middle below the top of the fuselage and its greatest height, in fuselage widths.
 const TITLE_AT = { window: [0.42, 0.46], above: [0.25, 0.22], low: [0.76, 0.3] };
@@ -86,10 +189,11 @@ const LOGOS = {
 };
 
 // The engines of a model, so that a livery can colour them: every vertex gets the attribute livPart
-// (1 = engine). The models are made of many separate pieces; an engine's cowling is a round piece beside
-// the fuselage, about as wide as it is high and longer than half its width, and with it go the pieces in it.
+// (1 = engine, 6 = a window pane). The models are made of many separate pieces; an engine's cowling is a round
+// piece beside the fuselage, about as wide as it is high and longer than half its width, and with it go the
+// pieces in it.
 // A model in one piece says so itself: the attribute _LIVPART of its file (tools/convert_model.html).
-function markEngines(scene, hw) {
+function markEngines(scene, hw, file) {
   const d = 2 * hw;
   const meshes = [];
   scene.traverse((o) => {
@@ -146,11 +250,12 @@ function markEngines(scene, hw) {
     return Math.abs(b[0] + b[1]) / 2 > 1.3 * hw && Math.min(dx, dz) > 0.3 * d && wide < 1.4 * d && dx / dz > 0.6 && dx / dz < 1.6 &&
       dy > 0.5 * wide && dy < 6 * wide;
   });
-  const engine = new Set();
+  const engine = new Map();   // piece -> the cowling it is in
   for (const p of pieces) {
     const b = p.box;
     const c = [(b[0] + b[1]) / 2, (b[2] + b[3]) / 2, (b[4] + b[5]) / 2];
-    if (cowlings.some(({ box: e }) => c[0] > e[0] && c[0] < e[1] && c[1] > e[2] - 0.1 * (e[3] - e[2]) && c[1] < e[3] + 0.1 * (e[3] - e[2]) && c[2] > e[4] && c[2] < e[5])) engine.add(p);
+    const cowl = cowlings.find(({ box: e }) => c[0] > e[0] && c[0] < e[1] && c[1] > e[2] - 0.1 * (e[3] - e[2]) && c[1] < e[3] + 0.1 * (e[3] - e[2]) && c[2] > e[4] && c[2] < e[5]);
+    if (cowl) engine.set(p, cowl.box);
   }
   scene.userData.engines = cowlings.length;
   // Propellers: blades are pieces thin along the nose, off the fuselage. Touching ones (or one alone) make a
@@ -183,13 +288,29 @@ function markEngines(scene, hw) {
     props++;
   }
   scene.userData.props = props;
-  const marked = new Map(meshes.map((m) => [m, new Set()]));
-  for (const p of engine) marked.get(p.mesh).add(p.root);
+  // A jet's cowling says how far back along it each vertex is: 1.01 at the inlet lip to 1.98 at the exhaust
+  // (the shader paints the lip bare metal and the exhaust grey); what is inside it (fan, spinner) is 5 and keeps
+  // the model's own colours. A turboprop's nacelle is plain 1.
+  const jet = !(FG.data.props && FG.data.props[file]);
+  const marked = new Map(meshes.map((m) => [m, new Map()]));
+  for (const [p, cowl] of engine) {
+    marked.get(p.mesh).set(p.root, { box: cowl, inner: !cowlings.some((c) => c === p) });
+  }
   for (const m of meshes) {
     const root = roots.get(m);
+    const pos = m.geometry.attributes.position;
     const part = new Float32Array(root.length);
-    const set = marked.get(m);
-    if (set.size) for (let i = 0; i < root.length; i++) part[i] = set.has(root[i]) ? 1 : 0;
+    const cowls = marked.get(m);
+    if (cowls.size) {
+      for (let i = 0; i < root.length; i++) {
+        const e = cowls.get(root[i]);
+        if (!e) continue;
+        if (!jet) part[i] = 1;
+        else if (e.inner) part[i] = 5;
+        else part[i] = 1.01 + 0.97 * Math.min(1, Math.max(0, (e.box[3] - pos.getY(i)) / (e.box[3] - e.box[2])));
+      }
+    }
+    for (const i of m.geometry.userData.windows || []) part[i] = 6;   // window panes (flushWindows): glass
     if (!ownMarks.has(m)) m.geometry.setAttribute('livPart', new THREE.BufferAttribute(part, 1));
     m.geometry.userData.livSearched = true;
     const hub = new Float32Array(root.length * 3);
@@ -327,6 +448,14 @@ const FRAG_HEAD = `
 uniform vec3 livBody;
 uniform vec3 livWing;
 uniform vec3 livEngine;
+uniform vec3 livLip;       // a jet engine's inlet lip and exhaust (bare metal)
+uniform vec3 livNozzle;
+uniform vec3 livGlass;     // window panes (livPart 6)
+uniform vec4 livProp;      // propellers: hub x (either side), hub z, y of the blades, blade radius (0: none)
+uniform vec3 livPropShape; // half the blades' thickness along y, y of the spinner's tip, spinner radius at its base
+uniform vec3 livPropColor;
+uniform vec3 livPropTip;
+uniform vec3 livSpinColor;
 uniform vec3 livBelly;
 uniform float livBellyZ;  // the fuselage below this z has the belly colour (far below: none)
 uniform vec2 livBellyNose; // ahead of this y the belly's edge rises by this much per unit
@@ -369,7 +498,37 @@ const FRAG_BODY = `
   float bellyZ = livBellyZ + max(0.0, vLivPos.y - livBellyNose.x) * livBellyNose.y;
   if (fuselage > 0.5 && vLivPos.y < livBellyAft && vLivPos.z < bellyZ + livLineW) paint = vLivPos.z > bellyZ - livLineW && livLineW > 0.0 ? livLine : livBelly;
   paint = mix(paint, livWinglet, step(livWingletX, abs(vLivPos.x)) * upright);
-  if (vLivPart > 0.5) paint = livEngine;
+  if (vLivPart > 5.5) {
+    // a window pane: glass, over any title
+    own = livGlass;
+    detail = 1.0;
+  } else if (vLivPart > 4.5) {
+    // inside a jet engine (fan, spinner): the model's own colours, but grey metal where they are the colours of
+    // its own livery
+    paint = vec3(lum);
+    detail = 1.0 - smoothstep(0.08, 0.16, sat);
+  }
+  else if (vLivPart > 0.5) {
+    paint = livEngine;
+    // a jet engine (js/livery.js markEngines): its inlet lip bare metal, its exhaust grey metal
+    float back = vLivPart - 1.01;
+    if (back > -0.005 && back < 0.06) paint = livLip;
+    else if (back > 0.86) paint = livNozzle;
+  }
+  // propellers: the blades in their thin disc, yellow at the tips, and the spinner in front, over the
+  // model's own colours
+  if (livProp.w > 0.0 && fuselage < 0.5) {
+    float rr = length(vec2(abs(vLivPos.x) - livProp.x, vLivPos.z - livProp.y));
+    float ahead = vLivPos.y - livProp.z;
+    if (abs(ahead) < livPropShape.x && rr > 0.9 * livPropShape.z && rr < livProp.w * 1.03) {
+      paint = rr > livProp.w * 0.86 ? livPropTip : livPropColor;
+      detail = 0.0;
+    } else if (ahead > -livPropShape.x && vLivPos.y < livPropShape.y + 0.001 &&
+        rr < livPropShape.z * clamp((livPropShape.y - vLivPos.y) / max(0.001, livPropShape.y - livProp.z), 0.0, 1.0) + 0.0015) {
+      paint = livSpinColor;
+      detail = 0.0;
+    }
+  }
   if (fuselage > 0.5 && livTail.y > 0.0 && vLivPos.z <= livFin.y && vLivPos.y < livTail.x + (livFin.y - vLivPos.z) * livTail.y) paint = livFinColor;
   if (vLivPos.y < livFin.x && vLivPos.z > livFin.y && abs(vLivPos.x) < livFin.z) {
     vec2 p = vec2((vLivPos.y - livCross.x) * livStretch, vLivPos.z - livCross.y) / livCross.z;
@@ -414,7 +573,9 @@ export function paintLivery(scene, file, extra, stretch = 1, livery = FG.livery(
   const m = measure(scene, file, stretch,
     { aspect: title.aspect, at: livery.titleAt, height: livery.titleHeight, length: livery.titleLength },
     { aspect: finText.aspect, angle: mark.angle, size: mark.size });
-  markEngines(scene, m.halfWidth);
+  if (POCKET_WINDOWS[file]) flushWindows(scene, m.halfWidth);
+  markEngines(scene, m.halfWidth, file);
+  const prop = FG.data.props && FG.data.props[file];   // its propellers, if it has any
   const belly = livery.belly;
   const color = (c) => new THREE.Color(c);
   const wing = livery.wing == null ? livery.body : livery.wing;
@@ -424,6 +585,14 @@ export function paintLivery(scene, file, extra, stretch = 1, livery = FG.livery(
     livBody: { value: color(livery.body) },
     livWing: { value: color(wing) },
     livEngine: { value: color(livery.engine == null ? wing : livery.engine) },
+    livLip: { value: color(0xc8cdd3) },
+    livNozzle: { value: color(0x6b7078) },
+    livGlass: { value: color(0x1b2128) },
+    livProp: { value: prop ? new THREE.Vector4(prop.x, prop.z, prop.y, prop.r) : new THREE.Vector4() },
+    livPropShape: { value: prop ? new THREE.Vector3(prop.t, prop.tip, prop.r * 0.25) : new THREE.Vector3() },
+    livPropColor: { value: color(prop && prop.blade || 0x1c1d20) },
+    livPropTip: { value: color(0xf2b600) },
+    livSpinColor: { value: color(prop && prop.spinner || 0x1c1d20) },
     livBelly: { value: color(belly ? belly.color : livery.body) },
     livBellyZ: { value: belly ? m.top - belly.from * m.width : -99 },
     // (to the nose the edge climbs to the cockpit windows)
@@ -471,7 +640,8 @@ export function paintLivery(scene, file, extra, stretch = 1, livery = FG.livery(
         .replace('#include <begin_vertex>', `#include <begin_vertex>\n${VERT_BODY}`);
       shader.fragmentShader = shader.fragmentShader
         .replace('#include <common>', `#include <common>\n${FRAG_HEAD}`)
-        .replace('#include <map_fragment>', `#include <map_fragment>\n${FRAG_BODY}`);
+        // (after the vertex colours: the converted models keep their dark parts in them)
+        .replace('#include <color_fragment>', `#include <color_fragment>\n${FRAG_BODY}`);
     };
     o.material.customProgramCacheKey = () => 'livery';
     o.material.needsUpdate = true;

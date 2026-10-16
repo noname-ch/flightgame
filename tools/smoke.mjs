@@ -788,6 +788,9 @@ try {
     if (!near(again, 46.91, 7.5) || Math.abs(again.z - 13) > 0.01) errors.push(`3D did not open again where the 2D map was (${JSON.stringify(again)})`);
     await evaluate(() => FG.ui.follow && FG.ui.follow(G.state.planes[0].id));
     await sleep(8000);
+    // its model (once loaded) stands on landing gear (js/gear3d.js)
+    const gear = await evaluate(() => { const e = FG.view3d.planes[G.state.planes[0].id]; return e ? { loaded: e.obj.userData.lift != null, gear: !!e.obj.userData.gear } : null; });
+    if (gear && gear.loaded && !gear.gear) errors.push('3D view: the followed plane has no landing gear');
     step('3D cameras: B fly-by, N wing camera (N again: the other wing), V back to the chase camera');
     await evaluate(() => { if (!FG.ui.selectedPlane) FG.ui.selectPlane(G.state.planes[0].id); });
     await key('b');

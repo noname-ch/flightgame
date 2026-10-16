@@ -1,8 +1,9 @@
 // Loads the 3D aircraft models for the 3D view and the hangar, painted in the airline livery: glTF files
-// (models/*.glb, see models/README.md).
+// (models/*.glb, see models/README.md), with landing gear (js/gear3d.js).
 // FG.data.models says which aircraft type uses which model.
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { paintLivery } from './livery.js';
+import { addGear, gearKey } from './gear3d.js';
 
 const MODELS = new URL('../models/', import.meta.url);
 const raws = {};    // file -> Promise of the unpainted scene
@@ -46,13 +47,14 @@ function raw(file) {
 // long: scale it with modelSize(type). The scene is shared, clone() it
 // for every aircraft drawn. Stretched types get their own materials, so the livery can keep its proportions.
 export function loadModel(type, livery = FG.livery()) {
-  const { file, stretch } = modelSize(type);
-  const key = `${file}|${stretch}|${livery.id}`;
+  const size = modelSize(type);
+  const { file, stretch } = size;
+  const key = `${file}|${stretch}|${livery.id}|${gearKey(type, file)}`;
   if (!loads[key]) {
     loads[key] = raw(file).then((scene) => {
       const copy = scene.clone();
       copy.traverse((o) => { if (o.isMesh) o.material = o.material.clone(); });
-      return paintLivery(copy, file, patchFacing, stretch, livery);
+      return addGear(paintLivery(copy, file, patchFacing, stretch, livery), scene, file, size, patchFacing, type);
     });
     loads[key].catch((e) => console.warn(`3D model ${file} not loaded`, e));
   }

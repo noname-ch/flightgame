@@ -328,6 +328,10 @@ Settings → Map style sets it too (Satellite, or the map for Standard and Dark)
 loading, the ground is dark. The aircraft are glTF models from
 `models/` (Flightradar24's GPLv2 models, see `models/README.md`); `js/data/models.js` says which type uses
 which file; six more come from FlightGear aircraft, and the Saab 340 and Saab 2000 from 3D-print models on Thingiverse.
+Every model stands on 3D landing gear (`js/gear3d.js`, sizes and layout per model in `FG.data.gear`): nose and
+main legs with their tyres, bogies on the big jets, shock absorbers, braces and gear doors; it is raised after
+take-off and lowered on the approach: the legs fold into the wings and nacelles and the doors shut behind
+them. The DC-3 sits nose up on its tail wheel.
 The hangar marketplace shows the same models: the selected type as a live 3D
 model that you can turn by dragging (double-click to reset), the tiles as pictures.
 
@@ -438,7 +442,8 @@ All content is plain data:
 `js/hangar3d.js` the turnable 3D aircraft in the marketplace. `js/models3d.js` loads the 3D models and
 `js/livery.js` paints them in the airline's livery, chosen in the settings (⚙ → Livery, kept in the saved game):
 SWISS, Lufthansa, KLM, Delta, Ryanair, Eurowings and easyJet (`js/data/liveries.js`), simplified after photographs of the real
-ones: the fuselage in one or two colours, coloured engines (found as the round pieces beside the fuselage), a
+ones: the fuselage in one or two colours, coloured engines (found as the round pieces beside the fuselage; a jet engine keeps a bare-metal inlet lip, a
+grey exhaust and its own fan, and propellers are black with yellow tips, `FG.data.props`), a
 coloured fin with a mark or a simple logo (crown, crane, harp), the title on the
 forward fuselage, coloured wing tips. The first livery has its hangar pictures in `models/hangar/`; in the
 others `js/shots3d.js` renders them in the browser. `tools/liveries.html` shows all of them on a few types.

@@ -6,8 +6,8 @@
   const H = 300;
   const GROUND = 240;
   const RED = '#d52b1e';
-  const LIFT = 0.016;   // height of a gearless 3D model above the floor, in aircraft lengths
-  const liftOf = (file) => ((FG.data.modelsOnGear || []).includes(file) ? 0 : LIFT);
+  const LIFT = 0.016;   // height of a 3D model without landing gear above the floor, in aircraft lengths
+  const liftOf = (file) => ((FG.data.modelsOnGear || []).includes(file) || (FG.data.gear && FG.data.gear[file]) ? 0 : LIFT);
   const cache = {};
 
   // ---------- small helpers ----------

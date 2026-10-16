@@ -51,5 +51,73 @@ FG.data.typeSlug = (type) => type.toLowerCase().replace(/[^a-z0-9]+/g, '-');
 // aircraft sits above the lower edge. tools/hangar_shots.html renders with these, js/hangar.js places with them.
 FG.data.modelShot = { w: 1.1, h: 0.5, ground: 0.04 };
 
-// Models that stand on their own landing gear. The others have none and hover a little above the hangar floor.
+// Models that have landing gear of their own. The others get theirs from js/gear3d.js (FG.data.gear).
 FG.data.modelsOnGear = ['dhc6', 'ju52'];
+
+// Landing gear of each model without gear of its own (js/gear3d.js builds it): main = where the main legs are
+// ('wing' under the wing root, 'nacelle' in the engine nacelles, 'body' on the fuselage sides), track = half
+// the distance between the main legs in fuselage widths, wheels = each main leg's tyres as rows x across
+// ('1x2' a pair, '2x1' in tandem, '2x2' and '3x2' bogies), tyre = main tyre diameter (m), noseTyre = the nose
+// gear's (m; else two thirds of the main ones), mainAt = the main legs' distance from the nose (share of the length;
+// else behind the middle of the wing root), nose = the nose gear's distance from
+// the nose (share of the length), tail = a tail wheel instead (leg = its main legs below the nacelles, m),
+// body = more legs under the fuselage { track, wheels, aft: behind the main legs (share of the length) }. A type
+// can have an entry of its own, for other gear than its model's (js/gear3d.js gearKey).
+FG.data.gear = {
+  do228: { main: 'body', track: 0.95, wheels: '1x1', tyre: 0.65 },
+  b1900d: { main: 'nacelle', wheels: '1x2', tyre: 0.56, nose: 0.1 },
+  saab340: { main: 'nacelle', wheels: '1x2', tyre: 0.75, nose: 0.1 },
+  saab2000: { main: 'nacelle', wheels: '1x2', tyre: 0.8, nose: 0.09 },
+  atr42: { main: 'body', track: 0.68, wheels: '1x2', tyre: 0.86, noseTyre: 0.45, nose: 0.08, mainAt: 0.476 },
+  q400: { main: 'nacelle', wheels: '1x2', tyre: 0.85, nose: 0.09 },
+  crj700: { main: 'wing', track: 0.62, wheels: '1x2', tyre: 0.9 },
+  crj900: { main: 'wing', track: 0.62, wheels: '1x2', tyre: 0.9 },
+  bae146: { main: 'body', track: 0.66, wheels: '1x2', tyre: 0.85, nose: 0.1 },
+  e170: { main: 'wing', track: 0.95, wheels: '1x2', tyre: 1 },
+  e190: { main: 'wing', track: 0.95, wheels: '1x2', tyre: 1 },
+  cs100: { main: 'wing', track: 0.9, wheels: '1x2', tyre: 1.05 },
+  cs300: { main: 'wing', track: 0.9, wheels: '1x2', tyre: 1.05 },
+  a318: { main: 'wing', track: 0.95, wheels: '1x2', tyre: 1.17 },
+  a319: { main: 'wing', track: 0.95, wheels: '1x2', tyre: 1.17 },
+  a320: { main: 'wing', track: 0.95, wheels: '1x2', tyre: 1.17 },
+  a321: { main: 'wing', track: 0.95, wheels: '1x2', tyre: 1.17 },
+  b737: { main: 'wing', track: 0.76, wheels: '1x2', tyre: 1.1 },
+  b738: { main: 'wing', track: 0.76, wheels: '1x2', tyre: 1.1 },
+  b739: { main: 'wing', track: 0.76, wheels: '1x2', tyre: 1.1 },
+  b752: { main: 'wing', track: 0.9, wheels: '2x2', tyre: 1.17 },
+  b763: { main: 'wing', track: 0.92, wheels: '2x2', tyre: 1.17 },
+  a332: { main: 'wing', track: 0.95, wheels: '2x2', tyre: 1.27 },
+  a333: { main: 'wing', track: 0.95, wheels: '2x2', tyre: 1.27 },
+  a346: { main: 'wing', track: 0.95, wheels: '2x2', tyre: 1.4, body: { track: 0, wheels: '2x2', aft: 0.02 } },
+  a359: { main: 'wing', track: 0.89, wheels: '2x2', tyre: 1.4 },
+  a380: { main: 'wing', track: 0.88, wheels: '2x2', tyre: 1.4, nose: 0.1, body: { track: 0.35, wheels: '3x2', aft: 0.05 } },
+  b788: { main: 'wing', track: 0.85, wheels: '2x2', tyre: 1.3 },
+  b789: { main: 'wing', track: 0.85, wheels: '2x2', tyre: 1.3 },
+  b772: { main: 'wing', track: 0.89, wheels: '3x2', tyre: 1.32, nose: 0.1 },
+  b773: { main: 'wing', track: 0.89, wheels: '3x2', tyre: 1.32, nose: 0.1 },
+  b744: { main: 'wing', track: 0.85, wheels: '2x2', tyre: 1.25, nose: 0.1, body: { track: 0.3, wheels: '2x2', aft: 0.05 } },
+  b748: { main: 'wing', track: 0.85, wheels: '2x2', tyre: 1.25, nose: 0.1, body: { track: 0.3, wheels: '2x2', aft: 0.05 } },
+  dc3: { main: 'nacelle', wheels: '1x1', tyre: 1.15, tail: true, leg: 1.5 },
+  concorde: { main: 'wing', track: 1.33, wheels: '2x2', tyre: 1.2, nose: 0.24 },
+  // types with other gear than the model they borrow: the later propliners drawn with the DC-3 had a nose wheel
+  'DC-4': { main: 'nacelle', wheels: '1x2', tyre: 1.2, nose: 0.13 },
+  'CV-340': { main: 'nacelle', wheels: '1x2', tyre: 1.1, nose: 0.12 },
+  'DC-6B': { main: 'nacelle', wheels: '1x2', tyre: 1.25, nose: 0.13 },
+  'L-1049G': { main: 'nacelle', wheels: '1x2', tyre: 1.3, nose: 0.12 },
+  'DC-7C': { main: 'nacelle', wheels: '1x2', tyre: 1.3, nose: 0.13 },
+};
+
+// Propellers of the models that have them, for their colours (js/livery.js): hub x (either side) and z, the y
+// of the blades and their radius, t = half the blades' thickness along y, tip = the y of the spinner's tip
+// (model units, measured off the models). Black blades with yellow tips and a black spinner, as on most
+// turboprops; `blade` and `spinner` for others (the propliners' bare metal ones).
+FG.data.props = {
+  atr42: { x: 0.174, z: -0.024, y: 0.2216, r: 0.088, t: 0.0065, tip: 0.2558 },
+  q400: { x: 0.134, z: -0.0346, y: 0.1627, r: 0.063, t: 0.0055, tip: 0.1856 },
+  saab340: { x: 0.1653, z: -0.0857, y: 0.2212, r: 0.0858, t: 0.006, tip: 0.2331 },
+  saab2000: { x: 0.135, z: -0.0702, y: 0.2111, r: 0.0704, t: 0.005, tip: 0.223 },
+  b1900d: { x: 0.1485, z: -0.0433, y: 0.2167, r: 0.0775, t: 0.009, tip: 0.2375 },
+  do228: { x: 0.154, z: -0.0096, y: 0.1834, r: 0.083, t: 0.003, tip: 0.2166 },
+  dhc6: { x: 0.1814, z: -0.0029, y: 0.2659, r: 0.0788, t: 0.003, tip: 0.2923 },
+  dc3: { x: 0.143, z: -0.0822, y: 0.3552, r: 0.0891, t: 0.003, tip: 0.377, blade: 0x9ea4ab, spinner: 0xb9bec4 },
+};
