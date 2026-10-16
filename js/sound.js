@@ -35,6 +35,7 @@
   // 0.24 a little heavier than the brown noise at 0.3 was. far (15 s): an airliner drifting over far away. start (9 s,
   // once, not a loop): a jet's starter whistling up from 1 to 1.5 kHz (the hiss above 6 kHz taken out).
   const RECORDINGS = { rumble: ['sounds/jet-rumble.wav', 0.24], far: ['sounds/far-wash.wav', 0.3], start: ['sounds/jet-start.wav', 0.3] };
+  const SCREECH = 5;        // the screech's level (× size, power, style)
   const START_LEVEL = 0.3;  // the start recording × the plane's size × the style's whine
   const FAR = [800, 4000]; // metres: from here the made-up voice gives way to the far recording, all of it by there
   const FAR_LEVEL = 2.5;   // the far recording × the engines' power: about as loud as the made-up voice it takes over from
@@ -44,11 +45,14 @@
   // The same voices with other numbers (Settings → Sound). 'standard' is the sound as tuned with the user (the user:
   // "that is a good sound but it needs more bass"; later "it sounds like a tractor, it should have really strong bass
   // and air sounds" and, on the wing camera, "a fast repeating electric beat": no crackle, a quarter of the buzz-saw,
-  // more bass and air); its numbers are the ones the others are measured against.
+  // more bass and air; then "still a humming sound", "the engines should screech, not a high pitched tone", louder,
+  // and heard close by too, not only coming towards you; "the buzz completely gone": no drone, no buzz-saw, the
+  // screech); its numbers are the ones the others are measured against.
   // Jets: shelf (dB of bass below shelfHz), roar (level; its low-pass from roarLo at no power + roarHi × N1^roarPow,
   // the second one roarSpread times higher), rumble (the recording below rumbleHz), crackle (the rumble jumping about
   // at take-off power), drone (the fan shaft's hum), fan and core (the whines; tone: their pitch, also the APU's and
-  // the turboprop's), saw (the buzz-saw ahead of a big fan), air (the air rushing past: level, airHz × its low-pass,
+  // the turboprop's), saw (the buzz-saw ahead of a big fan), screech (the fan's rough screech: noise in two narrow
+  // bands at its blade pitch, all round the plane), air (the air rushing past: level, airHz × its low-pass,
   // airHp a high-pass so it rushes instead of rumbling, gust), top (a low-pass on it all: muffled), spool (× the
   // time the engines take to follow the levers), level. Turboprops and pistons: prop (the propeller and engine
   // tones) and bright (× their filters), and roar, core, tone, air, shelf, top and level as above.
@@ -56,25 +60,25 @@
     standard: {
       name: 'Standard', about: 'The full roar and rumble, the air rushing past.',
       shelf: 9, shelfHz: 220, roar: 1, roarLo: 200, roarHi: 1900, roarPow: 1.6, roarSpread: 2, rumble: 1.3, rumbleHz: 180,
-      crackle: 0, drone: 0.7, fan: 1, core: 1, tone: 1, saw: 0.25, air: 1.8, airHz: 1, airHp: 0, gust: 0.3, top: 16000, spool: 1,
+      crackle: 0, drone: 0, fan: 0.35, core: 0.3, tone: 1, saw: 0, screech: 1, air: 2.4, airHz: 1, airHp: 0, gust: 0.3, top: 16000, spool: 1,
       level: 1, prop: 1, bright: 1,
     },
     deep: {
       name: 'Deep', about: 'Heavier and darker, cinematic: more rumble and low drone, a dark roar, hardly any whine.',
       shelf: 10, shelfHz: 180, roar: 1.05, roarLo: 150, roarHi: 1000, roarPow: 1.6, roarSpread: 1.5, rumble: 2, rumbleHz: 150,
-      crackle: 0, drone: 1.5, fan: 0.2, core: 0.15, tone: 0.68, saw: 0.15, air: 1.2, airHz: 0.65, airHp: 0, gust: 0.3, top: 5000, spool: 1,
+      crackle: 0, drone: 0.6, fan: 0.2, core: 0.15, tone: 0.68, saw: 0, screech: 0.3, air: 1.4, airHz: 0.65, airHp: 0, gust: 0.3, top: 5000, spool: 1,
       level: 1, prop: 1.1, bright: 0.7,
     },
     open: {
       name: 'Open', about: 'Brighter and more open at full power, a strong rush of air, the bass kept.',
       shelf: 6, shelfHz: 220, roar: 1.15, roarLo: 260, roarHi: 2900, roarPow: 2, roarSpread: 2.6, rumble: 1, rumbleHz: 180,
-      crackle: 0, drone: 0.7, fan: 0.6, core: 0.5, tone: 0.68, saw: 0.35, air: 3.2, airHz: 1.25, airHp: 350, gust: 0.45, top: 16000, spool: 1,
+      crackle: 0, drone: 0, fan: 0.25, core: 0.4, tone: 0.68, saw: 0, screech: 1, air: 3.6, airHz: 1.25, airHp: 350, gust: 0.45, top: 16000, spool: 1,
       level: 1, prop: 1, bright: 1.3,
     },
     soft: {
       name: 'Soft', about: 'Smooth and relaxed for long sessions: muffled, as from further away or inside, gentle air, almost no whine.',
       shelf: 4, shelfHz: 200, roar: 0.9, roarLo: 180, roarHi: 1200, roarPow: 1.6, roarSpread: 1.6, rumble: 0.75, rumbleHz: 160,
-      crackle: 0, drone: 0.5, fan: 0.12, core: 0.08, tone: 0.68, saw: 0, air: 0.7, airHz: 0.7, airHp: 0, gust: 0.15, top: 1300, spool: 1.5,
+      crackle: 0, drone: 0, fan: 0.12, core: 0.08, tone: 0.68, saw: 0, screech: 0.2, air: 0.7, airHz: 0.7, airHp: 0, gust: 0.15, top: 1300, spool: 1.5,
       level: 0.7, prop: 0.8, bright: 0.6,
     },
   };
@@ -446,6 +450,13 @@
       L.core = gain();
       L.core1 = osc('sine', 100);
       L.core1.connect(L.core);
+      // The screech: white noise in two narrow bands at the fan's blade pitch (rough, not a tone).
+      L.scrSrc = src(s.noise);
+      L.scrF1 = filter('bandpass', 2000, 5);
+      L.scrF2 = filter('bandpass', 2900, 7);
+      L.screech = gain();
+      L.scrSrc.connect(L.scrF1).connect(L.screech);
+      L.scrSrc.connect(L.scrF2).connect(L.screech);
       L.sawF = filter('bandpass', 1100, 0.6);
       L.saw = gain();
       L.saw1 = osc('sawtooth', 50);
@@ -674,6 +685,11 @@
       T(L2.core.gain, sz * 0.035 * S.core * smooth(0.02, 0.12, n2) * (pr.old ? 2 : 1) * (1 - 0.8 * n1));
       T(L2.core1.frequency, Math.max(20, pr.core * S.tone * n2 * dop));
       T(L2.saw.gain, pr.old ? 0 : sz * 1.2 * S.saw * smooth(0.82, 0.92, n1) * front ** 1.5);
+      // The screech: up with the power, from all round (a little more ahead), old jets more.
+      const scrHz = Math.min(2000, 1.5 * pr.fan * (0.55 + 0.45 * n1)) * dop; // (higher was a hiss: small fans)
+      T(L2.screech.gain, run * sz * SCREECH * S.screech * (0.04 + 0.96 * smooth(0.25, 0.9, n1)) * (0.8 + 0.4 * front) * (pr.old ? 1.3 : 1));
+      T(L2.scrF1.frequency, scrHz);
+      T(L2.scrF2.frequency, scrHz * 1.25);
       T(L2.saw1.frequency, Math.max(20, pr.shaft * n1 * dop));
     } else if (pr.kind === 'turboprop') {
       const pw = sm.pw;
