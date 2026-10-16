@@ -2096,10 +2096,11 @@
     const radius = vTurn * vTurn / (9.81 * Math.tan(toRad(pf.bank)));
     const P = (ll) => ({ lat: ll[0], lon: ll[1] });
 
-    // Takeoff run to lift-off at ~1.8 m/s², landing run at ~1.6 m/s², within the runway.
+    // Takeoff run to lift-off at ~2.2 m/s² (an A320 in about 36 s and 1400 m), landing run at ~1.6 m/s², within
+    // the runway.
     const vLofMs = pf.vLof / 3.6;
     const vAppMs = pf.vApp / 3.6;
-    const rollM = Math.min(dep.len * 0.85, Math.max(250, vLofMs * vLofMs / 3.6));
+    const rollM = Math.min(dep.len * 0.85, Math.max(250, vLofMs * vLofMs / 4.4));
     const stopM = Math.min(arr.len * 0.85, Math.max(400 + 300, 400 + vAppMs * vAppMs / 3.2));
     const lift = offsetPoint(dep.thr[0], dep.thr[1], dep.hdg, rollM);
     const climbOut = offsetPoint(dep.end[0], dep.end[1], dep.hdg, ac.speedKmh < 450 ? 2500 : 5000);
@@ -2442,6 +2443,10 @@
     // the runway the nose is straight again.
     const fieldFt = Math.round(tr.fieldAt(sv));
     const ground = sv <= sLift || sv >= sTouch;
+    // rollT: how far through its takeoff run the plane is in time (0 brakes off, 1 lift-off); with an even push the
+    // speed grows with it (the 3D view rotates the plane over the last part).
+    const sThr = tr.cum[tr.idx.thr];
+    const rollT = phase === 'takeoff' ? Math.sqrt(Math.min(1, Math.max(0, (sv - sThr) / Math.max(1e-6, sLift - sThr)))) : null;
     const wind = windAt(pos.lat, pos.lon, t, alt);
     let crab = 0;
     if (!ground) {
@@ -2453,7 +2458,7 @@
     }
     // altFt: above sea level; fieldFt: the runways' height at this point (altFt - fieldFt = height above them).
     return { lat: pos.lat, lon: pos.lon, heading: pos.heading, altFt: alt, fieldFt,
-      ground, speedKmh: speed, phase, airFrac, crab, windFrom: wind.from, windKt: wind.kt, gusty: wind.gusty,
+      ground, speedKmh: speed, phase, airFrac, rollT, crab, windFrom: wind.from, windKt: wind.kt, gusty: wind.gusty,
       cruiseFt: tr.cruiseAlt, depRunway: designatorOf(tr.depRunway.hdg), arrRunway: designatorOf(tr.arrRunway.hdg) };
   }
   const designatorOf = (h) => String(Math.round((((h % 360) + 360) % 360) / 10) || 36).padStart(2, '0');

@@ -57,6 +57,7 @@ const CRUISE_M = { turboprop: 7000, regional: 10000, narrowbody: 11000, widebody
 const DEG = Math.PI / 180;
 const wrap180 = (d) => ((((d % 360) + 540) % 360) - 180);
 const AIRBORNE = { climb: 1, cruise: 1, descent: 1, approach: 1 };
+const ROTATE_DEG = 8; // nose up at lift-off
 
 // Flight attitude from the track around time t: heading along the actual motion (so corners are
 // flown as curves), bank from the turn rate, pitch from the climb or descent angle, plus the
@@ -92,8 +93,12 @@ function attitude(p, st, t) {
       bank += k * 4 * (0.6 * Math.sin(s * 1.9 + ph) + 0.4 * Math.sin(s * 4.3 + ph * 2));
       pitch += k * 1.2 * Math.sin(s * 2.7 + ph);
     }
+    if (st.phase === 'climb' && agl < 300) pitch = Math.max(pitch, ROTATE_DEG); // (just off the runway: still rotated)
   } else if (st.phase === 'takeoff') {
-    pitch = 9 * Math.max(0, Math.min(1, (st.speedKmh - vLift * 0.75) / (vLift * 0.25))); // rotation
+    // Rotation: the nose comes up over the last tenth of the run (3-4 s at its usual pace, about 2.5° a second),
+    // and the plane leaves the runway at ROTATE_DEG. (It used to start at three quarters of the lift-off speed,
+    // half way down the runway, and the tail dragged along the ground.)
+    pitch = ROTATE_DEG * Math.max(0, Math.min(1, ((st.rollT ?? 0) - 0.9) / 0.1));
   } else if (st.phase === 'landing') {
     pitch = 4 * Math.max(0, Math.min(1, (st.speedKmh - vLift * 0.5) / (vLift * 0.5))); // nose wheel down
   }
@@ -807,19 +812,43 @@ function fieldElevation(map, code) {
   if (e != null && e !== 0) v.elev[code] = e;
   return e || 0;
 }
-// Shown height: the real height, but stretched when zoomed out so planes stay clearly above the ground.
-// Height a plane is drawn at: heights in the game are above the airports, from the departure field's ground
-// to the arrival field's, stretched like the hills, and never below the terrain under the plane; always
-// clearly above the ground when zoomed out (shownAlt).
+// The ground a flight's heights are drawn from: the ground at its lift-off point, then at its touchdown point
+// ({ e0, e1 }, shown metres). Read from the terrain tiles themselves at the finest zoom the 3D map draws (12):
+// the map's own queryTerrainElevation answers from whatever tile has loaded there, and the field height kept
+// from a zoomed-out look was up to 100 m off (Bern: 617 m instead of 509 m), so planes jumped up when they left
+// the runway (or dropped onto it on landing). fieldElevation until the tile is in.
+const runwayGround = new Map(); // "lat,lon" -> metres, null while its tile loads
+function groundOf(pt) {
+  const key = `${pt[0].toFixed(5)},${pt[1].toFixed(5)}`;
+  if (!runwayGround.has(key)) {
+    if (runwayGround.size > 600) runwayGround.clear();
+    runwayGround.set(key, null);
+    heightsAt([pt], 12).then(([h]) => { runwayGround.set(key, h); if (v.map) v.map.triggerRepaint(); }, () => {});
+  }
+  return runwayGround.get(key);
+}
+function fieldBase(map, p) {
+  const tr = G.flightTrack(p);
+  const at = (i, code) => {
+    const h = tr ? groundOf(tr.pts[i]) : null;
+    return h != null ? h * TERRAIN_EXAG : fieldElevation(map, code);
+  };
+  return { e0: at(tr ? tr.idx.lift : 0, p.flight.from), e1: at(tr ? tr.idx.touch : 0, p.flight.to) };
+}
+// Height a plane is drawn at: heights in the game are above the airports, from the departure runway's ground
+// to the arrival runway's, stretched like the hills, and never below the terrain under the plane; always
+// clearly above the ground when zoomed out (shownAlt). The clearance kept over the terrain grows with the
+// height, so leaving the runway is not a jump.
 function drawnAlt(map, p, pose, len, exag) {
   const under = map.queryTerrainElevation([pose.lon, pose.lat]) || 0;
   let base = under;
   if (pose.st && pose.altM > 0) {
     const f = pose.st.airFrac;
-    base = fieldElevation(map, p.flight.from) * (1 - f) + fieldElevation(map, p.flight.to) * f;
+    const { e0, e1 } = fieldBase(map, p);
+    base = e0 * (1 - f) + e1 * f;
   }
   const rise = shownAlt(pose.altM * TERRAIN_EXAG, len, exag);
-  return Math.max(base + rise, under + Math.min(rise, 150 * TERRAIN_EXAG) + (pose.altM > 0 ? len * exag * 0.12 : 0));
+  return Math.max(base + rise, under + Math.min(rise, 150 * TERRAIN_EXAG) + Math.min(len * exag * 0.12, pose.altM * TERRAIN_EXAG));
 }
 function shownAlt(altM, len, exag) {
   return Math.max(altM, (altM / 11000) * len * exag * 1.2) + len * exag * 0.12;
@@ -1101,7 +1130,8 @@ const planeLayer = {
       const pose = planePose(p, t, st);
       if (st && st.speedKmh) moving = Math.max(moving, (st.speedKmh / 3.6) * (FG.ui ? FG.ui.speed : 0) / mpp);
       const len = e.obj.userData.len;
-      const exag = p.id === cine ? 1 : Math.max(1, px * mpp / len) * (p.id === sel ? 1.35 : 1);
+      // (the selected plane a little bigger where all are drawn enlarged; close up, real size like the others)
+      const exag = p.id === cine ? 1 : Math.max(1, px * mpp / len * (p.id === sel ? 1.35 : 1));
       // Shown height: real cruise height, but always clearly above the ground when zoomed out.
       const altM = drawnAlt(map, p, pose, len, exag);
       if (p.id === sel && !cine) this.drawTrack(p, len, exag, globe);
@@ -1181,8 +1211,7 @@ planeLayer.drawTrack = function (p, len, exag, globe) {
   }
   if (!tr) { this.track.visible = false; return; }
   const map = v.map;
-  const e0 = fieldElevation(map, p.flight.from);
-  const e1 = fieldElevation(map, p.flight.to);
+  const { e0, e1 } = fieldBase(map, p);
   // (flat: unwrapped at ±180°, and as a whole in the copy of the world nearest the view, like the plane)
   if (!trackLons.has(tr)) trackLons.set(tr, unwrap(tr.pts).map((c) => c[0]));
   const lons = trackLons.get(tr);
@@ -1469,12 +1498,12 @@ const WING_CAM = { out: 0.3, back: 0.32, up: 0.08, aimOut: 0.12, aimAhead: 2.2, 
 // uses) that is neither water, ice nor a built-up area (from the map's vector tiles, read through a hidden
 // map as for the obstacles). What cannot be found out (offline, a slow network) does not stand in the way.
 const DEM = { url: 'https://tiles.mapterhorn.com/{z}/{x}/{y}.webp', z: 11, size: 512 }; // terrarium heights
-const demTiles = new Map(); // "x/y" -> promise of the tile's pixels
-function demTile(x, y) {
-  const key = `${x}/${y}`;
+const demTiles = new Map(); // "z/x/y" -> promise of the tile's pixels
+function demTile(x, y, z = DEM.z) {
+  const key = `${z}/${x}/${y}`;
   if (!demTiles.has(key)) {
     if (demTiles.size > 40) demTiles.clear();
-    demTiles.set(key, fetch(DEM.url.replace('{z}', DEM.z).replace('{x}', x).replace('{y}', y))
+    demTiles.set(key, fetch(DEM.url.replace('{z}', z).replace('{x}', x).replace('{y}', y))
       .then((r) => { if (!r.ok) throw new Error(`terrain tile ${r.status}`); return r.blob(); })
       .then((blob) => createImageBitmap(blob, { colorSpaceConversion: 'none', premultiplyAlpha: 'none' }))
       .then((img) => {
@@ -1487,9 +1516,9 @@ function demTile(x, y) {
   }
   return demTiles.get(key);
 }
-// Heights in metres at [lat, lon] points.
-async function heightsAt(pts) {
-  const n = 2 ** DEM.z;
+// Heights in metres at [lat, lon] points (from the tiles of zoom z).
+async function heightsAt(pts, z = DEM.z) {
+  const n = 2 ** z;
   const where = pts.map(([lat, lon]) => {
     const x = ((lon + 180) / 360) * n;
     const s = Math.sin(Math.max(-85, Math.min(85, lat)) * DEG);
@@ -1497,7 +1526,7 @@ async function heightsAt(pts) {
     return [((Math.floor(x) % n) + n) % n, Math.floor(y), Math.min(DEM.size - 1, Math.floor((x - Math.floor(x)) * DEM.size)), Math.min(DEM.size - 1, Math.floor((y - Math.floor(y)) * DEM.size))];
   });
   const tiles = {};
-  await Promise.all([...new Set(where.map((w) => `${w[0]}/${w[1]}`))].map(async (k) => { tiles[k] = await demTile(...k.split('/').map(Number)); }));
+  await Promise.all([...new Set(where.map((w) => `${w[0]}/${w[1]}`))].map(async (k) => { tiles[k] = await demTile(...k.split('/').map(Number), z); }));
   return where.map(([tx, ty, px, py]) => {
     const d = tiles[`${tx}/${ty}`];
     const i = (py * DEM.size + px) * 4;
