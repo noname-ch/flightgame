@@ -96,10 +96,13 @@ Play online: https://noname-ch.github.io/flightgame/ (GitHub Pages, deployed fro
   (elevation, azimuth), `G.daylight(lat, lon, t, sp)` (1 day … 0 night), `G.sunTimes(code, t)`. Timetables and
   `C.curfew` still run on home-base time. js/daynight.js (`FG.daynight`) draws the night on the 2D map (pane 'night',
   under the game's layers; the "Day and night" overlay, `FG.daynight.enabled()` also switches the 3D night).
-  view3d.js `daylight3d(map, layer, lat, lon, t, now, weather)` lights the planes from the sun every frame and, on a
-  change, sets the sky (`skyOf(w, sun)`), `fg-night` (a dark flat layer over the ground), `fg-runway-lights` /
+  view3d.js `daylight3d(map, layer, lat, lon, t, now, weather)` turns the planes' light by the sun at the view centre
+  and, on a change, sets the sky (`skyOf(w, sun)`, from zoom 5), `fg-night` (zoomed out: an image of the night side
+  of the world, `nightImage`; from zoom 7-9 `fg-night-local`, one darkness from the centre's sun), `fg-runway-lights` /
   `fg-taxi-lights`, `terminalColors(night)` and every other extrusion's colour, and `map.setLight`. Aircraft lights
-  are `navLights(type, model)` (points read off the model, `navSpotsOf`), switched by phase in `setNavLights`.
+  are `navLights(type, model)` (points read off the model, `navSpotsOf`), switched by phase in `setNavLights`. Each
+  aircraft and cloud is dimmed for the light where it is (livery.js OWN_UNIFORM `livLight`, set in `placeModel`; the
+  clouds' `lit` attribute): never light the whole view from its centre (zoomed out that lit New York at night).
 - Sound (js/sound.js, `FG.sound`, off until turned on; prefs in localStorage `flightgame.sound`): Web Audio voices
   made up as they play, plus `RECORDINGS` in `sounds/` (loops from ElevenLabs Sound Effects, 16 kHz mono WAV: an MP3's
   lead-in silence would stutter in a loop). The jets' rumble, roar and screech come from `BANKS` (several takes each,

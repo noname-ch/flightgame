@@ -1215,6 +1215,7 @@ if (livSurf.x > 0.5) {
   transformed.z += livFlex * livSpan * livOut * livOut;
 }`;
 const FRAG_HEAD = `
+uniform float livLight;   // how light it is where the aircraft is (OWN_UNIFORMS)
 uniform vec3 livBody;
 uniform vec3 livWing;
 uniform vec3 livEngine;
@@ -1354,14 +1355,15 @@ const FRAG_BODY = `
   paint = mix(paint, livColor, ink * upright);
   // lettering of the model's own livery goes
   if (vLivPos.y > livClean.x && vLivPos.y < livClean.y && vLivPos.z > livClean.z && vLivPos.z < livClean.w) detail = 0.0;
-  diffuseColor.rgb = mix(paint, own, detail);
+  diffuseColor.rgb = mix(paint, own, detail) * livLight;
 }`;
 
 // Models whose texture has dark noise baked into its shading (see FRAG_BODY).
 const NOISY = { cs100: 1, cs300: 1 };
 
 // Uniforms each material has its own of (in its userData), for the aircraft drawn with it.
-export const OWN_UNIFORMS = ['livFlex', 'livSpin', 'livAil', 'livFlap', 'livElev', 'livRud', 'livRev', 'livRevKind', 'livRevX'];
+// livLight: how light it is where the aircraft is (1 day … dark at night, js/view3d.js placeModel).
+export const OWN_UNIFORMS = ['livFlex', 'livSpin', 'livAil', 'livFlap', 'livElev', 'livRud', 'livRev', 'livRevKind', 'livRevX', 'livLight'];
 
 // Paints a loaded model in a livery (its materials are changed in place; clones of the model share them).
 // `extra(shader)` can patch the shader further.
@@ -1430,7 +1432,7 @@ export function paintLivery(scene, file, extra, stretch = 1, livery = FG.livery(
     // (each material has its own OWN_UNIFORMS, so an aircraft drawn with copies of them bends, turns its
     // propellers and moves its control surfaces on its own:
     // js/view3d.js ownMaterials)
-    for (const k of OWN_UNIFORMS) o.material.userData[k] = { value: 0 };
+    for (const k of OWN_UNIFORMS) o.material.userData[k] = { value: k === 'livLight' ? 1 : 0 };
     o.material.onBeforeCompile = function (shader) {
       Object.assign(shader.uniforms, uniforms);
       for (const k of OWN_UNIFORMS) shader.uniforms[k] = this.userData[k];

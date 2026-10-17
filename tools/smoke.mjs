@@ -1058,16 +1058,26 @@ try {
     for (const [t, n] of Object.entries(wantEngines)) if (revs.engines[t] !== n) errors.push(`3D thrust reversers: ${t} has ${revs.engines[t]} engines found, not ${n}`);
     if (revs.own !== revs.drawn) errors.push(`3D thrust reversers: ${revs.drawn - revs.own} of ${revs.drawn} drawn aircraft without their own livRev uniforms`);
 
-    step('3D night: the dark ground as dark as the sun says where the camera is; the aircraft have their lights');
+    step('3D night: the night side of the world on the ground (not one darkness from the view centre), each aircraft as light as it is where it is, their lights');
     await sleep(1500);
     const n3 = await evaluate(() => {
       const m = FG.view3d.map;
       const c = m.getCenter();
       const want = 1 - G.daylight(c.lat, c.lng, FG.ui.time);
       const lit = Object.values(FG.view3d.planes).filter((e) => e.obj.userData.nav).length;
-      return { want, have: m.fgDay && m.fgDay.night, op: m.getPaintProperty('fg-night', 'fill-opacity'), lit, models: Object.values(FG.view3d.planes).filter((e) => e.obj.userData.liv).length };
+      // the picture: dark where the sun is far under the horizon, clear where it is high
+      const sp = G.sunPoint(FG.ui.time);
+      const night = m.fgDay && m.fgDay.pic;
+      const shade = [];
+      for (const k of FG.view3d.planes ? Object.values(FG.view3d.planes) : []) {
+        const u = k.obj.userData.liv && k.obj.userData.liv[0];
+        if (u && u.livLight) shade.push(u.livLight.value);
+      }
+      return { want, have: m.fgDay && m.fgDay.night, night, antipode: [-sp.lat, sp.lon > 0 ? sp.lon - 180 : sp.lon + 180], shade,
+        lit, models: Object.values(FG.view3d.planes).filter((e) => e.obj.userData.liv).length };
     });
-    if (n3.have == null || Math.abs(n3.have - n3.want) > 0.1 || Math.abs(n3.op - 0.7 * n3.have) > 0.01) errors.push(`3D night: ${JSON.stringify(n3)}`);
+    if (n3.have == null || Math.abs(n3.have - n3.want) > 0.1 || !n3.night) errors.push(`3D night: ${JSON.stringify(n3)}`);
+    if (n3.shade.some((x) => !(x >= 0.15 && x <= 1))) errors.push(`3D night: aircraft light out of range ${n3.shade.join(', ')}`);
     if (n3.models && n3.lit < n3.models) errors.push(`3D aircraft lights: ${n3.lit} of ${n3.models} models have them`);
 
     step('3D satellite: 🛰 not under the plane window while following; Settings → Map style switches the 3D ground too');

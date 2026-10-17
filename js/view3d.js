@@ -311,12 +311,12 @@ function navLights(type, model) {
 }
 // Which lights are on, from what the plane is doing, and how bright for the light where it is (v.sp: the sun
 // this frame, lightAt). Sets e.flashing while the beacon or strobes flash (the 3D view keeps drawing then).
-function setNavLights(e, pose, now) {
+function setNavLights(e, pose, now, light) {
   const u = e.obj.userData.nav;
   if (!u) return;
   const st = pose.st;
   const ph = st ? st.phase : null;
-  const night = v.sp && (!FG.daynight || FG.daynight.enabled()) ? 1 - G.daylight(pose.lat, pose.lon, 0, v.sp) : 0;
+  const night = 1 - light;
   const running = !!(pose.flying && ph && ph !== 'boarding');
   const air = !!(ph && (AIRBORNE[ph] || ph === 'takeoff' || ph === 'landing'));
   const agl = st ? (st.altFt || 0) - (st.fieldFt || 0) : 0;
@@ -1060,10 +1060,17 @@ function transformStyle(_prev, style) {
   );
   // Night (daylight3d): the ground darkens under the routes, airports and planes, runway edges and taxiway
   // centre lines light up. All flat, so they stay in the one run of draped layers.
-  style.sources['fg-night'] = { type: 'geojson', data: { type: 'Feature', properties: {},
+  // Zoomed out the night side of the world (an image, nightImage); from zoom 7 to 9 that hands over to one darkness for
+  // the view, from the sun at its centre (MapLibre doesn't draw a picture of the world that close in, and the view
+  // is a few km across there anyway).
+  style.sources['fg-night'] = { type: 'image', url: CLEAR_PNG, coordinates: NIGHT_CORNERS };
+  style.sources['fg-night-local'] = { type: 'geojson', data: { type: 'Feature', properties: {},
     geometry: { type: 'Polygon', coordinates: [[[-180, -85], [180, -85], [180, 85], [-180, 85], [-180, -85]]] } } };
   style.layers.push(
-    { id: 'fg-night', type: 'fill', source: 'fg-night', paint: { 'fill-color': NIGHT_GROUND, 'fill-opacity': 0, 'fill-antialias': false } },
+    { id: 'fg-night', type: 'raster', source: 'fg-night', maxzoom: 9,
+      paint: { 'raster-opacity': ['interpolate', ['linear'], ['zoom'], 7, 1, 9, 0], 'raster-fade-duration': 0, 'raster-resampling': 'linear' } },
+    { id: 'fg-night-local', type: 'fill', source: 'fg-night-local', minzoom: 7,
+      paint: { 'fill-color': NIGHT_GROUND, 'fill-opacity': 0, 'fill-antialias': false } },
     { id: 'fg-runway-lights', type: 'line', source: 'fg-gates', minzoom: 12, filter: kind('runway'),
       layout: { 'line-cap': 'round', 'line-join': 'round', visibility: 'none' },
       paint: { 'line-color': '#fff6d8', 'line-opacity': 0, 'line-blur': 0.8,
@@ -1206,6 +1213,7 @@ function placeModel(e, pose, altM, exag, globe, now, lineUp) {
   // (real seconds since the last frame; none while the game is paused, so a bounce or smoke waits)
   const dtR = e.lastFrame == null || (FG.ui && !FG.ui.speed) ? 0 : Math.min(0.25, Math.max(0, (now - e.lastFrame) / 1000));
   const unit = frameAt(pose.lat, pose.lon, altM, globe);
+  const light = v.sp && nightOn() ? G.daylight(pose.lat, pose.lon, 0, v.sp) : 1; // (where the plane is)
   // Ease heading, bank and pitch towards the target, so the plane turns, rolls and pitches
   // smoothly instead of snapping (frame-rate independent).
   const k = e.att ? 1 - Math.exp(-Math.min(0.25, (now - e.lastFrame) / 1000) / 0.35) : 1;
@@ -1236,6 +1244,7 @@ function placeModel(e, pose, altM, exag, globe, now, lineUp) {
     e.ctl.flap += (c.flap - e.ctl.flap) * kf;
     for (const u of liv) {
       u.livFlex.value = e.flex;
+      if (u.livLight) u.livLight.value = 0.15 + 0.85 * light;
       u.livSpin.value = e.spin;
       u.livAil.value = e.ctl.ail;
       u.livFlap.value = e.ctl.flap;
@@ -1247,7 +1256,7 @@ function placeModel(e, pose, altM, exag, globe, now, lineUp) {
     }
   }
   e.lastFrame = now;
-  setNavLights(e, pose, now);
+  setNavLights(e, pose, now, light);
   const ud = e.obj.userData;
   // the shock absorbers: how much higher the plane is drawn as it settles onto its legs, and the nose's bounce
   const ol = ud.oleo && ud.gear && ud.mainY != null && !ud.sit ? oleo(e, ud, pose, exag, dtR) : null;
@@ -1436,8 +1445,8 @@ function smokeTick(e, dt) {
 const CLOUD_MAX = 2600;
 const CLOUD_VS = `
 uniform float uScale; uniform vec4 uClip; uniform float uClipOn; uniform float uMaxPx; uniform float uAlpha;
-attribute float size; attribute float shade; attribute float alpha; attribute float rot;
-varying float vShade; varying float vAlpha; varying float vRot;
+attribute float size; attribute float shade; attribute float alpha; attribute float rot; attribute float lit;
+varying float vShade; varying float vAlpha; varying float vRot; varying float vLit;
 void main() {
   vec4 c = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
   gl_Position = c;
@@ -1445,10 +1454,11 @@ void main() {
   float a = alpha * uAlpha * clamp((uMaxPx - px) / (uMaxPx * 0.5), 0.0, 1.0);
   if (uClipOn > 0.5 && dot(uClip.xyz, position) + uClip.w < -0.002) a = 0.0; // behind the globe
   gl_PointSize = a > 0.0 ? px : 0.0;
-  vShade = shade; vAlpha = a; vRot = rot;
+  vShade = shade; vAlpha = a; vRot = rot; vLit = lit;
 }`;
 const CLOUD_FS = `
-uniform sampler2D uTex; uniform float uLight;
+uniform sampler2D uTex;
+varying float vLit;
 varying float vShade; varying float vAlpha; varying float vRot;
 void main() {
   vec2 q = gl_PointCoord - 0.5;
@@ -1457,18 +1467,18 @@ void main() {
   float a = t.a * vAlpha;
   if (a < 0.01) discard;
   vec3 col = mix(vec3(1.0), vec3(0.36, 0.4, 0.46), vShade) * (0.8 + 0.25 * (1.0 - gl_PointCoord.y)); // lit from above
-  col *= mix(vec3(0.07, 0.09, 0.15), vec3(1.0), uLight); // (dark at night)
+  col *= mix(vec3(0.07, 0.09, 0.15), vec3(1.0), vLit); // (dark where it is night)
   gl_FragColor = vec4(col, a);
 }`;
 function cloudPoints() {
   const g = new THREE.BufferGeometry();
   const attr = (n) => new THREE.BufferAttribute(new Float32Array(CLOUD_MAX * n), n).setUsage(THREE.DynamicDrawUsage);
   g.setAttribute('position', attr(3));
-  for (const a of ['size', 'shade', 'alpha', 'rot']) g.setAttribute(a, attr(1));
+  for (const a of ['size', 'shade', 'alpha', 'rot', 'lit']) g.setAttribute(a, attr(1));
   g.setDrawRange(0, 0);
   const tex = new THREE.CanvasTexture(FG.weather.sprite());
   const m = new THREE.ShaderMaterial({
-    uniforms: { uTex: { value: tex }, uScale: { value: 1 }, uClip: { value: new THREE.Vector4() }, uClipOn: { value: 0 }, uMaxPx: { value: 700 }, uAlpha: { value: 1 }, uLight: { value: 1 } },
+    uniforms: { uTex: { value: tex }, uScale: { value: 1 }, uClip: { value: new THREE.Vector4() }, uClipOn: { value: 0 }, uMaxPx: { value: 700 }, uAlpha: { value: 1 } },
     vertexShader: CLOUD_VS, fragmentShader: CLOUD_FS, transparent: true, depthWrite: false, depthTest: true,
   });
   const pts = new THREE.Points(g, m);
@@ -1485,7 +1495,6 @@ function updateClouds(layer, map, globe, mpp, centerW, now) {
   pts.visible = on;
   if (!on) { FG.weather.n3d = 0; return; }
   const u = pts.material.uniforms;
-  u.uLight.value = layer.light == null ? 1 : layer.light;
   u.uScale.value = (centerW / mpp) * (window.devicePixelRatio || 1);
   u.uClipOn.value = v.clip ? 1 : 0;
   if (v.clip) u.uClip.value.set(v.clip[0], v.clip[1], v.clip[2], v.clip[3]);
@@ -1497,7 +1506,8 @@ function updateClouds(layer, map, globe, mpp, centerW, now) {
   const dLat = Math.min(85, halfKm / 111.32);
   const dLon = Math.min(180, dLat / Math.max(0.2, Math.cos(c.lat * DEG)));
   const t = G.state.time;
-  const key = `${c.lat.toFixed(2)},${c.lng.toFixed(2)},${dLat.toFixed(3)},${globe},${t}`;
+  const sp = nightOn() ? G.sunPoint(t) : null;
+  const key = `${c.lat.toFixed(2)},${c.lng.toFixed(2)},${dLat.toFixed(3)},${globe},${t},${!!sp}`;
   if (key === v.cloudKey || now - (v.cloudAt || 0) < 250) return;
   v.cloudKey = key;
   v.cloudAt = now;
@@ -1508,6 +1518,7 @@ function updateClouds(layer, map, globe, mpp, centerW, now) {
   const H = g.attributes.shade.array;
   const A = g.attributes.alpha.array;
   const R = g.attributes.rot.array;
+  const Lt = g.attributes.lit.array;
   const n = Math.min(CLOUD_MAX, list.length);
   for (let i = 0; i < n; i++) {
     const p = list[i];
@@ -1517,8 +1528,9 @@ function updateClouds(layer, map, globe, mpp, centerW, now) {
     H[i] = p.shade;
     A[i] = Math.min(1, p.a * 0.75);
     R[i] = p.rot;
+    Lt[i] = sp ? G.daylight(p.lat, p.lon, 0, sp) : 1;
   }
-  for (const a of ['position', 'size', 'shade', 'alpha', 'rot']) g.attributes[a].needsUpdate = true;
+  for (const a of ['position', 'size', 'shade', 'alpha', 'rot', 'lit']) g.attributes[a].needsUpdate = true;
   g.setDrawRange(0, n);
   FG.weather.n3d = n;
 }
@@ -1552,46 +1564,93 @@ function skyOf(w, sun = DAYLIGHT) {
 // the main map), the dark ground, runway and taxiway lights, lit windows and the buildings' light follow. (Those
 // redraw the ground, so only on a change.)
 const DAYLIGHT = { light: 1, elev: 45, az: 200 };
+const nightOn = () => !!G.sunAt && (!FG.daynight || FG.daynight.enabled());
 function lightAt(lat, lon, t) {
-  if (!G.sunAt || (FG.daynight && !FG.daynight.enabled())) return DAYLIGHT;
+  if (!nightOn()) return DAYLIGHT;
   v.sp = G.sunPoint(t);
   const sun = G.sunAt(lat, lon, t, v.sp);
   return { light: G.daylight(lat, lon, t, v.sp), elev: sun.elev, az: sun.az };
 }
+// The night side of the world as a picture for the ground (the source 'fg-night'): Web Mercator rows from 85° N to
+// 85° S, dark blue as far as the sun is under the horizon (0.7 at night, dusk in between). Zoomed out the whole globe
+// shows, half in daylight: one darkness for all of it, from the view centre, lit New York at night when Europe was in
+// the middle. Made again when the sun has moved on a little (a third of a degree), shared by the 3D maps.
+const NIGHT_W = 360, NIGHT_H = 256;
+const nightPic = { key: null, url: null };
+function nightImage(t) {
+  const sp = G.sunPoint(t);
+  const key = `${Math.round(sp.lon * 3)},${Math.round(sp.lat * 10)}`;
+  if (key === nightPic.key) return nightPic;
+  const c = nightPic.canvas || (nightPic.canvas = Object.assign(document.createElement('canvas'), { width: NIGHT_W, height: NIGHT_H }));
+  const g = c.getContext('2d');
+  const img = g.createImageData(NIGHT_W, NIGHT_H);
+  const d = img.data;
+  const sinD = Math.sin(sp.lat * DEG), cosD = Math.cos(sp.lat * DEG);
+  const col = parseInt(NIGHT_GROUND.slice(1), 16);
+  const cosH = [];
+  for (let x = 0; x < NIGHT_W; x++) cosH.push(Math.cos(((x + 0.5) / NIGHT_W * 360 - 180 - sp.lon) * DEG));
+  for (let y = 0, i = 0; y < NIGHT_H; y++) {
+    const lat = Math.atan(Math.sinh(Math.PI * (1 - 2 * (y + 0.5) / NIGHT_H)));
+    const sf = Math.sin(lat) * sinD, cf = Math.cos(lat) * cosD;
+    for (let x = 0; x < NIGHT_W; x++, i += 4) {
+      const elev = Math.asin(Math.max(-1, Math.min(1, sf + cf * cosH[x]))) / DEG;
+      const k = Math.min(1, Math.max(0, (elev + 9) / 13));
+      d[i] = col >> 16; d[i + 1] = (col >> 8) & 255; d[i + 2] = col & 255;
+      d[i + 3] = Math.round(0.7 * (1 - k * k * (3 - 2 * k)) * 255);
+    }
+  }
+  g.putImageData(img, 0, 0);
+  nightPic.key = key;
+  nightPic.url = c.toDataURL('image/png');
+  return nightPic;
+}
+const NIGHT_CORNERS = [[-180, 85.0511], [180, 85.0511], [180, -85.0511], [-180, -85.0511]];
+const CLEAR_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+
 // (tmp: the frame at the view centre, frameAt)
+// The planes are dimmed one by one for the light where each is (placeModel, livLight); the scene's lights keep their
+// daytime strength, coloured and turned by the sun at the view centre when zoomed in. The sky follows the centre's
+// sun from zoom 5 on (zoomed out it is the globe's atmosphere, day and night side alike).
 function daylight3d(map, layer, lat, lon, t, now, weather) {
   const sun = lightAt(lat, lon, t);
   const L = sun.light;
+  const zoom = map.getZoom();
+  const local = zoom >= 7;
   layer.light = L;
-  layer.scene.userData.light = L;   // (the tyre smoke's)
-  layer.amb.intensity = 0.28 + 1.32 * L;
-  layer.sun.intensity = 0.3 + 1.9 * L;
-  if (L > 0.05 && sun.elev > -3) {
+  layer.scene.userData.light = local ? L : 1; // (the tyre smoke's)
+  layer.amb.intensity = 1.6;
+  layer.sun.intensity = 2.2;
+  if (local && L > 0.05 && sun.elev > -3) {
     const e = Math.max(5, sun.elev) * DEG;
     const az = sun.az * DEG;
     layer.sun.color.set(mixHex('#ffb070', '#ffffff', Math.min(1, Math.max(0, sun.elev / 20))));
     layer.sun.position.copy(tmp.pos).addScaledVector(tmp.up, Math.sin(e))
       .addScaledVector(tmp.east, Math.sin(az) * Math.cos(e)).addScaledVector(tmp.north, Math.cos(az) * Math.cos(e));
   } else {
-    layer.sun.color.set('#9db2df');
+    layer.sun.color.set(local && L < 0.3 ? '#9db2df' : '#ffffff');
     layer.sun.position.copy(tmp.pos).addScaledVector(tmp.up, 1).addScaledVector(tmp.east, -0.6).addScaledVector(tmp.north, 0.4);
   }
   layer.sun.target.position.copy(tmp.pos);
   const st = map.fgDay || (map.fgDay = {});
   if (now - (st.at || 0) < 300) return;
   st.at = now;
-  const w = weather && FG.weather && FG.weather.enabled() && map.getZoom() >= 6 ? G.weatherAt(lat, lon, G.state.time) : null;
-  const sky = skyOf(w, sun);
+  const w = weather && FG.weather && FG.weather.enabled() && zoom >= 6 ? G.weatherAt(lat, lon, G.state.time) : null;
+  const skySun = zoom >= 5 ? sun : DAYLIGHT;
+  const sky = skyOf(w, skySun);
   const night = Math.round((1 - L) * 20) / 20;
-  const key = JSON.stringify([sky['sky-color'], sky['horizon-color'], sky['fog-color'], sky['fog-ground-blend'], night, Math.round(sun.az / 10), Math.round(sun.elev / 5)]);
+  const pic = nightOn() ? nightImage(t) : null;
+  const key = JSON.stringify([sky['sky-color'], sky['horizon-color'], sky['fog-color'], sky['fog-ground-blend'], night, Math.round(sun.az / 10), Math.round(sun.elev / 5), pic && pic.key]);
   if (key === st.key) return;
   const was = st.night;
   st.key = key;
   st.night = night;
   setTimeout(() => { // (not inside the layer's render)
-    if (!map.getLayer('fg-night')) return;
+    const src = map.getSource('fg-night');
+    if (!src) return;
     map.setSky(sky);
-    map.setPaintProperty('fg-night', 'fill-opacity', 0.7 * night);
+    const url = pic ? pic.url : CLEAR_PNG;
+    if (url !== st.url) { st.url = url; st.pic = pic && pic.key; src.updateImage({ url, coordinates: NIGHT_CORNERS }); }
+    map.setPaintProperty('fg-night-local', 'fill-opacity', ['interpolate', ['linear'], ['zoom'], 7, 0, 9, 0.7 * night]);
     const lamps = Math.max(0, Math.min(1, (night - 0.25) / 0.4));
     for (const id of ['fg-runway-lights', 'fg-taxi-lights']) {
       map.setLayoutProperty(id, 'visibility', lamps > 0 ? 'visible' : 'none');
