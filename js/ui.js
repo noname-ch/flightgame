@@ -277,6 +277,9 @@
     }).setView(C.map.center, C.map.zoom);
 
     // Stacking: tiles < towns + catchment < routes < airports < planes.
+    const night = map.createPane('night'); // (js/daynight.js: over the map, under everything of the game's)
+    night.style.zIndex = 300;
+    night.style.pointerEvents = 'none';
     map.createPane('towns').style.zIndex = 350;
     // (runways over the aprons and taxiways: where a taxiway meets or crosses a runway, the runway and its
     // paint lie on top, as in 3D)
@@ -337,6 +340,7 @@
     ui.baseName = baseName;
     ui.overlays = { Towns: ui.townLayer, Routes: ui.routeLayer, 'Rival airlines': ui.rivalLayer, 'Place names': names };
     if (FG.weather) ui.overlays['Clouds and weather'] = FG.weather.layer2d(); // (also the 3D clouds, rain and snow)
+    if (FG.daynight) ui.overlays['Day and night'] = FG.daynight.layer2d(); // (also the 3D night)
     ui.names = names;
     addControl('topleft', () => {
       const bar = L.DomUtil.create('div', 'leaflet-bar');
@@ -1084,7 +1088,12 @@
     money.classList.toggle('negative', s.money < 0);
     const day = Math.floor(s.time / 1440);
     $('clock-time').textContent = G.fmtClock(s.time);
-    $('clock-day').textContent = G.fmtTime(s.time).replace(/ \d\d:\d\d$/, '');
+    const home = G.airportByCode[G.home()];
+    $('clock-day').textContent = `${G.fmtTime(s.time).replace(/ \d\d:\d\d$/, '')} ${home ? lightIcon(home.lat, home.lon, s.time) : ''}`;
+    if (home && Math.floor(s.time / 60) !== ui.clockHour) {
+      ui.clockHour = Math.floor(s.time / 60);
+      $('clock-time').parentElement.title = `The time at ${home.code} (${G.fmtZone(home.code, s.time)}), your home base: every airport has its own local time. ${sunText(home.code, s.time)}`;
+    }
     $('pause').classList.toggle('active', ui.paused);
     $('speed-btn').classList.toggle('paused', ui.paused);
     $('speed-label').textContent = ui.paused ? 'Paused' : ui.speed === 1 ? 'Real time' : fmtSpeed(ui.speed);
@@ -1125,6 +1134,7 @@
       <div class="muted">${a.city}, ${a.country} · ${categoryTag(code)} · size ${sizeDots(G.airportSize(code))}${a.minor ? ' · airfield' : ''}</div>
       <div>Catchment: <b>${fmtPop(G.catchment(code))}</b> people · landing fee ${G.fmtMoney(G.landingFee(code))}</div>
       <div>${runwayText(code)}</div>
+      <div title="The local time there (the clock at the top is the time at your home base)">🕗 ${G.fmtLocal(code, s.time)} local (${G.fmtZone(code, s.time)}) · ${lightIcon(a.lat, a.lon, s.time)} ${lightName(a.lat, a.lon, s.time)} · ${sunText(code, s.time)}</div>
       ${FG.weather ? `<div title="Weather now (it drifts east and changes over a day or two)">${FG.weather.text(G.airportWeather(code))}</div>` : ''}${rivalsAt(code)}`;
     if (a.built && !a.open) {
       h += a.site ? '<div class="warn">🏗 Being built: open it once its checklist (Construction, below) is done.</div>'
@@ -1277,11 +1287,30 @@
     return h + `</table></div>`;
   }
 
+  // Day and night (game.js G.sunAt): an icon and a word for how light it is at a place, sunrise and sunset at an
+  // airport, and "(09:10 local)" after a time at an airport whose clock is not the home base's.
+  function lightIcon(lat, lon, t) {
+    const e = G.sunAt(lat, lon, t).elev;
+    return e > 6 ? '☀️' : e > -6 ? '🌅' : '🌙';
+  }
+  function lightName(lat, lon, t) {
+    const e = G.sunAt(lat, lon, t).elev;
+    return e > 6 ? 'day' : e > 0 ? 'low sun' : e > -6 ? 'dusk' : 'night';
+  }
+  function sunText(code, t) {
+    const st = G.sunTimes(code, t);
+    if (!st) return '';
+    return st.polar ? (st.polar === 'day' ? 'midnight sun' : 'polar night') : `sunrise ${st.rise}, sunset ${st.set}`;
+  }
+  function localNote(code, t) {
+    return G.utcOffset(code, t) === G.utcOffset(G.home(), t) ? '' : ` (${G.fmtLocal(code, t)} local)`;
+  }
+
   function planeStatus(p) {
     const f = p.flight;
     if (p.status === 'flying') {
       const verb = { ferry: 'Ferrying', delivery: 'Delivery flight' }[f.kind] || 'Flying';
-      return `${verb} ${f.from} → ${f.to}, arrives ${G.fmtClock(f.arr)}` +
+      return `${verb} ${f.from} → ${f.to}, arrives ${G.fmtClock(f.arr)}${localNote(f.to, f.arr)}` +
         (f.kind === 'scheduled' ? ` · ${f.pax} pax` : '') + ` · ${flightText(p)}`;
     }
     if (p.status === 'turnaround' && p.repair) return `🔧 Grounded for repairs at ${p.location} until ${G.fmtTime(p.readyAt)}`;
@@ -1907,7 +1936,7 @@
       h += `<div class="tt-route"><span>${f.from}<small>${G.airportByCode[f.from].city}</small></span><span class="arrow">✈</span>
           <span>${f.to}<small>${G.airportByCode[f.to].city}</small></span></div>
         <div class="tt-prog"><i style="width:${Math.min(100, ((t - f.dep) / Math.max(1, f.arr - f.dep)) * 100)}%"></i></div>
-        <div>⏱ <b>${G.fmtDuration(left)}</b> left · lands ${G.fmtClock(Math.round(f.arr))}</div>
+        <div>⏱ <b>${G.fmtDuration(left)}</b> left · lands ${G.fmtClock(Math.round(f.arr))}${localNote(f.to, f.arr)}</div>
         <div class="muted">${flightText(p)}${f.kind === 'scheduled' ? ` · ${f.pax} pax` : ` · ${f.kind}`}</div>`;
     } else {
       const sch = p.schedule;

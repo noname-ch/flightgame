@@ -207,10 +207,123 @@ function planeModel(type) {
     // on the ground, and the model's width (the gear's unit)
     g.userData.mainY = (scene.userData.mainY ?? -0.05) * size.len;
     g.userData.wide = size.wide;
+    const lights = navLights(type, model);
+    g.userData.nav = lights.material.uniforms;
     g.clear();
-    g.add(model);
+    g.add(model, lights);
   }, () => {});
   return g;
+}
+
+// ---------- aircraft lights ----------
+// Red and green position lights on the wing tips and a white one on the tail, a red beacon flashing on top of and
+// under the fuselage while the engines run, white strobes flashing twice on the tips and tail from the runway on,
+// and a landing light under the nose for take-off and landing (dimmer, the taxi light, on the taxiways). Points of
+// a fixed size in pixels, added onto what is behind: bright at night, faint by day (the strobes stay bright).
+// Where they go is read off the model once per type (navSpotsOf).
+const NAV_VS = `
+uniform float uPx; uniform float uTime; uniform float uPhase; uniform vec4 uOn;
+attribute float kind; attribute vec3 tint;
+varying vec3 vCol; varying float vA;
+void main() {
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  float t = uTime + uPhase;
+  float a = 0.0, size = 5.0;
+  if (kind < 0.5) a = uOn.x;
+  else if (kind < 1.5) { a = uOn.y * step(fract(t), 0.12); size = 7.0; }
+  else if (kind < 2.5) { float f = fract(t / 1.3); a = uOn.z * (step(f, 0.04) + step(0.11, f) * step(f, 0.15)); size = 10.0; }
+  else { a = uOn.w; size = 12.0; }
+  gl_PointSize = a > 0.0 ? size * uPx : 0.0;
+  vCol = tint; vA = a;
+}`;
+const NAV_FS = `
+varying vec3 vCol; varying float vA;
+void main() {
+  float d = length(gl_PointCoord - 0.5) * 2.0;
+  float glow = smoothstep(1.0, 0.0, d);
+  float core = smoothstep(0.38, 0.0, d);
+  gl_FragColor = vec4(mix(vCol, vec3(1.0), core * 0.7) * (glow * 0.6 + core * 0.8) * vA, 1.0);
+}`;
+const navSpots = {}; // type -> [x, y, z, kind, r, g, b, ...] in metres
+function navSpotsOf(type, model) {
+  if (navSpots[type]) return navSpots[type];
+  const look = D.looks && D.looks[type];
+  const len = look ? look.len : 30;
+  const dia = look && look.dia ? look.dia : len * 0.1;
+  const inGear = (o) => { for (; o; o = o.parent) if (o.name === 'gear') return true; return false; };
+  const p = new THREE.Vector3();
+  let L = null, R = null, aft = null, top = -Infinity, bottom = Infinity, nose = Infinity;
+  model.updateMatrixWorld(true);
+  model.traverse((o) => {
+    if (!o.isMesh || inGear(o)) return;
+    const pos = o.geometry.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      p.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld);
+      if (!L || p.x < L.x) L = p.clone();
+      if (!R || p.x > R.x) R = p.clone();
+      if (!aft || p.y < aft.y) aft = p.clone();
+      if (Math.abs(p.x) < dia * 0.25) {
+        if (p.y > -0.05 * len && p.y < 0.1 * len) { top = Math.max(top, p.z); bottom = Math.min(bottom, p.z); }
+        if (p.y > 0.3 * len && p.y < 0.4 * len) nose = Math.min(nose, p.z);
+      }
+    }
+  });
+  if (!L) return (navSpots[type] = []);
+  if (!Number.isFinite(top)) { top = dia / 2; bottom = -dia / 2; }
+  if (!Number.isFinite(nose)) nose = bottom;
+  const red = [1, 0.12, 0.08], green = [0.15, 1, 0.35], white = [1, 1, 1];
+  const out = [];
+  const add = (x, y, z, kind, c) => out.push(x, y, z, kind, ...c);
+  add(L.x - 0.1, L.y, L.z, 0, red);
+  add(R.x + 0.1, R.y, R.z, 0, green);
+  add(0, aft.y - 0.1, aft.z, 0, white);
+  add(0, 0.02 * len, top + 0.15, 1, red);
+  add(0, -0.05 * len, bottom - 0.15, 1, red);
+  add(L.x - 0.1, L.y - 0.3, L.z, 2, white);
+  add(R.x + 0.1, R.y - 0.3, R.z, 2, white);
+  add(0, aft.y - 0.2, aft.z + 0.2, 2, white);
+  add(0, 0.35 * len, nose - 0.2, 3, [1, 0.95, 0.82]);
+  return (navSpots[type] = out);
+}
+function navLights(type, model) {
+  const spots = navSpotsOf(type, model);
+  const n = spots.length / 7;
+  const g = new THREE.BufferGeometry();
+  const pos = new Float32Array(n * 3), kind = new Float32Array(n), tint = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    pos.set(spots.slice(i * 7, i * 7 + 3), i * 3);
+    kind[i] = spots[i * 7 + 3];
+    tint.set(spots.slice(i * 7 + 4, i * 7 + 7), i * 3);
+  }
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('kind', new THREE.BufferAttribute(kind, 1));
+  g.setAttribute('tint', new THREE.BufferAttribute(tint, 3));
+  const m = new THREE.ShaderMaterial({
+    uniforms: { uPx: { value: window.devicePixelRatio || 1 }, uTime: { value: 0 }, uPhase: { value: Math.random() * 10 }, uOn: { value: new THREE.Vector4() } },
+    vertexShader: NAV_VS, fragmentShader: NAV_FS, transparent: true, depthWrite: false, depthTest: true, blending: THREE.AdditiveBlending,
+  });
+  const pts = new THREE.Points(g, m);
+  pts.frustumCulled = false;
+  pts.renderOrder = 5;
+  return pts;
+}
+// Which lights are on, from what the plane is doing, and how bright for the light where it is (v.sp: the sun
+// this frame, lightAt). Sets e.flashing while the beacon or strobes flash (the 3D view keeps drawing then).
+function setNavLights(e, pose, now) {
+  const u = e.obj.userData.nav;
+  if (!u) return;
+  const st = pose.st;
+  const ph = st ? st.phase : null;
+  const night = v.sp && (!FG.daynight || FG.daynight.enabled()) ? 1 - G.daylight(pose.lat, pose.lon, 0, v.sp) : 0;
+  const running = !!(pose.flying && ph && ph !== 'boarding');
+  const air = !!(ph && (AIRBORNE[ph] || ph === 'takeoff' || ph === 'landing'));
+  const agl = st ? (st.altFt || 0) - (st.fieldFt || 0) : 0;
+  const land = ph === 'takeoff' || ph === 'landing' || ((ph === 'approach' || ph === 'climb' || ph === 'descent') && agl < 10000);
+  const taxi = ph === 'taxi-out' || ph === 'taxi-in';
+  u.uOn.value.set(pose.flying ? 0.3 + 0.7 * night : 0, running ? 0.45 + 0.55 * night : 0, air ? 0.75 + 0.25 * night : 0,
+    land ? 0.2 + 0.8 * night : taxi ? 0.1 + 0.5 * night : 0);
+  u.uTime.value = now / 1000;
+  e.flashing = running;
 }
 
 // Gives a clone of a model its own copies of the shared livery materials (same shader program), so its wings
@@ -806,6 +919,18 @@ function phoneDrapes(map) {
   rtt.rttSize = map.terrain.tileManager.tileSize;
 }
 const LOADING_GROUND = '#3a4236'; // under the satellite pictures where they are still loading
+const NIGHT_GROUND = '#030817';
+// The buildings' colours; at night (0 day … 1 night) they darken (the map's light only shades them) and the glass
+// and the tower cab glow with the lights inside.
+function terminalColors(night) {
+  const k = Math.min(0.8, night * 0.85);
+  const c = (day) => (k > 0.01 ? mixHex(day, NIGHT_GROUND, k) : day);
+  const lit = (day, glow) => (night > 0.05 ? mixHex(day, glow, Math.min(1, night * 1.2)) : day);
+  const own = k > 0.01 ? ['interpolate', ['linear'], ['literal', k], 0, ['to-color', ['get', 'col']], 1, NIGHT_GROUND] : ['get', 'col'];
+  return ['case', ['has', 'col'], own, ['match', ['get', 'part'], 'tower', c('#aab4c2'), 'cab', lit('#27313f', '#c9e3ff'), 'hangar', c('#7b8590'),
+    'carpark', c('#6b7280'), 'hall', c('#9aa7b8'), 'bridge', c('#c3ccd8'), 'glass', lit('#35506a', '#f5c66e'), 'roof', c('#e3e7ed'), 'plant', c('#6d7682'),
+    'canopy', c('#dfe5ec'), 'road', c('#3b4048'), 'mast', c('#d1d5db'), c('#8a96a8')]];
+}
 function transformStyle(_prev, style) {
   style.projection = { type: 'globe' };
   // Terrain heights from zoom 12 on are only made larger, not loaded finer: runways are flat, and the
@@ -874,7 +999,7 @@ function transformStyle(_prev, style) {
       paint: { 'line-color': '#facc15', 'line-width': ['case', ['==', ['get', 'kind'], 'stop'], 3, 1.2] } },
     { id: 'fg-terminals', type: 'fill-extrusion', source: 'fg-gates', minzoom: GATE_MINZOOM, filter: kind('building'),
       paint: {
-        'fill-extrusion-color': ['case', ['has', 'col'], ['get', 'col'], ['match', ['get', 'part'], 'tower', '#aab4c2', 'cab', '#27313f', 'hangar', '#7b8590', 'carpark', '#6b7280', 'hall', '#9aa7b8', 'bridge', '#c3ccd8', 'glass', '#35506a', 'roof', '#e3e7ed', 'plant', '#6d7682', 'canopy', '#dfe5ec', 'road', '#3b4048', 'mast', '#d1d5db', '#8a96a8']],
+        'fill-extrusion-color': terminalColors(0),
         'fill-extrusion-base': ['get', 'base'], 'fill-extrusion-height': ['get', 'h'], 'fill-extrusion-opacity': 0.95,
       } },
     { id: 'fg-bridges', type: 'fill-extrusion', source: 'fg-gates', minzoom: 14, filter: kind('bridge'),
@@ -893,6 +1018,23 @@ function transformStyle(_prev, style) {
     { id: 'fg-gate-labels', type: 'symbol', source: 'fg-gates', minzoom: 16, filter: kind('label'),
       layout: { 'text-field': ['get', 'name'], 'text-font': ['Noto Sans Bold'], 'text-size': 11, 'text-allow-overlap': true },
       paint: { 'text-color': '#facc15', 'text-halo-color': '#000', 'text-halo-width': 1.2 } },
+  );
+  // Night (daylight3d): the ground darkens under the routes, airports and planes, runway edges and taxiway
+  // centre lines light up. All flat, so they stay in the one run of draped layers.
+  style.sources['fg-night'] = { type: 'geojson', data: { type: 'Feature', properties: {},
+    geometry: { type: 'Polygon', coordinates: [[[-180, -85], [180, -85], [180, 85], [-180, 85], [-180, -85]]] } } };
+  style.layers.push(
+    { id: 'fg-night', type: 'fill', source: 'fg-night', paint: { 'fill-color': NIGHT_GROUND, 'fill-opacity': 0, 'fill-antialias': false } },
+    { id: 'fg-runway-lights', type: 'line', source: 'fg-gates', minzoom: 12, filter: kind('runway'),
+      layout: { 'line-cap': 'round', 'line-join': 'round', visibility: 'none' },
+      paint: { 'line-color': '#fff6d8', 'line-opacity': 0, 'line-blur': 0.8,
+        'line-width': ['interpolate', ['exponential', 2], ['zoom'], 12, 1.6, 15, 3.5, 19, 7],
+        'line-dasharray': [0.05, 3] } },
+    { id: 'fg-taxi-lights', type: 'line', source: 'fg-gates', minzoom: 14, filter: kind('twline'),
+      layout: { 'line-cap': 'round', 'line-join': 'round', visibility: 'none' },
+      paint: { 'line-color': '#4ade80', 'line-opacity': 0, 'line-blur': 0.5,
+        'line-width': ['interpolate', ['exponential', 2], ['zoom'], 14, 1, 17, 2, 19, 3.2],
+        'line-dasharray': [0.2, 5] } },
   );
   style.layers.push(
     {
@@ -1056,6 +1198,7 @@ function placeModel(e, pose, altM, exag, globe, now, lineUp) {
     }
   }
   e.lastFrame = now;
+  setNavLights(e, pose, now);
   const h = e.att.heading * DEG;
   const pitch = e.att.pitch * DEG;
   const bank = e.att.bank * DEG;
@@ -1105,7 +1248,7 @@ void main() {
   vShade = shade; vAlpha = a; vRot = rot;
 }`;
 const CLOUD_FS = `
-uniform sampler2D uTex;
+uniform sampler2D uTex; uniform float uLight;
 varying float vShade; varying float vAlpha; varying float vRot;
 void main() {
   vec2 q = gl_PointCoord - 0.5;
@@ -1114,6 +1257,7 @@ void main() {
   float a = t.a * vAlpha;
   if (a < 0.01) discard;
   vec3 col = mix(vec3(1.0), vec3(0.36, 0.4, 0.46), vShade) * (0.8 + 0.25 * (1.0 - gl_PointCoord.y)); // lit from above
+  col *= mix(vec3(0.07, 0.09, 0.15), vec3(1.0), uLight); // (dark at night)
   gl_FragColor = vec4(col, a);
 }`;
 function cloudPoints() {
@@ -1124,7 +1268,7 @@ function cloudPoints() {
   g.setDrawRange(0, 0);
   const tex = new THREE.CanvasTexture(FG.weather.sprite());
   const m = new THREE.ShaderMaterial({
-    uniforms: { uTex: { value: tex }, uScale: { value: 1 }, uClip: { value: new THREE.Vector4() }, uClipOn: { value: 0 }, uMaxPx: { value: 700 }, uAlpha: { value: 1 } },
+    uniforms: { uTex: { value: tex }, uScale: { value: 1 }, uClip: { value: new THREE.Vector4() }, uClipOn: { value: 0 }, uMaxPx: { value: 700 }, uAlpha: { value: 1 }, uLight: { value: 1 } },
     vertexShader: CLOUD_VS, fragmentShader: CLOUD_FS, transparent: true, depthWrite: false, depthTest: true,
   });
   const pts = new THREE.Points(g, m);
@@ -1141,6 +1285,7 @@ function updateClouds(layer, map, globe, mpp, centerW, now) {
   pts.visible = on;
   if (!on) { FG.weather.n3d = 0; return; }
   const u = pts.material.uniforms;
+  u.uLight.value = layer.light == null ? 1 : layer.light;
   u.uScale.value = (centerW / mpp) * (window.devicePixelRatio || 1);
   u.uClipOn.value = v.clip ? 1 : 0;
   if (v.clip) u.uClip.value.set(v.clip[0], v.clip[1], v.clip[2], v.clip[3]);
@@ -1187,27 +1332,86 @@ function mixHex(a, b, k) {
   const ch = (sh) => Math.round(((pa >> sh) & 255) * (1 - k) + ((pb >> sh) & 255) * k);
   return `#${((ch(16) << 16) | (ch(8) << 8) | ch(0)).toString(16).padStart(6, '0')}`;
 }
-function skyOf(w) {
+// Dusk turns the horizon orange and night the whole sky dark blue (`sun`: lightAt).
+const DUSK = { sky: '#4b5f92', horizon: '#ee9a5c', fog: '#c2927e' };
+const NIGHT = { sky: '#040a1d', horizon: '#16233f', fog: '#0d162b' };
+function skyOf(w, sun = DAYLIGHT) {
   const grey = w ? Math.min(1, w.cover * 0.7 + w.rain * 0.4) : 0;
   const storm = w && w.storm ? 0.8 : 0;
-  const col = (k) => mixHex(mixHex(SKY[k], GREY[k], grey), STORMY[k], storm);
+  const dusk = Math.max(0, 1 - Math.abs(sun.elev - 1) / 9) * (1 - grey * 0.7);
+  const col = (k) => mixHex(mixHex(mixHex(mixHex(SKY[k], GREY[k], grey), STORMY[k], storm), DUSK[k], dusk * 0.85), NIGHT[k], 1 - sun.light);
   return {
     'sky-color': col('sky'), 'horizon-color': col('horizon'), 'fog-color': col('fog'),
     'sky-horizon-blend': 0.6, 'horizon-fog-blend': 0.6, 'fog-ground-blend': w && w.fog ? 0.35 : w && w.rain > 0.5 ? 0.7 : 0.85,
     'atmosphere-blend': ['interpolate', ['linear'], ['zoom'], 0, 1, 5, 1, 8, 0],
   };
 }
-function weatherSky(map, now) {
-  if (now - (v.skyAt || 0) < 2000) return;
-  v.skyAt = now;
-  const on = FG.weather && FG.weather.enabled() && map.getZoom() >= 6;
-  const c = map.getCenter();
-  const w = on ? G.weatherAt(c.lat, c.lng, G.state.time) : null;
-  const sky = skyOf(w);
-  const key = JSON.stringify([sky['sky-color'], sky['fog-color'], sky['fog-ground-blend']]);
-  if (key === v.skyKey) return;
-  v.skyKey = key;
-  setTimeout(() => { if (v.map === map) map.setSky(sky); }, 0); // (not inside the layer's render)
+// ---------- day and night (game.js G.sunAt) ----------
+// How light it is at the view centre and where the sun is. Every frame the planes are lit from the sun (dim and
+// bluish under the moon at night); a few times a second, when it has changed, the map's sky (with the weather on
+// the main map), the dark ground, runway and taxiway lights, lit windows and the buildings' light follow. (Those
+// redraw the ground, so only on a change.)
+const DAYLIGHT = { light: 1, elev: 45, az: 200 };
+function lightAt(lat, lon, t) {
+  if (!G.sunAt || (FG.daynight && !FG.daynight.enabled())) return DAYLIGHT;
+  v.sp = G.sunPoint(t);
+  const sun = G.sunAt(lat, lon, t, v.sp);
+  return { light: G.daylight(lat, lon, t, v.sp), elev: sun.elev, az: sun.az };
+}
+// (tmp: the frame at the view centre, frameAt)
+function daylight3d(map, layer, lat, lon, t, now, weather) {
+  const sun = lightAt(lat, lon, t);
+  const L = sun.light;
+  layer.light = L;
+  layer.amb.intensity = 0.28 + 1.32 * L;
+  layer.sun.intensity = 0.3 + 1.9 * L;
+  if (L > 0.05 && sun.elev > -3) {
+    const e = Math.max(5, sun.elev) * DEG;
+    const az = sun.az * DEG;
+    layer.sun.color.set(mixHex('#ffb070', '#ffffff', Math.min(1, Math.max(0, sun.elev / 20))));
+    layer.sun.position.copy(tmp.pos).addScaledVector(tmp.up, Math.sin(e))
+      .addScaledVector(tmp.east, Math.sin(az) * Math.cos(e)).addScaledVector(tmp.north, Math.cos(az) * Math.cos(e));
+  } else {
+    layer.sun.color.set('#9db2df');
+    layer.sun.position.copy(tmp.pos).addScaledVector(tmp.up, 1).addScaledVector(tmp.east, -0.6).addScaledVector(tmp.north, 0.4);
+  }
+  layer.sun.target.position.copy(tmp.pos);
+  const st = map.fgDay || (map.fgDay = {});
+  if (now - (st.at || 0) < 300) return;
+  st.at = now;
+  const w = weather && FG.weather && FG.weather.enabled() && map.getZoom() >= 6 ? G.weatherAt(lat, lon, G.state.time) : null;
+  const sky = skyOf(w, sun);
+  const night = Math.round((1 - L) * 20) / 20;
+  const key = JSON.stringify([sky['sky-color'], sky['horizon-color'], sky['fog-color'], sky['fog-ground-blend'], night, Math.round(sun.az / 10), Math.round(sun.elev / 5)]);
+  if (key === st.key) return;
+  const was = st.night;
+  st.key = key;
+  st.night = night;
+  setTimeout(() => { // (not inside the layer's render)
+    if (!map.getLayer('fg-night')) return;
+    map.setSky(sky);
+    map.setPaintProperty('fg-night', 'fill-opacity', 0.7 * night);
+    const lamps = Math.max(0, Math.min(1, (night - 0.25) / 0.4));
+    for (const id of ['fg-runway-lights', 'fg-taxi-lights']) {
+      map.setLayoutProperty(id, 'visibility', lamps > 0 ? 'visible' : 'none');
+      map.setPaintProperty(id, 'line-opacity', lamps);
+    }
+    if (was == null || Math.round(was * 5) !== Math.round(night * 5)) {
+      map.setPaintProperty('fg-terminals', 'fill-extrusion-color', terminalColors(night));
+      // the town's buildings and the jet bridges darken too (their own colours kept for the day)
+      const k = Math.min(0.8, night * 0.85);
+      st.own = st.own || {};
+      for (const l of map.getStyle().layers) {
+        if (l.type !== 'fill-extrusion' || l.id === 'fg-terminals') continue;
+        if (!(l.id in st.own)) st.own[l.id] = map.getPaintProperty(l.id, 'fill-extrusion-color') || '#aaaaaa';
+        const day = st.own[l.id];
+        map.setPaintProperty(l.id, 'fill-extrusion-color', k > 0.01 ? ['interpolate', ['linear'], ['literal', k], 0, day, 1, NIGHT_GROUND] : day);
+      }
+    }
+    // the buildings lit from the sun, or faintly from above at night
+    map.setLight({ anchor: 'map', intensity: 0.12 + 0.38 * L, color: L > 0.3 ? '#ffffff' : '#a9bbe6',
+      position: [1.15, L > 0.05 ? sun.az : 210, L > 0.05 ? Math.min(80, Math.max(20, 90 - sun.elev)) : 30] });
+  }, 0);
 }
 
 const planeLayer = {
@@ -1217,7 +1421,8 @@ const planeLayer = {
   onAdd(map, gl) {
     this.camera = new THREE.Camera();
     this.scene = new THREE.Scene();
-    this.scene.add(new THREE.AmbientLight(0xffffff, 1.6));
+    this.amb = new THREE.AmbientLight(0xffffff, 1.6);
+    this.scene.add(this.amb);
     this.sun = new THREE.DirectionalLight(0xffffff, 2.2);
     this.scene.add(this.sun, this.sun.target);
     // Everything is drawn relative to the view centre (see render): the aircraft and the track live in here.
@@ -1255,12 +1460,11 @@ const planeLayer = {
     // Fly-by and wing cameras: the plane at its real size, always posed (the camera needs it), no flight path line.
     const cine = v.follow && v.cam !== 'chase' ? sel : null;
 
-    // Light from above-left of the view centre.
+    // Light from the sun (or the moon) at the view centre.
     lonRef = center.lng;
     frameAt(center.lat, center.lng, 0, globe);
     const centerW = this.v4.set(tmp.pos.x, tmp.pos.y, tmp.pos.z, 1).applyMatrix4(this.matrix).w; // (cloud sizes)
-    this.sun.position.copy(tmp.pos).addScaledVector(tmp.up, 1).addScaledVector(tmp.east, -0.6).addScaledVector(tmp.north, 0.4);
-    this.sun.target.position.copy(tmp.pos);
+    daylight3d(map, this, center.lat, center.lng, t, now, true);
     // Draw relative to the view centre: world coordinates (mercator 0..1, or a sphere of radius 1) are
     // too coarse as 32-bit floats, an aircraft's vertices would snap to a grid of about a metre.
     this.world.position.copy(tmp.pos).negate();
@@ -1303,6 +1507,7 @@ const planeLayer = {
       if (p.id === sel && !cine) this.drawTrack(p, len, exag, globe, e.obj.userData.lift);
       placeModel(e, pose, altM, exag, globe, now, n);
       if ((e.spinRate > 0.3 || (st && st.windKt > 8)) && len * exag / mpp > 40) animating = true;
+      if (e.flashing && ((this.light ?? 1) < 0.85 || len * exag / mpp > 40)) animating = true; // (beacons and strobes flash)
       const { pos } = tmp;
       e.world.copy(pos);
       e.lngLat = [pose.lon, pose.lat];
@@ -1319,7 +1524,6 @@ const planeLayer = {
     }
     if (this.track && (cine || !(sel && v.planes[sel] && G.plane(sel) && G.plane(sel).status === 'flying'))) this.track.visible = false;
     updateClouds(this, map, globe, mpp, centerW, now);
-    weatherSky(map, now);
 
     this.renderer.resetState();
     // Own depth buffer for the planes: sharing MapLibre's lets the (exaggerated) terrain and the
@@ -1910,7 +2114,8 @@ function chaseLayer(cam) {
       this.map = map;
       this.camera = new THREE.Camera();
       this.scene = new THREE.Scene();
-      this.scene.add(new THREE.AmbientLight(0xffffff, 1.6));
+      this.amb = new THREE.AmbientLight(0xffffff, 1.6);
+      this.scene.add(this.amb);
       this.sun = new THREE.DirectionalLight(0xffffff, 2.2);
       this.scene.add(this.sun, this.sun.target);
       this.world = new THREE.Group();
@@ -1932,8 +2137,7 @@ function chaseLayer(cam) {
       const center = map.getCenter();
       lonRef = center.lng;
       frameAt(center.lat, center.lng, 0, globe);
-      this.sun.position.copy(tmp.pos).addScaledVector(tmp.up, 1).addScaledVector(tmp.east, -0.6).addScaledVector(tmp.north, 0.4);
-      this.sun.target.position.copy(tmp.pos);
+      daylight3d(map, this, center.lat, center.lng, t, now, false);
       this.world.position.copy(tmp.pos).negate();
       this.camera.projectionMatrix.multiply(this.shift.makeTranslation(tmp.pos.x, tmp.pos.y, tmp.pos.z));
       const dLat = CHASE_KM / 111;

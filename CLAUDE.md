@@ -86,9 +86,20 @@ Play online: https://noname-ch.github.io/flightgame/ (GitHub Pages, deployed fro
   `attitude` add it), `windFrom`, `windKt`, `gusty`. js/weather.js draws it: `FG.weather.puffs(box, t, max)`, the 2D
   canvas (an `L.Renderer` in the 'clouds' pane, the "Clouds and weather" overlay = `FG.weather.enabled()`), the
   `#wx-fx` CSS overlay and chip; view3d.js draws the same puffs as one `THREE.Points` in planeLayer
-  (`cloudPoints`/`updateClouds`) and greys the sky (`weatherSky`, map.setSky, no layers). Developer tools → Wind
+  (`cloudPoints`/`updateClouds`) and greys the sky (`skyOf` through `daylight3d`, map.setSky, no layers). Developer tools → Wind
   places winds by hand: `state.winds` via `G.placeWind/setWind/removeWind/clearWinds`; `placedWind(lat, lon)` blends
   them into weatherAt, windAt and `surfaceFrom` (what pickRunway uses); `G.windRev` keys the route-line tracks.
+- Time and the sun (game.js): the game clock (`G.state.time`) is the time at the home base. Every airport has its own
+  local time from `js/data/timezones.js` (built by `tools/build_timezones.py` from GeoNames: UTC offsets in winter
+  and summer and the days the clocks change; airports missing there take their nearest neighbour's): `G.utcOffset(code,
+  t)`, `G.utcOf(t)`, `G.localTime(code, t)`, `G.fmtLocal`, `G.fmtZone`. `G.sunPoint(t)`, `G.sunAt(lat, lon, t, sp)`
+  (elevation, azimuth), `G.daylight(lat, lon, t, sp)` (1 day … 0 night), `G.sunTimes(code, t)`. Timetables and
+  `C.curfew` still run on home-base time. js/daynight.js (`FG.daynight`) draws the night on the 2D map (pane 'night',
+  under the game's layers; the "Day and night" overlay, `FG.daynight.enabled()` also switches the 3D night).
+  view3d.js `daylight3d(map, layer, lat, lon, t, now, weather)` lights the planes from the sun every frame and, on a
+  change, sets the sky (`skyOf(w, sun)`), `fg-night` (a dark flat layer over the ground), `fg-runway-lights` /
+  `fg-taxi-lights`, `terminalColors(night)` and every other extrusion's colour, and `map.setLight`. Aircraft lights
+  are `navLights(type, model)` (points read off the model, `navSpotsOf`), switched by phase in `setNavLights`.
 - Sound (js/sound.js, `FG.sound`, off until turned on; prefs in localStorage `flightgame.sound`): Web Audio voices
   made up as they play, plus `RECORDINGS` in `sounds/` (loops from ElevenLabs Sound Effects, 16 kHz mono WAV: an MP3's
   lead-in silence would stutter in a loop). The jets' rumble, roar and screech come from `BANKS` (several takes each,

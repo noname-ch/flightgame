@@ -55,6 +55,14 @@ it left on time, incidents, ferry flights and its last 8 flights. A year is the 
 the airport editor and build panel, the bug report, the airport checklist and settings) and opens where it was
 left last time. On a phone a click shows the plane's card in Fleet instead.
 
+**Day and night**: the clock at the top is the time at your home base; every airport has its own local time
+(its real time zone, with summer time), shown in the airport panel with sunrise and sunset, and arrivals say the
+local time there. The sun rises and sets where it really does: the night moves west over the 2D map, and in 3D the
+sky turns orange at dusk and dark at night, the ground and buildings darken, terminal windows, runway edges and
+taxiway centre lines light up, and planes show their red and green position lights, flashing beacons, strobes and
+landing lights. Settings → On the map → *Day and night* turns it off. (Timetables and the night curfew still run on
+home-base time.)
+
 **Weather**: clouds drift over both maps, from fair-weather puffs to grey rain bands and thunderstorms, and the
 storms in the newspaper show up as real storms. It is made up but steady: it drifts east, changes over a day or two,
 is drier in the subtropics, wetter at the equator and colder towards the poles, in winter and at night. Zoomed in,

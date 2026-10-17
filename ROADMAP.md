@@ -14,7 +14,8 @@ realistic flight tracks in 2D and 3D, AI rival airlines, random events and a dev
   draws them; `js/view3d.js` only draws ours. Same models, painted in the rival's colour.
 - [ ] **A profit table per route** (S). Planes keep totals (`p.stats`), but there is no list of routes with
   load factor, revenue, cost and profit per week, sortable. It would show at a glance what to cut.
-- [ ] **Curfews per airport** (S/M). `C.curfew` is the same 06:00–22:00 everywhere. Real airports differ:
+- [ ] **Curfews per airport** (S/M). `C.curfew` is the same 06:00–22:00 everywhere, in home-base time (every airport
+  has its own local time now, `G.localTime`: curfews could follow it). Real airports differ:
   Zurich closes at 23:30, Frankfurt and London have night quotas, many hubs are open all night. Hand-written
   for the main airports, a default by size for the rest.
 - [ ] **Loans** (S). Today there is only the bankruptcy limit. A bank loan with interest and a credit
@@ -89,8 +90,6 @@ realistic flight tracks in 2D and 3D, AI rival airlines, random events and a dev
   one from the control tower of the airport.
 - [ ] **More sound** (S). The engines are in (js/sound.js). Still to do: a quiet airport ambience (vehicles,
   announcements), a radio call on take-off, rain and thunder from the weather.
-- [ ] **Night in 3D** (M). Darker map and lit runways, taxiways and terminals after sunset at the plane's
-  position.
 
 ## Polish, tech and infrastructure
 
@@ -115,6 +114,9 @@ realistic flight tracks in 2D and 3D, AI rival airlines, random events and a dev
 
 Recent milestones, newest first (see `git log` for the rest):
 
+- Local time and day and night: every airport keeps its own clock (time zones with summer time), the sun rises
+  and sets where it really does, the night moves over the 2D map, and in 3D the sky, ground and buildings darken
+  with lit runways, taxiways and windows and the planes' position lights, beacons, strobes and landing lights
 - Aircraft sounds (off until turned on, M): engine start, idle, take-off power, climb, cruise, approach, reverse
   thrust and run-down for jets, turboprops and piston radials, heard from where you look (Web Audio; the jets'
   deep rumble, screech, engine start and planes far away are recordings made with ElevenLabs)

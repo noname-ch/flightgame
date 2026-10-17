@@ -331,6 +331,97 @@
     if (!d) return Math.floor(t / DAY) % 365;
     return Math.floor((d - Date.UTC(d.getUTCFullYear(), 0, 1)) / 86400000);
   }
+  // ---------- local time, the sun, day and night ----------
+  // The game clock is the time at the home airport. Every airport has its own local time (js/data/timezones.js:
+  // its zone's UTC offsets in winter and summer and the days the clocks change), so the sun rises and sets
+  // there at the right hour: UTC = game time - the home offset.
+  let tzByCode = null;
+  function tzTable() {
+    if (tzByCode) return tzByCode;
+    tzByCode = new Map();
+    for (const [key, codes] of Object.entries(D.timezones || {})) {
+      const z = key.split(',').map(Number);
+      for (const c of codes.split(' ')) tzByCode.set(c, z);
+    }
+    return tzByCode;
+  }
+  // The zone of an airport; one the data has none for (a new one the player built) takes its nearest neighbour's,
+  // or the sun's (15° of longitude an hour) far from any.
+  function zoneOf(code) {
+    const tab = tzTable();
+    let z = tab.get(code);
+    if (z) return z;
+    const a = airportByCode[code];
+    if (!a) return [0];
+    let best = null;
+    let bd = 4; // (degrees: about 400 km)
+    for (const b of Object.values(airportByCode)) {
+      if (Math.abs(b.lat - a.lat) > bd || Math.abs(b.lon - a.lon) > bd || !tab.has(b.code)) continue;
+      const d = Math.hypot(b.lat - a.lat, (b.lon - a.lon) * Math.cos(a.lat * Math.PI / 180));
+      if (d < bd) { bd = d; best = b.code; }
+    }
+    z = best ? tab.get(best) : [Math.round(a.lon / 15) * 4];
+    tab.set(code, z);
+    return z;
+  }
+  // Minutes ahead of UTC at an airport on game day t (summer time included).
+  function utcOffset(code, t) {
+    const z = zoneOf(code);
+    if (z.length < 4) return z[0] * 15;
+    const doy = dayOfYear(t);
+    const summer = z[2] < z[3] ? doy >= z[2] && doy < z[3] : doy >= z[2] || doy < z[3]; // (south: across New Year)
+    return (summer === (z[2] < z[3]) ? z[1] : z[0]) * 15;
+  }
+  const homeCode = () => (Game.state && Game.state.home) || C.startAirport;
+  const utcOf = (t) => t - utcOffset(homeCode(), t);
+  // Local time at an airport for game time t (minutes, as game time: fmtClock shows it).
+  const localTime = (code, t) => utcOf(t) + utcOffset(code, t);
+  const fmtLocal = (code, t) => fmtClock(Math.floor(((localTime(code, t) % DAY) + DAY) % DAY));
+  // "UTC+2", "UTC−4", "UTC+5:45"
+  function fmtZone(code, t) {
+    const m = utcOffset(code, t);
+    const h = Math.floor(Math.abs(m) / 60);
+    return `UTC${m < 0 ? '−' : '+'}${h}${Math.abs(m) % 60 ? `:${pad(Math.abs(m) % 60)}` : ''}`;
+  }
+  // Where the sun is: its declination and the longitude it is overhead at, for game time t.
+  function sunPoint(t) {
+    const u = utcOf(t);
+    const doy = dayOfYear(t) + ((u % DAY) + DAY) % DAY / DAY;
+    const g = 2 * Math.PI * (doy - 1) / 365;
+    const dec = 0.006918 - 0.399912 * Math.cos(g) + 0.070257 * Math.sin(g) - 0.006758 * Math.cos(2 * g) +
+      0.000907 * Math.sin(2 * g) - 0.002697 * Math.cos(3 * g) + 0.00148 * Math.sin(3 * g); // (radians)
+    const eot = 229.18 * (0.000075 + 0.001868 * Math.cos(g) - 0.032077 * Math.sin(g) - 0.014615 * Math.cos(2 * g) - 0.040849 * Math.sin(2 * g)); // minutes
+    const utcMin = ((u % DAY) + DAY) % DAY;
+    const lon = (((720 - utcMin - eot) / 4 + 540) % 360) - 180;
+    return { lat: dec * 180 / Math.PI, lon, eot };
+  }
+  // The sun seen from a place: elevation above the horizon and azimuth (degrees, from north, clockwise).
+  function sunAt(lat, lon, t, sp = sunPoint(t)) {
+    const R = Math.PI / 180;
+    const f = lat * R, d = sp.lat * R, H = (lon - sp.lon) * R;
+    const sinE = Math.sin(f) * Math.sin(d) + Math.cos(f) * Math.cos(d) * Math.cos(H);
+    const elev = Math.asin(Math.max(-1, Math.min(1, sinE))) / R;
+    const az = (Math.atan2(-Math.sin(H), Math.tan(d) * Math.cos(f) - Math.sin(f) * Math.cos(H)) / R + 360) % 360;
+    return { elev, az };
+  }
+  // How light it is: 1 in daylight, 0 at night (the sun more than 9° under the horizon), dusk in between.
+  const daylight = (lat, lon, t, sp) => smooth(-9, 4, sunAt(lat, lon, t, sp).elev);
+  // Sunrise and sunset at an airport on game day t, as local clock times ("06:42"), or { polar: 'day'|'night' }.
+  function sunTimes(code, t) {
+    const a = airportByCode[code];
+    if (!a) return null;
+    const noon = Math.floor(t / DAY) * DAY + 720;
+    const sp = sunPoint(noon);
+    const R = Math.PI / 180;
+    const c = (Math.sin(-0.833 * R) - Math.sin(a.lat * R) * Math.sin(sp.lat * R)) / (Math.cos(a.lat * R) * Math.cos(sp.lat * R));
+    if (c < -1) return { polar: 'day' };
+    if (c > 1) return { polar: 'night' };
+    const h0 = Math.acos(c) / R / 15 * 60; // minutes either side of the sun's highest
+    const transit = 720 - 4 * a.lon - sp.eot; // UTC minutes of the day
+    const off = utcOffset(code, t);
+    const clock = (utcMin) => fmtClock(Math.round(((utcMin + off) % DAY + DAY) % DAY));
+    return { rise: clock(transit - h0), set: clock(transit + h0) };
+  }
   // Storm events under way, as { lat, lon, km } (old saves: their label starts with "Storm").
   let wxStormKey = '';
   let wxStorms = [];
@@ -2636,6 +2727,7 @@
     CLASSES, CLASS_ROOM, typeClass, standClassAt, maxClass, slotsFit, longestRunway, runwayNeed, attraction,
     flightTrack, flightState, legTrack, cruiseFt, perf, windFrom, weatherAt, windAt, WX_DRIFT, gateOf, standSpot, apronOf, taxiwaysOf, drawnTaxiways, expansionPreview, terminalPiece,
     fmtMoney, fmtTime, fmtClock, fmtDuration, fmtLegDep, fmtDue,
+    utcOffset, utcOf, localTime, fmtLocal, fmtZone, sunPoint, sunAt, daylight, sunTimes,
 
     // opts: { mode, difficulty, airport, aircraft, company, story } from the start screen; all optional.
     // story = the year a story game starts in (C.story.years); without it the game plays today.

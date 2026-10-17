@@ -138,7 +138,10 @@
     const q = c.width / b.getSize().x;
     const spr = spritesOf();
     const world = 256 * 2 ** zoom;
+    // (at night, js/daynight.js: the clouds dark and faint)
+    const sp = FG.daynight && FG.daynight.enabled() ? G.sunPoint(G.state.time) : null;
     for (const p of list) {
+      const lit = sp ? G.daylight(p.lat, p.lon, 0, sp) : 1;
       const rpx = (p.r / (EARTH_CIRC * Math.cos(p.lat * DEG) / world)) * q;
       if (rpx < 0.6) continue;
       const pt = map.latLngToLayerPoint([p.lat, p.lon]);
@@ -146,8 +149,8 @@
       const y = (pt.y - b.min.y) * q;
       const half = rpx * 1.2; // (the blob fills about 85% of its sprite)
       if (x + half < 0 || y + half < 0 || x - half > c.width || y - half > c.height) continue;
-      g.globalAlpha = Math.min(1, p.a * 0.62 * fade);
-      g.drawImage(spr[p.v][Math.min(3, Math.round(p.shade * 3))], x - half, y - half, half * 2, half * 2);
+      g.globalAlpha = Math.min(1, p.a * 0.62 * fade) * (0.3 + 0.7 * lit);
+      g.drawImage(spr[p.v][Math.min(3, Math.round(p.shade * 3 + (1 - lit) * 3))], x - half, y - half, half * 2, half * 2);
       st.n2d++;
     }
     g.globalAlpha = 1;

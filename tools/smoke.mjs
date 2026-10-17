@@ -368,6 +368,28 @@ try {
   else if (wx.lowCrab > 3 || (wx.highCrab != null && wx.highCrab < 5)) errors.push(`crab in a 55 kt crosswind after lift-off: up to ${wx.lowCrab}° under 300 ft (at most 3°), ${wx.highCrab}° at 1500-4000 ft (at least 5°)`);
   else step(`weather at home: ${wx.line}; ${wx.puffs} cloud puffs in view${wx.crab != null ? `; a plane in the air crabs ${wx.crab}° in ${wx.wind} kt` : ''}`);
 
+  step('day and night: local times and time zones, sunrise at home, the night on the 2D map');
+  const dn = await evaluate(() => {
+    const out = { jfk: G.utcOffset('JFK', 0), syd: G.utcOffset('SYD', 0), ktm: G.utcOffset('KTM', 0), jfkJul: G.utcOffset('JFK', 190 * 1440) };
+    const bern = G.sunTimes('BRN', 0);
+    out.rise = bern && bern.rise;
+    out.on = FG.daynight.enabled();
+    FG.ui.map.setView([20, 0], 1, { animate: false });
+    FG.daynight.redraw();
+    const c = document.querySelector('canvas.fg-night');
+    if (c) {
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      let lo = 255, hi = 0;
+      for (let i = 3; i < d.length; i += 4) { lo = Math.min(lo, d[i]); hi = Math.max(hi, d[i]); }
+      out.alpha = [lo, hi];
+    }
+    return out;
+  });
+  if (dn.jfk !== -300 || dn.jfkJul !== -240 || dn.syd !== 660 || dn.ktm !== 345) errors.push(`time zones: ${JSON.stringify(dn)}`);
+  if (!dn.rise || dn.rise < '08:00' || dn.rise > '08:30') errors.push(`sunrise at Bern on 1 January: ${dn.rise} (about 08:15)`);
+  if (!dn.on || !dn.alpha || dn.alpha[0] > 20 || dn.alpha[1] < 120) errors.push(`2D night: no day and night side on the world map (${JSON.stringify(dn)})`);
+  else step(`local time: JFK UTC${dn.jfk / 60} (summer ${dn.jfkJul / 60}), Sydney +${dn.syd / 60}, Kathmandu +${dn.ktm / 60}; sunrise at Bern ${dn.rise}`);
+
   step('sound: the engines through a flight (started in the pushback, take-off power, reverse thrust), heard following a plane on the 2D map; M off and on');
   const snd = await evaluate(async () => {
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -938,6 +960,18 @@ try {
     }
     // (the flaps are cut out of the wing, so they slide back on their own and are painted apart: cutFlaps)
     for (const file of ['atr42', 'q400', 'a320']) if (!(parts[file].flapFaces > 0)) errors.push(`3D flaps: ${file} has no flaps cut out of its wing`);
+
+    step('3D night: the dark ground as dark as the sun says where the camera is; the aircraft have their lights');
+    await sleep(1500);
+    const n3 = await evaluate(() => {
+      const m = FG.view3d.map;
+      const c = m.getCenter();
+      const want = 1 - G.daylight(c.lat, c.lng, FG.ui.time);
+      const lit = Object.values(FG.view3d.planes).filter((e) => e.obj.userData.nav).length;
+      return { want, have: m.fgDay && m.fgDay.night, op: m.getPaintProperty('fg-night', 'fill-opacity'), lit, models: Object.values(FG.view3d.planes).filter((e) => e.obj.userData.liv).length };
+    });
+    if (n3.have == null || Math.abs(n3.have - n3.want) > 0.1 || Math.abs(n3.op - 0.7 * n3.have) > 0.01) errors.push(`3D night: ${JSON.stringify(n3)}`);
+    if (n3.models && n3.lit < n3.models) errors.push(`3D aircraft lights: ${n3.lit} of ${n3.models} models have them`);
 
     step('3D satellite: 🛰 not under the plane window while following; Settings → Map style switches the 3D ground too');
     const sat = await evaluate(async () => {
