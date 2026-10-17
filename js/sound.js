@@ -20,6 +20,8 @@
 // Four styles of the same voices (STYLES: Standard, Deep, Open, Soft; Settings → Sound), and a preview that plays
 // a whole flight in about 35 s on its own voice to compare them (▶ Preview; it plays paused or in the menu too).
 (function () {
+  // (the screech's grain player, in the same version as this file)
+  const GRAINS_URL = `js/grains.js${(document.currentScript && document.currentScript.src.match(/\?v=\d+/) || [''])[0]}`;
   const G = FG.game;
   const D = FG.data;
   const KEY = 'flightgame.sound';
@@ -38,7 +40,8 @@
   // 0.3 was. The screeches (2.3-5.6 s): a turbofan's or turbojet's rough scream at power, wavering about its hz
   // (400 Hz-5 kHz kept; the user: the noise screech before it was "just static"), played faster or slower with the
   // fan; at take-off about as the first was recorded (at first 1.4× that: "a little too high pitch and speed"). Its
-  // pitch and speed can be set apart in the mixer (F6): the speed by stretching the recording (stretched()). The
+  // pitch and speed can be set apart in the mixer (F6): played in grains (js/grains.js, an AudioWorklet; without one
+  // the pitch and speed go together). The
   // roars (4-10 s, 60 Hz-6.5 kHz): the blast behind a jet at take-off thrust, through the same low-passes as the
   // pink noise they take over from.
   const RECORDINGS = { far: ['sounds/far-wash.wav', 0.3], start: ['sounds/jet-start.wav', 0.3] };
@@ -46,16 +49,17 @@
   // and bass, roar etc"; ElevenLabs, looped where they hold steady): in the mixer (F6) for all planes, a kind or a
   // type, else each type its own (auto: by its name, old jets from the turbojet screeches). Each played at the rms
   // given; a screech's hz is its pitch (played faster or slower to the fan's). A take without a url is made up
-  // (the roar's pink noise). Loaded when a plane first wants it.
+  // (the roar's pink noise). Loaded when a plane first wants it. Howl and Whistling were dropped: steady tones, "some
+  // screeches still sound like drones"; Gritty and Turbulent (broadband, wavering) took their place.
   const BANKS = {
     screech: [
       { id: 'scream', name: 'Scream', url: 'sounds/jet-screech.wav', rms: 0.13, hz: 1360, for: 'new' },
       { id: 'rasp', name: 'Rasp', url: 'sounds/screech-rasp.wav', rms: 0.13, hz: 1407, for: 'new' },
       { id: 'tearing', name: 'Tearing', url: 'sounds/screech-tearing.wav', rms: 0.13, hz: 1464, for: 'new' },
-      { id: 'howl', name: 'Howl', url: 'sounds/screech-howl.wav', rms: 0.13, hz: 1525, for: 'new' },
+      { id: 'gritty', name: 'Gritty', url: 'sounds/screech-gritty.wav', rms: 0.13, hz: 1400, for: 'new' },
+      { id: 'turbulent', name: 'Turbulent', url: 'sounds/screech-turbulent.wav', rms: 0.13, hz: 1200, for: 'new' },
       { id: 'shriek', name: 'Shriek (turbojet)', url: 'sounds/screech-shriek.wav', rms: 0.13, hz: 1605, for: 'old' },
       { id: 'turbojet', name: 'Raspy turbojet', url: 'sounds/screech-turbojet.wav', rms: 0.13, hz: 1617, for: 'old' },
-      { id: 'whistle', name: 'Whistling (turbojet)', url: 'sounds/screech-whistle.wav', rms: 0.13, hz: 1608, for: 'old' },
     ],
     rumble: [
       { id: 'rumble', name: 'Rumble', url: 'sounds/jet-rumble.wav', rms: 0.24 },
@@ -72,6 +76,9 @@
     ],
   };
   const SCREECH = 5;        // the screech's level (× size, power, style)
+  // The screech's grains (js/grains.js): 70 ms, each from up to 30 ms either side of the playhead and up to 1.5 %
+  // sharp or flat, the pitch wandering 2 % (a take may have its own spread and wander).
+  const GRAIN = { grain: 0.07, jitter: 0.03, spread: 0.015, wander: 0.02 };
   const START_LEVEL = 0.3;  // the start recording × the plane's size × the style's whine
   const FAR = [800, 4000]; // metres: from here the made-up voice gives way to the far recording, all of it by there
   const FAR_LEVEL = 2.5;   // the far recording × the engines' power: about as loud as the made-up voice it takes over from
@@ -411,6 +418,11 @@
     for (let k = 1; k < 24; k++) bi[k] = 1 / k ** 1.5;
     s.blade = ctx.createPeriodicWave(new Float32Array(24), bi);
     for (const name in RECORDINGS) load(ctx, name);
+    s.grains = false;
+    if (ctx.audioWorklet && window.AudioWorkletNode) {
+      ctx.audioWorklet.addModule(GRAINS_URL).then(() => { s.grains = true; restyle(); })
+        .catch((e) => console.warn('sound: no grain player, the screech\'s pitch and speed go together', e));
+    }
     clearInterval(s.timer);
     s.timer = setInterval(update, TICK);
     return true;
@@ -586,6 +598,7 @@
         L.scrOther = ctx.createGain(); // (the other engine)
         L.scrOther.gain.value = 0.7;
         L.scrOther.connect(L.screech);
+        [L.scr1, L.scr2] = [L.screech, L.scrOther].map((to) => screechPlayer(v, to));
       } else {
         L.scrSrc = src(s.noise);
         L.scrF1 = filter('bandpass', 2000, 5);
@@ -656,103 +669,42 @@
     return v;
   }
 
-  // The screech recording into voice v, stretched k times (k = pitch / speed: played k times faster it keeps its
-  // speed), both engines from other places in it (they don't beat). Again when k changes (the mixer).
-  function screechAt(v, k) {
-    const L = v.L;
-    const buf = stretched(v, k);
-    if (!buf) return;
-    for (const b of [L.scr1, L.scr2]) {
-      if (!b) continue;
-      try { b.stop(); } catch (e) { /* already */ }
-      v.srcs.splice(v.srcs.indexOf(b), 1);
+  // A player of voice v's screech take into node `to`: the grain player (pitch and speed apart; each engine its own,
+  // from another place in the take, so they don't beat), or until it has loaded or without one, the take looping
+  // (its playbackRate is the pitch and the speed both). Set by screechRate().
+  function screechPlayer(v, to) {
+    const t = v.takes.screech;
+    if (s.grains) {
+      const d = v.scrBuf.getChannelData(0);
+      const g = new AudioWorkletNode(s.ctx, 'fg-grains', {
+        numberOfInputs: 0, outputChannelCount: [1],
+        processorOptions: { data: d, sr: v.scrBuf.sampleRate, grain: GRAIN.grain, jitter: GRAIN.jitter, spread: t.spread ?? GRAIN.spread, wander: t.wander ?? GRAIN.wander },
+      });
+      g.connect(to);
+      (v.nodes || (v.nodes = [])).push(g);
+      return g;
     }
-    const rate = L.scr1 ? L.scr1.playbackRate.value : 1;
-    [L.scr1, L.scr2] = [L.screech, L.scrOther].map((to) => {
-      const b = s.ctx.createBufferSource();
-      b.buffer = buf;
-      b.loop = true;
-      b.playbackRate.value = rate;
-      b.connect(to);
-      b.start(0, Math.random() * buf.duration);
-      v.srcs.push(b);
-      return b;
-    });
-    v.scrK = k;
+    const b = s.ctx.createBufferSource();
+    b.buffer = v.scrBuf;
+    b.loop = true;
+    b.connect(to);
+    b.start(0, Math.random() * v.scrBuf.duration);
+    v.srcs.push(b);
+    return b;
   }
-
-  // The screech recording k times as long, the same pitch (WSOLA: overlapping 50 ms pieces, each taken where it
-  // follows on best from the one before, so the scream's waves line up instead of buzzing; four overlapping at a
-  // time, else it throbs at the step rate), looping as the original. The best place is looked for at a quarter of the sample rate, then to the sample. null while it is made (a few
-  // tens of ms, once the mixer's slider has stopped for a moment): the voice keeps the one it has until then. Only
-  // what voices still ask for is made (not every step the slider went through).
-  function stretched(v, k) {
-    const id = v.takes.screech.id;
-    const bufs = s.scrBufs || (s.scrBufs = {});
-    const cache = bufs[id] || (bufs[id] = { 1: v.scrBuf });
-    if (cache[k]) return cache[k];
-    const asked = s.scrAsked || (s.scrAsked = new Map());
-    const key = `${id}:${k}`;
-    if (!asked.has(key)) {
-      clearTimeout(s.scrTimer);
-      s.scrTimer = setTimeout(() => {
-        const now = performance.now();
-        for (const [, a] of asked) if (now - a.t < 2 * TICK + 100) a.cache[a.k] = stretch(a.cache[1], a.k);
-        asked.clear();
-      }, 200);
+  // The screech players' pitch and speed (1: as the take was recorded), gliding there.
+  function screechRate(v, pitch, speed, at) {
+    for (const p of [v.L.scr1, v.L.scr2]) {
+      if (p.parameters) {
+        p.parameters.get('pitch').setTargetAtTime(Math.max(0.05, Math.min(8, pitch)), at, 0.06);
+        p.parameters.get('speed').setTargetAtTime(Math.max(0, Math.min(8, speed)), at, 0.06);
+      } else p.playbackRate.setTargetAtTime(pitch, at, 0.06);
     }
-    asked.set(key, { t: performance.now(), cache, k });
-    return null;
-  }
-  function stretch(src, k) {
-    const x0 = src.getChannelData(0);
-    const n = x0.length;
-    const sr = src.sampleRate;
-    const N = 8 * Math.round(sr * 0.00625); // (a piece, 50 ms; a quarter of it each step)
-    const H = N / 4;
-    const tol = 4 * Math.round(sr * 0.0025); // (± 10 ms)
-    const m = Math.round(n * k / H) * H; // (whole steps: the loop closes)
-    const pad = N + 2 * tol + 8;
-    const x = new Float32Array(n + 2 * pad); // (the loop twice over: no wrapping in the inner loops)
-    for (let i = 0; i < x.length; i++) x[i] = x0[(i - pad + 2 * n) % n];
-    const q = new Float32Array(x.length >> 2); // (a quarter of the samples, to look with)
-    for (let i = 0; i < q.length; i++) q[i] = x[4 * i];
-    const wrap = (i) => ((i % n) + n) % n + pad;
-    const y = new Float32Array(m);
-    const w = new Float32Array(N);
-    for (let i = 0; i < N; i++) w[i] = 0.25 - 0.25 * Math.cos(2 * Math.PI * i / N); // (Hann, halved: four of them sum to 1)
-    let prev = -H;
-    for (let o = 0; o < m; o += H) {
-      let best = 0;
-      if (o) {
-        const want = wrap(Math.round(o / k)) - tol;
-        const next = wrap(prev + H); // (where the last piece's own sound goes on)
-        let bestC = -Infinity;
-        for (let d = 0; d <= 2 * tol; d += 4) {
-          let c = 0;
-          for (let i = 0, a = (want + d) >> 2, b = next >> 2; i < N >> 2; i += 2) c += q[a + i] * q[b + i];
-          if (c > bestC) { bestC = c; best = want + d; }
-        }
-        let fine = best;
-        bestC = -Infinity;
-        for (let d = -3; d <= 3; d++) {
-          let c = 0;
-          for (let i = 0; i < N; i += 2) c += x[best + d + i] * x[next + i];
-          if (c > bestC) { bestC = c; fine = best + d; }
-        }
-        best = fine - pad;
-      }
-      const at = wrap(best);
-      for (let i = 0; i < N; i++) y[(o + i) % m] += x[at + i] * w[i];
-      prev = best;
-    }
-    const buf = s.ctx.createBuffer(1, m, sr);
-    buf.copyToChannel(y, 0);
-    return buf;
   }
 
   function dropVoice(v) {
     for (const x of v.srcs) { try { x.stop(); } catch (e) { /* already */ } }
+    for (const x of v.nodes || []) { x.port.postMessage('stop'); x.disconnect(); }
     try { v.out.disconnect(); } catch (e) { /* already */ }
   }
 
@@ -914,13 +866,10 @@
       // The screech: up with the power, from all round (a little more ahead), old jets more.
       const scrHz = Math.min(1550, 1.15 * pr.fan * (0.55 + 0.45 * n1)) * dop * M.screechPitch; // (higher: a hiss, small fans)
       T(L2.screech.gain, M.screech * run * sz * SCREECH * S.screech * (0.04 + 0.96 * smooth(0.25, 0.9, n1)) * (0.8 + 0.4 * front) * (pr.old ? 1.3 : 1));
-      if (L2.scrOther) {
-        const k = Math.round(20 * Math.min(8, Math.max(0.25, M.screechPitch / M.screechSpeed))) / 20;
-        if (k !== v.scrK) screechAt(v, k);
-        if (L2.scr1) {
-          L2.scr1.playbackRate.setTargetAtTime(scrHz / v.takes.screech.hz, at, 0.06);
-          L2.scr2.playbackRate.setTargetAtTime(scrHz / v.takes.screech.hz, at, 0.06);
-        }
+      if (L2.scr1) {
+        // (pitch: the fan's, × the mixer's; speed: as fast as the fan's pitch would play it, × the mixer's speed)
+        const pitch = scrHz / v.takes.screech.hz;
+        screechRate(v, pitch, pitch / M.screechPitch * M.screechSpeed, at);
       } else {
         T(L2.scrF1.frequency, scrHz);
         T(L2.scrF2.frequency, scrHz * 1.25);
@@ -1216,7 +1165,8 @@
     get state() { return s.ctx ? s.ctx.state : 'off'; },
     // (what has loaded: the RECORDINGS 'far', 'start', and the BANKS 'rumble', 'roar', 'screech' once a take of each is in)
     get recorded() { return [...Object.keys(s.rec), ...Object.keys(BANKS).filter((b) => Object.keys(s.takes).some((k) => k.startsWith(`${b}:`)))]; },
-    get takesLoaded() { return Object.keys(s.takes); }, // ('screech:howl', …)
+    get grains() { return !!s.grains; }, // (the screech's grain player, js/grains.js, has loaded)
+    get takesLoaded() { return Object.keys(s.takes); }, // ('screech:rasp', …)
     // The takes a pick part (PICKS: 'bassSound', 'roarSound', 'screechSound') offers: [{ id, name }] ('auto' not listed);
     // takeFor(type, bank) the one a plane of that type plays now.
     takes(part) { return PICKS[part] ? BANKS[PICKS[part]].map((t) => ({ id: t.id, name: t.name, old: t.for === 'old' })) : null; },

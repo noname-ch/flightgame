@@ -499,7 +499,7 @@ try {
     FG.soundMix.target = 'all';
     const picks = [...document.querySelectorAll('[data-pick]')].map((s) => s.dataset.pick);
     out.picks = picks;
-    for (const [part, bank, id] of [['screechSound', 'screech', 'howl'], ['bassSound', 'rumble', 'thunder'], ['roarSound', 'roar', 'deep']]) {
+    for (const [part, bank, id] of [['screechSound', 'screech', 'gritty'], ['bassSound', 'rumble', 'thunder'], ['roarSound', 'roar', 'deep']]) {
       const sel = document.querySelector(`[data-pick="${part}"]`);
       if (!sel) { out.bad.push(`no ${part} dropdown`); continue; }
       sel.value = id;
@@ -512,6 +512,16 @@ try {
       if (out.state === 'running' && !(db > -60)) out.bad.push(`${id}: ${Math.round(db)} dB`);
       FG.sound.setMix('all', part, null);
     }
+    // The screech's pitch and speed apart (the grain player, js/grains.js): slowed right down and higher, still heard.
+    out.grains = FG.sound.grains;
+    FG.sound.setMix('all', 'screechSpeed', 0.25);
+    FG.sound.setMix('all', 'screechPitch', 1.5);
+    FG.sound.preview({ kind: 'jet', type: 'A320neo', from: 'takeoff', hold: 'takeoff' });
+    await sleep(1500);
+    out.heard.slow = Math.round(FG.sound.meter());
+    if (out.state === 'running' && !(out.heard.slow > -60)) out.bad.push(`slow, high screech: ${out.heard.slow} dB`);
+    FG.sound.setMix('all', 'screechSpeed', null);
+    FG.sound.setMix('all', 'screechPitch', null);
     FG.sound.preview(false);
     out.auto = FG.sound.takeFor('A320neo', 'screech');
     out.loaded = FG.sound.takesLoaded.length;
@@ -519,6 +529,7 @@ try {
     return out;
   });
   if (tk.bad.length || tk.picks.length !== 3) errors.push(`sound takes: ${JSON.stringify(tk)}`);
+  if (tk.state === 'running' && !tk.grains) errors.push('sound takes: the screech\'s grain player (js/grains.js) did not load');
   if (tk.state === 'running' && tk.loaded < 3) errors.push(`sound takes: only ${tk.loaded} takes loaded: ${JSON.stringify(tk)}`);
   step(`sound takes: ${Object.entries(tk.heard).map(([k, x]) => `${k} ${x} dB`).join(', ')}, ${tk.loaded} loaded`);
 
