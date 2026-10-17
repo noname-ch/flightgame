@@ -1454,6 +1454,7 @@ body { height: 100dvh; } /* the visible height, also while the phone's address b
 .mix-row label { color: var(--muted); }
 .mix-row.own label { color: inherit; font-weight: 600; }
 .mix-row input[type=range] { width: 100%; min-width: 0; }
+.mix-pick-row select { grid-column: span 2; width: 100%; min-width: 0; }
 .mix-val { text-align: right; font-variant-numeric: tabular-nums; }
 .mix-note { grid-column: 2 / -1; font-size: 11px; margin-top: -3px; }
 .mix-foot { margin-top: 8px; display: flex; justify-content: flex-end; }

@@ -1,5 +1,6 @@
-// The sound mixer (F6, or 🎚 in the ⋯ menu): how loud each part of the planes' sound is (bass, roar, screech, whine,
-// air, …) and the screech's pitch and speed, for all planes, one engine kind or one aircraft type. A type takes what is set for it, else its kind's,
+// The sound mixer (F6, or 🎚 in the ⋯ menu): which recorded take the jets' bass, roar and screech play (each type
+// its own until one is picked), how loud each part of the planes' sound is (bass, roar, screech, whine, air, …) and
+// the screech's pitch and speed, for all planes, one engine kind or one aircraft type. A type takes what is set for it, else its kind's,
 // else all planes'. The planes playing change at once; ▶ plays the chosen type's flight (FG.sound.preview). The
 // numbers live in sound.js (FG.sound.mix / setMix, kept with the sound settings).
 (function () {
@@ -20,8 +21,9 @@
   function level(target, part) {
     const chain = target === 'all' ? ['all'] : KINDS[target] ? [target, 'all'] : [target, kindOf(target), 'all'];
     for (const k of chain) { const x = FG.sound.mix(k)[part]; if (x != null) return { x, from: k }; }
-    return { x: 1, from: null };
+    return { x: FG.sound.takes(part) ? 'auto' : 1, from: null };
   }
+  const BANK_OF = { bassSound: 'rumble', roarSound: 'roar', screechSound: 'screech' };
   const nameOf = (k) => (k === 'all' ? 'all planes' : KINDS[k] ? KINDS[k].toLowerCase() : (D.aircraft[k] && D.aircraft[k].name) || k);
 
   function options() {
@@ -37,10 +39,22 @@
   function render() {
     if (!mx.win) return;
     const t = mx.target;
+    const isType = !(KINDS[t] || t === 'all');
     const rows = partsOf(t).map((part) => {
       const { x, from } = level(t, part);
       const own = from === t;
       const note = own ? '' : from ? `from ${esc(nameOf(from))}` : '';
+      const takes = FG.sound.takes(part);
+      if (takes) {
+        // (auto: each type its own; for a type, which one that is)
+        const now = isType && x === 'auto' ? takes.find((k) => k.id === FG.sound.takeFor(t, BANK_OF[part])) : null;
+        const opts = [['auto', `Auto${now ? ` (${now.name})` : ': each type its own'}`], ...takes.map((k) => [k.id, k.name])];
+        return `<div class="mix-row mix-pick-row${own ? ' own' : ''}">
+        <label for="mix-${part}">${esc(FG.sound.parts[part])}</label>
+        <select id="mix-${part}" data-pick="${part}">${opts.map(([id, label]) => `<option value="${esc(id)}"${id === x ? ' selected' : ''}>${esc(label)}</option>`).join('')}</select>
+        <button class="mini" data-reset="${part}" title="${own ? 'Back to what the planes above set' : 'Not changed here'}"${own ? '' : ' disabled'}>↺</button>
+        ${note ? `<div class="mix-note muted">${note}</div>` : ''}</div>`;
+      }
       return `<div class="mix-row${own ? ' own' : ''}">
         <label for="mix-${part}">${esc(FG.sound.parts[part])}</label>
         <input id="mix-${part}" type="range" min="${FG.sound.range(part)[0]}" max="${FG.sound.range(part)[1]}" step="0.05" value="${x}" data-part="${part}">
@@ -52,7 +66,7 @@
     mx.win.body.innerHTML = `
       <div class="mix-pick"><select data-target>${options()}</select>
         <button class="mini${FG.sound.previewing ? ' on' : ''}" data-play title="Play a whole flight of ${esc(nameOf(type || (KINDS[t] ? t : 'jet')))}">${FG.sound.previewing ? '■' : '▶'}</button></div>
-      <p class="muted mix-help">Each part ×0 to ×3, the screech's pitch ×0.5 to ×2 and speed ×0.25 to ×2. A type follows its kind and all planes until you change it here.${FG.sound.on ? '' : ' Sound is off: ▶ turns it on.'}</p>
+      <p class="muted mix-help">Pick a recorded bass, roar and screech, or leave them on Auto (each type sounds a little different). Each part ×0 to ×3, the screech's pitch ×0.5 to ×2 and speed ×0.25 to ×2. A type follows its kind and all planes until you change it here.${FG.sound.on ? '' : ' Sound is off: ▶ turns it on.'}</p>
       ${rows}
       <div class="mix-foot"><button class="mini" data-resetall${Object.keys(FG.sound.mix(t)).length ? '' : ' disabled'}>Reset ${esc(nameOf(t))}</button></div>`;
   }
@@ -88,7 +102,7 @@
         b.querySelector('[data-resetall]').disabled = false;
       });
       b.addEventListener('change', (e) => {
-        if (e.target.matches('[data-target]')) { mx.target = e.target.value; render(); } else if (e.target.dataset.part) render();
+        if (e.target.matches('[data-target]')) { mx.target = e.target.value; render(); } else if (e.target.dataset.pick) { FG.sound.setMix(mx.target, e.target.dataset.pick, e.target.value); render(); } else if (e.target.dataset.part) render();
       });
       b.addEventListener('click', (e) => {
         const r = e.target.closest('[data-reset]');

@@ -91,7 +91,10 @@ Play online: https://noname-ch.github.io/flightgame/ (GitHub Pages, deployed fro
   them into weatherAt, windAt and `surfaceFrom` (what pickRunway uses); `G.windRev` keys the route-line tracks.
 - Sound (js/sound.js, `FG.sound`, off until turned on; prefs in localStorage `flightgame.sound`): Web Audio voices
   made up as they play, plus `RECORDINGS` in `sounds/` (loops from ElevenLabs Sound Effects, 16 kHz mono WAV: an MP3's
-  lead-in silence would stutter in a loop): `rumble` replaces the jets' brown-noise rumble, `far` (a distant
+  lead-in silence would stutter in a loop). The jets' rumble, roar and screech come from `BANKS` (several takes each,
+  loaded when a voice first wants one: `takeBuf`; `takeOf(pr, M, bank)` is the mixer's pick, parts `PICKS`
+  bassSound/roarSound/screechSound, or 'auto' by the type's name hash, old jets from the `for: 'old'` screeches; a
+  new pick rebuilds the voices playing, `remix`/`again`; a screech take's `hz` is its pitch). `far` (a distant
   airliner's wash) takes over from the made-up voice between `FAR` metres (`FAR_LEVEL`), `start` (not a loop) plays
   once over a jet's made-up start (`oneShot`, `START_LEVEL` × the style's whine). `load` brings each in after the
   first click and rebuilds the voices; made up until then or if it fails (`FG.sound.recorded` lists what loaded).

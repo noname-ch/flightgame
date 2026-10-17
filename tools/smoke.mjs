@@ -446,6 +446,37 @@ try {
     step(`sound styles: ${Object.entries(h).filter(([k]) => k.startsWith('jet')).map(([k, x]) => `${k.slice(4)} ${x.db} dB ~${x.c} Hz`).join(', ')}`);
   }
 
+  step('sound takes: the mixer picks another screech, bass and roar (F6 dropdowns), each heard; auto again after');
+  const tk = await evaluate(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const out = { state: FG.sound.state, heard: {}, bad: [] };
+    FG.soundMix.open();
+    FG.soundMix.target = 'all';
+    const picks = [...document.querySelectorAll('[data-pick]')].map((s) => s.dataset.pick);
+    out.picks = picks;
+    for (const [part, bank, id] of [['screechSound', 'screech', 'howl'], ['bassSound', 'rumble', 'thunder'], ['roarSound', 'roar', 'deep']]) {
+      const sel = document.querySelector(`[data-pick="${part}"]`);
+      if (!sel) { out.bad.push(`no ${part} dropdown`); continue; }
+      sel.value = id;
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+      if (FG.sound.takeFor('A320neo', bank) !== id) out.bad.push(`${part}: ${FG.sound.takeFor('A320neo', bank)} not ${id}`);
+      FG.sound.preview({ kind: 'jet', type: 'A320neo', from: 'takeoff', hold: 'takeoff' });
+      await sleep(1500);
+      const db = FG.sound.meter();
+      out.heard[id] = Math.round(db);
+      if (out.state === 'running' && !(db > -60)) out.bad.push(`${id}: ${Math.round(db)} dB`);
+      FG.sound.setMix('all', part, null);
+    }
+    FG.sound.preview(false);
+    out.auto = FG.sound.takeFor('A320neo', 'screech');
+    out.loaded = FG.sound.takesLoaded.length;
+    FG.soundMix.toggle(false);
+    return out;
+  });
+  if (tk.bad.length || tk.picks.length !== 3) errors.push(`sound takes: ${JSON.stringify(tk)}`);
+  if (tk.state === 'running' && tk.loaded < 3) errors.push(`sound takes: only ${tk.loaded} takes loaded: ${JSON.stringify(tk)}`);
+  step(`sound takes: ${Object.entries(tk.heard).map(([k, x]) => `${k} ${x} dB`).join(', ')}, ${tk.loaded} loaded`);
+
   step('parking: at Zurich an A320neo and a 777 (where it fits) stop short of the buildings (before: 31 of 42 noses of 777s were in one)');
   await evaluate(() => { FG.layouts.get('ZRH'); });
   await waitFor(() => !!FG.layouts.get('ZRH'), 30000, 'the Zurich layout');

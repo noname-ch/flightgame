@@ -1,6 +1,6 @@
-// Aircraft sounds, made up as they play with Web Audio, and four recordings made with ElevenLabs Sound Effects
-// (RECORDINGS): the jets' deep rumble, their screech, a jet's starter whistling up, and a distant airliner's wash
-// that planes far away turn into. Until they have loaded, or where they can't be, it is all made up. Each engine kind has its own
+// Aircraft sounds, made up as they play with Web Audio, and recordings made with ElevenLabs Sound Effects
+// (RECORDINGS, BANKS): the jets' deep rumble, roar and screech (several takes of each), a jet's starter whistling up,
+// and a distant airliner's wash that planes far away turn into. Until they have loaded, or where they can't be, it is all made up. Each engine kind has its own
 // voice:
 // - jets: the core whining up on the starter, the igniters ticking, light-off, the fan whine at idle, a burst of
 //   thrust to get rolling, the roar at take-off power (and from behind the rumble, ahead of a big fan the buzz-saw),
@@ -32,19 +32,46 @@
   const IDLE = 0.21;    // jet fan speed at idle
   const SPEED_OF_SOUND = 343;
   // Recorded loops (16 kHz mono WAV: an MP3 starts with a little silence, which would stutter in a loop), each at the
-  // rms it plays at. rumble (10 s): the jets' rumble at power, all its weight where it is heard (40-160 Hz), so at
-  // 0.24 a little heavier than the brown noise at 0.3 was. far (15 s): an airliner drifting over far away. start (9 s,
-  // once, not a loop): a jet's starter whistling up from 1 to 1.5 kHz (the hiss above 6 kHz taken out). screech
-  // (2.3 s): a turbofan's rough scream at power, wavering about SCREECH_HZ (400 Hz-5 kHz kept; the user: the noise
-  // screech before it was "just static"), played faster or slower with the fan; at take-off about as recorded (at
-  // first 1.4× that: "a little too high pitch and speed"). Its pitch and speed can be set apart in the mixer (F6):
-  // the speed by stretching the recording (stretched()).
-  const RECORDINGS = {
-    rumble: ['sounds/jet-rumble.wav', 0.24], far: ['sounds/far-wash.wav', 0.3], start: ['sounds/jet-start.wav', 0.3],
-    screech: ['sounds/jet-screech.wav', 0.13],
+  // rms it plays at. far (15 s): an airliner drifting over far away. start (9 s, once, not a loop): a jet's starter
+  // whistling up from 1 to 1.5 kHz (the hiss above 6 kHz taken out). The rumbles (BANKS.rumble, 5-10 s): the jets'
+  // rumble at power, all its weight where it is heard (25-220 Hz), at 0.24 a little heavier than the brown noise at
+  // 0.3 was. The screeches (2.3-5.6 s): a turbofan's or turbojet's rough scream at power, wavering about its hz
+  // (400 Hz-5 kHz kept; the user: the noise screech before it was "just static"), played faster or slower with the
+  // fan; at take-off about as the first was recorded (at first 1.4× that: "a little too high pitch and speed"). Its
+  // pitch and speed can be set apart in the mixer (F6): the speed by stretching the recording (stretched()). The
+  // roars (4-10 s, 60 Hz-6.5 kHz): the blast behind a jet at take-off thrust, through the same low-passes as the
+  // pink noise they take over from.
+  const RECORDINGS = { far: ['sounds/far-wash.wav', 0.3], start: ['sounds/jet-start.wav', 0.3] };
+  // The jets' screech, rumble and roar each have several takes to pick from (the user: "make multiple screech sounds
+  // and bass, roar etc"; ElevenLabs, looped where they hold steady): in the mixer (F6) for all planes, a kind or a
+  // type, else each type its own (auto: by its name, old jets from the turbojet screeches). Each played at the rms
+  // given; a screech's hz is its pitch (played faster or slower to the fan's). A take without a url is made up
+  // (the roar's pink noise). Loaded when a plane first wants it.
+  const BANKS = {
+    screech: [
+      { id: 'scream', name: 'Scream', url: 'sounds/jet-screech.wav', rms: 0.13, hz: 1360, for: 'new' },
+      { id: 'rasp', name: 'Rasp', url: 'sounds/screech-rasp.wav', rms: 0.13, hz: 1407, for: 'new' },
+      { id: 'tearing', name: 'Tearing', url: 'sounds/screech-tearing.wav', rms: 0.13, hz: 1464, for: 'new' },
+      { id: 'howl', name: 'Howl', url: 'sounds/screech-howl.wav', rms: 0.13, hz: 1525, for: 'new' },
+      { id: 'shriek', name: 'Shriek (turbojet)', url: 'sounds/screech-shriek.wav', rms: 0.13, hz: 1605, for: 'old' },
+      { id: 'turbojet', name: 'Raspy turbojet', url: 'sounds/screech-turbojet.wav', rms: 0.13, hz: 1617, for: 'old' },
+      { id: 'whistle', name: 'Whistling (turbojet)', url: 'sounds/screech-whistle.wav', rms: 0.13, hz: 1608, for: 'old' },
+    ],
+    rumble: [
+      { id: 'rumble', name: 'Rumble', url: 'sounds/jet-rumble.wav', rms: 0.24 },
+      { id: 'sub', name: 'Sub bass', url: 'sounds/bass-sub.wav', rms: 0.24 },
+      { id: 'growl', name: 'Growl', url: 'sounds/bass-growl.wav', rms: 0.24 },
+      { id: 'thunder', name: 'Thunder', url: 'sounds/bass-thunder.wav', rms: 0.24 },
+    ],
+    roar: [
+      { id: 'noise', name: 'Made up (noise)' },
+      { id: 'blast', name: 'Blast', url: 'sounds/roar-blast.wav', rms: 0.3 },
+      { id: 'rush', name: 'Rushing', url: 'sounds/roar-rush.wav', rms: 0.3 },
+      { id: 'bright', name: 'Bright', url: 'sounds/roar-bright.wav', rms: 0.3 },
+      { id: 'deep', name: 'Deep', url: 'sounds/roar-deep.wav', rms: 0.3 },
+    ],
   };
   const SCREECH = 5;        // the screech's level (× size, power, style)
-  const SCREECH_HZ = 1360;  // the screech recording's pitch
   const START_LEVEL = 0.3;  // the start recording × the plane's size × the style's whine
   const FAR = [800, 4000]; // metres: from here the made-up voice gives way to the far recording, all of it by there
   const FAR_LEVEL = 2.5;   // the far recording × the engines' power: about as loud as the made-up voice it takes over from
@@ -102,14 +129,17 @@
   // 'piston') or one type ('A320neo'): prefs.mix[target][part]. A plane takes its type's, else its kind's, else all
   // planes' (else 1). Not levels but × the same way: the screech's pitch and speed (RANGES).
   const PARTS = {
+    bassSound: 'Bass sound', roarSound: 'Roar sound', screechSound: 'Screech sound',
     bass: 'Bass and rumble', roar: 'Roar', screech: 'Screech', screechPitch: 'Screech pitch', screechSpeed: 'Screech speed',
     whine: 'Whine', prop: 'Propellers', engine: 'Engine (pistons)', air: 'Air rushing past', start: 'Engine start',
     far: 'Far away', apu: 'APU',
   };
   const RANGES = { screechPitch: [0.5, 2], screechSpeed: [0.25, 2] }; // (the others × 0..3)
   const rangeOf = (part) => RANGES[part] || [0, 3];
+  // Parts that pick a take (BANKS) instead of a level: 'auto' (each type its own) or a take's id.
+  const PICKS = { bassSound: 'rumble', roarSound: 'roar', screechSound: 'screech' };
   const KIND_PARTS = {
-    jet: ['bass', 'roar', 'screech', 'screechPitch', 'screechSpeed', 'whine', 'air', 'start', 'far', 'apu'],
+    jet: ['bassSound', 'roarSound', 'screechSound', 'bass', 'roar', 'screech', 'screechPitch', 'screechSpeed', 'whine', 'air', 'start', 'far', 'apu'],
     turboprop: ['bass', 'prop', 'roar', 'whine', 'air', 'far', 'apu'],
     piston: ['bass', 'engine', 'prop', 'roar', 'air', 'far'],
   };
@@ -117,13 +147,25 @@
     const m = {};
     for (const part in PARTS) {
       const x = [type, kind, 'all'].map((k) => prefs.mix[k] && prefs.mix[k][part]).find((y) => y != null);
-      m[part] = x == null ? 1 : x;
+      m[part] = x == null ? (PICKS[part] ? 'auto' : 1) : x;
     }
     return m;
   };
+  // The take a plane of profile pr plays from a bank, with mix M: the one picked, else (auto) one by its type's
+  // name, from the takes for old or new jets where the bank has those (all recorded ones else).
+  const PICK_OF = Object.fromEntries(Object.entries(PICKS).map(([part, bank]) => [bank, part]));
+  function takeOf(pr, M, bank) {
+    const all = BANKS[bank];
+    const picked = all.find((t) => t.id === M[PICK_OF[bank]]);
+    if (picked) return picked;
+    const rec = all.filter((t) => t.url);
+    const mine = rec.filter((t) => t.for === (pr.old ? 'old' : 'new'));
+    const pool = mine.length ? mine : rec;
+    return pool[Math.floor(hashStr(`${pr.type}:${bank}`) * pool.length) % pool.length];
+  }
   const savePrefs = () => { try { localStorage.setItem(KEY, JSON.stringify(prefs)); } catch (e) { /* private mode */ } };
 
-  const s = { ctx: null, master: null, noise: null, wobble: null, wave: null, rec: {}, voices: new Map(), picked: [], tick: 0, last: 0, timer: null, demo: null };
+  const s = { ctx: null, master: null, noise: null, wobble: null, wave: null, rec: {}, takes: {}, loading: {}, voices: new Map(), picked: [], tick: 0, last: 0, timer: null, demo: null };
 
   const clamp01 = (x) => Math.max(0, Math.min(1, x));
   const smooth = (a, b, x) => { const k = clamp01((x - a) / (b - a)); return k * k * (3 - 2 * k); };
@@ -408,9 +450,24 @@
     return buf;
   }
 
-  // A recording (RECORDINGS) into s.rec. Once it is in, the voices are built again with it.
+  // A recording (RECORDINGS) into s.rec, or a take (BANKS) into s.takes. Once it is in, the voices are built again
+  // with it.
   function load(ctx, name) {
     const [url, rms] = RECORDINGS[name];
+    fetchRec(ctx, url, rms, (buf) => { s.rec[name] = buf; }, name);
+  }
+  // The buffer of take t of a bank, or null: made up until it has loaded (it is asked for then).
+  function takeBuf(bank, t) {
+    if (!t || !t.url || !s.ctx) return null;
+    const key = `${bank}:${t.id}`;
+    if (s.takes[key]) return s.takes[key];
+    if (!s.loading[key]) {
+      s.loading[key] = true;
+      fetchRec(s.ctx, t.url, t.rms, (buf) => { s.takes[key] = buf; }, key);
+    }
+    return null;
+  }
+  function fetchRec(ctx, url, rms, done, name) {
     fetch(url)
       .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(`${url}: ${r.status}`))))
       .then((data) => new Promise((ok, no) => ctx.decodeAudioData(data, ok, no))) // (old Safari: no promise)
@@ -420,7 +477,7 @@
         for (let i = 0; i < d0.length; i++) sq += d0[i] * d0[i];
         const g = rms / Math.sqrt(sq / d0.length || 1);
         for (let c = 0; c < buf.numberOfChannels; c++) { const d = buf.getChannelData(c); for (let i = 0; i < d.length; i++) d[i] *= g; }
-        s.rec[name] = buf;
+        done(buf);
         restyle();
       })
       .catch((e) => console.warn(`sound: no recording ${name}, made up instead`, e)); // (offline, file://)
@@ -459,8 +516,10 @@
     const gain = (to = v.mix) => { const g = ctx.createGain(); g.gain.value = 0; g.connect(to); return g; };
     const L = v.L;
     L.noise = src(s.pink); // (roar, APU, wind)
-    v.rec = pr.kind === 'jet' && !!s.rec.rumble;
-    L.deep = src(v.rec ? s.rec.rumble : s.brown); // (rumble)
+    // The jets' takes (BANKS, the mixer's picks): rumble, roar, screech.
+    v.takes = pr.kind === 'jet' ? { rumble: takeOf(pr, v.M, 'rumble'), roar: takeOf(pr, v.M, 'roar'), screech: takeOf(pr, v.M, 'screech') } : {};
+    const rumbleBuf = takeBuf('rumble', v.takes.rumble);
+    L.deep = src(rumbleBuf || s.brown); // (rumble)
     const lp2 = (f, q = 0.7) => { const a = filter('lowpass', f, q); const b = filter('lowpass', f, q); a.connect(b); return [a, b]; };
     // Propellers (turboprops, pistons): the blades' tone (n of them, a little apart: they swell against each other),
     // the air they chop (noise pulsing at the blade rate: the rasp, which a tone alone hasn't got) and the rumble.
@@ -492,7 +551,9 @@
     if (pr.kind === 'jet') {
       [L.roarF, L.roarF2] = lp2(400);
       L.roar = gain();
-      L.noise.connect(L.roarF);
+      const roarBuf = takeBuf('roar', v.takes.roar);
+      if (roarBuf) L.roarSrc = src(roarBuf);
+      (L.roarSrc || L.noise).connect(L.roarF);
       L.roarF2.connect(L.roar);
       L.rumbleF = filter('lowpass', S.rumbleHz, 0.8);
       L.rumble = gain();
@@ -520,7 +581,8 @@
       // The screech: the recording (screechAt()), or until it is in, white noise in two narrow bands at the fan's
       // blade pitch.
       L.screech = gain();
-      if (s.rec.screech) {
+      v.scrBuf = takeBuf('screech', v.takes.screech);
+      if (v.scrBuf) {
         L.scrOther = ctx.createGain(); // (the other engine)
         L.scrOther.gain.value = 0.7;
         L.scrOther.connect(L.screech);
@@ -598,7 +660,7 @@
   // speed), both engines from other places in it (they don't beat). Again when k changes (the mixer).
   function screechAt(v, k) {
     const L = v.L;
-    const buf = stretched(k);
+    const buf = stretched(v, k);
     if (!buf) return;
     for (const b of [L.scr1, L.scr2]) {
       if (!b) continue;
@@ -624,19 +686,22 @@
   // time, else it throbs at the step rate), looping as the original. The best place is looked for at a quarter of the sample rate, then to the sample. null while it is made (a few
   // tens of ms, once the mixer's slider has stopped for a moment): the voice keeps the one it has until then. Only
   // what voices still ask for is made (not every step the slider went through).
-  function stretched(k) {
-    const cache = s.scrBufs || (s.scrBufs = { 1: s.rec.screech });
+  function stretched(v, k) {
+    const id = v.takes.screech.id;
+    const bufs = s.scrBufs || (s.scrBufs = {});
+    const cache = bufs[id] || (bufs[id] = { 1: v.scrBuf });
     if (cache[k]) return cache[k];
     const asked = s.scrAsked || (s.scrAsked = new Map());
-    if (!asked.has(k)) {
+    const key = `${id}:${k}`;
+    if (!asked.has(key)) {
       clearTimeout(s.scrTimer);
       s.scrTimer = setTimeout(() => {
         const now = performance.now();
-        for (const [kk, t] of asked) if (now - t < 2 * TICK + 100) cache[kk] = stretch(s.rec.screech, kk);
+        for (const [, a] of asked) if (now - a.t < 2 * TICK + 100) a.cache[a.k] = stretch(a.cache[1], a.k);
         asked.clear();
       }, 200);
     }
-    asked.set(k, performance.now());
+    asked.set(key, { t: performance.now(), cache, k });
     return null;
   }
   function stretch(src, k) {
@@ -821,6 +886,7 @@
     T(v.pan.pan, g.pan * 0.8);
     L2.noise.playbackRate.setTargetAtTime(dop, at, 0.06);
     L2.deep.playbackRate.setTargetAtTime(dop, at, 0.06); // (not with the power: it revved like a tractor)
+    if (L2.roarSrc) L2.roarSrc.playbackRate.setTargetAtTime(dop, at, 0.06);
     if (pr.kind === 'jet') {
       const n1 = sm.pw;
       const n2 = sm.n2;
@@ -852,8 +918,8 @@
         const k = Math.round(20 * Math.min(8, Math.max(0.25, M.screechPitch / M.screechSpeed))) / 20;
         if (k !== v.scrK) screechAt(v, k);
         if (L2.scr1) {
-          L2.scr1.playbackRate.setTargetAtTime(scrHz / SCREECH_HZ, at, 0.06);
-          L2.scr2.playbackRate.setTargetAtTime(scrHz / SCREECH_HZ, at, 0.06);
+          L2.scr1.playbackRate.setTargetAtTime(scrHz / v.takes.screech.hz, at, 0.06);
+          L2.scr2.playbackRate.setTargetAtTime(scrHz / v.takes.screech.hz, at, 0.06);
         }
       } else {
         T(L2.scrF1.frequency, scrHz);
@@ -941,22 +1007,31 @@
     v.last = { lit: !!e.lit, phase: e.phase, start: e.start };
   }
 
-  // The mixer changed: every voice takes its parts' levels again (kept with the settings).
+  // The mixer changed: every voice takes its parts' levels again (kept with the settings); one that now picks
+  // other takes is built again.
   function remix() {
     savePrefs();
-    for (const v of s.voices.values()) v.M = mixOf(v.pr.type, v.pr.kind);
-    if (s.demo) s.demo.v.M = mixOf(s.demo.v.pr.type, s.demo.v.pr.kind);
+    const other = (v) => v.pr.kind === 'jet' && Object.keys(v.takes).some((bank) => takeOf(v.pr, v.M, bank) !== v.takes[bank]);
+    for (const [key, v] of s.voices) {
+      v.M = mixOf(v.pr.type, v.pr.kind);
+      if (!v.kill && s.ctx && other(v)) s.voices.set(key, again(v));
+    }
+    if (s.demo) {
+      s.demo.v.M = mixOf(s.demo.v.pr.type, s.demo.v.pr.kind);
+      if (s.ctx && other(s.demo.v)) s.demo.v = again(s.demo.v);
+    }
+  }
+  // Voice v built again (keeping where its engines are), the old one fading out.
+  function again(v) {
+    const nv = makeVoice(v.pr);
+    Object.assign(nv, { id: v.id, sm: v.sm, last: v.last, nextClick: v.nextClick });
+    fadeDrop(v, 0.03);
+    return nv;
   }
 
   // A new style: every voice is built again in it (keeping where its engines are), the old one fades out.
   function restyle() {
     if (!s.ctx) return;
-    const again = (v) => {
-      const nv = makeVoice(v.pr);
-      Object.assign(nv, { id: v.id, sm: v.sm, last: v.last, nextClick: v.nextClick });
-      fadeDrop(v, 0.03);
-      return nv;
-    };
     for (const [key, v] of s.voices) {
       if (v.kill) { dropVoice(v); s.voices.delete(key); } else s.voices.set(key, again(v));
     }
@@ -1128,7 +1203,7 @@
     mixFor(type) { const pr = profile(type); return mixOf(type, pr.kind); },
     setMix(target, part, x) {
       const m = prefs.mix[target] || (prefs.mix[target] = {});
-      if (x == null || !Number.isFinite(Number(x))) delete m[part]; else m[part] = Math.max(rangeOf(part)[0], Math.min(rangeOf(part)[1], Number(x)));
+      if (PICKS[part]) { if (x == null || x === 'auto' || !BANKS[PICKS[part]].some((t) => t.id === x)) delete m[part]; else m[part] = x; } else if (x == null || !Number.isFinite(Number(x))) delete m[part]; else m[part] = Math.max(rangeOf(part)[0], Math.min(rangeOf(part)[1], Number(x)));
       if (!Object.keys(m).length) delete prefs.mix[target];
       remix();
     },
@@ -1139,7 +1214,13 @@
     heardFrom: listener, // where it is heard from now
     profile,
     get state() { return s.ctx ? s.ctx.state : 'off'; },
-    get recorded() { return Object.keys(s.rec); }, // (the RECORDINGS that have loaded: 'rumble', 'far', 'start', 'screech')
+    // (what has loaded: the RECORDINGS 'far', 'start', and the BANKS 'rumble', 'roar', 'screech' once a take of each is in)
+    get recorded() { return [...Object.keys(s.rec), ...Object.keys(BANKS).filter((b) => Object.keys(s.takes).some((k) => k.startsWith(`${b}:`)))]; },
+    get takesLoaded() { return Object.keys(s.takes); }, // ('screech:howl', …)
+    // The takes a pick part (PICKS: 'bassSound', 'roarSound', 'screechSound') offers: [{ id, name }] ('auto' not listed);
+    // takeFor(type, bank) the one a plane of that type plays now.
+    takes(part) { return PICKS[part] ? BANKS[PICKS[part]].map((t) => ({ id: t.id, name: t.name, old: t.for === 'old' })) : null; },
+    takeFor(type, bank) { const pr = profile(type); const t = takeOf(pr, mixOf(type, pr.kind), bank); return t && t.id; },
     get pickMs() { return s.pickMs || 0; }, // (time to find the loudest planes, 4 times a second)
     // The planes playing now: [{ id, kind, gain }] (smoke test).
     get playing() { return [...s.voices.values()].filter((v) => !v.kill).map((v) => ({ id: v.id, kind: v.pr.kind, gain: v.out.gain.value })); },
