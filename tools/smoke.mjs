@@ -916,7 +916,7 @@ try {
             if (a.getX(i) === 4) { r[0] = Math.min(r[0], p.getZ(i)); r[1] = Math.max(r[1], p.getZ(i)); }
           }
         });
-        out[file] = { props: s.userData.props, surfaces: s.userData.surfaces, hollow: Object.values(hubs).filter(([a, b]) => a > 0.5 * b).length, elevIn: e[0] / e[1], rudShare: (r[1] - r[0]) / (top - r[0]) };
+        out[file] = { props: s.userData.props, surfaces: s.userData.surfaces, flapFaces: s.userData.flapFaces, hollow: Object.values(hubs).filter(([a, b]) => a > 0.5 * b).length, elevIn: e[0] / e[1], rudShare: (r[1] - r[0]) / (top - r[0]) };
       }
       return out;
     });
@@ -936,6 +936,8 @@ try {
       if (!(elevIn < 0.35)) errors.push(`3D elevators: ${file}'s start ${elevIn} of the way out, not beside the fuselage`);
       if (!(rudShare > 0.8)) errors.push(`3D rudder: ${file}'s covers ${rudShare} of the fin's height`);
     }
+    // (the flaps are cut out of the wing, so they slide back on their own and are painted apart: cutFlaps)
+    for (const file of ['atr42', 'q400', 'a320']) if (!(parts[file].flapFaces > 0)) errors.push(`3D flaps: ${file} has no flaps cut out of its wing`);
 
     step('3D satellite: 🛰 not under the plane window while following; Settings → Map style switches the 3D ground too');
     const sat = await evaluate(async () => {

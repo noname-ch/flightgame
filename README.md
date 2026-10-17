@@ -64,7 +64,8 @@ nose points partly into the wind so they still track their path, and the pilots 
 touchdown; in gusty wind and thunderstorms they bump about a little. The plane window shows the wind and the crab
 angle. In 3D the wings bend a little: they droop on the ground, come up as the lift builds on the take-off run (more
 in turns and climbs, less in descents) and flutter in the wind. Propellers and jet fans turn while the engines run.
-The control surfaces move too: flaps out for take-off and further for landing, ailerons when rolling into or out
+The control surfaces move too: flaps out for take-off and further for landing (grey metal panels in two parts,
+cut out of the wing, that slide back and down so a slot opens behind it; the Concorde has none), ailerons when rolling into or out
 of a turn, elevators when pitching (rotation, flare) and the rudder when turning, also steering on the ground. The weather is for looks: flights don't wait for it (storm events still close airports). It is light on
 the computer (one half-resolution canvas in 2D, one batch of sprites in 3D, CSS for rain and snow);
 Settings → On the map → *Clouds and weather* turns it all off.
