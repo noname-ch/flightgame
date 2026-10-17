@@ -1093,9 +1093,10 @@ if (livSurf.x > 0.5) {
     vec2 livH = livSurf.yz;
     if (livSurf.x > 1.5 && livSurf.x < 2.5 && livSurf.w > 0.0) {
       // a flap (cut out of the wing: livSurf.w is its chord) slides back and a little down as it goes out
-      // (Fowler flaps): a slot opens between it and the wing
+      // (Fowler flaps): a narrow slot opens between it and the wing (a fifth of its chord back: the wing has no
+      // shroud over it, so more would leave it hanging behind the wing, metres off on a wide-body)
       float livOut = clamp(livFlap / 0.61, 0.0, 1.2);
-      livH += vec2(-0.6, -0.12) * livOut * livSurf.w;
+      livH += vec2(-0.18, -0.08) * livOut * livSurf.w;
       vLivFlap = vec2(1.0, clamp((livSurf.y - position.y) / livSurf.w, 0.0, 1.0));
     }
     transformed.yz = livH + vec2(livC * livR.x - livS * livR.y, livS * livR.x + livC * livR.y);
