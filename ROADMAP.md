@@ -117,7 +117,8 @@ Recent milestones, newest first (see `git log` for the rest):
 - Thrust reversers on every type, each its own kind: in 3D the sleeves of big fans slide back over the cascade vanes,
   the A320ceo's four doors swing out, the old jets' buckets close behind the exhaust (on the A380 and A340-600 only the
   inner engines, on the Il-62, VC10 and Comet the outer ones); the reverse roar as loud as the engines that have them,
-  propellers to reverse pitch or ground fine; named in the market and the plane window
+  propellers to reverse pitch or ground fine, Concorde's eyelids behind its four nozzles; they shorten the landing run
+  (an earlier exit; brakes alone roll further); named in the market and the plane window
 - Local time and day and night: every airport keeps its own clock (time zones with summer time), the sun rises
   and sets where it really does, the night moves over the 2D map, and in 3D the sky, ground and buildings darken
   with lit runways, taxiways and windows and the planes' position lights, beacons, strobes and landing lights

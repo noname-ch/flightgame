@@ -386,20 +386,28 @@ function markEngines(scene, hw, file) {
     };
     revs.forEach(axis);
     // (a nacelle in pieces one behind the other, the CRJ's intake and its rear, is one engine)
-    for (let i = 0; i < revs.length; i++) for (let j = revs.length - 1; j > i; j--) {
-      const a = revs[i], c = revs[j], r = Math.max(a.r, c.r);
-      if (Math.abs(a.x - c.x) > 0.5 * r || Math.abs(a.z - c.z) > 0.5 * r || Math.max(a.box[2], c.box[2]) - Math.min(a.box[3], c.box[3]) > 2 * r) continue;
-      a.cowls.push(...c.cowls);
-      for (let k = 0; k < 6; k += 2) { a.box[k] = Math.min(a.box[k], c.box[k]); a.box[k + 1] = Math.max(a.box[k + 1], c.box[k + 1]); }
-      axis(a);
-      revs.splice(j, 1);
-    }
-    // (only round nacelles with something in them, a fan or a core: not the A350's wing tip, nor Concorde's
-    // nacelles, two engines side by side)
+    const inLine = (list) => {
+      for (let i = 0; i < list.length; i++) for (let j = list.length - 1; j > i; j--) {
+        const a = list[i], c = list[j], r = Math.max(a.r, c.r);
+        if (Math.abs(a.x - c.x) > 0.5 * r || Math.abs(a.z - c.z) > 0.5 * r || Math.max(a.box[2], c.box[2]) - Math.min(a.box[3], c.box[3]) > 2 * r) continue;
+        a.cowls.push(...c.cowls);
+        for (let k = 0; k < 6; k += 2) { a.box[k] = Math.min(a.box[k], c.box[k]); a.box[k + 1] = Math.max(a.box[k + 1], c.box[k + 1]); }
+        axis(a);
+        list.splice(j, 1);
+      }
+      return list;
+    };
+    inLine(revs);
+    // Only round nacelles with something in them, a fan or a core (not the A350's wing tip). A nacelle with two
+    // engines side by side (Concorde's) has a round nozzle for each at its back: those are the engines.
     const inside = new Set([...engine].filter(([p]) => !cowlings.includes(p)).map(([, box]) => box));
+    const round = (b) => { const q = (b[1] - b[0]) / (b[5] - b[4]); return q >= 0.8 && q <= 1.25; };
     for (let i = revs.length - 1; i >= 0; i--) {
-      const b = revs[i].box, q = (b[1] - b[0]) / (b[5] - b[4]);
-      if (q < 0.8 || q > 1.25 || !revs[i].cowls.some((c) => inside.has(c.box))) revs.splice(i, 1);
+      const e = revs[i];
+      if (!e.cowls.some((c) => inside.has(c.box))) { revs.splice(i, 1); continue; }
+      if (round(e.box)) continue;
+      const twin = inLine(e.cowls.filter((c) => round(c.box)).map((c) => { const n = { cowls: [c], box: [...c.box] }; axis(n); return n; }));
+      revs.splice(i, 1, ...(twin.length >= 2 ? twin : []));
     }
     // (an airliner's engines are all alike: something much smaller is not one)
     const big = Math.max(0, ...revs.map((e) => e.r));
@@ -409,7 +417,7 @@ function markEngines(scene, hw, file) {
   scene.userData.revEngines = revs.map((e) => ({ x: e.x, y: (e.box[2] + e.box[3]) / 2, z: e.z, r: e.r, len: e.len, ratio: (e.box[1] - e.box[0]) / (e.box[5] - e.box[4]), n: e.cowls.length }));
   const revOf = new Map(revs.flatMap((e) => e.cowls.map((c) => [c.box, e])));
   for (const [p, cowl] of engine) {
-    marked.get(p.mesh).set(p.root, { box: cowl, inner: !cowlings.some((c) => c === p) });
+    marked.get(p.mesh).set(p.root, { box: cowl, own: p.box, inner: !cowlings.some((c) => c === p) });
   }
   for (const m of meshes) {
     const root = roots.get(m);
@@ -439,7 +447,7 @@ function markEngines(scene, hw, file) {
     // exhaust) and livEngL (its length)
     const eng = new Float32Array(root.length * 4), engL = new Float32Array(root.length);
     if (cowls.size) for (let i = 0; i < root.length; i++) {
-      const c = cowls.get(root[i]), e = c && !c.inner && revOf.get(c.box);
+      const c = cowls.get(root[i]), e = c && !c.inner && (revOf.get(c.own) || revOf.get(c.box));
       if (!e) continue;
       eng.set([e.x, e.z, e.r, Math.min(1, Math.max(0, (e.box[3] - pos.getY(i)) / e.len))], i * 4);
       engL[i] = e.len;
@@ -447,6 +455,7 @@ function markEngines(scene, hw, file) {
     m.geometry.setAttribute('livEng', new THREE.BufferAttribute(eng, 4));
     m.geometry.setAttribute('livEngL', new THREE.BufferAttribute(engL, 1));
   }
+  cutSleeves(meshes);
   // (a model in one piece has no propellers to turn)
   scene.userData.props = 0;
   scene.traverse((o) => {
@@ -458,8 +467,117 @@ function markEngines(scene, hw, file) {
       o.geometry.setAttribute('livEng', new THREE.BufferAttribute(new Float32Array(o.geometry.attributes.position.count * 4), 4));
       o.geometry.setAttribute('livEngL', new THREE.BufferAttribute(new Float32Array(o.geometry.attributes.position.count), 1));
     }
+    for (const k of ['livSleeve', 'livDoor']) if (!o.geometry.attributes[k]) o.geometry.setAttribute(k, new THREE.BufferAttribute(new Float32Array(o.geometry.attributes.position.count), 1));
     scene.userData.props += o.geometry.userData.livProps || 0;
   });
+}
+
+// Thrust reversers cut into the cowls. Translating sleeves (the cascade kind): each jet engine's outer skin is cut
+// round SLEEVE_AT of the way back along its fan cowl (the skin's length), and the vertices on the cut are doubled:
+// those in front stay, those behind get livSleeve (how far the sleeve slides back, SLEEVE_SLIDE of the skin's length)
+// and a band of faces between the two, no wider than a line while stowed, opens as the cascade vanes. Pivoting doors:
+// the part behind that cut is cut again along the sides of DOORS doors (their middles at 45° + k·90° round the axis,
+// DOOR_HALF either side), doubled the same way; the doors' vertices get livDoor 1 and swing out about the front edge.
+// (Without the cuts a coarse cowl has no vertices there: its faces stretched from near the intake and the opening
+// covered most of the engine.)
+const SLEEVE_AT = 0.55, SLEEVE_SLIDE = 0.16, DOORS = 4, DOOR_HALF = 0.42;
+function cutSleeves(meshes) {
+  for (const o of meshes) {
+    const g = o.geometry;
+    if (g.attributes.livSleeve) continue; // (a geometry shared by two meshes is cut once)
+    const n0 = g.attributes.position.count;
+    const pos = g.attributes.position, eng = g.attributes.livEng;
+    const zeros = () => new THREE.BufferAttribute(new Float32Array(n0), 1);
+    const key = (x, z) => `${x.toFixed(5)},${z.toFixed(5)}`;
+    const skin = [];
+    const ends = new Map(); // engine (its axis) -> the furthest back its skin reaches
+    for (let i = 0; i < n0; i++) {
+      const r = eng.getZ(i);
+      skin.push(r > 0 && Math.hypot(pos.getX(i) - eng.getX(i), pos.getZ(i) - eng.getY(i)) > 0.75 * r ? 1 : 0);
+      if (!skin[i]) continue;
+      const k = key(eng.getX(i), eng.getY(i));
+      ends.set(k, Math.max(ends.get(k) || 0, eng.getW(i)));
+    }
+    if (!ends.size) { g.setAttribute('livSleeve', zeros()); g.setAttribute('livDoor', zeros()); continue; }
+    const names = Object.keys(g.attributes);
+    const vals = names.map((k) => { const at = g.attributes[k], v = []; for (let i = 0; i < at.count; i++) for (let c = 0; c < at.itemSize; c++) v.push(at.getComponent(i, c)); return v; });
+    const E = vals[names.indexOf('livEng')], L = vals[names.indexOf('livEngL')], P = vals[names.indexOf('position')];
+    const engOf = (i) => key(E[4 * i], E[4 * i + 1]);
+    const end = (i) => ends.get(engOf(i)) || 0;
+    const angle = (i) => Math.atan2(P[3 * i + 2] - E[4 * i + 1], P[3 * i] - E[4 * i]);
+    const slide = [], door = []; // (door -1: by its angle, at the end)
+    const behind = (i) => E[4 * i + 3] - SLEEVE_AT * end(i);
+    for (let i = 0; i < n0; i++) { slide.push(skin[i] && behind(i) > 0 ? SLEEVE_SLIDE * end(i) * L[i] : 0); door.push(-1); }
+    let count = n0;
+    const copy = (a, b, t, sl, dr) => {
+      names.forEach((name, n) => {
+        const size = g.attributes[name].itemSize, v = vals[n];
+        for (let c = 0; c < size; c++) v.push(v[a * size + c] + (v[b * size + c] - v[a * size + c]) * t);
+      });
+      skin.push(1); slide.push(sl); door.push(dr);
+      return count++;
+    };
+    const idx = g.index ? Array.from(g.index.array) : Array.from({ length: n0 }, (_, i) => i);
+    const groups = g.groups.length ? g.groups : [{ start: 0, count: idx.length, materialIndex: 0 }];
+    const tris = groups.map((gr) => idx.slice(gr.start, gr.start + gr.count));
+    // Cuts the triangles pick() takes where side() changes sign. made(a, b, t) makes the two copies of a point on the
+    // cut [on the minus side, on the plus side]; a band of faces between them joins the two sides, seen from both.
+    const split = (pick, side, made) => {
+      const memo = new Map();
+      const point = (a, b) => {
+        if (a > b) [a, b] = [b, a];
+        const k = a + ',' + b;
+        if (!memo.has(k)) { const sa = side(a); memo.set(k, made(a, b, sa / (sa - side(b)))); }
+        return memo.get(k);
+      };
+      tris.forEach((src, gi) => {
+        const out = [];
+        for (let t = 0; t + 2 < src.length; t += 3) {
+          const tri = [src[t], src[t + 1], src[t + 2]];
+          const s3 = tri.map(side);
+          if (!pick(tri) || !(Math.min(...s3) < 0 && Math.max(...s3) > 0)) { out.push(...tri); continue; }
+          // (the vertex alone on its side first, keeping the winding: it keeps a triangle, the other two a quad)
+          const plus = s3.map((v) => v > 0);
+          const j = [0, 1, 2].find((e) => plus[e] !== plus[(e + 1) % 3] && plus[e] !== plus[(e + 2) % 3]);
+          const a = tri[j], b = tri[(j + 1) % 3], c = tri[(j + 2) % 3];
+          const p = point(a, b), q = point(a, c), A = plus[j] ? 1 : 0, B = 1 - A;
+          out.push(a, p[A], q[A], p[B], b, c, p[B], c, q[B]);
+          out.push(p[0], q[0], q[1], p[0], q[1], p[1], p[0], q[1], q[0], p[0], p[1], q[1]);
+        }
+        tris[gi] = out;
+      });
+    };
+    const oneEngine = (tri) => engOf(tri[1]) === engOf(tri[0]) && engOf(tri[2]) === engOf(tri[0]);
+    // the sleeve's front edge
+    split((tri) => tri.every((i) => skin[i]) && oneEngine(tri), behind,
+      (a, b, t) => [copy(a, b, t, 0, 0), copy(a, b, t, SLEEVE_SLIDE * end(a) * L[a], -1)]);
+    // the doors' sides, behind it
+    const rear = (tri) => tri.every((i) => slide[i] > 0) && oneEngine(tri);
+    for (let k = 0; k < DOORS; k++) {
+      const mid = Math.PI / 4 + k * 2 * Math.PI / DOORS;
+      for (const [edge, inside] of [[mid - DOOR_HALF, 1], [mid + DOOR_HALF, 0]]) {
+        split((tri) => rear(tri) && tri.every((i) => Math.cos(angle(i) - edge) > 0.3), (i) => Math.sin(angle(i) - edge),
+          (a, b, t) => [copy(a, b, t, slide[a], 1 - inside), copy(a, b, t, slide[a], inside)]);
+      }
+    }
+    for (let i = 0; i < count; i++) {
+      if (door[i] !== -1) continue;
+      const off = Math.abs(((angle(i) - Math.PI / 4) % (2 * Math.PI / DOORS) + 2 * Math.PI / DOORS) % (2 * Math.PI / DOORS));
+      door[i] = slide[i] > 0 && Math.min(off, 2 * Math.PI / DOORS - off) < DOOR_HALF ? 1 : 0;
+    }
+    names.forEach((name, n) => g.setAttribute(name, new THREE.BufferAttribute(new Float32Array(vals[n]), g.attributes[name].itemSize)));
+    g.setAttribute('livSleeve', new THREE.BufferAttribute(new Float32Array(slide), 1));
+    g.setAttribute('livDoor', new THREE.BufferAttribute(new Float32Array(door), 1));
+    const out = tris.flat();
+    g.setIndex(count > 65535 ? new THREE.Uint32BufferAttribute(out, 1) : new THREE.Uint16BufferAttribute(out, 1));
+    if (g.groups.length) {
+      g.clearGroups();
+      let at = 0;
+      tris.forEach((t, gi) => { g.addGroup(at, t.length, groups[gi].materialIndex); at += t.length; });
+    }
+    g.computeBoundingBox();
+    g.computeBoundingSphere();
+  }
 }
 
 // The control surfaces of a model, so that the shader can move them: every vertex gets the attribute livSurf
@@ -1123,6 +1241,8 @@ uniform float livElev;     // elevators (radians, trailing edge down)
 uniform float livRud;      // rudder (radians, trailing edge to the right)
 attribute vec4 livEng;     // of a jet's cowling: the engine's axis x, z, its radius (0: not one), 0 at the inlet lip .. 1 at the exhaust
 attribute float livEngL;   // ... and its length
+attribute float livSleeve; // how far back it slides with the sleeve of a cascade reverser (cutSleeves; 0: it stays)
+attribute float livDoor;   // 1: on a pivoting reverser door (cutSleeves)
 uniform float livRev;      // thrust reversers: 0 stowed .. 1 deployed
 uniform float livRevKind;  // 0 none, 1 translating sleeve (cascade), 2 pivoting doors, 3 target buckets
 uniform float livRevX;     // on which engines: 0 all, above 0 those nearer than it (|axis x|), below 0 those further out than -it
@@ -1152,20 +1272,18 @@ if (livEng.z > 0.0 && livRev > 0.001 && livRevKind > 0.5 &&
   float livR = length(livD);
   float livT = livEng.w;
   if (livRevKind < 1.5) {
-    // translating sleeve: the outer skin of the rear of the cowl slides back, opening a band of cascade vanes
-    if (livT > 0.45 && livR > 0.75 * livEng.z) { transformed.y -= 0.2 * livEngL * livRev; vLivRev = 1.0; }
+    // translating sleeve: the outer skin of the rear of the fan cowl slides back, opening a band of cascade vanes
+    if (livSleeve > 0.0) { transformed.y -= livSleeve * livRev; vLivRev = 1.0; }
   } else if (livRevKind < 2.5) {
-    // pivoting doors: four (upper and lower, left and right) turn about a hinge across them, their rear edges out
-    // (their sides round off: on a coarse cowl hard edges made jagged holes)
-    float livW = 1.0 - smoothstep(0.3, 0.6, abs(mod(atan(livD.y, livD.x), 1.5708) - 0.7854));
-    if (livT > 0.5 && livT < 0.8 && livW > 0.0 && livR > 0.75 * livEng.z) {
-      float livA = 0.6 * livRev * livW;
-      float livHy = transformed.y + (livT - 0.6) * livEngL;
+    // pivoting doors (cut out of the rear of the fan cowl: cutSleeves) swing out about their front edge
+    if (livDoor > 0.5) {
+      float livA = 0.45 * livRev;
+      float livHy = transformed.y + livT * livEngL - ${(SLEEVE_AT / SLEEVE_SLIDE).toFixed(4)} * livSleeve;
       vec2 livP = vec2(transformed.y - livHy, livR - livEng.z);
       vec2 livN = vec2(livP.x * cos(livA) + livP.y * sin(livA), livP.y * cos(livA) - livP.x * sin(livA));
       transformed.y = livHy + livN.x;
       transformed.xz = livEng.xy + livD / max(livR, 1e-6) * (livEng.z + livN.y);
-      vLivRev = livW;
+      vLivRev = 1.0;
     }
   } else if (livT > 0.8) {
     // target buckets: the rear of the exhaust in two halves, upper and lower, swings back and shut behind it
@@ -1257,6 +1375,7 @@ varying vec3 vLivNor;
 varying float vLivPart;
 varying vec2 vLivFlap;
 varying float vLivRev;
+uniform float livRevKind;
 uniform vec3 livFlapSpan; // the flaps are between these |x|, in two parts split FLAP_BREAK of the way out
 `;
 const FRAG_BODY = `
@@ -1303,9 +1422,9 @@ const FRAG_BODY = `
     float back = vLivPart - 1.01;
     if (back > -0.005 && back < 0.06) paint = livLip;
     else if (back > 0.86) paint = livNozzle;
-    // a thrust reverser's opening (between its moved part and the fixed cowl): dark, ribbed by the cascade vanes
+    // a thrust reverser's opening (between its moved part and the fixed cowl): dark, ribbed by the vanes of a cascade
     if (vLivRev > 0.02 && vLivRev < 0.98) {
-      paint = mix(vec3(0.07, 0.075, 0.08), vec3(0.2, 0.21, 0.22), step(0.6, fract(vLivRev * 7.0)));
+      paint = livRevKind < 1.5 ? mix(vec3(0.07, 0.075, 0.08), vec3(0.2, 0.21, 0.22), step(0.6, fract(vLivRev * 7.0))) : vec3(0.09, 0.095, 0.1);
       detail = 0.0;
     }
   }

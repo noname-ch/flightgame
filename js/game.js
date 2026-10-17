@@ -2363,11 +2363,11 @@
     const radius = vTurn * vTurn / (9.81 * Math.tan(toRad(pf.bank)));
     const P = (ll) => ({ lat: ll[0], lon: ll[1] });
 
-    // Takeoff run to lift-off at ~2.2 m/s² (an A320 in about 36 s and 1400 m), landing run at ~1.6 m/s², within
-    // the runway.
+    // Takeoff run to lift-off at ~2.2 m/s² (an A320 in about 36 s and 1400 m), landing run within the runway at
+    // brakeDecel (its reversers help), so the plane turns off at an earlier exit with them.
     const vLofMs = pf.vLof / 3.6;
     const vAppMs = pf.vApp / 3.6;
-    const stopM = Math.min(arr.len * 0.85, Math.max(400 + 300, 400 + vAppMs * vAppMs / 3.2));
+    const stopM = Math.min(arr.len * 0.85, Math.max(400 + 300, 400 + vAppMs * vAppMs / (2 * brakeDecel(type))));
 
     // Gates: pushed back out of the stand at the start, nose-in onto the stand at the end.
     const gA = gateOf(f.from, planeId, type);
@@ -2691,6 +2691,13 @@
     return t;
   }
 
+  // How hard a type slows down after touchdown (m/s²): wheel brakes alone 1.25, with all its thrust reversed 1.6
+  // (as every type did before reversers came: js/data/reversers.js), propellers to ground fine pitch in between.
+  function brakeDecel(type) {
+    const flat = D.reverserOf && D.reverserOf(type).kind === 'flat';
+    return 1.25 + 0.35 * (D.reverseShare ? D.reverseShare(type) : 1) + (flat ? 0.15 : 0);
+  }
+
   // Today's planned track for a schedule leg (for drawing routes). rw: the plane's runway choices for it
   // ({ from, to } runway keys, Game.legRunways), else the runways it would take on its own.
   function legTrack(type, from, to, rw) {
@@ -2924,7 +2931,7 @@
     priceNew, fitsAirport, fitsReason, crewFor, factoryOf, onSale, dateOf,
     airportSize, baseSize, airportCategory, airportRunways, runwayLength, runwayTaxiways, runwayCover, roundLine,
     CLASSES, CLASS_ROOM, typeClass, standClassAt, maxClass, slotsFit, longestRunway, runwayNeed, attraction,
-    flightTrack, flightState, legTrack, cruiseFt, perf, windFrom, weatherAt, windAt, WX_DRIFT, gateOf, standSpot, apronOf, taxiwaysOf, drawnTaxiways, expansionPreview, terminalPiece,
+    flightTrack, flightState, legTrack, brakeDecel, cruiseFt, perf, windFrom, weatherAt, windAt, WX_DRIFT, gateOf, standSpot, apronOf, taxiwaysOf, drawnTaxiways, expansionPreview, terminalPiece,
     fmtMoney, fmtTime, fmtClock, fmtDuration, fmtLegDep, fmtDue,
     utcOffset, utcOf, localTime, fmtLocal, fmtZone, sunPoint, sunAt, daylight, sunTimes,
 

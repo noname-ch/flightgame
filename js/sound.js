@@ -207,9 +207,8 @@
     }
     // its thrust reversers (FG.data.reversers): rev = how much of its thrust reverses (some on only part of the
     // engines), flat = propellers to ground fine pitch only
-    const rv = D.reverserOf ? D.reverserOf(type) : { kind: 'cascade' };
-    pr.rev = rv.kind === 'none' || rv.kind === 'flat' ? 0 : rv.on === 'center' ? 1 / 3 : rv.on === 'sides' ? 2 / 3 : rv.on ? 0.5 : 1;
-    pr.flat = rv.kind === 'flat';
+    pr.rev = D.reverseShare ? D.reverseShare(type) : 1;
+    pr.flat = !!D.reverserOf && D.reverserOf(type).kind === 'flat';
     pr.size = Math.min(1.25, 0.5 + Math.sqrt(ac.seats || 100) / 25) * (four ? 1.1 : 1);
     pr.type = type;
     return (profiles[type] = pr);

@@ -443,7 +443,8 @@ All content is plain data:
 - `js/data/factories.js` – where each type is built (delivery flights start there)
 - `js/data/looks.js` – side-view shape of each type, drawn by `js/hangar.js`
 - `js/data/reversers.js` – each type's thrust reversers (cascade sleeve, pivoting doors, clamshell buckets, reverse-pitch
-  propellers, ground fine pitch or none, and on which engines): moved in 3D, heard, named in the market and plane window
+  propellers, ground fine pitch or none, and on which engines): moved in 3D, heard, named in the market and plane window;
+  they shorten the landing run (game.js `brakeDecel`), so a plane with them turns off at an earlier exit
 - `js/data/models.js` – 3D model of each type (a file, `models/*.glb`)
   and the real size of each model (`modelSize`), so that a type flying a relative's model is
   stretched to its own length. Each type's hangar picture (`models/hangar/*.webp`) and map icon

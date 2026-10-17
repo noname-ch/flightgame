@@ -44,3 +44,10 @@ FG.data.reverserText = (type) => {
   const on = { inner: 'inner engines', outer: 'outer engines', sides: 'side engines', center: 'tail engine' }[r.on];
   return on ? `${kind}, ${on} only` : kind;
 };
+// How much of the thrust turns round (0..1): all of it, or the share of the engines that have reversers; none for
+// ground fine pitch (that is drag, not reverse) or none at all. js/sound.js (the roar) and js/game.js (the braking).
+FG.data.reverseShare = (type) => {
+  const r = FG.data.reverserOf(type);
+  if (r.kind === 'none' || r.kind === 'flat') return 0;
+  return r.on === 'center' ? 1 / 3 : r.on === 'sides' ? 2 / 3 : r.on ? 0.5 : 1;
+};

@@ -162,13 +162,19 @@ Play online: https://noname-ch.github.io/flightgame/ (GitHub Pages, deployed fro
   their own, `livSurf.w` = flap chord, 0 for the old uncut kind) and slide back and down as they turn; FRAG_BODY
   paints them in the wing's livery with darker seams (`vLivFlap`, `livFlapSpan`). Thrust reversers: `markEngines` makes
   each jet engine from its cowlings (overlapping ones, and pieces in line behind each other; only round ones with a
-  fan or core inside and about the biggest size: not the A350's wing tip, not Concorde's twin nacelles) and gives
-  their vertices `livEng` (axis x, z, radius, 0 at the lip .. 1 at the exhaust) and `livEngL` (length);
-  `scene.userData.revX` lists the engines' |x|. The shader moves them by `livRev` (0..1) as `livRevKind` says (1 sleeve
-  slides back, 2 four doors swing out, 3 two buckets close behind the exhaust) on the engines `livRevX` picks; the
-  opening is painted dark and ribbed (`vLivRev`). Each type's kind is `FG.data.reversers` (js/data/reversers.js,
+  fan or core inside and about the biggest size: not the A350's wing tip) and gives
+  their vertices `livEng` (axis x, z, radius, 0 at the lip .. 1 at the exhaust) and `livEngL` (length; a nacelle
+  with two engines side by side, Concorde's, gives each round nozzle at its back instead, looked up by `own` box);
+  `scene.userData.revX` lists the engines' |x|. `cutSleeves` cuts each engine's outer skin round at the sleeve's front
+  edge and the rear part again along four doors' sides, doubling the vertices on the cuts with a band of faces between
+  (zero wide while stowed): `livSleeve` (how far a vertex slides back) and `livDoor`. Without the cuts the coarse cowls'
+  faces stretched and the opening covered most of the engine (the user: "a black strip WAY too long"). The shader moves
+  them by `livRev` (0..1) as `livRevKind` says (1 sleeve slides back, 2 four doors swing out about their front edge,
+  3 two buckets close behind the exhaust) on the engines `livRevX` picks; the opening is painted dark (`vLivRev`),
+  ribbed for a cascade. Each type's kind is `FG.data.reversers` (js/data/reversers.js,
   `reverserOf`, `reverserText`); view3d.js `reverserUniforms(type, scene)` and `revTarget(pose)` (touchdown to 60 kt),
-  sound.js `profile().rev` (share of the thrust that reverses) and `.flat`. These `OWN_UNIFORMS` are per material: each drawn aircraft gets its own copies
+  sound.js `profile().rev` (`FG.data.reverseShare`: share of the thrust that reverses) and `.flat`; game.js
+  `brakeDecel(type)` (1.25 m/s² brakes alone .. 1.6 all reversed) sets the landing run (`stopM`), so the exit taken. These `OWN_UNIFORMS` are per material: each drawn aircraft gets its own copies
   (view3d.js `ownMaterials`), set in `placeModel` from `wingFlex`, `propRate` and `surfaceAngles` (the elevators are
   pulled for the rotation, the climb-out, the flare and the nose wheel coming down, besides following the pitch rate). The fuselage width
   (`measure`) falls back to `FG.data.modelSize` where nacelles reach forward (DC-3, Ju 52, Twin Otter).

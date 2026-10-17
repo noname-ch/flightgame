@@ -1039,11 +1039,13 @@ try {
     // (the flaps are cut out of the wing, so they slide back on their own and are painted apart: cutFlaps)
     for (const file of ['atr42', 'q400', 'a320']) if (!(parts[file].flapFaces > 0)) errors.push(`3D flaps: ${file} has no flaps cut out of its wing`);
 
-    step("3D thrust reversers: every type has its kind; each engine found once (the CRJ's nacelle in two pieces, not the A350's wing tip, not Concorde's twin nacelles); the A380's four found)");
+    step("3D thrust reversers: every type has its kind; each engine found once (the CRJ's nacelle in two pieces, not the A350's wing tip, Concorde's four nozzles in its twin nacelles); they brake harder than brakes alone)");
     const revs = await evaluate(async () => {
       const m = await import('/js/models3d.js');
       const D = FG.data;
-      const out = { missing: Object.keys(D.aircraft).filter((t) => !D.reversers[t]), engines: {}, own: 0, drawn: 0 };
+      const out = { missing: Object.keys(D.aircraft).filter((t) => !D.reversers[t]), engines: {}, own: 0, drawn: 0,
+        // (they slow it down: an A320 brakes harder than a BAe 146, which has none, and an A380 in between)
+        decel: ['A320', 'A380-800', 'BAE146'].map((t) => G.brakeDecel(t)) };
       for (const type of ['A320', 'B737-800', 'CRJ900', 'A350-900', 'A380-800', 'CONCORDE']) out.engines[type] = ((await m.loadModel(type)).userData.revX || []).length;
       for (const e of Object.values(FG.view3d.planes)) {
         const u = e.obj.userData.liv;
@@ -1054,7 +1056,8 @@ try {
       return out;
     });
     if (revs.missing.length) errors.push(`3D thrust reversers: no kind for ${revs.missing.join(', ')}`);
-    const wantEngines = { A320: 2, 'B737-800': 2, CRJ900: 2, 'A350-900': 2, 'A380-800': 4, CONCORDE: 0 };
+    const wantEngines = { A320: 2, 'B737-800': 2, CRJ900: 2, 'A350-900': 2, 'A380-800': 4, CONCORDE: 4 };
+    if (!(revs.decel[0] > revs.decel[1] && revs.decel[1] > revs.decel[2])) errors.push(`3D thrust reversers: landing decelerations A320, A380, BAe 146 not in order: ${revs.decel.join(', ')}`);
     for (const [t, n] of Object.entries(wantEngines)) if (revs.engines[t] !== n) errors.push(`3D thrust reversers: ${t} has ${revs.engines[t]} engines found, not ${n}`);
     if (revs.own !== revs.drawn) errors.push(`3D thrust reversers: ${revs.drawn - revs.own} of ${revs.drawn} drawn aircraft without their own livRev uniforms`);
 
