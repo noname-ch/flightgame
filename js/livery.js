@@ -1156,7 +1156,6 @@ varying vec3 vLivPos;
 varying vec3 vLivNor;
 varying float vLivPart;
 varying vec2 vLivFlap;
-uniform vec3 livFlapColor;
 uniform vec3 livFlapSpan; // the flaps are between these |x|, in two parts split FLAP_BREAK of the way out
 `;
 const FRAG_BODY = `
@@ -1180,12 +1179,12 @@ const FRAG_BODY = `
   if (fuselage > 0.5 && vLivPos.y < livBellyAft && vLivPos.z < bellyZ + livLineW) paint = vLivPos.z > bellyZ - livLineW && livLineW > 0.0 ? livLine : livBelly;
   paint = mix(paint, livWinglet, step(livWingletX, abs(vLivPos.x)) * upright);
   if (vLivFlap.x > 0.5) {
-    // a flap (js/livery.js cutFlaps): grey metal, not the wing's colour, with a dark seal along its leading edge and
-    // dark ends and a split between its inner and outer part
+    // a flap (js/livery.js cutFlaps): in the wing's livery, with a darker seal along its leading edge, darker ends
+    // and a split between its inner and outer part
     float ax = abs(vLivPos.x);
-    float edge = 0.012 * (livFlapSpan.y - livFlapSpan.x);
-    float seam = step(vLivFlap.y, 0.1) + step(ax, livFlapSpan.x + edge) + step(livFlapSpan.y - edge, ax) + step(abs(ax - livFlapSpan.z), edge);
-    paint = mix(livFlapColor, vec3(0.16, 0.17, 0.19), min(seam, 1.0));
+    float edge = 0.008 * (livFlapSpan.y - livFlapSpan.x);
+    float seam = step(vLivFlap.y, 0.05) + step(ax, livFlapSpan.x + edge) + step(livFlapSpan.y - edge, ax) + step(abs(ax - livFlapSpan.z), edge);
+    paint = mix(paint, paint * 0.45 + 0.03, min(seam, 1.0));
   }
   if (vLivPart > 5.5) {
     // a window pane: glass, over any title
@@ -1317,7 +1316,6 @@ export function paintLivery(scene, file, extra, stretch = 1, livery = FG.livery(
     livHalfWidth: { value: m.halfWidth },
     livHalfW: { value: m.halfWidth },
     livSpan: { value: m.span },
-    livFlapColor: { value: color(0x9aa1aa) },
     livFlapSpan: { value: new THREE.Vector3(1.25 * m.halfWidth, FLAP_END * m.span, 1.25 * m.halfWidth + FLAP_BREAK * (FLAP_END * m.span - 1.25 * m.halfWidth)) },
   };
   const seen = new Set();

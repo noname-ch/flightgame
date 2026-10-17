@@ -149,7 +149,7 @@ Play online: https://noname-ch.github.io/flightgame/ (GitHub Pages, deployed fro
   `livAil`/`livFlap`/`livElev`/`livRud`. Flaps are cut out of the wing's geometry (`cutFlaps`: two straight parts
   fitted to the strips, none behind nacelles that reach past the trailing edge, none on a delta; their vertices are
   their own, `livSurf.w` = flap chord, 0 for the old uncut kind) and slide back and down as they turn; FRAG_BODY
-  paints them grey (`vLivFlap`, `livFlapColor`). These `OWN_UNIFORMS` are per material: each drawn aircraft gets its own copies
+  paints them in the wing's livery with darker seams (`vLivFlap`, `livFlapSpan`). These `OWN_UNIFORMS` are per material: each drawn aircraft gets its own copies
   (view3d.js `ownMaterials`), set in `placeModel` from `wingFlex`, `propRate` and `surfaceAngles` (the elevators are
   pulled for the rotation, the climb-out, the flare and the nose wheel coming down, besides following the pitch rate). The fuselage width
   (`measure`) falls back to `FG.data.modelSize` where nacelles reach forward (DC-3, Ju 52, Twin Otter).
