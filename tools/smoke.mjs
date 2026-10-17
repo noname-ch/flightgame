@@ -905,7 +905,18 @@ try {
             b[0] = Math.min(b[0], r); b[1] = Math.max(b[1], r);
           }
         });
-        out[file] = { props: s.userData.props, surfaces: s.userData.surfaces, hollow: Object.values(hubs).filter(([a, b]) => a > 0.5 * b).length };
+        // (how far out the elevators reach, inner end over outer, and how much of the fin's height the rudder has)
+        const e = [Infinity, 0], r = [Infinity, -Infinity];
+        let top = -Infinity;
+        s.traverse((o) => {
+          const a = o.isMesh && o.geometry.attributes.livSurf, p = a && o.geometry.attributes.position;
+          if (a) for (let i = 0; i < p.count; i++) {
+            top = Math.max(top, p.getZ(i));
+            if (a.getX(i) === 3) { e[0] = Math.min(e[0], Math.abs(p.getX(i))); e[1] = Math.max(e[1], Math.abs(p.getX(i))); }
+            if (a.getX(i) === 4) { r[0] = Math.min(r[0], p.getZ(i)); r[1] = Math.max(r[1], p.getZ(i)); }
+          }
+        });
+        out[file] = { props: s.userData.props, surfaces: s.userData.surfaces, hollow: Object.values(hubs).filter(([a, b]) => a > 0.5 * b).length, elevIn: e[0] / e[1], rudShare: (r[1] - r[0]) / (top - r[0]) };
       }
       return out;
     });
@@ -917,6 +928,13 @@ try {
     for (const file of ['atr42', 'a320']) {
       const missing = ['aileron', 'flap', 'elevator', 'rudder'].filter((_, i) => !(parts[file].surfaces && parts[file].surfaces[i + 1] > 0));
       if (missing.length) errors.push(`3D control surfaces: ${file} has no ${missing.join(', ')}`);
+    }
+    // (elevators from beside the tail cone out to the tips, the rudder up the whole fin: the A350 had no elevators,
+    // the A320's were a few vertices at the tips and its rudder only the top of the fin)
+    for (const file of ['q400', 'atr42', 'a320', 'a359', 'a333', 'dc3']) {
+      const { elevIn, rudShare } = parts[file];
+      if (!(elevIn < 0.35)) errors.push(`3D elevators: ${file}'s start ${elevIn} of the way out, not beside the fuselage`);
+      if (!(rudShare > 0.8)) errors.push(`3D rudder: ${file}'s covers ${rudShare} of the fin's height`);
     }
 
     step('3D satellite: 🛰 not under the plane window while following; Settings → Map style switches the 3D ground too');

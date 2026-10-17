@@ -217,24 +217,31 @@ function propRate(pose) {
 
 // Where the control surfaces go (radians; js/livery.js livSurf): flaps out for take-off and further for landing;
 // ailerons, elevators and rudder while the plane still rolls, pitches or turns towards its attitude (`toGo`, in
-// degrees), which includes the bumps in gusts and the steering on the ground.
-const MAX_AIL = 18 * DEG, MAX_ELEV = 15 * DEG, MAX_RUD = 20 * DEG;
+// degrees), which includes the bumps in gusts and the steering on the ground. The elevators are pulled up besides
+// (`pull`, degrees): for the rotation at the end of the take-off run, a little less while the plane climbs away,
+// for the flare, and while the nose wheel is let down after touchdown (as in attitude()). With the pitch rate alone
+// they hardly moved: the nose comes up at about 2.5° a second.
+const MAX_AIL = 18 * DEG, MAX_ELEV = 20 * DEG, MAX_RUD = 20 * DEG;
 function surfaceAngles(pose, toGo) {
   const st = pose.st;
-  let flap = 0;
+  let flap = 0, pull = 0;
   if (st) {
     const agl = (st.altFt || 0) - (st.fieldFt || 0);
     if (st.phase === 'taxi-out' || st.phase === 'takeoff') flap = 12;
     else if (st.phase === 'climb') flap = agl < 1500 ? 12 : agl < 3000 ? 5 : 0;
     else if (st.phase === 'approach') flap = agl < 1500 ? 35 : agl < 4000 ? 20 : 8;
     else if (st.phase === 'landing') flap = 35;
+    if (st.phase === 'takeoff') pull = st.ground ? 15 * Math.max(0, Math.min(1, ((st.rollT ?? 0) - 0.86) / 0.06)) : 10;
+    else if (st.phase === 'climb') pull = 1 + 9 * Math.max(0, 1 - agl / 1000);
+    else if (st.phase === 'approach') pull = 2 + (agl < 150 ? 12 * (1 - agl / 150) : 0);
+    else if (st.phase === 'landing') pull = 2 * (pose.pitch || 0);
   }
   const clamp = (v, m) => Math.max(-m, Math.min(m, v));
   const ground = !st || st.ground || st.phase === 'landing' || st.phase === 'taxi-in' || st.phase === 'taxi-out' || st.phase === 'pushback';
   return {
     flap: flap * DEG,
     ail: ground ? 0 : clamp(toGo.bank * 1.5 * DEG, MAX_AIL),
-    elev: clamp(-toGo.pitch * 3 * DEG, MAX_ELEV),
+    elev: clamp((-pull - toGo.pitch * 6) * DEG, MAX_ELEV),
     rud: clamp(toGo.heading * (ground ? 4 : 1.5) * DEG, ground ? MAX_RUD : MAX_RUD / 2),
   };
 }

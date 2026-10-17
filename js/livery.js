@@ -410,7 +410,8 @@ function markEngines(scene, hw, file) {
 // (kind: 1 aileron, 2 flap, 3 elevator, 4 rudder; then the hinge's y and z, for the rudder its y). They are read
 // off the geometry: across the span in strips, the flat vertices (not engines or propellers) make the wing and,
 // behind a gap, the tailplane; the rear of their chord moves (ailerons on the outer third, flaps inboard). The
-// fin is read height by height in the same way.
+// tailplane and the fin are then read again from their faces as straight edges (edgeLines) and cut along their
+// hinges (cutAlong): elevators from beside the tail cone to the tips, the rudder from a little above the fuselage.
 const STRIPS = 32;
 const SURF_CHORD = { 1: 0.27, 3: 0.32, 4: 0.32 }; // share of the chord that moves (wing, tailplane, fin)
 function markSurfaces(scene, m) {
@@ -444,34 +445,39 @@ function findSurfaces(meshes, m) {
   // forwards or backwards, but the faces between them are flat)
   const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), n = new THREE.Vector3();
   const faces = new Map(); // mesh -> per vertex: 1 on a flat face, 2 on an upright one (both: 3)
-  let engZ0 = Infinity, engZ1 = -Infinity; // height of engines on the rear fuselage (not to be taken for the tailplane)
+  let engZ0 = Infinity, engZ1 = -Infinity; // height of engines on the rear fuselage (not to be taken for the tailplane;
+  // beside it: the A350's wing engines reach back behind -0.1 too, and their height is the tailplane's)
   for (const o of meshes) {
     const pos = o.geometry.attributes.position, part = o.geometry.attributes.livPart;
-    if (part) for (let i = 0; i < pos.count; i++) if (part.getX(i) > 0.5 && pos.getY(i) < -0.1) { engZ0 = Math.min(engZ0, pos.getZ(i)); engZ1 = Math.max(engZ1, pos.getZ(i)); }
+    if (part) for (let i = 0; i < pos.count; i++) if (part.getX(i) > 0.5 && pos.getY(i) < -0.1 && Math.abs(pos.getX(i)) < 2.5 * hw) { engZ0 = Math.min(engZ0, pos.getZ(i)); engZ1 = Math.max(engZ1, pos.getZ(i)); }
   }
-  for (const o of meshes) {
-    const g = o.geometry;
-    const pos = g.attributes.position, idx = g.index, part = g.attributes.livPart, hub = g.attributes.livHub;
-    const count = idx ? idx.count : pos.count;
-    const skip = (i) => (part && part.getX(i) > 0.5) || (hub && hub.getZ(i) > 0.5);
-    const face = new Uint8Array(pos.count);
-    faces.set(o, face);
-    for (let t = 0; t < count; t += 3) {
-      const ia = idx ? idx.getX(t) : t, ib = idx ? idx.getX(t + 1) : t + 1, ic = idx ? idx.getX(t + 2) : t + 2;
-      if (skip(ia) || skip(ib) || skip(ic)) continue;
-      a.fromBufferAttribute(pos, ia); b.fromBufferAttribute(pos, ib); c.fromBufferAttribute(pos, ic);
-      n.subVectors(b, a).cross(c.clone().sub(a));
-      const len = n.length();
-      if (len < 1e-12) continue;
-      const nx = Math.abs(n.x) / len, nz = Math.abs(n.z) / len;
-      for (const i of [ia, ib, ic]) face[i] |= (nz > 0.6 ? 1 : 0) | (nx > 0.5 ? 2 : 0);
-      for (const p of [a, b, c]) {
-        const ax = Math.abs(p.x);
-        if (nz > 0.6 && ax >= x0 && ax < span && !(p.y < -0.1 && p.z > engZ0 - 0.01 && p.z < engZ1 + 0.01)) wing[Math.min(STRIPS - 1, Math.floor((ax - x0) / xw))].push(p.y, p.z);
-        if (nx > 0.5 && finOn && ax < finX && p.y < -0.15 && p.z > finZ0 && p.z < finZ1) fin[Math.min(STRIPS - 1, Math.floor((p.z - finZ0) / zw))].push(p.y);
+  // (`strips`: also gather the wing's and the fin's vertices; again after the flaps are cut out, only the faces)
+  const readFaces = (strips) => {
+    for (const o of meshes) {
+      const g = o.geometry;
+      const pos = g.attributes.position, idx = g.index, part = g.attributes.livPart, hub = g.attributes.livHub;
+      const count = idx ? idx.count : pos.count;
+      const skip = (i) => (part && part.getX(i) > 0.5) || (hub && hub.getZ(i) > 0.5);
+      const face = new Uint8Array(pos.count);
+      faces.set(o, face);
+      for (let t = 0; t < count; t += 3) {
+        const ia = idx ? idx.getX(t) : t, ib = idx ? idx.getX(t + 1) : t + 1, ic = idx ? idx.getX(t + 2) : t + 2;
+        if (skip(ia) || skip(ib) || skip(ic)) continue;
+        a.fromBufferAttribute(pos, ia); b.fromBufferAttribute(pos, ib); c.fromBufferAttribute(pos, ic);
+        n.subVectors(b, a).cross(c.clone().sub(a));
+        const len = n.length();
+        if (len < 1e-12) continue;
+        const nx = Math.abs(n.x) / len, nz = Math.abs(n.z) / len;
+        for (const i of [ia, ib, ic]) face[i] |= (nz > 0.6 ? 1 : 0) | (nx > 0.5 ? 2 : 0);
+        if (strips) for (const p of [a, b, c]) {
+          const ax = Math.abs(p.x);
+          if (nz > 0.6 && ax >= x0 && ax < span && !(p.y < -0.1 && p.z > engZ0 - 0.01 && p.z < engZ1 + 0.01)) wing[Math.min(STRIPS - 1, Math.floor((ax - x0) / xw))].push(p.y, p.z);
+          if (nx > 0.5 && finOn && ax < finX && p.y < -0.15 && p.z > finZ0 && p.z < finZ1) fin[Math.min(STRIPS - 1, Math.floor((p.z - finZ0) / zw))].push(p.y);
+        }
       }
     }
-  }
+  };
+  readFaces(true);
   // Wing and tailplane: split where, over the whole span, no flat vertex lies between them (the widest empty
   // stretch behind the middle; none on a delta wing).
   const BINS = 200, occupied = new Uint8Array(BINS);
@@ -538,6 +544,65 @@ function findSurfaces(meshes, m) {
     const le = Math.max(...ys), te = Math.min(...ys);
     return le - te > 0.01 ? { kind: 4, y: te + SURF_CHORD[4] * (le - te), z: 0, half: 0, te } : null;
   }));
+  // The tailplane and the fin once more, by their faces: coarse models draw a tailplane as a few long triangles
+  // from inside the fuselage out to its tip, with vertices only there, so the strips above found it at the tip at
+  // most and the elevators hardly moved (the A320's rudder had 4 vertices). Where their faces cross stations across
+  // the span (up the fin) are their edges, fitted with straight lines; the faces are then cut along the hinge, so
+  // the elevators and the rudder turn on a hinge of their own.
+  const engine = (p) => p[1] < -0.1 && p[2] > engZ0 - 0.01 && p[2] < engZ1 + 0.01;
+  let tipX = 0, tailZ = null;
+  const flatBehind = (ps, n) => n[2] > 0.6 && ps.every((p) => p[1] < split && !engine(p) && Math.abs(p[0]) < span) &&
+    (ps.every((p) => p[0] >= 0) || ps.every((p) => p[0] <= 0));
+  // (at the height where most of that flat area is: the Beech 1900's T-tail, not the small fins on its tail cone)
+  const tailPlane = (ps, n) => flatBehind(ps, n) && ps.every((p) => Math.abs(p[2] - tailZ) < 0.035);
+  if (split > -Infinity) {
+    const area = new Map();
+    eachFace(meshes, (ps, n, ids, o, a) => {
+      if (!flatBehind(ps, n)) return;
+      const k = Math.round((ps[0][2] + ps[1][2] + ps[2][2]) / 3 / 0.01);
+      area.set(k, (area.get(k) || 0) + a);
+    });
+    let most = 0;
+    for (const [k, a] of area) {
+      const near = a + (area.get(k - 1) || 0) + (area.get(k + 1) || 0);
+      if (near > most) { most = near; tailZ = k * 0.01; }
+    }
+    if (tailZ != null) eachFace(meshes, (ps, n) => { if (tailPlane(ps, n)) for (const p of ps) tipX = Math.max(tipX, Math.abs(p[0])); });
+  }
+  // (faces of the tail cone, near the middle, are not the tailplane's)
+  const tailFace = (ps, n) => tailPlane(ps, n) && Math.max(...ps.map((p) => Math.abs(p[0]))) > 0.25 * tipX;
+  const tail = tipX > hw ? edgeLines(meshes, tailFace, (p) => Math.abs(p[0]), 0, tipX, 0.45, 0.95) : null;
+  // (a coarse fin's long faces reach down into the fuselage)
+  const finFace = (ps, n) => n[0] > 0.5 && ps.every((p) => Math.abs(p[0]) < finX && p[1] < -0.15) && Math.max(...ps.map((p) => p[2])) > finZ0;
+  const finL = finOn ? edgeLines(meshes, finFace, (p) => p[2], finZ0, finZ1, 0.3, 0.85) : null;
+  // (the elevators start a little out from the middle, beside the tail cone)
+  const elevX0 = 0.6 * hw;
+  const elevAt = (ax, y, z) => {
+    const le = tail.le(ax), te = tail.te(ax), c = le - te, hy = te + SURF_CHORD[3] * c, hz = tail.z(ax);
+    return c > 0.005 && ax > elevX0 - 1e-5 && ax < 1.02 * tipX && y < hy && y > te - 0.01 && Math.abs(z - hz) < 0.06 * c + 0.003 ? { kind: 3, y: hy, z: hz } : null;
+  };
+  // (the rudder starts a little above the fuselage: the ATR's fin fillet stays put)
+  const rudZ0 = finZ0 + 0.08 * (finZ1 - finZ0);
+  const rudAt = (y, z) => {
+    const le = finL.le(z), te = finL.te(z), c = le - te, hy = te + SURF_CHORD[4] * c;
+    return c > 0.005 && z > rudZ0 - 1e-5 && z < finZ1 && y < hy && y > te - 0.01 ? { kind: 4, y: hy, z: 0 } : null;
+  };
+  if (tail) {
+    const half = (ax) => 0.06 * (tail.le(ax) - tail.te(ax)) + 0.003;
+    // (every face within its thickness: the narrow ones closing its edges too, or they would stretch)
+    const inTail = (ps) => ps.every((p) => p[1] < split && !engine(p) && Math.abs(p[2] - tail.z(Math.abs(p[0]))) < 2 * half(Math.abs(p[0]))) &&
+      (ps.every((p) => p[0] >= 0) || ps.every((p) => p[0] <= 0)) && Math.max(...ps.map((p) => Math.abs(p[0]))) > 0.25 * tipX;
+    cutAlong(meshes, inTail,
+      (p) => { const ax = Math.abs(p[0]), te = tail.te(ax); return p[1] - te - SURF_CHORD[3] * (tail.le(ax) - te); });
+    cutAlong(meshes, inTail, (p) => Math.abs(p[0]) - elevX0);
+    tailH.fill(null);
+  }
+  if (finL) {
+    cutAlong(meshes, finFace, (p) => { const te = finL.te(p[2]); return p[1] - te - SURF_CHORD[4] * (finL.le(p[2]) - te); });
+    cutAlong(meshes, finFace, (p) => p[2] - rudZ0);
+    finH.fill(null);
+  }
+  if (tail || finL) readFaces(false);
   const surf = new Map(meshes.map((o) => [o, new Float32Array(o.geometry.attributes.position.count * 4)]));
   for (const o of meshes) o.geometry.userData.livSurfaces = { 1: 0, 2: 0, 3: 0, 4: 0 };
   each((o, i, x, y, z) => {
@@ -552,6 +617,8 @@ function findSurfaces(meshes, m) {
       const c = finH[Math.min(STRIPS - 1, Math.floor((z - finZ0) / zw))];
       if (c && faces.get(o)[i] & 2 && y < c.y && y > c.te - 0.01) h = c;
     }
+    if (!h && tail && y < split && !engine([x, y, z])) h = elevAt(ax, y, z);
+    if (!h && finL && ax < finX) h = rudAt(y, z);
     if (!h) return;
     surf.get(o).set([h.kind, h.y, h.kind === 4 ? 0 : h.z, 1], i * 4);
     o.geometry.userData.livSurfaces[h.kind]++;
@@ -559,6 +626,115 @@ function findSurfaces(meshes, m) {
   for (const [o, a] of surf) {
     o.geometry.setAttribute('livSurf', new THREE.BufferAttribute(a, 4));
     o.geometry.userData.livSurfaced = true;
+  }
+}
+
+// Every face of these meshes but engines' and propellers': fn([a, b, c] as [x, y, z], unit normal [x, y, z]
+// with its signs dropped, the vertices' indices, mesh, area).
+function eachFace(meshes, fn) {
+  for (const o of meshes) {
+    const g = o.geometry;
+    const pos = g.attributes.position, idx = g.index, part = g.attributes.livPart, hub = g.attributes.livHub;
+    const count = idx ? idx.count : pos.count;
+    const skip = (i) => (part && part.getX(i) > 0.5) || (hub && hub.getZ(i) > 0.5);
+    for (let t = 0; t < count; t += 3) {
+      const ids = [0, 1, 2].map((k) => (idx ? idx.getX(t + k) : t + k));
+      if (ids.some(skip)) continue;
+      const ps = ids.map((i) => [pos.getX(i), pos.getY(i), pos.getZ(i)]);
+      const u = [0, 1, 2].map((k) => ps[1][k] - ps[0][k]), v = [0, 1, 2].map((k) => ps[2][k] - ps[0][k]);
+      const n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+      const len = Math.hypot(...n);
+      if (len < 1e-12) continue;
+      fn(ps, n.map((c) => Math.abs(c) / len), ids, o, len / 2);
+    }
+  }
+}
+
+// Straight edges of a tailplane (or a fin) from its faces (those `pick(ps, n)` takes): at stations along it
+// (`along(p)`: |x| across the span, z up the fin) from t0 to t1, where its faces cross a station their frontmost
+// and rearmost points are its leading and trailing edge there; least-squares lines through the stations between
+// `from` and `to` (shares of t0..t1: nearer the fuselage, its fairings would be taken for the tailplane).
+// Returns { le(t), te(t), z(t) } (y of the edges, the middle height), or null.
+const STATIONS = 24;
+function edgeLines(meshes, pick, along, t0, t1, from, to) {
+  const st = Array.from({ length: STATIONS }, (_, i) => ({ t: t0 + (i + 0.5) * (t1 - t0) / STATIONS, ys: [], zs: [] }));
+  eachFace(meshes, (ps, n) => {
+    if (!pick(ps, n)) return;
+    const ts = ps.map(along);
+    for (const s of st) {
+      if (s.t < Math.min(...ts) || s.t > Math.max(...ts)) continue;
+      for (let e = 0; e < 3; e++) {
+        const p = ps[e], q = ps[(e + 1) % 3], tp = ts[e], tq = ts[(e + 1) % 3];
+        if ((tp - s.t) * (tq - s.t) > 0 || tp === tq) continue;
+        const f = (s.t - tp) / (tq - tp);
+        s.ys.push(p[1] + (q[1] - p[1]) * f);
+        s.zs.push(p[2] + (q[2] - p[2]) * f);
+      }
+    }
+  });
+  const use = st.filter((s) => s.ys.length >= 2 && s.t >= t0 + from * (t1 - t0) && s.t <= t0 + to * (t1 - t0));
+  if (use.length < 3) return null;
+  const line = (val) => {
+    const n = use.length, mt = use.reduce((a, s) => a + s.t, 0) / n, mv = use.reduce((a, s) => a + val(s), 0) / n;
+    let num = 0, den = 0;
+    for (const s of use) { num += (s.t - mt) * (val(s) - mv); den += (s.t - mt) ** 2; }
+    const k = den ? num / den : 0;
+    return (t) => mv + k * (t - mt);
+  };
+  const le = line((s) => Math.max(...s.ys)), te = line((s) => Math.min(...s.ys));
+  const z = line((s) => { const zs = [...s.zs].sort((a, b) => a - b); return zs[zs.length >> 1]; });
+  return le(t1) - te(t1) > 0.003 && le(t0) - te(t0) > 0.003 ? { le, te, z } : null;
+}
+
+// Cuts the faces `pick(ps, n)` takes along the line where `side(p)` is 0 (a hinge), so that what lies behind it can
+// turn about it where the model had no vertices. A cut point on an edge is the same for both faces on it.
+function cutAlong(meshes, pick, side) {
+  const cuts = new Map(); // geometry -> faces to cut, by their vertices (a geometry two meshes share is cut once)
+  eachFace(meshes, (ps, n, ids, o) => {
+    if (o.geometry.groups.length > 1 || !pick(ps, n)) return;
+    const s = ps.map(side);
+    if (Math.min(...s) < 0 && Math.max(...s) > 0) {
+      if (!cuts.has(o.geometry)) cuts.set(o.geometry, []);
+      cuts.get(o.geometry).push(ids);
+    }
+  });
+  for (const [g, faces] of cuts) {
+    const names = Object.keys(g.attributes);
+    const vals = names.map((k) => { const at = g.attributes[k], v = []; for (let i = 0; i < at.count; i++) for (let c = 0; c < at.itemSize; c++) v.push(at.getComponent(i, c)); return v; });
+    const xyz = vals[names.indexOf('position')];
+    const P = (i) => [xyz[3 * i], xyz[3 * i + 1], xyz[3 * i + 2]];
+    let count = g.attributes.position.count;
+    const idx = g.index ? Array.from(g.index.array) : Array.from({ length: count }, (_, i) => i);
+    const made = new Map(); // "a,b" -> new vertex
+    const point = (a, b) => {
+      if (a > b) [a, b] = [b, a];
+      const key = a + ',' + b;
+      if (!made.has(key)) {
+        const sa = side(P(a)), t = sa / (sa - side(P(b)));
+        names.forEach((name, n) => {
+          const size = g.attributes[name].itemSize, v = vals[n];
+          for (let c = 0; c < size; c++) v.push(v[a * size + c] + (v[b * size + c] - v[a * size + c]) * t);
+        });
+        made.set(key, count++);
+      }
+      return made.get(key);
+    };
+    const cut = new Set(faces.map((f) => f.join(',')));
+    const out = [];
+    for (let t = 0; t < idx.length; t += 3) {
+      const tri = [idx[t], idx[t + 1], idx[t + 2]];
+      if (!cut.has(tri.join(','))) { out.push(...tri); continue; }
+      // (the vertex alone on its side first, keeping the winding: it keeps a triangle, the other two a quad)
+      const neg = tri.map((i) => side(P(i)) < 0);
+      const k = [0, 1, 2].find((e) => neg[e] !== neg[(e + 1) % 3] && neg[e] !== neg[(e + 2) % 3]);
+      const a = tri[k], b = tri[(k + 1) % 3], c = tri[(k + 2) % 3];
+      const p = point(a, b), q = point(a, c);
+      out.push(a, p, q, p, b, c, p, c, q);
+    }
+    names.forEach((name, n) => g.setAttribute(name, new THREE.BufferAttribute(new Float32Array(vals[n]), g.attributes[name].itemSize)));
+    g.setIndex(count > 65535 ? new THREE.Uint32BufferAttribute(out, 1) : new THREE.Uint16BufferAttribute(out, 1));
+    g.computeBoundingBox();
+    g.computeBoundingSphere();
   }
 }
 

@@ -127,9 +127,12 @@ Play online: https://noname-ch.github.io/flightgame/ (GitHub Pages, deployed fro
   in front of the engines, grouped, turning round the middle of their vertices; a jet's fan is `spinFans`: the widest
   round ring of flat parts inside each engine's cowlings) turn by `livSpin`; `livSurf` (kind 1 aileron, 2 flap, 3 elevator,
   4 rudder, hinge y, z; `markSurfaces`: wing and tailplane read in strips across the span from flat faces, split at the
-  empty gap between them, hinge lines interpolated over strips without vertices; the fin height by height) turns by
+  empty gap between them, hinge lines interpolated over strips without vertices; the tailplane (at the height of most
+  flat area behind the gap) and the fin again as straight edges from their faces, `edgeLines`, and their faces cut
+  along the hinge, `cutAlong`, since coarse models have no vertex there) turns by
   `livAil`/`livFlap`/`livElev`/`livRud`. These `OWN_UNIFORMS` are per material: each drawn aircraft gets its own copies
-  (view3d.js `ownMaterials`), set in `placeModel` from `wingFlex`, `propRate` and `surfaceAngles`. The fuselage width
+  (view3d.js `ownMaterials`), set in `placeModel` from `wingFlex`, `propRate` and `surfaceAngles` (the elevators are
+  pulled for the rotation, the climb-out, the flare and the nose wheel coming down, besides following the pitch rate). The fuselage width
   (`measure`) falls back to `FG.data.modelSize` where nacelles reach forward (DC-3, Ju 52, Twin Otter).
 - 3D only repaints while something moves. Anything new that animates in 3D must trigger a repaint
   itself.
