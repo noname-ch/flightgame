@@ -885,6 +885,14 @@ try {
         for (let i = 1; i < h.length - 1; i++) bump = Math.max(bump, Math.abs(h[i] - (h[i - 1] + h[i + 1]) / 2));
         out.push({ bump, rise: Math.max(...h) - Math.min(...h) });
       }
+      // the tile the map gets (a PNG made in js/flatground.js): no spikes (Brave's canvas noise made 256 m ones)
+      const n = 4096, a = G.airportByCode.IST, sn = Math.sin(a.lat * Math.PI / 180);
+      const res = await FG.flat.protocol({ url: `fgdem://12/${Math.floor((a.lon + 180) / 360 * n)}/${Math.floor((0.5 - Math.log((1 + sn) / (1 - sn)) / (4 * Math.PI)) * n)}` });
+      const d = await FG.flat.pixels(await createImageBitmap(new Blob([res.data])));
+      const hh = (k) => d[k * 4] * 256 + d[k * 4 + 1] + d[k * 4 + 2] / 256;
+      let spikes = 0;
+      for (let y = 1; y < 511; y++) for (let x = 1; x < 511; x++) { const k = y * 512 + x; if (Math.abs(hh(k) - (hh(k - 1) + hh(k + 1) + hh(k - 512) + hh(k + 512)) / 4) > 100) spikes++; }
+      out.push({ bump: spikes, rise: 0 });
       return out;
     })()]));
     if (!level) warnings.push('3D ground: Istanbul\'s terrain tiles did not load in 30 s: levelling not tested');

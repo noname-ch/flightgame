@@ -19,12 +19,8 @@
     fetch(URL.replace('{z}', Z).replace('{x}', x).replace('{y}', y))
       .then((r) => { if (!r.ok) throw new Error(`terrain tile ${r.status}`); return r.blob(); })
       .then((blob) => createImageBitmap(blob, { colorSpaceConversion: 'none', premultiplyAlpha: 'none' }))
-      .then((img) => {
-        const c = document.createElement('canvas');
-        c.width = c.height = SIZE;
-        const ctx = c.getContext('2d', { willReadFrequently: true });
-        ctx.drawImage(img, 0, 0, SIZE, SIZE);
-        const d = ctx.getImageData(0, 0, SIZE, SIZE).data;
+      .then((img) => FG.flat.pixels(img)) // (not through a canvas: Brave puts 256 m spikes in those, js/flatground.js)
+      .then((d) => {
         const h = new Int16Array(SIZE * SIZE);
         for (let i = 0; i < h.length; i++) h[i] = Math.max(-500, Math.round(d[i * 4] * 256 + d[i * 4 + 1] + d[i * 4 + 2] / 256 - 32768));
         return h;

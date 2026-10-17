@@ -32,13 +32,9 @@
     p = fetch(URL.replace('{z}', z).replace('{x}', x).replace('{y}', y))
       .then((r) => { if (r.status === 404) return null; if (!r.ok) throw new Error(`terrain tile ${r.status}`); return r.blob(); })
       .then((blob) => blob && createImageBitmap(blob, { colorSpaceConversion: 'none', premultiplyAlpha: 'none' }))
-      .then((img) => {
+      .then(async (img) => {
         if (!img) return Object.assign(new Float32Array(SIZE * SIZE), { missing: true }); // (no tile there: sea level)
-        const c = document.createElement('canvas');
-        c.width = c.height = SIZE;
-        const ctx = c.getContext('2d', { willReadFrequently: true });
-        ctx.drawImage(img, 0, 0, SIZE, SIZE);
-        const d = ctx.getImageData(0, 0, SIZE, SIZE).data;
+        const d = await pixels(img);
         const h = new Float32Array(SIZE * SIZE);
         for (let i = 0; i < h.length; i++) h[i] = d[i * 4] * 256 + d[i * 4 + 1] + d[i * 4 + 2] / 256 - 32768;
         return h;
@@ -47,6 +43,90 @@
     raw.set(key, p);
     while (raw.size > 48) raw.delete(raw.keys().next().value);
     return p;
+  }
+
+  // A tile's pixels (RGBA). Not read back from a canvas where it can be helped: Brave (and Firefox resisting
+  // fingerprinting) change a few of those pixels by a bit, and a bit of the red channel is 256 m of height: the
+  // levelled tiles were full of 256 m spikes. A VideoFrame's pixels are left alone (MapLibre reads its own tiles
+  // that way too).
+  // Does this browser change what is read back from a canvas? (tried once on a known picture)
+  let noisy = null;
+  function noisyCanvas() {
+    if (noisy !== null) return noisy;
+    const c = document.createElement('canvas');
+    c.width = c.height = 64;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    const img = ctx.createImageData(64, 64);
+    for (let i = 0; i < img.data.length; i++) img.data[i] = i % 4 === 3 ? 255 : (i * 37) % 251;
+    ctx.putImageData(img, 0, 0);
+    const back = ctx.getImageData(0, 0, 64, 64).data;
+    noisy = back.some((v, i) => v !== img.data[i]);
+    return noisy;
+  }
+  async function pixels(img) {
+    if (typeof VideoFrame === 'function') {
+      try {
+        const frame = new VideoFrame(img, { timestamp: 0 });
+        try {
+          const f = frame.format || '';
+          if (f.startsWith('RGB') || f.startsWith('BGR')) {
+            const d = new Uint8ClampedArray(SIZE * SIZE * 4);
+            await frame.copyTo(d, { rect: { x: 0, y: 0, width: SIZE, height: SIZE }, layout: [{ offset: 0, stride: SIZE * 4 }] });
+            if (f.startsWith('BGR')) for (let i = 0; i < d.length; i += 4) { const b = d[i]; d[i] = d[i + 2]; d[i + 2] = b; }
+            return d;
+          }
+        } finally { frame.close(); }
+      } catch (e) { /* (the canvas then) */ }
+    }
+    const c = document.createElement('canvas');
+    c.width = c.height = SIZE;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(img, 0, 0, SIZE, SIZE);
+    const d = ctx.getImageData(0, 0, SIZE, SIZE).data;
+    if (!noisyCanvas()) return d;
+    // a pixel 256 m off all its neighbours is the noise, not a cliff
+    for (let y = 1; y < SIZE - 1; y++) {
+      for (let x = 1; x < SIZE - 1; x++) {
+        const i = (y * SIZE + x) * 4;
+        const n = [i - 4, i + 4, i - SIZE * 4, i + SIZE * 4].map((k) => d[k] * 256 + d[k + 1]).sort((a, b) => a - b);
+        const off = d[i] * 256 + d[i + 1] - (n[1] + n[2]) / 2;
+        if (Math.abs(Math.abs(off) - 256) < 64) d[i] += off > 0 ? -1 : 1;
+      }
+    }
+    return d;
+  }
+
+  // A terrarium PNG of heights (m), made here: the canvas's toBlob gets the same noise in Brave.
+  const CRC = new Int32Array(256).map((_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c; });
+  function chunk(type, data) {
+    const out = new Uint8Array(12 + data.length);
+    const dv = new DataView(out.buffer);
+    dv.setUint32(0, data.length);
+    for (let i = 0; i < 4; i++) out[4 + i] = type.charCodeAt(i);
+    out.set(data, 8);
+    let c = -1;
+    for (let i = 4; i < 8 + data.length; i++) c = CRC[(c ^ out[i]) & 255] ^ (c >>> 8);
+    dv.setUint32(8 + data.length, (c ^ -1) >>> 0);
+    return out;
+  }
+  async function terrariumPng(H) {
+    const rows = new Uint8Array(SIZE * (1 + SIZE * 3)); // (each row: filter 0, then RGB)
+    for (let y = 0; y < SIZE; y++) {
+      let o = y * (1 + SIZE * 3) + 1;
+      for (let x = 0; x < SIZE; x++) {
+        const v = Math.max(0, Math.min(65535.99, H[y * SIZE + x] + 32768));
+        rows[o++] = Math.floor(v / 256);
+        rows[o++] = Math.floor(v) % 256;
+        rows[o++] = Math.floor((v % 1) * 256);
+      }
+    }
+    const zipped = new Uint8Array(await new Response(new Blob([rows]).stream().pipeThrough(new CompressionStream('deflate'))).arrayBuffer());
+    const head = new Uint8Array(13);
+    const dv = new DataView(head.buffer);
+    dv.setUint32(0, SIZE);
+    dv.setUint32(4, SIZE);
+    head.set([8, 2, 0, 0, 0], 8); // 8 bits, RGB
+    return new Blob([new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', head), chunk('IDAT', zipped), chunk('IEND', new Uint8Array(0))]).arrayBuffer();
   }
 
   // Web Mercator: world pixel coordinates at zoom z (tiles of SIZE px), and back.
@@ -368,21 +448,7 @@
       }
       shown.add(md.code);
     }
-    const c = document.createElement('canvas');
-    c.width = c.height = SIZE;
-    const ctx = c.getContext('2d');
-    const img = ctx.createImageData(SIZE, SIZE);
-    const d = img.data;
-    for (let i = 0; i < H.length; i++) {
-      const v = Math.max(0, Math.min(65535.99, H[i] + 32768));
-      d[i * 4] = Math.floor(v / 256);
-      d[i * 4 + 1] = Math.floor(v) % 256;
-      d[i * 4 + 2] = Math.floor((v % 1) * 256);
-      d[i * 4 + 3] = 255;
-    }
-    ctx.putImageData(img, 0, 0);
-    const blob = await new Promise((done) => c.toBlob(done, 'image/png'));
-    return { data: await blob.arrayBuffer() };
+    return { data: await terrariumPng(H) };
   }
 
   // Heights (m) at [lat, lon] points as the 3D map draws them, from the tiles of zoom z.
@@ -425,5 +491,5 @@
     return stale;
   }
 
-  FG.flat = { protocol, heightsAt, check, REAL, models: ready };
+  FG.flat = { protocol, heightsAt, check, pixels, REAL, models: ready };
 })();
