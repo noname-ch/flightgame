@@ -812,6 +812,7 @@ function refreshGates() {
   if (!v.gatesDirty && infra === v.gatesInfra) return;
   v.gatesDirty = false;
   v.gatesInfra = infra;
+  relevel();
   let list = [];
   const gates = map.getZoom() >= GATE_MINZOOM;
   if (G.apronOf && map.getZoom() >= RUNWAY_MINZOOM) {
@@ -931,12 +932,32 @@ function terminalColors(night) {
     'carpark', c('#6b7280'), 'hall', c('#9aa7b8'), 'bridge', c('#c3ccd8'), 'glass', lit('#35506a', '#f5c66e'), 'roof', c('#e3e7ed'), 'plant', c('#6d7682'),
     'canopy', c('#dfe5ec'), 'road', c('#3b4048'), 'mast', c('#d1d5db'), c('#8a96a8')]];
 }
+let demRev = 0; // goes up when airports are levelled again (the tiles are loaded again)
+function demSource(maxzoom) {
+  if (FG.flat && !demSource.on) { maplibregl.addProtocol('fgdem', FG.flat.protocol); demSource.on = true; }
+  const tiles = [demSource.on ? `fgdem://{z}/{x}/{y}?r=${demRev}` : 'https://tiles.mapterhorn.com/{z}/{x}/{y}.webp'];
+  return { type: 'raster-dem', tiles, tileSize: 512, encoding: 'terrarium', maxzoom, attribution: '<a href="https://mapterhorn.com/attribution">© Mapterhorn</a>' };
+}
+// An airport's runways or layout changed: level it again where its tiles are drawn already.
+function relevel() {
+  if (!FG.flat || !FG.flat.check()) return;
+  demRev++;
+  runwayGround.clear();
+  for (const map of [v.map, ...chaseMaps]) {
+    for (const id of ['terrain', 'hillshade']) {
+      const src = map && map.getSource(id);
+      if (src && src.setTiles) src.setTiles(demSource(src.maxzoom).tiles);
+    }
+  }
+}
 function transformStyle(_prev, style) {
   style.projection = { type: 'globe' };
   // Terrain heights from zoom 12 on are only made larger, not loaded finer: runways are flat, and the
   // finer tiles cost a lot of downloads and memory when zoomed in on an airport.
-  style.sources.terrain = { type: 'raster-dem', url: 'https://tiles.mapterhorn.com/tilejson.json', maxzoom: 12 };
-  style.sources.hillshade = { type: 'raster-dem', url: 'https://tiles.mapterhorn.com/tilejson.json', maxzoom: 13 };
+  // The tiles come through fgdem:// (js/flatground.js): the airports in them levelled, so runways and taxiways
+  // don't go over the old ground's pits and humps or the buildings and trees in the heights.
+  style.sources.terrain = demSource(12);
+  style.sources.hillshade = demSource(13);
   // Esri's aerial imagery, the same as the 2D map: sharp down to single aircraft (Sentinel-2 stopped at 10 m).
   style.sources.satellite = {
     type: 'raster', tileSize: 256, maxzoom: 18,
@@ -1094,7 +1115,7 @@ function groundOf(pt) {
   if (!runwayGround.has(key)) {
     if (runwayGround.size > 600) runwayGround.clear();
     runwayGround.set(key, null);
-    heightsAt([pt], 12).then(([h]) => { runwayGround.set(key, h); if (v.map) v.map.triggerRepaint(); }, () => {});
+    (FG.flat ? FG.flat.heightsAt([pt], 12) : heightsAt([pt], 12)).then(([h]) => { runwayGround.set(key, h); if (v.map) v.map.triggerRepaint(); }, () => {});
   }
   return runwayGround.get(key);
 }

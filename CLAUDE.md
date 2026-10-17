@@ -138,6 +138,14 @@ Play online: https://noname-ch.github.io/flightgame/ (GitHub Pages, deployed fro
   Settings → Map style sets 2D and 3D) switches the satellite layer, the map layers under it (`v.underSatellite`) and
   the background (`LOADING_GROUND`, dark, where pictures are still loading) on the 3D map and the plane windows'
   cameras. The 3D buttons sit at the bottom centre: top left, the plane window covered them.
+- 3D terrain at airports: js/flatground.js (`FG.flat`) levels it. view3d.js `demSource` points the terrain and
+  hillshade sources at `fgdem://` (`FG.flat.protocol`): tiles from zoom 11 on with an airport in them come back with
+  its area (runways + strips, taxiways, aprons, buildings, closed over 400 m gaps) set to a robust plane through the
+  ground there, tilt capped (`MAX_TILT`), feathered back over 300 m. Mapterhorn's heights are partly older than the
+  airports (Istanbul: open-pit mines, 120 m up and down under the runways) and partly surface models (buildings,
+  trees). `REAL` lists the airports whose runway really slopes (only smoothed). Planes' heights in the air come from
+  `FG.flat.heightsAt` (view3d `groundOf`), so they match the drawn ground. When an airport's runways/layout change,
+  `relevel()` (from refreshGates) rebuilds it and reloads the terrain tiles (`setTiles` with a new `?r=`).
 - Moving parts (looks only), in the livery's vertex shader (js/livery.js `VERT_BODY`): the wings bend by `livFlex` (tip
   rise in half spans); vertices with the attribute `livHub` (x, z of a hub, 1; `markEngines`: propellers are thin pieces
   in front of the engines, grouped, turning round the middle of their vertices; a jet's fan is `spinFans`: the widest

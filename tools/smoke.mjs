@@ -873,6 +873,23 @@ try {
     await key('v');
     const again = await evaluate(() => { const c = FG.view3d.map.getCenter(); return { lat: c.lat, lng: c.lng, z: FG.view3d.map.getZoom() }; });
     if (!near(again, 46.91, 7.5) || Math.abs(again.z - 13) > 0.01) errors.push(`3D did not open again where the 2D map was (${JSON.stringify(again)})`);
+    // the ground under airports is levelled (js/flatground.js): Istanbul's runways lie over old mines in the heights
+    step('3D ground: Istanbul\'s runways levelled');
+    const level = await evaluate(() => Promise.race([new Promise((r) => setTimeout(() => r(null), 30000)), (async () => {
+      const out = [];
+      for (const rw of G.airportRunways('IST')) {
+        const pts = [];
+        for (let i = 0; i <= 30; i++) pts.push([rw[0] + (rw[2] - rw[0]) * i / 30, rw[1] + (rw[3] - rw[1]) * i / 30]);
+        const h = await FG.flat.heightsAt(pts, 12);
+        let bump = 0;
+        for (let i = 1; i < h.length - 1; i++) bump = Math.max(bump, Math.abs(h[i] - (h[i - 1] + h[i + 1]) / 2));
+        out.push({ bump, rise: Math.max(...h) - Math.min(...h) });
+      }
+      return out;
+    })()]));
+    if (!level) warnings.push('3D ground: Istanbul\'s terrain tiles did not load in 30 s: levelling not tested');
+    else if (level.some((r) => r.bump > 0.3 || r.rise > 40)) errors.push(`3D ground: Istanbul's runways not level: ${JSON.stringify(level)}`);
+    else step(`levelled: bumps ≤ ${Math.max(...level.map((r) => r.bump)).toFixed(2)} m, rises ≤ ${Math.max(...level.map((r) => r.rise)).toFixed(0)} m`);
     await evaluate(() => FG.ui.follow && FG.ui.follow(G.state.planes[0].id));
     await sleep(8000);
     // the chase camera starts close to the plane, in the air too (GitHub issue #6: at zoom 12 it was kilometres away)

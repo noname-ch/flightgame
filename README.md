@@ -315,7 +315,8 @@ at the selected airport would go, in 2D and 3D: each kind of new runway with its
 extension, and the apron, stands and buildings of the next terminal size (`G.expansionPreview(code)`).
 
 3D view: the **3D** button (or V) switches the map to a 3D globe with terrain, hill shading and 3D
-buildings (MapLibre). Switching keeps the place: 3D opens where the 2D map is, at the same scale, and 2D comes
+buildings (MapLibre). Airports stand on level ground (runways straight, no bumps from old terrain, buildings or
+trees in the height data), except the few whose runway really slopes, such as Courchevel and Lukla. Switching keeps the place: 3D opens where the 2D map is, at the same scale, and 2D comes
 back where you were in 3D. Aircraft are drawn as 3D models at their real altitude, stretched when zoomed out
 so you can see them. Planes really fly: they push back from their gate tail first, taxi
 (speeding up and slowing down), accelerate down the runway, rotate and lift off, bank into turns, pitch up
@@ -428,6 +429,10 @@ All content is plain data:
   year in airline service and last year built (story mode)
   and optionally its flight performance (`climbFpm`, `vLofKmh`, `vAppKmh`, `bankDeg`; otherwise its
   category's): every type climbs, turns and approaches at its own rates
+- `js/flatground.js` – levels the 3D terrain at airports (`FG.flat`): the 3D map loads its terrain tiles through
+  `fgdem://`, and round every airport the runways, taxiways, aprons and what lies between them become one gently
+  tilted plane (at most 0.6 % with a long runway), sloping back to the real hills. Steep altiports (`REAL`:
+  Courchevel, Lukla, Megève, Alpe d'Huez, Méribel) keep their real slope, only smoothed
 - `js/ground.js` – ground heights along a flight (the 3D view's terrain tiles): flights climb over the
   mountains, circling over a valley airport such as Lugano when the ridges are too close to outclimb, and
   fly a steeper glide path (up to 7°) where the final approach needs it
