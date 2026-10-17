@@ -197,9 +197,30 @@ const LOGOS = {
 // discs, stators) are taken in rings along it; the widest round ring is the fan, and turns round its own middle.
 // (Blades one by one are too small to pass for a propeller, so the A320's fan stood still and only a hidden disc
 // behind it turned; small parts beside the axis turned round their own middles and poked out of the A350's
-// nacelle; discs in the noses of the A330 and 747 turned too: GitHub issues #8, #9.)
-function spinFans(pieces, cowlings, engine, spin) {
+// nacelle; discs in the noses of the A330 and 747 turned too: GitHub issues #8, #9.) A ring that does not reach in
+// to its middle is part of the cowling (the 737's inlet lip, as wide as its flattened nacelle, turned as its fan).
+function spinFans(pieces, cowlings, engine, roots, spin) {
   const over = (a, b) => a[0] < b[1] && b[0] < a[1] && a[2] < b[3] && b[2] < a[3] && a[4] < b[5] && b[4] < a[5];
+  // (vertices of each piece, found when first asked for)
+  const byRoot = new Map();
+  const vertsOf = (p) => {
+    let m = byRoot.get(p.mesh);
+    if (!m) {
+      m = new Map();
+      roots.get(p.mesh).forEach((r, i) => { if (!m.has(r)) m.set(r, []); m.get(r).push(i); });
+      byRoot.set(p.mesh, m);
+    }
+    return m.get(p.root);
+  };
+  const hollow = (ring) => {
+    const b = ring.box, cx = (b[0] + b[1]) / 2, cz = (b[4] + b[5]) / 2;
+    let near = Infinity;
+    for (const p of ring.parts) {
+      const pos = p.mesh.geometry.attributes.position;
+      for (const i of vertsOf(p)) near = Math.min(near, Math.hypot(pos.getX(i) - cx, pos.getZ(i) - cz));
+    }
+    return near > 0.25 * ring.wide;
+  };
   const engines = [];
   let fans = 0;
   for (const c of cowlings) {
@@ -225,7 +246,7 @@ function spinFans(pieces, cowlings, engine, spin) {
       } while (i < inner.length && inner[i].box[2] < ring.box[3] + 0.1 * dia);
       const dx = ring.box[1] - ring.box[0], dz = ring.box[5] - ring.box[4];
       ring.wide = Math.max(dx, dz);
-      if (dx / dz < 0.75 || dx / dz > 1.33 || ring.wide < 0.4 * dia) continue;
+      if (dx / dz < 0.75 || dx / dz > 1.33 || ring.wide < 0.4 * dia || hollow(ring)) continue;
       if (!best || ring.wide > best.wide * 1.05 || (ring.wide > best.wide * 0.95 && ring.box[3] > best.box[3])) best = ring;
     }
     if (best) { spin(best.parts, best.box); fans++; }
@@ -313,7 +334,7 @@ function markEngines(scene, hw, file) {
     parts[0].mesh.geometry.userData.livProps = (parts[0].mesh.geometry.userData.livProps || 0) + 1;
   };
   // (the Ju 52 has no propeller drawing of its own, FG.data.props: no fan in it, its propellers are found as below)
-  if (!jet || !spinFans(pieces, cowlings, engine, spin)) {
+  if (!jet || !spinFans(pieces, cowlings, engine, roots, spin)) {
     // Propellers: blades are pieces thin along the nose, off the fuselage or in front of it (a Ju 52's nose
     // engine). Touching ones (or one alone) make a
     // propeller when together they are about as wide as high; its middle is the hub. Their vertices

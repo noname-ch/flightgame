@@ -891,15 +891,29 @@ try {
     const parts = await evaluate(async () => {
       const m = await import('/js/models3d.js');
       const out = {};
-      for (const file of ['q400', 'atr42', 'a320', 'a359', 'a333', 'dc3']) {
+      for (const file of ['q400', 'atr42', 'a320', 'a359', 'a333', 'dc3', 'b738']) {
         const type = Object.keys(FG.data.models).find((t) => FG.data.models[t] === file);
         const s = await m.loadModel(type);
-        out[file] = { props: s.userData.props, surfaces: s.userData.surfaces };
+        // (what turns reaches in to its hub: a ring that doesn't is a cowling, as the 737's inlet lip was)
+        const hubs = {};
+        s.traverse((o) => {
+          const h = o.isMesh && o.geometry.attributes.livHub, pos = h && o.geometry.attributes.position;
+          if (h) for (let i = 0; i < pos.count; i++) if (h.getZ(i) > 0.5) {
+            const r = Math.hypot(pos.getX(i) - h.getX(i), pos.getZ(i) - h.getY(i));
+            const k = `${h.getX(i)},${h.getY(i)}`;
+            const b = hubs[k] || (hubs[k] = [r, r]);
+            b[0] = Math.min(b[0], r); b[1] = Math.max(b[1], r);
+          }
+        });
+        out[file] = { props: s.userData.props, surfaces: s.userData.surfaces, hollow: Object.values(hubs).filter(([a, b]) => a > 0.5 * b).length };
       }
       return out;
     });
     // (and the jets' fans: one in each engine, nothing else turning: GitHub issues #8, #9)
-    for (const file of ['q400', 'atr42', 'a320', 'a359', 'a333', 'dc3']) if (parts[file].props !== 2) errors.push(`3D propellers and fans: ${file} has ${parts[file].props} found, not 2`);
+    for (const file of ['q400', 'atr42', 'a320', 'a359', 'a333', 'dc3', 'b738']) {
+      if (parts[file].props !== 2) errors.push(`3D propellers and fans: ${file} has ${parts[file].props} found, not 2`);
+      if (parts[file].hollow) errors.push(`3D propellers and fans: ${file} turns ${parts[file].hollow} ring(s) that do not reach their hub (a cowling?)`);
+    }
     for (const file of ['atr42', 'a320']) {
       const missing = ['aileron', 'flap', 'elevator', 'rudder'].filter((_, i) => !(parts[file].surfaces && parts[file].surfaces[i + 1] > 0));
       if (missing.length) errors.push(`3D control surfaces: ${file} has no ${missing.join(', ')}`);
