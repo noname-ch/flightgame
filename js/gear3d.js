@@ -5,7 +5,8 @@
 // folding stays, on the nose leg the steering collar and taxi lights, and the gear doors. Where the legs go is
 // read from the model: the wing root for the main legs, the underside for where each leg is fixed, the model's
 // lowest point for the ground. The gear is the object named 'gear'; js/view3d.js folds it away in flight
-// (setGear). Model axes: x = right wing, y = nose, z = up, 1 unit long.
+// (setGear) and works the shock absorbers (setOleo): the piston with the wheels slides out of its cylinder in the
+// air and back in as the plane settles onto it. Model axes: x = right wing, y = nose, z = up, 1 unit long.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
@@ -216,12 +217,15 @@ function leg(l, ground, stretch, mats, out) {
   const pitch = r * 2.2;              // between the axles of a bogie
   const gap = w * 1.2 + r * 0.22;     // between the tyres on an axle
   const V = (x, y, z) => new THREE.Vector3(x, y, z);
-  const parts = [];
+  const parts = [];   // the cylinder and what is fixed to it
+  const slide = [];   // what slides with the piston: the piston, the axles and the wheels (not on a tail wheel)
   const lights = [];
   const main = l.kind !== 'nose' && l.kind !== 'tail';
+  const oleo = l.kind !== 'tail';
+  const low = oleo ? slide : parts;
   // A bogie that tilts in flight (l.tilt) is a mesh of its own, turning about its pivot below the piston.
   const tilts = rows > 1 && l.tilt;
-  const wheels = tilts ? [] : parts;
+  const wheels = tilts ? [] : low;
   // tyres on their wheels, the axles, the bogie beam with its pivot
   for (let i = 0; i < rows; i++) {
     const dy = rows > 1 ? (i - (rows - 1) / 2) * pitch : 0;
@@ -241,21 +245,27 @@ function leg(l, ground, stretch, mats, out) {
     wheels.push(paint(rod(V(l.x, -((rows - 1) * pitch) / 2 - r * 0.3, axle + r * 0.08), V(l.x, ((rows - 1) * pitch) / 2 + r * 0.3, axle + r * 0.08), r * 0.17, 10), PAINT.leg));
     wheels.push(paint(rod(V(l.x - thick * 1.4, 0, foot.z), V(l.x + thick * 1.4, 0, foot.z), r * 0.13, 10), PAINT.chrome));
     // the pitch trimmer: from the leg to the front of the bogie
-    parts.push(paint(rod(at(0.38).add(V(0, thick * 1.1, 0)), V(l.x, ((rows - 1) * pitch) / 2, axle + r * 0.3), r * 0.06, 6), PAINT.leg));
+    low.push(paint(rod(at(0.38).add(V(0, thick * 1.1, 0)), V(l.x, ((rows - 1) * pitch) / 2, axle + r * 0.3), r * 0.06, 6), PAINT.leg));
   } else {
-    parts.push(paint(box(foot, thick * 1.7, thick * 1.7, thick * 1.5), PAINT.leg));   // the axle fitting
+    low.push(paint(box(foot, thick * 1.7, thick * 1.7, thick * 1.5), PAINT.leg));   // the axle fitting
   }
-  // the shock absorber: a chromed piston sliding in the cylinder, a collar at the top
-  parts.push(paint(rod(foot, at(0.5), thick * 0.62, 12), PAINT.chrome));
+  // the shock absorber: a chromed piston sliding in the cylinder (long enough to stay in it pulled out), a collar
+  // at the top
+  low.push(paint(rod(foot, at(0.75), thick * 0.62, 12), PAINT.chrome));
   parts.push(paint(rod(at(0.42), head, thick, 14), PAINT.leg));
   parts.push(paint(rod(at(0.88), head, thick * 1.22, 14), PAINT.leg));
   // a main leg turns on a trunnion across the top
   if (main && l.kind !== 'body') parts.push(paint(rod(head.clone().setY(-r * 0.9), head.clone().setY(r * 0.9), thick * 0.8, 10), PAINT.leg));
   // the torque link: a V where piston and cylinder meet, in front of a main leg, behind the nose leg
+  // (as two arms of their own, opening as the piston slides out: setOleo)
   const f = l.kind === 'nose' ? -1 : 1;
   const apex = at(0.3).add(V(0, f * r * 0.55, 0));
-  parts.push(paint(rod(at(0.1).add(V(0, f * thick, 0)), apex, r * 0.06, 6), PAINT.leg), paint(rod(apex, at(0.48).add(V(0, f * thick, 0)), r * 0.06, 6), PAINT.leg));
-  parts.push(paint(ball(apex, r * 0.08), PAINT.chrome));
+  const linkLow = at(0.1).add(V(0, f * thick, 0));
+  const linkUp = at(0.48).add(V(0, f * thick, 0));
+  if (!oleo) {
+    parts.push(paint(rod(linkLow, apex, r * 0.06, 6), PAINT.leg), paint(rod(apex, linkUp, r * 0.06, 6), PAINT.leg));
+    parts.push(paint(ball(apex, r * 0.08), PAINT.chrome));
+  }
   // a hydraulic hose from the airframe, in an arc round the back of the leg, down to the brakes
   const arc = (from, to, bulge) => new THREE.TubeGeometry(new THREE.QuadraticBezierCurve3(from, from.clone().lerp(to, 0.5).add(bulge), to), 12, r * 0.028, 5);
   if (main) for (const s of [-1, 1]) parts.push(paint(arc(head.clone().add(V(s * thick * 0.8, -thick * 1.4, r * 0.1)), at(0.06).add(V(s * thick * 0.95, -thick, 0)), V(s * r * 0.15, -r * 0.45, 0)), PAINT.dark));
@@ -283,8 +293,8 @@ function leg(l, ground, stretch, mats, out) {
     // the folding drag brace forwards, the steering collar, the tow lug down at the axle fitting
     brace(at(0.6), V(l.x, r * 2.8, head.z), r * 0.09, V(0, 0, -r * 0.25));
     parts.push(paint(rod(at(0.7), at(0.8), thick * 1.4, 14), PAINT.leg));
-    parts.push(paint(box(foot.clone().add(V(0, thick * 1.6, r * 0.1)), thick * 0.5, thick * 1.6, thick * 0.4), PAINT.leg));
-    parts.push(paint(rod(foot.clone().add(V(-thick * 0.3, thick * 2.3, r * 0.1)), foot.clone().add(V(thick * 0.3, thick * 2.3, r * 0.1)), thick * 0.35, 8), PAINT.leg));
+    slide.push(paint(box(foot.clone().add(V(0, thick * 1.6, r * 0.1)), thick * 0.5, thick * 1.6, thick * 0.4), PAINT.leg));
+    slide.push(paint(rod(foot.clone().add(V(-thick * 0.3, thick * 2.3, r * 0.1)), foot.clone().add(V(thick * 0.3, thick * 2.3, r * 0.1)), thick * 0.35, 8), PAINT.leg));
     // the taxi and turn-off lights: a lamp on each side of the leg, its glass facing forwards
     for (const s of [-1, 1]) {
       const p = at(0.86).add(V(s * thick * 1.1, thick * 0.6, 0));
@@ -313,6 +323,28 @@ function leg(l, ground, stretch, mats, out) {
   group.position.copy(pivot);
   group.add(new THREE.Mesh(mergeGeometries(parts.map((g) => g.applyMatrix4(local))), mats.body));
   if (lights.length) group.add(new THREE.Mesh(mergeGeometries(lights.map((g) => g.applyMatrix4(local))), mats.light));
+  // The piston and the wheels in a group sliding along the leg: `dir` from the top of the leg to its foot (no y, so
+  // the squash doesn't change it), `ext` how far it pulls out in the air (units), at most half as much further in.
+  // The torque link's two arms are posed by setOleo from its pins (in the leg's own coordinates, squashed by `sq`).
+  const slider = new THREE.Group();
+  if (oleo) {
+    const dir = foot.clone().sub(head).normalize();
+    const ext = Math.min(r * (main ? 0.85 : 0.9), len * 0.25);
+    slider.name = 'slider';
+    slider.userData = { dir: [dir.x, dir.z], ext, main };
+    if (slide.length) slider.add(new THREE.Mesh(mergeGeometries(slide.map((g) => g.applyMatrix4(local))), mats.body));
+    group.add(slider);
+    const sq = new THREE.Group();
+    sq.position.set(-pivot.x, l.y - pivot.y, -pivot.z);
+    sq.scale.set(1, 1 / stretch, 1);
+    const arm = () => new THREE.Mesh(paint(new THREE.CylinderGeometry(r * 0.06, r * 0.06, 1, 6).translate(0, 0.5, 0), PAINT.leg), mats.body);
+    const knuckle = new THREE.Mesh(paint(ball(V(0, 0, 0), r * 0.08), PAINT.chrome), mats.body);
+    sq.add(arm(), arm(), knuckle);
+    sq.name = 'link';
+    sq.userData = { low: linkLow.toArray(), up: linkUp.toArray(), apex: apex.toArray(), dir: [dir.x, dir.z] };
+    poseLink(sq, 0);
+    group.add(sq);
+  }
   if (tilts) {
     // the bogie in a frame as long as it is wide (undoing the squash, so it turns true), about its pivot pin;
     // `half`: from the pin to the end axles along the bogie
@@ -325,7 +357,7 @@ function leg(l, ground, stretch, mats, out) {
     bogie.userData = { tilt: l.tilt, half: ((rows - 1) * pitch) / 2 };
     bogie.add(new THREE.Mesh(mergeGeometries(wheels.map((g) => g.translate(-pin.x, -pin.y, -pin.z))), mats.body));
     frame.add(bogie);
-    group.add(frame);
+    (oleo ? slider : group).add(frame);
   }
   const fold = FOLD[l.kind];
   group.userData = fold ? { axis: fold[0], angle: fold[1] * (fold[0] === 'y' ? l.side : 1) } : { fixed: true };
@@ -370,8 +402,23 @@ export function addGear(scene, raw, file, size, patchFacing, type) {
   }
   scene.add(built[key].clone());
   // a tail-wheel aircraft sits nose up (js/view3d.js levels it in flight)
-  scene.rotation.x = scene.userData.sit = layouts[gear].sit;
-  scene.userData.mainY = layouts[gear].mainY;   // (the main legs' y: the plane rotates about them on the ground)
+  const lay = layouts[gear];
+  scene.rotation.x = scene.userData.sit = lay.sit;
+  scene.userData.mainY = lay.mainY;   // (the main legs' y: the plane rotates about them on the ground)
+  // The shock absorbers, in metres (js/view3d.js oleo): how far the main legs and the nose leg pull out in the air,
+  // a tilted bogie's half length and tilt (degrees), the nose leg from the main legs, and where the main wheels meet
+  // the runway (x, y: tyre smoke at touchdown).
+  const o = { main: Infinity, nose: 0, half: 0, tilt: 0, arm: 0, mains: [] };
+  built[key].traverse((c) => {
+    const u = c.userData;
+    if (c.name === 'slider') { if (u.main) o.main = Math.min(o.main, u.ext * size.wide); else o.nose = u.ext * size.wide; }
+    if (c.name === 'bogie' && u.half * size.wide > o.half) { o.half = u.half * size.wide; o.tilt = u.tilt; }
+  });
+  for (const l of lay.legs) {
+    if (l.kind === 'nose') o.arm = (l.y - lay.mainY) * size.len;
+    else if (l.kind !== 'tail') o.mains.push([l.x * size.wide, l.y * size.len]);
+  }
+  if (o.main < Infinity && !lay.sit) scene.userData.oleo = o;
   return scene;
 }
 
@@ -411,4 +458,54 @@ export function setBogies(gear, h, pitch) {
     const toGround = Math.sign(want) * Math.min(Math.abs(want), most);
     b.rotation.x = (toGround - pitch) * Math.PI / 180;
   }
+}
+
+// Slides the shock absorbers' pistons out (+) or in (-) from where they stand on the ground: `main` and `nose` in
+// metres (as wide as the model is: metres / modelSize wide = `wide`), each kept within what its leg allows. The torque
+// links open and close with them.
+const sliders = new WeakMap();   // gear -> its sliders with their torque links
+export function setOleo(gear, main, nose, wide) {
+  if (!sliders.has(gear)) {
+    const list = [];
+    gear.traverse((o) => { if (o.name === 'slider') list.push([o, o.parent.getObjectByName('link')]); });
+    sliders.set(gear, list);
+  }
+  const key = `${main.toFixed(3)}|${nose.toFixed(3)}`;
+  if (gear.userData.oleo === key) return;
+  gear.userData.oleo = key;
+  for (const [o, link] of sliders.get(gear)) {
+    const u = o.userData;
+    const s = Math.max(-0.5 * u.ext, Math.min(u.ext, (u.main ? main : nose) / wide));
+    o.position.set(u.dir[0] * s, 0, u.dir[1] * s);
+    poseLink(link, s);
+  }
+}
+// The torque link with the piston `s` units out: its lower pin moves with the piston, the arms keep their lengths
+// and meet further out.
+const P = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];
+const Y = new THREE.Vector3(0, 1, 0);
+function poseLink(link, s) {
+  const k = link.userData;
+  const [low, up, knee, axis, out] = P;
+  knee.fromArray(k.apex);
+  low.fromArray(k.low);
+  up.fromArray(k.up);
+  const a = knee.distanceTo(low);
+  const b = knee.distanceTo(up);
+  out.copy(knee).sub(low);
+  low.x += k.dir[0] * s;
+  low.z += k.dir[1] * s;
+  const d = axis.copy(up).sub(low).length();
+  axis.divideScalar(d);
+  out.addScaledVector(axis, -out.dot(axis)).normalize();
+  const along = (a * a - b * b + d * d) / (2 * d);
+  knee.copy(low).addScaledVector(axis, along).addScaledVector(out, Math.sqrt(Math.max(0, a * a - along * along)));
+  const [lower, upper, ball] = link.children;
+  for (const [m, from, to] of [[lower, low, knee], [upper, knee, up]]) {
+    const dv = to.clone().sub(from);
+    m.position.copy(from);
+    m.scale.set(1, dv.length(), 1);
+    m.quaternion.setFromUnitVectors(Y, dv.normalize());
+  }
+  ball.position.copy(knee);
 }

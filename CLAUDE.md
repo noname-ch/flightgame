@@ -169,6 +169,11 @@ Play online: https://noname-ch.github.io/flightgame/ (GitHub Pages, deployed fro
   (view3d.js `ownMaterials`), set in `placeModel` from `wingFlex`, `propRate` and `surfaceAngles` (the elevators are
   pulled for the rotation, the climb-out, the flare and the nose wheel coming down, besides following the pitch rate). The fuselage width
   (`measure`) falls back to `FG.data.modelSize` where nacelles reach forward (DC-3, Ju 52, Twin Otter).
+- Landing gear (js/gear3d.js, view3d.js `gearFor`/`oleo`): `setGear` folds it, `setBogies` tilts the bogies, `setOleo`
+  slides each leg's piston and wheels (the 'slider' group; the torque link 'link' is posed from its pins, `poseLink`).
+  `scene.userData.oleo` (metres: strokes, bogie, nose arm, main wheel spots) drives view3d's `oleo()`: damped springs
+  in real time (`OLEO`), paused with the game, so a touchdown looks the same at any game speed. `tyreSmoke` puts a
+  `THREE.Points` puff batch on the plane at touchdown (in the touchdown spot's frame; `smokeTick` ages it).
 - 3D only repaints while something moves. Anything new that animates in 3D must trigger a repaint
   itself.
 - Airport layouts: 116 airports have files in `js/data/layouts`. Every other airport is read from the

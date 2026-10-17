@@ -4,7 +4,7 @@
 import * as maplibregl from 'maplibre-gl';
 import * as THREE from 'three';
 import { loadModel, modelSize, facing, patchFacing } from './models3d.js';
-import { setGear, setBogies } from './gear3d.js';
+import { setGear, setBogies, setOleo } from './gear3d.js';
 
 const G = FG.game;
 const D = FG.data;
@@ -208,6 +208,7 @@ function planeModel(type) {
     // on the ground, and the model's width (the gear's unit)
     g.userData.mainY = (scene.userData.mainY ?? -0.05) * size.len;
     g.userData.wide = size.wide;
+    g.userData.oleo = scene.userData.oleo;   // (the shock absorbers' strokes, metres: oleo())
     const lights = navLights(type, model);
     g.userData.nav = lights.material.uniforms;
     g.clear();
@@ -1202,6 +1203,8 @@ function restoreGl(renderer, map) {
 // at their airport) are lined up beside each other where they are drawn too big to stand at their gates.
 function placeModel(e, pose, altM, exag, globe, now, lineUp) {
   const len = e.obj.userData.len;
+  // (real seconds since the last frame; none while the game is paused, so a bounce or smoke waits)
+  const dtR = e.lastFrame == null || (FG.ui && !FG.ui.speed) ? 0 : Math.min(0.25, Math.max(0, (now - e.lastFrame) / 1000));
   const unit = frameAt(pose.lat, pose.lon, altM, globe);
   // Ease heading, bank and pitch towards the target, so the plane turns, rolls and pitches
   // smoothly instead of snapping (frame-rate independent).
@@ -1245,8 +1248,11 @@ function placeModel(e, pose, altM, exag, globe, now, lineUp) {
   }
   e.lastFrame = now;
   setNavLights(e, pose, now);
+  const ud = e.obj.userData;
+  // the shock absorbers: how much higher the plane is drawn as it settles onto its legs, and the nose's bounce
+  const ol = ud.oleo && ud.gear && ud.mainY != null && !ud.sit ? oleo(e, ud, pose, exag, dtR) : null;
   const h = e.att.heading * DEG;
-  const pitch = e.att.pitch * DEG;
+  const pitch = e.att.pitch * DEG + (ol ? ol.dPitch : 0);
   const bank = e.att.bank * DEG;
   const { fwd, right, up, east, north, pos } = tmp;
   fwd.copy(north).multiplyScalar(Math.cos(h)).addScaledVector(east, Math.sin(h));
@@ -1259,12 +1265,11 @@ function placeModel(e, pose, altM, exag, globe, now, lineUp) {
   right.copy(wing);
   // Pitched about the main wheels, not the middle: they stay on the runway as the nose comes up at rotation or
   // down after touchdown (the tail used to dip into it and the main wheels sink in). Tail-wheel aircraft are left.
-  const ud = e.obj.userData;
   if (ud.mainY != null && !ud.sit) {
-    const raise = ud.lift * (Math.cos(pitch) - 1) - ud.mainY * Math.sin(pitch);
+    const raise = ud.lift * (Math.cos(pitch) - 1) - ud.mainY * Math.sin(pitch) + (ol ? ol.lift : 0);
     pos.addScaledVector(up, raise * exag * unit);
     // the bogies: flat on the runway, tilted in the air, the lowest wheels touching first
-    if (ud.gear) setBogies(ud.gear, (pose.altM || 0) * TERRAIN_EXAG / exag / ud.wide, e.att.pitch);
+    if (ud.gear) setBogies(ud.gear, (ol ? ol.wheels : (pose.altM || 0) * TERRAIN_EXAG / exag) / ud.wide, pitch / DEG);
   }
   // Zoomed out, enlarged parked planes would overlap at their gates: line them up instead.
   if (lineUp != null && !pose.flying && (!pose.gate || exag > 2.5)) {
@@ -1273,6 +1278,155 @@ function placeModel(e, pose, altM, exag, globe, now, lineUp) {
   const s = unit * exag;
   e.obj.matrix.makeBasis(right.multiplyScalar(s), nose.multiplyScalar(s), top.multiplyScalar(s)).setPosition(pos);
   e.obj.matrixWorldNeedsUpdate = true;
+  if (ol && ol.touch) tyreSmoke(e, ud, pose, exag, unit, h);
+  if (e.smoke) smokeTick(e, dtR);
+}
+
+// ---------- shock absorbers and tyre smoke ----------
+// The legs' shock absorbers (js/gear3d.js setOleo) as damped springs in real time, so they work the same at any game
+// speed: in the air the pistons hang out at full length (a tilted bogie below that), coming down the lowest wheels
+// meet the runway first, the bogie is pushed flat and the plane settles onto its legs, pushing them in a little
+// further than they stand and bouncing back; the nose leg the same as the nose wheel comes down. All in metres at
+// the model's size (the pose's height / exag). Returns how much higher the plane is drawn than its pose (`lift`),
+// the nose's extra pitch (radians), how high the main wheels are and whether they have just touched down.
+// (kick, noseKick: m/s more downwards as the main wheels and the nose wheel meet the runway: the weight coming onto
+// the legs, which the plane drawn coming down slowly in its last metres doesn't give)
+const OLEO = { hz: 1.6, damp: 0.3, noseHz: 2.2, noseDamp: 0.4, kick: 1.3, noseKick: 0.7 };
+function spring(s, target, hz, damp, dt, min) {
+  const w = 2 * Math.PI * hz;
+  const n = Math.ceil(dt / 0.008);
+  for (let i = 0; i < n; i++) {
+    s.v += (w * w * (target - s.y) - 2 * damp * w * s.v) * (dt / n);
+    s.y += s.v * (dt / n);
+    if (s.y < min) { s.y = min; s.v = Math.max(0, s.v); }   // (bottomed out)
+  }
+}
+function oleo(e, ud, pose, exag, dt) {
+  const o = ud.oleo;
+  const h = Math.max(0, (pose.altM || 0) * TERRAIN_EXAG / exag);   // the pose's height above standing on the runway
+  // the lowest wheels touch from here down (a tilted bogie's hang below a flat one's, more or less with the pitch)
+  const reach = o.main + (o.tilt ? o.half * Math.sin(Math.max(0, Math.sign(o.tilt) * (o.tilt + e.att.pitch)) * DEG) : 0);
+  const T = Math.min(h, reach);
+  const s = e.oleo || (e.oleo = { m: { y: T, v: 0 }, n: null, up: false });
+  spring(s.m, T, OLEO.hz, OLEO.damp, dt, -0.5 * o.main);
+  const body = h - T + s.m.y;   // how high the plane is drawn above standing
+  const wheels = Math.max(0, body - o.main);   // (the bogie pivots' height above the runway, legs out)
+  // the nose wheel: where the pitch puts it (the plane pitches about the main wheels), at most its leg's length up
+  const Tn = Math.max(0, Math.min(o.nose, body + o.arm * Math.sin(e.att.pitch * DEG)));
+  if (!s.n) s.n = { y: Tn, v: 0 };
+  if (s.n.y > 0.05 && Tn <= 0 && dt > 0 && pose.flying) s.n.v -= OLEO.noseKick;
+  spring(s.n, Tn, OLEO.noseHz, OLEO.noseDamp, dt, -0.5 * o.nose);
+  setOleo(ud.gear, s.m.y, s.n.y, ud.wide);
+  // touchdown: the main wheels on the runway after being well clear of it, at landing speed
+  let touch = false;
+  if (wheels > 0.5) s.up = true;
+  else if (s.up && wheels < 0.01) {
+    s.up = false;
+    touch = !!(pose.st && pose.st.speedKmh > 120 && (pose.st.phase === 'landing' || pose.st.phase === 'approach'));
+    if (touch) s.m.v -= OLEO.kick;
+  }
+  return { lift: s.m.y - T, dPitch: o.arm > 0 ? (s.n.y - Tn) / o.arm : 0, wheels, touch };
+}
+
+// Tyre smoke: at touchdown the main wheels, standing still, are spun up by the runway and leave a puff of burnt rubber
+// each, dragged forward a little, left hanging behind as the plane rolls on, drifting with the wind, rising, spreading
+// and fading. The puffs are points in the touchdown spot's frame (metres, along the runway), kept as a child of the
+// plane (its matrix undoes the plane's own, so they stay where they were made) and sized in pixels from how far
+// across the screen their metres reach.
+const SMOKE = { puffs: 16, life: 4, spin: 0.6 };   // (spin: the seconds the wheels take to spin up, letting smoke out)
+const SMOKE_VS = `
+uniform float uAge; uniform float uLife; uniform vec2 uView; uniform vec3 uWind;
+attribute vec3 vel; attribute float t0; attribute float size; attribute float shade;
+varying float vA; varying float vShade;
+vec2 ndc(vec3 p) { vec4 c = projectionMatrix * modelViewMatrix * vec4(p, 1.0); return c.xy / max(c.w, 1e-9); }
+void main() {
+  float age = uAge - t0;
+  float t = max(age, 0.0);
+  vec3 p = position + vel * (1.0 - exp(-2.5 * t)) / 2.5 + uWind * t + vec3(0.0, 0.0, 0.7 * t);
+  float s = size * (1.0 + 2.0 * sqrt(t));
+  vec4 c = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+  gl_Position = c;
+  vec2 o = c.xy / max(c.w, 1e-9);
+  float px = max(length(ndc(p + vec3(s, 0.0, 0.0)) - o), max(length(ndc(p + vec3(0.0, s, 0.0)) - o), length(ndc(p + vec3(0.0, 0.0, s)) - o))) * 0.5 * max(uView.x, uView.y);
+  float u = t / uLife;
+  vA = age < 0.0 || u >= 1.0 ? 0.0 : smoothstep(0.0, 0.12, t) * (1.0 - u) * (1.0 - u) * 0.8;
+  vShade = shade;
+  gl_PointSize = c.w > 0.0 && vA > 0.0 ? min(px, 2048.0) : 0.0;
+}`;
+const SMOKE_FS = `
+uniform float uLight;
+varying float vA; varying float vShade;
+void main() {
+  vec2 q = gl_PointCoord - 0.5;
+  float a = vA * (1.0 - smoothstep(0.2, 0.5, length(q)));
+  if (a < 0.01) discard;
+  vec3 col = mix(vec3(0.94, 0.94, 0.95), vec3(0.66, 0.66, 0.69), vShade) * (0.86 + 0.2 * (1.0 - gl_PointCoord.y));
+  col *= mix(vec3(0.3, 0.32, 0.38), vec3(1.0), uLight);   // (lit by the runway lights at night)
+  gl_FragColor = vec4(col, a);
+}`;
+const smokeView = new THREE.Vector2();
+function tyreSmoke(e, ud, pose, exag, unit, heading) {
+  const o = ud.oleo;
+  const n = o.mains.length * SMOKE.puffs;
+  if (!e.smoke || e.smoke.userData.n !== n) {
+    const g = new THREE.BufferGeometry();
+    for (const [a, k] of [['position', 3], ['vel', 3], ['t0', 1], ['size', 1], ['shade', 1]]) g.setAttribute(a, new THREE.BufferAttribute(new Float32Array(n * k), k));
+    const m = new THREE.ShaderMaterial({
+      uniforms: { uAge: { value: 0 }, uLife: { value: SMOKE.life }, uView: { value: new THREE.Vector2(1, 1) }, uWind: { value: new THREE.Vector3() }, uLight: { value: 1 } },
+      vertexShader: SMOKE_VS, fragmentShader: SMOKE_FS, transparent: true, depthWrite: false,
+    });
+    const pts = new THREE.Points(g, m);
+    pts.frustumCulled = false;
+    pts.matrixAutoUpdate = false;
+    pts.renderOrder = 9;
+    pts.userData = { n, at: new THREE.Matrix4(), inv: new THREE.Matrix4() };
+    pts.onBeforeRender = (renderer, scene) => {
+      renderer.getDrawingBufferSize(smokeView);
+      m.uniforms.uView.value.copy(smokeView);
+      m.uniforms.uLight.value = scene.userData.light ?? 1;
+    };
+    if (e.smoke) e.obj.remove(e.smoke);
+    e.obj.add(pts);
+    e.smoke = pts;
+  }
+  const g = e.smoke.geometry;
+  const tyre = o.main / 0.42;   // (about the main tyres' size: their legs pull out 0.42 of it)
+  // the wheels move on along the smoke's frame while it is let out (at the speed drawn, real seconds)
+  const runM = Math.min(60, ((pose.st.speedKmh / 3.6) * (FG.ui ? FG.ui.speed || 1 : 1)) / exag);
+  let i = 0;
+  for (const [x, y] of o.mains) {
+    for (let k = 0; k < SMOKE.puffs; k++, i++) {
+      const t0 = (k / SMOKE.puffs) * SMOKE.spin * (0.85 + Math.random() * 0.3);
+      g.attributes.position.setXYZ(i, x + (Math.random() - 0.5) * tyre * 0.5, y + runM * t0, -ud.lift + tyre * 0.35);
+      g.attributes.vel.setXYZ(i, Math.sign(x) * Math.random() * 2.5, 5 + Math.random() * 9, 0.4 + Math.random() * 1.2);
+      g.attributes.t0.setX(i, t0);
+      g.attributes.size.setX(i, tyre * (1 + Math.random() * 0.9) * (1.3 - 0.6 * k / SMOKE.puffs));   // (less as they spin up)
+      g.attributes.shade.setX(i, Math.random());
+    }
+  }
+  for (const a of Object.values(g.attributes)) a.needsUpdate = true;
+  // the wind in the frame along the runway (m/s, at the model's size)
+  const st = pose.st;
+  const to = ((st.windFrom || 0) + 180) * DEG - heading;
+  const ms = (st.windKt || 0) * 0.514 / exag;
+  e.smoke.material.uniforms.uWind.value.set(Math.sin(to) * ms, Math.cos(to) * ms, 0);
+  // the frame: where the plane is, along its heading, upright, metres at the model's size
+  const { up, east, north, pos } = tmp;
+  const f = north.clone().multiplyScalar(Math.cos(heading)).addScaledVector(east, Math.sin(heading)).multiplyScalar(unit * exag);
+  const r = east.clone().multiplyScalar(Math.cos(heading)).addScaledVector(north, -Math.sin(heading)).multiplyScalar(unit * exag);
+  e.smoke.userData.at.makeBasis(r, f, up.clone().multiplyScalar(unit * exag)).setPosition(pos);
+  e.smoke.userData.age = 0;
+  e.smoke.visible = true;
+}
+// The smoke's age, and its matrix: the touchdown frame seen from the plane, which has moved on.
+function smokeTick(e, dt) {
+  const sm = e.smoke;
+  if (!sm.visible) return;
+  sm.userData.age += dt;
+  if (sm.userData.age > SMOKE.life + 0.4) { sm.visible = false; return; }
+  sm.material.uniforms.uAge.value = sm.userData.age;
+  sm.matrix.copy(sm.userData.inv.copy(e.obj.matrix).invert()).multiply(sm.userData.at);
+  sm.matrixWorldNeedsUpdate = true;
 }
 
 // ---------- clouds (js/weather.js puffs) ----------
@@ -1409,6 +1563,7 @@ function daylight3d(map, layer, lat, lon, t, now, weather) {
   const sun = lightAt(lat, lon, t);
   const L = sun.light;
   layer.light = L;
+  layer.scene.userData.light = L;   // (the tyre smoke's)
   layer.amb.intensity = 0.28 + 1.32 * L;
   layer.sun.intensity = 0.3 + 1.9 * L;
   if (L > 0.05 && sun.elev > -3) {
@@ -1538,7 +1693,7 @@ const planeLayer = {
         const at = st || (G.gateOf ? G.gateOf(p.location, p.id) : G.airportByCode[p.location]);
         if (at && !inBox(view, at.lat, at.lon)) {
           e.obj.visible = false;
-          e.att = e.flex = e.ctl = null; // eased afresh when it comes back (its wings not still bent as when it left)
+          e.att = e.flex = e.ctl = e.oleo = null; // eased afresh when it comes back (its wings not still bent as when it left)
           continue;
         }
       }
@@ -1554,6 +1709,7 @@ const planeLayer = {
       placeModel(e, pose, altM, exag, globe, now, n);
       if ((e.spinRate > 0.3 || (st && st.windKt > 8)) && len * exag / mpp > 40) animating = true;
       if (e.flashing && ((this.light ?? 1) < 0.85 || len * exag / mpp > 40)) animating = true; // (beacons and strobes flash)
+      if ((e.smoke && e.smoke.visible) || (e.oleo && Math.abs(e.oleo.m.v) + Math.abs(e.oleo.n ? e.oleo.n.v : 0) > 0.02)) animating = true; // (tyre smoke, a bounce)
       const { pos } = tmp;
       e.world.copy(pos);
       e.lngLat = [pose.lon, pose.lat];

@@ -945,6 +945,9 @@ try {
     // its model (once loaded) stands on landing gear (js/gear3d.js)
     const gear = await evaluate(() => { const e = FG.view3d.planes[G.state.planes[0].id]; return e ? { loaded: e.obj.userData.lift != null, gear: !!e.obj.userData.gear } : null; });
     if (gear && gear.loaded && !gear.gear) errors.push('3D view: the followed plane has no landing gear');
+    // ... with working shock absorbers: a stroke for its legs, and the spring state once it is drawn
+    const oleo = await evaluate(() => { const e = FG.view3d.planes[G.state.planes[0].id]; const o = e && e.obj.userData.oleo; return e && e.obj.userData.lift != null ? { o: !!o && o.main > 0 && o.mains.length >= 2, drawn: !!e.oleo } : null; });
+    if (oleo && (!oleo.o || !oleo.drawn)) errors.push(`3D view: the followed plane's shock absorbers are missing (${JSON.stringify(oleo)})`);
     step('3D cameras: B fly-by, N wing camera (N again: the other wing), V back to the chase camera');
     await evaluate(() => { if (!FG.ui.selectedPlane) FG.ui.selectPlane(G.state.planes[0].id); });
     await key('b');

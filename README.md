@@ -342,7 +342,9 @@ which file; six more come from FlightGear aircraft, and the Saab 340 and Saab 20
 Every model stands on 3D landing gear (`js/gear3d.js`, sizes and layout per model in `FG.data.gear`): nose and
 main legs with their tyres, bogies on the big jets, shock absorbers, braces and gear doors; it is raised after
 take-off and lowered on the approach: the legs fold into the wings and nacelles and the doors shut behind
-them. The DC-3 sits nose up on its tail wheel.
+them. The shock absorbers work: in the air the legs hang out at full length (the big jets' bogies tilted), at
+touchdown the plane settles onto them, pushing them in and bouncing back, and the main wheels give off a puff of
+tyre smoke. The DC-3 sits nose up on its tail wheel.
 The hangar marketplace shows the same models: the selected type as a live 3D
 model that you can turn by dragging (double-click to reset), the tiles as pictures.
 
