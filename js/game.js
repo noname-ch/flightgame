@@ -602,6 +602,46 @@
     const run = alongM > 0 ? exitRun(rwy.len, off) : 0;
     return [...inside, rwyPoint(rwy, a, off), rwyPoint(rwy, Math.min(rwy.len, alongM + run), off)];
   }
+  // The way between the stand side (`lanePt`) and a runway, in the order it is driven: { x, path }. Landing
+  // (`alongM`: where the plane has slowed down, metres past the threshold): from where it turns off the runway,
+  // x, to lanePt. Takeoff: from lanePt to where it lines up, x metres past the threshold (up to `xMax` in).
+  function runwayWay(code, rwy, lanePt, landing, alongM, xMax = 0) {
+    const ap = apronOf(code);
+    if (!ap.real) {
+      const path = taxiPath(code, rwy, lanePt, landing ? alongM : 0);
+      return { x: landing ? alongM : 0, path: landing ? path.reverse() : path };
+    }
+    const way = realRunwayWay(code, ap.real, rwy, lanePt, landing, landing ? alongM - 100 : 0, landing ? rwy.len : xMax);
+    if (way) return way;
+    // No exit or entry from the side: along the runway (backtracking), turning round on it where the way
+    // goes back the way the plane came.
+    const r = airportRunways(code).find((q) => (q[0] === rwy.thr[0] && q[1] === rwy.thr[1]) || (q[2] === rwy.thr[0] && q[3] === rwy.thr[1]));
+    const w = (r && r[4]) || 45;
+    const at = rwyPoint(rwy, landing ? alongM : 0, 0);
+    const path = realTaxiPath(code, ap.real, lanePt, at);
+    if (landing) path.reverse();
+    const x = landing ? alongM : 0;
+    // (backwards: the way driven on the runway, in its first or last 500 m, goes more than 10 m against the
+    // way the plane rolls; `seq` runs from the runway out)
+    const seq = landing ? path : path.slice().reverse();
+    const on = (q) => Math.abs(q.across) < w / 2 + 3;
+    let moved = 0;
+    let off = null;
+    for (let i = 1, m = 0; i < seq.length && m < 500; i++) {
+      const a = rwyCoords(rwy, seq[i - 1]), b = rwyCoords(rwy, seq[i]);
+      if (on(a) && on(b)) moved += (landing ? 1 : -1) * (b.along - a.along);
+      if (!off && metres(seq[i], at) >= 30) off = rwyCoords(rwy, seq[i]);
+      m += metres(seq[i - 1], seq[i]);
+    }
+    if (!off) return { x, path };
+    const back = moved < -10 || (off.along - x) * (landing ? 1 : -1) < -0.5 * Math.hypot(off.along - x, off.across);
+    if (!back) return { x, path };
+    const side = off.across < 0 ? -1 : 1; // (round on the side away from where it goes)
+    const r4 = 4 * Math.max(6, Math.min(20, w * 0.27));
+    if (landing) return { x, path: [...turnAround(rwy, Math.min(alongM + r4, rwy.len - 25), -1, w, side).slice(1), ...path] };
+    const keep = path.filter((p, i) => i === 0 || metres(p, at) > r4 + 10);
+    return { x: 0, path: [...keep, ...turnAround(rwy, 0, 1, w, side)] };
+  }
   // All taxiway centre lines of an airport, for drawing: [[lat, lon], [lat, lon]] each.
   function taxiwaysOf(code) {
     const ap = apronOf(code);
@@ -1448,6 +1488,7 @@
     // along the runway to it (backtracking, as on small fields); a landing plane rolls to the next taxiway. Before,
     // it went straight from the nearest taxiway point to the threshold, across the grass.
     const before = g.pts.length;
+    g.rwys = []; // each runway's centre-line points, from its first end (r[0], r[1]): ids and metres along
     for (const r of rws) {
       const rwy = { thr: [r[0], r[1]], hdg: bearing({ lat: r[0], lon: r[1] }, { lat: r[2], lon: r[3] }), len: runwayLength(r) };
       const reach = Math.max(18, r[4] || 30) / 2 + 25;
@@ -1463,6 +1504,7 @@
       }
       const xs = [...new Set(at.map((x) => Math.round(x)))].sort((p, q) => p - q);
       const ids = xs.map((x) => node(rwyPoint(rwy, x, 0)));
+      g.rwys.push({ a: rwy.thr, b: [r[2], r[3]], len: rwy.len, w: r[4] || 45, xs, ids, on: new Set(ids) });
       for (let k = 1; k < ids.length; k++) {
         const d = (xs[k] - xs[k - 1]) * RUNWAY_TAXI_COST;
         g.adj[ids[k - 1]].push([ids[k], d]);
@@ -1538,25 +1580,26 @@
   }
   // Shortest way along the real taxiways from near `from` to near `to`: the points on the way, or [] if
   // the taxiways do not connect them.
-  function realTaxiPath(code, lay, from, to) {
-    const g = taxiGraph(code, lay);
-    // Planes join and leave the taxiways at the nearest point along a line (not at its nearest corner point,
-    // which could be far down a long straight: they went across the grass to it), among the lines of the
-    // biggest connected piece (stubs that join nothing lead nowhere).
+  // Planes join and leave the taxiways at the nearest point along a line (not at its nearest corner point,
+  // which could be far down a long straight: they went across the grass to it), among the lines of the
+  // biggest connected piece (stubs that join nothing lead nowhere).
+  function ontoTaxiway(g, p) {
     if (!g.segs) {
       g.segs = [];
       for (let u = 0; u < g.adj.length; u++) for (const [w] of g.adj[u]) if (u < w && g.main[u]) g.segs.push([u, w]);
     }
-    const onto = (p) => {
-      let best = null;
-      for (const [u, w] of g.segs) {
-        const a = g.pts[u], b = g.pts[w];
-        if (Math.abs(a[0] - p[0]) > 0.05 && Math.abs(b[0] - p[0]) > 0.05) continue;
-        const r = segMetres(p, a, b);
-        if (!best || r.d < best.d) best = { d: r.d, pt: r.pt, u, w };
-      }
-      return best;
-    };
+    let best = null;
+    for (const [u, w] of g.segs) {
+      const a = g.pts[u], b = g.pts[w];
+      if (Math.abs(a[0] - p[0]) > 0.05 && Math.abs(b[0] - p[0]) > 0.05) continue;
+      const r = segMetres(p, a, b);
+      if (!best || r.d < best.d) best = { d: r.d, pt: r.pt, u, w };
+    }
+    return best;
+  }
+  function realTaxiPath(code, lay, from, to) {
+    const g = taxiGraph(code, lay);
+    const onto = (p) => ontoTaxiway(g, p);
     const S = onto(from);
     const T = onto(to);
     if (!S || !T) return [];
@@ -1612,6 +1655,136 @@
     for (let u = end; u >= 0; u = prev[u]) path.push(g.pts[u]);
     path.reverse();
     return [S.pt, ...path, T.pt];
+  }
+
+  // Shortest ways from the point near `p` to every taxiway point, without the centre line of runway `R` (a
+  // g.rwys entry; crossing it is still allowed): { best, prev } (prev leads back towards p). Kept per graph.
+  function taxiDistances(g, p, R) {
+    const T = ontoTaxiway(g, p);
+    if (!T) return null;
+    if (!g.dist) g.dist = new Map();
+    const key = `${T.u},${T.w},${T.pt},${g.rwys.indexOf(R)}`;
+    if (g.dist.has(key)) return g.dist.get(key);
+    const best = new Float64Array(g.pts.length).fill(Infinity);
+    const prev = new Int32Array(g.pts.length).fill(-1);
+    const heap = [];
+    const push = (d, u) => {
+      heap.push([d, u]);
+      for (let i = heap.length - 1; i > 0;) {
+        const up = (i - 1) >> 1;
+        if (heap[up][0] <= heap[i][0]) break;
+        [heap[i], heap[up]] = [heap[up], heap[i]];
+        i = up;
+      }
+    };
+    for (const u of [T.u, T.w]) { const d = metres(T.pt, g.pts[u]); if (d < best[u]) { best[u] = d; push(d, u); } }
+    while (heap.length) {
+      const [d, u] = heap[0];
+      const last = heap.pop();
+      if (heap.length) {
+        heap[0] = last;
+        for (let i = 0; ;) {
+          let m = i;
+          const l = 2 * i + 1, r = l + 1;
+          if (l < heap.length && heap[l][0] < heap[m][0]) m = l;
+          if (r < heap.length && heap[r][0] < heap[m][0]) m = r;
+          if (m === i) break;
+          [heap[i], heap[m]] = [heap[m], heap[i]];
+          i = m;
+        }
+      }
+      if (d > best[u]) continue;
+      const along = R && R.on.has(u);
+      for (const [w, len] of g.adj[u]) {
+        if (along && R.on.has(w)) continue;
+        const nd = d + len;
+        if (nd >= best[w]) continue;
+        best[w] = nd;
+        prev[w] = u;
+        push(nd, w);
+      }
+    }
+    const out = { best, prev, end: T.pt };
+    if (g.dist.size > 40) g.dist.clear();
+    g.dist.set(key, out);
+    return out;
+  }
+
+  // A 180° turn on a runway, as at its end or on a turn pad: from the centre line `4r` metres before `x0`
+  // (coming the other way), out to one side and round, ending on the centre line at x0 facing `dir` (+1 the
+  // runway's heading, -1 the other way). Before, planes turned round on the spot.
+  function turnAround(rwy, x0, dir, w, side = 1) {
+    const r = Math.max(6, Math.min(20, w * 0.27));
+    const pts = [rwyPoint(rwy, x0 + dir * 4 * r, 0)];
+    for (let a = -90; a >= -270; a -= 15) pts.push(rwyPoint(rwy, x0 + dir * r * Math.cos(toRad(a)), side * r * (Math.sin(toRad(a)) - 1)));
+    return pts;
+  }
+
+  // The way between the stand side (`lanePt`) and runway `rwy` at a real layout: where on the runway the plane
+  // turns off after landing (`landing`: the first good exit from `xMin` metres past the threshold on) or comes
+  // onto it to take off (an entry from the side at most `xMax` in, as near the threshold as it can). An exit
+  // that bends back more than 120° doesn't count: the plane would turn round on the spot. Returns { x, path }
+  // in the order it is driven (the landing's starts on the runway, the takeoff's ends there), or null if no
+  // exit or entry fits (then the plane backtracks along the runway).
+  function realRunwayWay(code, lay, rwy, lanePt, landing, xMin, xMax) {
+    const g = taxiGraph(code, lay);
+    const same = (p, q) => Math.abs(p[0] - q[0]) < 1e-7 && Math.abs(p[1] - q[1]) < 1e-7;
+    const R = g.rwys.find((q) => same(q.a, rwy.thr) || same(q.b, rwy.thr));
+    if (!R) return null;
+    const D = taxiDistances(g, lanePt, R);
+    if (!D) return null;
+    let pick = null;
+    for (let k = 0; k < R.ids.length; k++) {
+      const x = rwyCoords(rwy, g.pts[R.ids[k]]).along; // (measured from this end: not R.xs, from the first)
+      if (x < xMin || x > xMax) continue;
+      const id = R.ids[k];
+      for (const [n, len] of g.adj[id]) {
+        if (R.on.has(n) || D.best[n] === Infinity) continue;
+        // The first 800 m of the way: while on the runway it must keep going the way the plane rolls (landing)
+        // or will roll (takeoff), and every turn sharper than 135° (a fast exit taken towards gates behind it)
+        // counts as 3 km more.
+        let u = n;
+        let p = g.pts[id];
+        let h0 = landing ? rwy.hdg : rwy.hdg + 180; // (the way along the chain: from the runway out)
+        let walked = 0;
+        let sharp = 0;
+        let wrong = false;
+        while (u >= 0 && walked < 800) {
+          const q = g.pts[u];
+          const m = metres(p, q);
+          if (m >= 3) {
+            const a = rwyCoords(rwy, p), b = rwyCoords(rwy, q);
+            const go = (landing ? 1 : -1) * (b.along - a.along) / m; // cos of the way driven with the runway heading
+            if (Math.abs(a.across) < R.w / 2 + 3 && a.along > -60 && a.along < rwy.len + 60 && go < -0.5) { wrong = true; break; }
+            const h = bearing({ lat: p[0], lon: p[1] }, { lat: q[0], lon: q[1] });
+            if (Math.abs(((h - h0 + 540) % 360) - 180) > 135) sharp++;
+            h0 = h;
+            walked += m;
+            p = q;
+          }
+          u = D.prev[u];
+        }
+        if (wrong) continue;
+        // (a landing plane rolls on to an exit at half the cost; a departing one starts as near the threshold
+        // as it can: runway behind it is wasted)
+        const cost = len + D.best[n] + sharp * 3000 + (landing ? (x - xMin) * 0.5 : x * 3);
+        if (!pick || cost < pick.cost) pick = { cost, x, id, n };
+      }
+    }
+    if (!pick) return null;
+    const path = [g.pts[pick.id]];
+    for (let u = pick.n; u >= 0; u = D.prev[u]) path.push(g.pts[u]);
+    path.push(D.end);
+    // A taxiway that ends on the runway a few metres from its point: the plane turns on or off right there,
+    // not with a jog back or sideways.
+    const c = rwyCoords(rwy, g.pts[pick.n]);
+    let x = pick.x;
+    if (Math.abs(c.across) < Math.min(10, R.w / 2) && Math.abs(c.along - x) < 60) {
+      x = c.along;
+      path[0] = rwyPoint(rwy, x, 0);
+      path.splice(1, 1);
+    }
+    return { x, path: landing ? path : path.reverse() };
   }
 
   // ---------- expansion preview (developer tools) ----------
@@ -2194,19 +2367,7 @@
     // the runway.
     const vLofMs = pf.vLof / 3.6;
     const vAppMs = pf.vApp / 3.6;
-    const rollM = Math.min(dep.len * 0.85, Math.max(250, vLofMs * vLofMs / 4.4));
     const stopM = Math.min(arr.len * 0.85, Math.max(400 + 300, 400 + vAppMs * vAppMs / 3.2));
-    const lift = offsetPoint(dep.thr[0], dep.thr[1], dep.hdg, rollM);
-    const climbOut = offsetPoint(dep.end[0], dep.end[1], dep.hdg, ac.speedKmh < 450 ? 2500 : 5000);
-    const faf = offsetPoint(arr.thr[0], arr.thr[1], arr.hdg + 180, FINAL_KM * 1000);
-    const touch = offsetPoint(arr.thr[0], arr.thr[1], arr.hdg, 400);
-    const stop = offsetPoint(arr.thr[0], arr.thr[1], arr.hdg, stopM); // where it leaves the runway
-
-    const outTurn = turnToward(climbOut, dep.hdg, P(faf), radius);
-    const turnEnd = outTurn.length ? outTurn[outTurn.length - 1] : climbOut;
-    // The arrival turn is built backwards from the final approach fix.
-    const inTurn = turnToward(faf, arr.hdg + 180, P(turnEnd), radius).reverse();
-    const turnStart = inTurn.length ? inTurn[0] : faf;
 
     // Gates: pushed back out of the stand at the start, nose-in onto the stand at the end.
     const gA = gateOf(f.from, planeId, type);
@@ -2215,9 +2376,28 @@
     const standB = [gB.lat, gB.lon];
     const pushA = offsetPoint(gA.lat, gA.lon, gA.heading + 180, gA.push);
     const leadB = offsetPoint(gB.lat, gB.lon, gB.heading + 180, gB.push);
-    // Taxi out along the taxiways to the threshold, and in from where the plane leaves the runway.
-    const outPath = taxiPath(f.from, dep, pushA, 0);
-    const inPath = taxiPath(f.to, arr, leadB, stopM).reverse();
+    // Taxi out along the taxiways onto the runway (from the side, near the threshold: an entry up to 400 m in
+    // where the runway is long enough), and in from the first exit after the plane has slowed down. Before,
+    // planes stopped on the runway and turned round on the spot for an exit behind them.
+    const out = runwayWay(f.from, dep, pushA, false, 0, Math.max(60, Math.min(400, dep.len - need.m)));
+    const inn = runwayWay(f.to, arr, leadB, true, stopM);
+    const lineUp = out.x > 1 ? rwyPoint(dep, out.x, 0) : dep.thr; // where the takeoff run starts
+    const stop = inn.x !== stopM ? rwyPoint(arr, inn.x, 0) : offsetPoint(arr.thr[0], arr.thr[1], arr.hdg, stopM); // where it leaves the runway
+    const near = (p, q) => p && metres(p, q) < 5;
+    const outPath = near(out.path[out.path.length - 1], lineUp) ? out.path.slice(0, -1) : out.path;
+    const inPath = near(inn.path[0], stop) ? inn.path.slice(1) : inn.path;
+    const rollM = Math.min((dep.len - out.x) * 0.85, Math.max(250, vLofMs * vLofMs / 4.4));
+    const lift = offsetPoint(lineUp[0], lineUp[1], dep.hdg, rollM);
+    const climbOut = offsetPoint(dep.end[0], dep.end[1], dep.hdg, ac.speedKmh < 450 ? 2500 : 5000);
+    const faf = offsetPoint(arr.thr[0], arr.thr[1], arr.hdg + 180, FINAL_KM * 1000);
+    const touch = offsetPoint(arr.thr[0], arr.thr[1], arr.hdg, 400);
+
+    const outTurn = turnToward(climbOut, dep.hdg, P(faf), radius);
+    const turnEnd = outTurn.length ? outTurn[outTurn.length - 1] : climbOut;
+    // The arrival turn is built backwards from the final approach fix.
+    const inTurn = turnToward(faf, arr.hdg + 180, P(turnEnd), radius).reverse();
+    const turnStart = inTurn.length ? inTurn[0] : faf;
+
     const cruisePts = [];
     const cruise = distanceKm(P(turnEnd), P(turnStart));
     const n = Math.max(1, Math.ceil(cruise / 25));
@@ -2236,7 +2416,7 @@
     function geometry(orbits) {
       const up = orbits[0] ? circles(climbOut, dep.hdg, radius, orbits[0], sideOut) : [];
       const down = orbits[1] ? [faf, ...circles(faf, arr.hdg, radius, orbits[1], sideIn).slice(0, -1)] : [];
-      const pts = [standA, pushA, ...outPath, dep.thr, lift, dep.end, climbOut, ...up, ...outTurn, ...cruisePts,
+      const pts = [standA, pushA, ...outPath, lineUp, lift, dep.end, climbOut, ...up, ...outTurn, ...cruisePts,
         ...inTurn, ...down, faf, arr.thr, touch, stop, ...inPath, leadB, standB];
       const iThr = 2 + outPath.length;
       const iClimb = iThr + 3; // climbOut
@@ -2399,14 +2579,20 @@
     const tTaxiOut = taxi(sHold - cum[idx.push]);
     const tLineUp = taxi(cum[idx.thr] - sHold) + 0.5;
     const tRoll = 2 * (rollM / 1000) / (pf.vLof / 60);
-    const tLand = 2 * ((cum[idx.stop] - sTouch)) / ((vApp * 0.93 + 30) / 60);
+    // (braking evenly from the touchdown speed to taxi speed at the exit, and taxiing on at that speed:
+    // before, the plane stopped dead on the runway and then pulled away again)
+    const vTouch = vApp * 0.93;
+    const vExit = TAXI_KMH * 1.2;
+    const tLand = 2 * ((cum[idx.stop] - sTouch)) / ((vTouch + vExit) / 60);
     const tTaxiIn = taxi(cum[idx.lead] - cum[idx.stop]);
     const natural = tPush + tTaxiOut + tLineUp + tRoll + raw[steps] + tLand + tTaxiIn + DOCK;
     const total = f.arr - f.dep;
     // Too little time (a long way round): everything goes a little faster.
     const k = Math.min(1, total / natural);
     const wait = Math.max(0, total - natural);
-    const segs = []; // [t0, t1, s0, s1, ease]; 'both' starts and ends at standstill
+    // [t0, t1, s0, s1, ease]; 'both' starts and ends at standstill, [m0, m1] starts and ends at m0 and m1 times
+    // the segment's average speed
+    const segs = [];
     let t = 0;
     const seg = (dt, s0, s1, ease) => { segs.push([t, t + dt, s0, s1, ease]); t += dt; };
     seg(wait, 0, 0, 'both');
@@ -2418,12 +2604,15 @@
     const t1 = t0 + raw[steps] * k;
     const scale = (raw[steps] * k) / raw[steps];
     t = t1;
-    seg(tLand * k, sTouch, cum[idx.stop], 'out');
-    seg(tTaxiIn * k, cum[idx.stop], cum[idx.lead], 'both');
-    seg(Math.max(0, total - t), cum[idx.lead], cum[cum.length - 1], 'both');
+    const landEase = [2 * vTouch / (vTouch + vExit), 2 * vExit / (vTouch + vExit)];
+    seg(tLand * k, sTouch, cum[idx.stop], landEase);
+    // (and on onto the stand at the speed it turns in with, slowing to a stop at the gate)
+    const vDock = (cum[cum.length - 1] - cum[idx.lead]) / DOCK * 60;
+    seg(tTaxiIn * k, cum[idx.stop], cum[idx.lead], [vExit / TAXI_KMH, vDock / TAXI_KMH]);
+    seg(Math.max(0, total - t), cum[idx.lead], cum[cum.length - 1], [1, 0]);
 
     return {
-      pts, cum, idx, cruiseAlt, depRunway: dep, arrRunway: arr, total, orbits, terrainMissing, boarding: wait,
+      pts, cum, idx, cruiseAlt, depRunway: dep, arrRunway: arr, total, orbits, terrainMissing, boarding: wait, landEase,
       glideDeg: Math.round(Math.atan(pr.glide / 3280.84) / Math.PI * 1800) / 10,
       altAt,
       // Ground height (ft) the heights are measured from in the 3D view: between the two runways.
@@ -2444,6 +2633,10 @@
           if (ease === 'in') u *= u;
           if (ease === 'out') u = 1 - (1 - u) * (1 - u);
           if (ease === 'both') u = u * u * (3 - 2 * u);
+          if (Array.isArray(ease)) { // (cubic Hermite: exact for even braking)
+            const [m0, m1] = ease;
+            u = (u * u * u - 2 * u * u + u) * m0 + (3 * u * u - 2 * u * u * u) + (u * u * u - u * u) * m1;
+          }
           return s0 + (s1 - s0) * u;
         }
         return tm < 0 ? 0 : cum[cum.length - 1];
@@ -2542,9 +2735,15 @@
     // speed grows with it (the 3D view rotates the plane over the last part).
     const sThr = tr.cum[tr.idx.thr];
     const rollT = phase === 'takeoff' ? Math.sqrt(Math.min(1, Math.max(0, (sv - sThr) / Math.max(1e-6, sLift - sThr)))) : null;
-    // landT: the same through the landing run (0 touchdown, 1 where it leaves the runway), braking evenly
+    // landT: the same through the landing run (0 touchdown, 1 where it leaves the runway), braking evenly to
+    // taxi speed: distance d = a t + (1 - a) t² (a = tr.landEase[0])
     const sStop = tr.cum[tr.idx.stop];
-    const landT = phase === 'landing' ? 1 - Math.sqrt(1 - Math.min(1, Math.max(0, (sv - sTouch) / Math.max(1e-6, sStop - sTouch)))) : null;
+    let landT = null;
+    if (phase === 'landing') {
+      const d = Math.min(1, Math.max(0, (sv - sTouch) / Math.max(1e-6, sStop - sTouch)));
+      const a = tr.landEase[0];
+      landT = Math.abs(1 - a) < 1e-6 ? d : (-a + Math.sqrt(a * a + 4 * (1 - a) * d)) / (2 * (1 - a));
+    }
     const wind = windAt(pos.lat, pos.lon, t, alt);
     let crab = 0;
     if (!ground) {

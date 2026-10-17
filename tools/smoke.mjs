@@ -568,6 +568,45 @@ try {
   step(`parking: ${park.n} planes on stands, ${park.into.length} with the nose closer than 2.5 m to a wall`);
   if (park.into.length) errors.push(`parking: noses into or right at buildings at Zurich: ${park.into.join(', ')}`);
 
+  step('runway exits: at Zurich, on every runway, a landing A320neo rolls on to an exit at taxi speed and takes off from the side (before: it stopped and turned round on the spot)');
+  const rollout = await evaluate(() => {
+    const bad = [];
+    const hdg = (a, b) => G.bearing({ lat: a[0], lon: a[1] }, { lat: b[0], lon: b[1] });
+    const km = (a, b) => G.distanceKm({ lat: a[0], lon: a[1] }, { lat: b[0], lon: b[1] });
+    // the sharpest turn between stretches longer than 3 m
+    const sharpest = (pts) => {
+      let most = 0;
+      let h0 = null;
+      for (let i = 1; i < pts.length; i++) {
+        if (km(pts[i - 1], pts[i]) < 0.003) continue;
+        const h = hdg(pts[i - 1], pts[i]);
+        if (h0 !== null) most = Math.max(most, Math.abs(((h - h0 + 540) % 360) - 180));
+        h0 = h;
+      }
+      return most;
+    };
+    const choices = G.runwayChoices('A320neo', 'ZRH').filter((c) => c.ok);
+    for (const c of choices) {
+      const tr = G.legTrack('A320neo', 'GVA', 'ZRH', { to: c.key });
+      const { pts, idx, cum } = tr;
+      const land = pts.filter((_, i) => i >= idx.touch && cum[i] - cum[idx.stop] < 0.3);
+      if (sharpest(land) > 150) bad.push(`${c.name}: turns ${Math.round(sharpest(land))}° after landing`);
+      const t2 = G.legTrack('A320neo', 'ZRH', 'GVA', { from: c.key });
+      const up = t2.pts.filter((_, i) => i <= t2.idx.lift && t2.cum[t2.idx.thr] - t2.cum[i] < 0.15);
+      if (sharpest(up) > 150) bad.push(`${c.name}: turns ${Math.round(sharpest(up))}° lining up`);
+      // never standing still between touchdown and the gate: the landing run ends at taxi speed
+      const p = { id: 'leg:A320neo', type: 'A320neo', flight: { from: 'GVA', to: 'ZRH', dep: 0, arr: tr.total, rw: { to: c.key } } };
+      let m = 0;
+      while (m < tr.total && tr.sAt(m) < cum[idx.stop]) m += 0.05;
+      const exit = G.flightState(p, m).speedKmh;
+      if (exit < 15) bad.push(`${c.name}: ${exit} km/h where it leaves the runway`);
+    }
+    return { n: choices.length, bad };
+  });
+  step(`runway exits: ${rollout.n} runways at Zurich, ${rollout.bad.length} with a turn round on the spot or a stop`);
+  if (!rollout.n) errors.push('runway exits: no runway at Zurich for an A320neo');
+  if (rollout.bad.length) errors.push(`runway exits at Zurich: ${rollout.bad.join('; ')}`);
+
   step('Fleet: Ferry there (to the other slot airport) says when the plane leaves');
   const ferry = await evaluate(async () => {
     const p = G.state.planes[0];
