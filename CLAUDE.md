@@ -93,10 +93,8 @@ Play online: https://noname-ch.github.io/flightgame/ (GitHub Pages, deployed fro
   local time from `js/data/timezones.js` (built by `tools/build_timezones.py` from GeoNames: UTC offsets in winter
   and summer and the days the clocks change; airports missing there take their nearest neighbour's): `G.utcOffset(code,
   t)`, `G.utcOf(t)`, `G.localTime(code, t)`, `G.fmtLocal`, `G.fmtZone`. `G.sunPoint(t)`, `G.sunAt(lat, lon, t, sp)`
-  (elevation, azimuth), `G.daylight(lat, lon, t, sp)` (1 day … 0 night), `G.sunTimes(code, t)`. Timetables keep
-  home-base times; `C.curfew` is local at the departure airport: `G.curfewOpen(code, t)`, `G.curfewOpensAt`,
-  `G.aheadOf(code, t)` (minutes ahead of home, today's: timetable times are times of day), `curfewStarts` for the fit;
-  the planner's first-departure slider is local at the first stop (`toLocal`/`toHome` in planner.js). js/daynight.js (`FG.daynight`) draws the night on the 2D map (pane 'night',
+  (elevation, azimuth), `G.daylight(lat, lon, t, sp)` (1 day … 0 night), `G.sunTimes(code, t)`. Timetables and
+  `C.curfew` still run on home-base time. js/daynight.js (`FG.daynight`) draws the night on the 2D map (pane 'night',
   under the game's layers; the "Day and night" overlay, `FG.daynight.enabled()` also switches the 3D night).
   view3d.js `daylight3d(map, layer, lat, lon, t, now, weather)` lights the planes from the sun every frame and, on a
   change, sets the sky (`skyOf(w, sun)`), `fg-night` (a dark flat layer over the ground), `fg-runway-lights` /
@@ -159,7 +157,15 @@ Play online: https://noname-ch.github.io/flightgame/ (GitHub Pages, deployed fro
   `livAil`/`livFlap`/`livElev`/`livRud`. Flaps are cut out of the wing's geometry (`cutFlaps`: two straight parts
   fitted to the strips, none behind nacelles that reach past the trailing edge, none on a delta; their vertices are
   their own, `livSurf.w` = flap chord, 0 for the old uncut kind) and slide back and down as they turn; FRAG_BODY
-  paints them in the wing's livery with darker seams (`vLivFlap`, `livFlapSpan`). These `OWN_UNIFORMS` are per material: each drawn aircraft gets its own copies
+  paints them in the wing's livery with darker seams (`vLivFlap`, `livFlapSpan`). Thrust reversers: `markEngines` makes
+  each jet engine from its cowlings (overlapping ones, and pieces in line behind each other; only round ones with a
+  fan or core inside and about the biggest size: not the A350's wing tip, not Concorde's twin nacelles) and gives
+  their vertices `livEng` (axis x, z, radius, 0 at the lip .. 1 at the exhaust) and `livEngL` (length);
+  `scene.userData.revX` lists the engines' |x|. The shader moves them by `livRev` (0..1) as `livRevKind` says (1 sleeve
+  slides back, 2 four doors swing out, 3 two buckets close behind the exhaust) on the engines `livRevX` picks; the
+  opening is painted dark and ribbed (`vLivRev`). Each type's kind is `FG.data.reversers` (js/data/reversers.js,
+  `reverserOf`, `reverserText`); view3d.js `reverserUniforms(type, scene)` and `revTarget(pose)` (touchdown to 60 kt),
+  sound.js `profile().rev` (share of the thrust that reverses) and `.flat`. These `OWN_UNIFORMS` are per material: each drawn aircraft gets its own copies
   (view3d.js `ownMaterials`), set in `placeModel` from `wingFlex`, `propRate` and `surfaceAngles` (the elevators are
   pulled for the rotation, the climb-out, the flare and the nose wheel coming down, besides following the pitch rate). The fuselage width
   (`measure`) falls back to `FG.data.modelSize` where nacelles reach forward (DC-3, Ju 52, Twin Otter).

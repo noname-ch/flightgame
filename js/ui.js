@@ -1460,6 +1460,7 @@
           <div><dt>Crew</dt><dd>${G.fmtMoney(G.crewFor(o.type).weeklySalary)}/wk</dd></div>
           <div><dt>Stand</dt><dd title="${look.span} m wingspan: it needs a stand (and a slot) of class ${G.CLASSES[G.typeClass(o.type)]} or bigger">class ${G.CLASSES[G.typeClass(o.type)]} · ${look.span} m</dd></div>
           <div><dt>Runway</dt><dd>${G.runwayNeed(o.type).m.toLocaleString('de-CH')} m${G.runwayNeed(o.type).paved ? '' : ' (grass ok)'}</dd></div>
+          <div><dt>Reversers</dt><dd>${D.reverserText(o.type)}</dd></div>
           <div><dt>Lease rate</dt><dd>${G.fmtMoney(ac.leasePerWeek)}/wk</dd></div>
         </dl>
         <div class="mk-delivery">${fits ? mkDelivery(o, at) : room ? `<span class="neg">${room}</span>`

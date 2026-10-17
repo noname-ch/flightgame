@@ -367,6 +367,47 @@ function markEngines(scene, hw, file) {
   // (the shader paints the lip bare metal and the exhaust grey); what is inside it (fan, spinner) is 5 and keeps
   // the model's own colours. A turboprop's nacelle is plain 1.
   const marked = new Map(meshes.map((m) => [m, new Map()]));
+  // Thrust reversers (the shader moves them: livRev): an engine's cowlings together make one engine, round its
+  // axis. The radius is the box's narrower side: a pylon makes it taller (under a wing) or wider (on the tail), so
+  // the axis is that far from the side away from the pylon.
+  const revs = [];
+  if (jet) {
+    for (const c of cowlings) {
+      const e = revs.find((e) => e.cowls.some((d) => d.box[0] < c.box[1] && c.box[0] < d.box[1] && d.box[2] < c.box[3] && c.box[2] < d.box[3] && d.box[4] < c.box[5] && c.box[4] < d.box[5]));
+      if (e) { e.cowls.push(c); for (let k = 0; k < 6; k += 2) { e.box[k] = Math.min(e.box[k], c.box[k]); e.box[k + 1] = Math.max(e.box[k + 1], c.box[k + 1]); } }
+      else revs.push({ cowls: [c], box: [...c.box] });
+    }
+    const axis = (e) => {
+      const b = e.box, dx = b[1] - b[0], dz = b[5] - b[4], side = Math.sign(b[0] + b[1]);
+      e.r = Math.min(dx, dz) / 2;
+      e.x = dz > dx ? (b[0] + b[1]) / 2 : side > 0 ? b[1] - e.r : b[0] + e.r;
+      e.z = dx > dz ? (b[4] + b[5]) / 2 : b[4] + e.r;
+      e.len = b[3] - b[2];
+    };
+    revs.forEach(axis);
+    // (a nacelle in pieces one behind the other, the CRJ's intake and its rear, is one engine)
+    for (let i = 0; i < revs.length; i++) for (let j = revs.length - 1; j > i; j--) {
+      const a = revs[i], c = revs[j], r = Math.max(a.r, c.r);
+      if (Math.abs(a.x - c.x) > 0.5 * r || Math.abs(a.z - c.z) > 0.5 * r || Math.max(a.box[2], c.box[2]) - Math.min(a.box[3], c.box[3]) > 2 * r) continue;
+      a.cowls.push(...c.cowls);
+      for (let k = 0; k < 6; k += 2) { a.box[k] = Math.min(a.box[k], c.box[k]); a.box[k + 1] = Math.max(a.box[k + 1], c.box[k + 1]); }
+      axis(a);
+      revs.splice(j, 1);
+    }
+    // (only round nacelles with something in them, a fan or a core: not the A350's wing tip, nor Concorde's
+    // nacelles, two engines side by side)
+    const inside = new Set([...engine].filter(([p]) => !cowlings.includes(p)).map(([, box]) => box));
+    for (let i = revs.length - 1; i >= 0; i--) {
+      const b = revs[i].box, q = (b[1] - b[0]) / (b[5] - b[4]);
+      if (q < 0.8 || q > 1.25 || !revs[i].cowls.some((c) => inside.has(c.box))) revs.splice(i, 1);
+    }
+    // (an airliner's engines are all alike: something much smaller is not one)
+    const big = Math.max(0, ...revs.map((e) => e.r));
+    for (let i = revs.length - 1; i >= 0; i--) if (revs[i].r < 0.75 * big) revs.splice(i, 1);
+  }
+  scene.userData.revX = revs.map((e) => Math.abs(e.x)).sort((a, b) => a - b);
+  scene.userData.revEngines = revs.map((e) => ({ x: e.x, y: (e.box[2] + e.box[3]) / 2, z: e.z, r: e.r, len: e.len, ratio: (e.box[1] - e.box[0]) / (e.box[5] - e.box[4]), n: e.cowls.length }));
+  const revOf = new Map(revs.flatMap((e) => e.cowls.map((c) => [c.box, e])));
   for (const [p, cowl] of engine) {
     marked.get(p.mesh).set(p.root, { box: cowl, inner: !cowlings.some((c) => c === p) });
   }
@@ -394,6 +435,17 @@ function markEngines(scene, hw, file) {
       if (h) hub.set([h[0], h[1], 1], i * 3);
     }
     m.geometry.setAttribute('livHub', new THREE.BufferAttribute(hub, 3));
+    // a jet's cowlings: livEng (the engine's axis x, z, its radius, how far back: 0 at the inlet lip, 1 at the
+    // exhaust) and livEngL (its length)
+    const eng = new Float32Array(root.length * 4), engL = new Float32Array(root.length);
+    if (cowls.size) for (let i = 0; i < root.length; i++) {
+      const c = cowls.get(root[i]), e = c && !c.inner && revOf.get(c.box);
+      if (!e) continue;
+      eng.set([e.x, e.z, e.r, Math.min(1, Math.max(0, (e.box[3] - pos.getY(i)) / e.len))], i * 4);
+      engL[i] = e.len;
+    }
+    m.geometry.setAttribute('livEng', new THREE.BufferAttribute(eng, 4));
+    m.geometry.setAttribute('livEngL', new THREE.BufferAttribute(engL, 1));
   }
   // (a model in one piece has no propellers to turn)
   scene.userData.props = 0;
@@ -401,6 +453,10 @@ function markEngines(scene, hw, file) {
     if (!o.isMesh) return;
     if (!o.geometry.attributes.livHub) {
       o.geometry.setAttribute('livHub', new THREE.BufferAttribute(new Float32Array(o.geometry.attributes.position.count * 3), 3));
+    }
+    if (!o.geometry.attributes.livEng) {
+      o.geometry.setAttribute('livEng', new THREE.BufferAttribute(new Float32Array(o.geometry.attributes.position.count * 4), 4));
+      o.geometry.setAttribute('livEngL', new THREE.BufferAttribute(new Float32Array(o.geometry.attributes.position.count), 1));
     }
     scene.userData.props += o.geometry.userData.livProps || 0;
   });
@@ -1065,6 +1121,12 @@ uniform float livAil;      // aileron (radians, rolling right: the right one up)
 uniform float livFlap;     // flaps (radians, down)
 uniform float livElev;     // elevators (radians, trailing edge down)
 uniform float livRud;      // rudder (radians, trailing edge to the right)
+attribute vec4 livEng;     // of a jet's cowling: the engine's axis x, z, its radius (0: not one), 0 at the inlet lip .. 1 at the exhaust
+attribute float livEngL;   // ... and its length
+uniform float livRev;      // thrust reversers: 0 stowed .. 1 deployed
+uniform float livRevKind;  // 0 none, 1 translating sleeve (cascade), 2 pivoting doors, 3 target buckets
+uniform float livRevX;     // on which engines: 0 all, above 0 those nearer than it (|axis x|), below 0 those further out than -it
+varying float vLivRev;     // 1 on a moved part of a reverser (faces between it and the fixed cowl are the opening)
 varying vec3 vLivPos;
 varying vec3 vLivNor;
 varying float vLivPart;
@@ -1082,6 +1144,43 @@ if (livHub.z > 0.5) {
   float livC = cos(livSpin);
   float livS = sin(livSpin);
   transformed.xz = livHub.xy + vec2(livC * livR.x - livS * livR.y, livS * livR.x + livC * livR.y);
+}
+vLivRev = 0.0;
+if (livEng.z > 0.0 && livRev > 0.001 && livRevKind > 0.5 &&
+    (livRevX == 0.0 || (livRevX > 0.0 ? abs(livEng.x) < livRevX : abs(livEng.x) > -livRevX))) {
+  vec2 livD = transformed.xz - livEng.xy;   // out from the engine's axis
+  float livR = length(livD);
+  float livT = livEng.w;
+  if (livRevKind < 1.5) {
+    // translating sleeve: the outer skin of the rear of the cowl slides back, opening a band of cascade vanes
+    if (livT > 0.45 && livR > 0.75 * livEng.z) { transformed.y -= 0.2 * livEngL * livRev; vLivRev = 1.0; }
+  } else if (livRevKind < 2.5) {
+    // pivoting doors: four (upper and lower, left and right) turn about a hinge across them, their rear edges out
+    // (their sides round off: on a coarse cowl hard edges made jagged holes)
+    float livW = 1.0 - smoothstep(0.3, 0.6, abs(mod(atan(livD.y, livD.x), 1.5708) - 0.7854));
+    if (livT > 0.5 && livT < 0.8 && livW > 0.0 && livR > 0.75 * livEng.z) {
+      float livA = 0.6 * livRev * livW;
+      float livHy = transformed.y + (livT - 0.6) * livEngL;
+      vec2 livP = vec2(transformed.y - livHy, livR - livEng.z);
+      vec2 livN = vec2(livP.x * cos(livA) + livP.y * sin(livA), livP.y * cos(livA) - livP.x * sin(livA));
+      transformed.y = livHy + livN.x;
+      transformed.xz = livEng.xy + livD / max(livR, 1e-6) * (livEng.z + livN.y);
+      vLivRev = livW;
+    }
+  } else if (livT > 0.8) {
+    // target buckets: the rear of the exhaust in two halves, upper and lower, swings back and shut behind it
+    float livHy = transformed.y + (livT - 0.8) * livEngL;
+    float livB = (livD.y >= 0.0 ? 1.0 : -1.0) * min(1.1, atan(livEng.z, 0.2 * livEngL)) * livRev;
+    float livC = cos(livB);
+    float livS = sin(livB);
+    vec2 livP = vec2(transformed.y - livHy, livD.y);
+    transformed.y = livHy + livC * livP.x - livS * livP.y;
+    transformed.z = livEng.y + livS * livP.x + livC * livP.y;
+    vLivRev = 1.0;
+    #if !defined(FLAT_SHADED) && (defined(STANDARD) || defined(PHONG) || defined(LAMBERT) || defined(TOON))
+    vNormal = normalize(normalMatrix * vec3(objectNormal.x, livC * objectNormal.y - livS * objectNormal.z, livS * objectNormal.y + livC * objectNormal.z));
+    #endif
+  }
 }
 vLivFlap = vec2(0.0);
 if (livSurf.x > 0.5) {
@@ -1156,6 +1255,7 @@ varying vec3 vLivPos;
 varying vec3 vLivNor;
 varying float vLivPart;
 varying vec2 vLivFlap;
+varying float vLivRev;
 uniform vec3 livFlapSpan; // the flaps are between these |x|, in two parts split FLAP_BREAK of the way out
 `;
 const FRAG_BODY = `
@@ -1202,6 +1302,11 @@ const FRAG_BODY = `
     float back = vLivPart - 1.01;
     if (back > -0.005 && back < 0.06) paint = livLip;
     else if (back > 0.86) paint = livNozzle;
+    // a thrust reverser's opening (between its moved part and the fixed cowl): dark, ribbed by the cascade vanes
+    if (vLivRev > 0.02 && vLivRev < 0.98) {
+      paint = mix(vec3(0.07, 0.075, 0.08), vec3(0.2, 0.21, 0.22), step(0.6, fract(vLivRev * 7.0)));
+      detail = 0.0;
+    }
   }
   // propellers: the blades in their thin disc, yellow at the tips, and the spinner in front, over the
   // model's own colours
@@ -1256,7 +1361,7 @@ const FRAG_BODY = `
 const NOISY = { cs100: 1, cs300: 1 };
 
 // Uniforms each material has its own of (in its userData), for the aircraft drawn with it.
-export const OWN_UNIFORMS = ['livFlex', 'livSpin', 'livAil', 'livFlap', 'livElev', 'livRud'];
+export const OWN_UNIFORMS = ['livFlex', 'livSpin', 'livAil', 'livFlap', 'livElev', 'livRud', 'livRev', 'livRevKind', 'livRevX'];
 
 // Paints a loaded model in a livery (its materials are changed in place; clones of the model share them).
 // `extra(shader)` can patch the shader further.

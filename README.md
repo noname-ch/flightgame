@@ -60,9 +60,8 @@ left last time. On a phone a click shows the plane's card in Fleet instead.
 local time there. The sun rises and sets where it really does: the night moves west over the 2D map, and in 3D the
 sky turns orange at dusk and dark at night, the ground and buildings darken, terminal windows, runway edges and
 taxiway centre lines light up, and planes show their red and green position lights, flashing beacons, strobes and
-landing lights. Settings → On the map → *Day and night* turns it off. Timetables are planned on your home base's
-clock, but the **night curfew** (no departures 22:00–06:00) is in each airport's local time: the planner's start time
-is local at the first airport, and a plane waits at an airport until morning there.
+landing lights. Settings → On the map → *Day and night* turns it off. (Timetables and the night curfew still run on
+home-base time.)
 
 **Weather**: clouds drift over both maps, from fair-weather puffs to grey rain bands and thunderstorms, and the
 storms in the newspaper show up as real storms. It is made up but steady: it drifts east, changes over a day or two,
@@ -84,7 +83,8 @@ Settings → On the map → *Clouds and weather* turns it all off.
 planes more than about a kilometre off turn into): jets whine up on the starter during the
 pushback, the igniters tick, the engines light and settle to idle; a burst of thrust gets them rolling on the
 taxiway, take-off power roars (deep, rumbling from behind, buzzing ahead of a big fan), then climb and cruise power
-with the air rushing past, a whoosh on the descent, power again on the approach, reverse thrust after the tyres chirp, and the whine running
+with the air rushing past, a whoosh on the descent, power again on the approach, reverse thrust after the tyres chirp (as much as the type
+really has: none on a BAe 146, half the engines on an A380, flat-pitch propellers on the old Dart turboprops), and the whine running
 down at the gate. Turboprops buzz (two propellers a little out of tune), old ones whistle; piston radials crank,
 cough, catch and run rough until warm. APUs hum at the gates. You hear what you look at: zoomed in on an airport its
 planes, zoomed out nothing; the plane you follow (2D or 3D, or the plane window's camera) from close behind, the
@@ -440,6 +440,8 @@ All content is plain data:
 - `js/data/story.js` – story mode: a newspaper line for each new type, and the rival airlines' aircraft by era
 - `js/data/factories.js` – where each type is built (delivery flights start there)
 - `js/data/looks.js` – side-view shape of each type, drawn by `js/hangar.js`
+- `js/data/reversers.js` – each type's thrust reversers (cascade sleeve, pivoting doors, clamshell buckets, reverse-pitch
+  propellers, ground fine pitch or none, and on which engines): moved in 3D, heard, named in the market and plane window
 - `js/data/models.js` – 3D model of each type (a file, `models/*.glb`)
   and the real size of each model (`modelSize`), so that a type flying a relative's model is
   stretched to its own length. Each type's hangar picture (`models/hangar/*.webp`) and map icon

@@ -205,6 +205,11 @@
       // (the whines: fan from fanLo at idle to fanHi at full power, about an octave; the core lower still)
       pr = { kind: 'jet', old, fan, fanLo: fan * 0.26, fanHi: fan * 0.5, shaft: fan / (look.bigFan ? 20 : 30), core: (old ? 2600 : 2200) * j, apu: true, afterburner: eng === 'concorde' };
     }
+    // its thrust reversers (FG.data.reversers): rev = how much of its thrust reverses (some on only part of the
+    // engines), flat = propellers to ground fine pitch only
+    const rv = D.reverserOf ? D.reverserOf(type) : { kind: 'cascade' };
+    pr.rev = rv.kind === 'none' || rv.kind === 'flat' ? 0 : rv.on === 'center' ? 1 / 3 : rv.on === 'sides' ? 2 / 3 : rv.on ? 0.5 : 1;
+    pr.flat = rv.kind === 'flat';
     pr.size = Math.min(1.25, 0.5 + Math.sqrt(ac.seats || 100) / 25) * (four ? 1.1 : 1);
     pr.type = type;
     return (profiles[type] = pr);
@@ -217,7 +222,7 @@
     const agl = Math.max(0, (st.altFt || 0) - (st.fieldFt || 0)) * 0.3048;
     const jet = pr.kind === 'jet';
     const pis = pr.kind === 'piston';
-    const L = (jp, tp, tn, pp, pn, rev = 0) => (jet ? { pw: jp, np: 0, rev } : pis ? { pw: pp, np: pn, rev: 0 } : { pw: tp, np: tn, rev });
+    const L = (jp, tp, tn, pp, pn, rev = 0) => (jet ? { pw: jp, np: 0, rev } : pis ? { pw: pp, np: pn, rev } : { pw: tp, np: tn, rev });
     switch (st.phase) {
       case 'pushback': return L(IDLE, 0.06, 0.7, 0.1, 0.26);
       case 'taxi-out': case 'taxi-in': return L(IDLE + 0.13 * accel, 0.08 + 0.14 * accel, 0.72, 0.12 + 0.18 * accel, 0.3 + 0.14 * accel);
@@ -228,8 +233,12 @@
       case 'approach':
         if (agl < 12) return L(IDLE + 0.04, 0.12, 1, 0.15, 0.5); // "retard": over the threshold, power off
         return agl > 700 ? L(0.4, 0.3, 0.9, 0.35, 0.7) : L(0.56, 0.4, 1, 0.45, 0.85); // gear and flaps out
-      case 'landing': // reversers until about 60 kt
-        return st.speedKmh > 110 ? L(0.72, 0.55, 1, 0.12, 0.4, 1) : L(IDLE, 0.08, 0.75, 0.12, 0.3);
+      case 'landing': { // reversers until about 60 kt (pr.rev of the thrust: the engines with them), else brakes only
+        const r = pr.rev || 0;
+        if (st.speedKmh <= 110) return L(IDLE, 0.08, 0.75, 0.12, 0.3);
+        if (pr.flat) return L(IDLE, 0.1, 1, 0.12, 0.4); // ground fine: the propellers roar, the engines idle
+        return L(IDLE + (0.72 - IDLE) * r, 0.08 + 0.47 * r, r ? 1 : 0.75, 0.12 + 0.43 * r, 0.3 + 0.55 * r, r);
+      }
       default: return L(IDLE, 0.06, 0.7, 0.1, 0.26);
     }
   }

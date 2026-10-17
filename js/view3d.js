@@ -198,6 +198,7 @@ function planeModel(type) {
     const size = modelSize(type);
     model.scale.set(size.wide, size.len, size.wide);
     g.userData.liv = ownMaterials(model);
+    g.userData.rev = reverserUniforms(type, scene);
     // On the ground it stands on its wheels: how far they are below its middle (m), and the gear to raise.
     model.updateMatrixWorld(true);
     g.userData.lift = -new THREE.Box3().setFromObject(model).min.z;
@@ -343,6 +344,22 @@ function ownMaterials(model) {
   });
   return [...copies.values()].map((m) => m.userData);
 }
+
+// A type's thrust reversers (FG.data.reversers) on its model: livRevKind and livRevX of js/livery.js. Where only some
+// engines have them, the model's engines (scene.userData.revX: their distances from the middle, nearest first) say
+// which: inner ones on a four-engined model, the outer one of each pair, or the side engines of a tri-jet (its tail
+// engine is in the fuselage, not one of the model's). A model with fewer engines than the type shows them on all it has.
+const REV_KINDS = { cascade: 1, doors: 2, buckets: 3 };
+function reverserUniforms(type, scene) {
+  const r = D.reverserOf ? D.reverserOf(type) : { kind: 'none' };
+  const xs = scene.userData.revX || [];
+  let x = 0;
+  if ((r.on === 'inner' || r.on === 'outer') && xs.length >= 4) x = (r.on === 'inner' ? 1 : -1) * (xs[1] + xs[2]) / 2;
+  else if (r.on === 'center') x = xs.length ? xs[0] / 2 : 0;   // (none of the model's)
+  return { kind: REV_KINDS[r.kind] || 0, x, prop: r.kind === 'prop' };
+}
+// Reversers out (0..1) for a pose: from touchdown down to about 60 kt.
+const revTarget = (pose) => (pose.st && pose.st.phase === 'landing' && pose.st.ground && pose.st.speedKmh > 110 ? 1 : 0);
 
 // How fast the propellers and fans turn (rad/s, js/livery.js livHub): off at the gate, slow while taxiing, fastest
 // for take-off and climb.
@@ -1201,7 +1218,12 @@ function placeModel(e, pose, altM, exag, globe, now, lineUp) {
     e.flex = e.flex == null ? target : e.flex + (target - e.flex) * k;
     // propellers and fans spin up and down with the engines (looks only: slow enough not to strobe)
     const dt = e.lastFrame == null ? 0 : Math.min(0.25, Math.max(0, (now - e.lastFrame) / 1000));
-    e.spinRate = (e.spinRate || 0) + (propRate(pose) - (e.spinRate || 0)) * (1 - Math.exp(-dt / 1.5));
+    // thrust reversers deploy in about a second and stow again below 60 kt; reversing propellers spin up
+    const rev = e.obj.userData.rev;
+    e.rev = (e.rev || 0) + (revTarget(pose) - (e.rev || 0)) * (1 - Math.exp(-dt / 0.4));
+    if (e.rev < 0.002) e.rev = 0;
+    const rate = propRate(pose) * (rev && rev.prop ? 1 + 0.5 * e.rev : 1);
+    e.spinRate = (e.spinRate || 0) + (rate - (e.spinRate || 0)) * (1 - Math.exp(-dt / 1.5));
     e.spin = ((e.spin || 0) + e.spinRate * dt) % (2 * Math.PI);
     // control surfaces move over a few tenths of a second, flaps over a few seconds
     const c = surfaceAngles(pose, toGo);
@@ -1216,6 +1238,9 @@ function placeModel(e, pose, altM, exag, globe, now, lineUp) {
       u.livFlap.value = e.ctl.flap;
       u.livElev.value = e.ctl.elev;
       u.livRud.value = e.ctl.rud;
+      u.livRev.value = rev ? e.rev : 0;
+      u.livRevKind.value = rev ? rev.kind : 0;
+      u.livRevX.value = rev ? rev.x : 0;
     }
   }
   e.lastFrame = now;

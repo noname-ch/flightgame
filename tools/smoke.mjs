@@ -372,9 +372,6 @@ try {
   const dn = await evaluate(() => {
     const out = { jfk: G.utcOffset('JFK', 0), syd: G.utcOffset('SYD', 0), ktm: G.utcOffset('KTM', 0), jfkJul: G.utcOffset('JFK', 190 * 1440) };
     const bern = G.sunTimes('BRN', 0);
-    // the night curfew is local: New York at 21:00 and 23:00 its time
-    const day = Math.floor(G.state.time / 1440) * 1440, ny = G.aheadOf('JFK', G.state.time);
-    out.curfew = [G.curfewOpen('JFK', day + 21 * 60 - ny), G.curfewOpen('JFK', day + 23 * 60 - ny)];
     out.rise = bern && bern.rise;
     out.on = FG.daynight.enabled();
     FG.ui.map.setView([20, 0], 1, { animate: false });
@@ -389,7 +386,6 @@ try {
     return out;
   });
   if (dn.jfk !== -300 || dn.jfkJul !== -240 || dn.syd !== 660 || dn.ktm !== 345) errors.push(`time zones: ${JSON.stringify(dn)}`);
-  if (!dn.curfew[0] || dn.curfew[1]) errors.push(`night curfew at New York not in its local time: open at 21:00 ${dn.curfew[0]}, at 23:00 ${dn.curfew[1]}`);
   if (!dn.rise || dn.rise < '08:00' || dn.rise > '08:30') errors.push(`sunrise at Bern on 1 January: ${dn.rise} (about 08:15)`);
   if (!dn.on || !dn.alpha || dn.alpha[0] > 20 || dn.alpha[1] < 120) errors.push(`2D night: no day and night side on the world map (${JSON.stringify(dn)})`);
   else step(`local time: JFK UTC${dn.jfk / 60} (summer ${dn.jfkJul / 60}), Sydney +${dn.syd / 60}, Kathmandu +${dn.ktm / 60}; sunrise at Bern ${dn.rise}`);
@@ -410,7 +406,7 @@ try {
     if (!p) return { none: true };
     const f = p.flight;
     const pr = FG.sound.profile(p.type);
-    const seen = { starter: false, lit: false, apu: !pr.apu, takeoff: 0, cruise: 0, rev: pr.kind === 'piston', bad: [] };
+    const seen = { starter: false, lit: false, apu: !pr.apu, takeoff: 0, cruise: 0, rev: !pr.rev, bad: [] }; // (a type without reversers: js/data/reversers.js)
     for (let t = f.dep; t < f.arr; t += 0.1) {
       const e = FG.sound.engines(p, t);
       for (const k of ['run', 'pw', 'np', 'n2']) if (!Number.isFinite(e[k] || 0) || (e[k] || 0) < 0 || (e[k] || 0) > 1.01) seen.bad.push(`${k} ${e[k]} at ${e.phase}`);
@@ -1039,6 +1035,25 @@ try {
     }
     // (the flaps are cut out of the wing, so they slide back on their own and are painted apart: cutFlaps)
     for (const file of ['atr42', 'q400', 'a320']) if (!(parts[file].flapFaces > 0)) errors.push(`3D flaps: ${file} has no flaps cut out of its wing`);
+
+    step("3D thrust reversers: every type has its kind; each engine found once (the CRJ's nacelle in two pieces, not the A350's wing tip, not Concorde's twin nacelles); the A380's four found)");
+    const revs = await evaluate(async () => {
+      const m = await import('/js/models3d.js');
+      const D = FG.data;
+      const out = { missing: Object.keys(D.aircraft).filter((t) => !D.reversers[t]), engines: {}, own: 0, drawn: 0 };
+      for (const type of ['A320', 'B737-800', 'CRJ900', 'A350-900', 'A380-800', 'CONCORDE']) out.engines[type] = ((await m.loadModel(type)).userData.revX || []).length;
+      for (const e of Object.values(FG.view3d.planes)) {
+        const u = e.obj.userData.liv;
+        if (!u || !u.length) continue;
+        out.drawn++;
+        if (u.every((x) => x.livRev && x.livRevKind && x.livRevX)) out.own++;
+      }
+      return out;
+    });
+    if (revs.missing.length) errors.push(`3D thrust reversers: no kind for ${revs.missing.join(', ')}`);
+    const wantEngines = { A320: 2, 'B737-800': 2, CRJ900: 2, 'A350-900': 2, 'A380-800': 4, CONCORDE: 0 };
+    for (const [t, n] of Object.entries(wantEngines)) if (revs.engines[t] !== n) errors.push(`3D thrust reversers: ${t} has ${revs.engines[t]} engines found, not ${n}`);
+    if (revs.own !== revs.drawn) errors.push(`3D thrust reversers: ${revs.drawn - revs.own} of ${revs.drawn} drawn aircraft without their own livRev uniforms`);
 
     step('3D night: the dark ground as dark as the sun says where the camera is; the aircraft have their lights');
     await sleep(1500);

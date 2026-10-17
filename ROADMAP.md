@@ -14,7 +14,8 @@ realistic flight tracks in 2D and 3D, AI rival airlines, random events and a dev
   draws them; `js/view3d.js` only draws ours. Same models, painted in the rival's colour.
 - [ ] **A profit table per route** (S). Planes keep totals (`p.stats`), but there is no list of routes with
   load factor, revenue, cost and profit per week, sortable. It would show at a glance what to cut.
-- [ ] **Curfews per airport** (S/M). `C.curfew` is 06:00–22:00 everywhere (in each airport's local time). Real airports differ:
+- [ ] **Curfews per airport** (S/M). `C.curfew` is the same 06:00–22:00 everywhere, in home-base time (every airport
+  has its own local time now, `G.localTime`: curfews could follow it). Real airports differ:
   Zurich closes at 23:30, Frankfurt and London have night quotas, many hubs are open all night. Hand-written
   for the main airports, a default by size for the rest.
 - [ ] **Loans** (S). Today there is only the bankruptcy limit. A bank loan with interest and a credit
@@ -113,6 +114,10 @@ realistic flight tracks in 2D and 3D, AI rival airlines, random events and a dev
 
 Recent milestones, newest first (see `git log` for the rest):
 
+- Thrust reversers on every type, each its own kind: in 3D the sleeves of big fans slide back over the cascade vanes,
+  the A320ceo's four doors swing out, the old jets' buckets close behind the exhaust (on the A380 and A340-600 only the
+  inner engines, on the Il-62, VC10 and Comet the outer ones); the reverse roar as loud as the engines that have them,
+  propellers to reverse pitch or ground fine; named in the market and the plane window
 - Local time and day and night: every airport keeps its own clock (time zones with summer time), the sun rises
   and sets where it really does, the night moves over the 2D map, and in 3D the sky, ground and buildings darken
   with lit runways, taxiways and windows and the planes' position lights, beacons, strobes and landing lights
