@@ -383,6 +383,38 @@
     const h = Math.floor(Math.abs(m) / 60);
     return `UTC${m < 0 ? '−' : '+'}${h}${Math.abs(m) % 60 ? `:${pad(Math.abs(m) % 60)}` : ''}`;
   }
+  // Minutes an airport's clock is ahead of the home base's, today (kept per game day: it only changes with summer
+  // time). Today's, whatever t is: timetables keep times of the day (t from 0), and those fly today.
+  const aheadCache = new Map();
+  let aheadDay = -1;
+  function aheadOf(code, t) {
+    const now = Game.state ? Game.state.time : t;
+    const day = Math.floor(now / DAY);
+    if (day !== aheadDay) { aheadCache.clear(); aheadDay = day; }
+    const key = `${homeCode()}|${code}`;
+    let a = aheadCache.get(key);
+    if (a == null) { a = utcOffset(code, now) - utcOffset(homeCode(), now); aheadCache.set(key, a); }
+    return a;
+  }
+  // The night curfew is in local time: departures from an airport only between C.curfew.start and end there.
+  const localTod = (code, t) => (((t + aheadOf(code, t)) % DAY) + DAY) % DAY;
+  function curfewOpen(code, t) {
+    const tod = localTod(code, t);
+    return tod >= C.curfew.start && tod <= C.curfew.end;
+  }
+  // When planes may next leave an airport (game time; t itself while its curfew is open).
+  function curfewOpensAt(code, t) {
+    return curfewOpen(code, t) ? t : t + (((C.curfew.start - localTod(code, t)) % DAY) + DAY) % DAY;
+  }
+  // An airport's curfew window on the home base's clock ("12:00–04:00"), for messages.
+  const homeClock = (m) => fmtClock(Math.round(((m % DAY) + DAY) % DAY));
+  const curfewHome = (code, t) => `${homeClock(C.curfew.start - aheadOf(code, t))}–${homeClock(C.curfew.end - aheadOf(code, t))}`;
+  // First departures from an airport (home-base minutes of the day) within its local curfew window, every `step`.
+  function curfewStarts(code, t, step) {
+    const out = [];
+    for (let m = C.curfew.start; m <= C.curfew.end; m += step) out.push((((m - aheadOf(code, t)) % DAY) + DAY) % DAY);
+    return out;
+  }
   // Where the sun is: its declination and the longitude it is overhead at, for game time t.
   function sunPoint(t) {
     const u = utcOf(t);
@@ -2927,6 +2959,7 @@
     flightTrack, flightState, legTrack, cruiseFt, perf, windFrom, weatherAt, windAt, WX_DRIFT, gateOf, standSpot, apronOf, taxiwaysOf, drawnTaxiways, expansionPreview, terminalPiece,
     fmtMoney, fmtTime, fmtClock, fmtDuration, fmtLegDep, fmtDue,
     utcOffset, utcOf, localTime, fmtLocal, fmtZone, sunPoint, sunAt, daylight, sunTimes,
+    aheadOf, curfewOpen, curfewOpensAt, curfewHome,
 
     // opts: { mode, difficulty, airport, aircraft, company, story } from the start screen; all optional.
     // story = the year a story game starts in (C.story.years); without it the game plays today.
@@ -2946,6 +2979,7 @@
         difficulty,
         story,
         home: homeCode,
+        localCurfew: true,
         company: (opts.company || '').trim().slice(0, 40) || C.companyName,
         time: C.curfew.start,
         money: C.difficulties[difficulty].startMoney,
@@ -3240,6 +3274,16 @@
       this.assignStands();
       if (!s.rivals) this.setupRivals(s.home);
       this.indexRivals();
+      // The night curfew is in each airport's local time now: say once which timetables leave somewhere at night
+      // (their planes wait there for the morning until they are planned again).
+      if (!s.localCurfew) {
+        s.localCurfew = true;
+        const late = s.planes.filter((p) => p.schedule.active && p.schedule.legs && p.schedule.legs.some((l) => !curfewOpen(l.from, l.dep)));
+        if (late.length) {
+          this.log(`🌙 The night curfew (no departures ${fmtClock(C.curfew.end)}–${fmtClock(C.curfew.start)}) is now in each airport's local time. ` +
+            `${late.map(nameOf).join(', ')} leave${late.length === 1 ? 's' : ''} somewhere at night local time: open the timetable and press ✨ to plan it again.`);
+        }
+      }
     },
 
     // ---------- gates ----------
@@ -3648,7 +3692,8 @@
     },
 
     // Rival planes in the air at time t (fractional minutes): departures spread evenly between the
-    // start and end of the curfew window on every route, both ways, along the great circle.
+    // start and end of the curfew window (local time at the airport they leave) on every route, both ways, along
+    // the great circle.
     rivalFlights(t) {
       const out = [];
       const day = Math.floor(t / DAY);
@@ -3664,7 +3709,7 @@
             const [f, g] = dir ? [B, A] : [A, B];
             const phase = hash01(r.id.charCodeAt(1), rt.a.charCodeAt(0) * 131 + rt.b.charCodeAt(2), dir);
             for (let i = 0; i < rt.perDay; i++) {
-              const dep = C.curfew.start + ((i + phase) * span) / rt.perDay;
+              const dep = ((C.curfew.start - aheadOf(f.code, t) + ((i + phase) * span) / rt.perDay) % DAY + DAY) % DAY; // (local time there)
               for (const back of [0, DAY]) { // long flights from yesterday may still be airborne
                 const x = (tod + back - dep) / block;
                 if (x < 0 || x >= 1) continue;
@@ -3837,8 +3882,7 @@
         this.stopPlane(p, `${leg.to} is out of range for ${nameOf(p)} – stopped.`);
         return;
       }
-      const tod = t % DAY;
-      if (tod < C.curfew.start || tod > C.curfew.end) return; // night curfew
+      if (!curfewOpen(p.location, t)) return; // night curfew there (local time)
       if (this.holdReason(p, leg.to)) return; // strike, weather, repairs
       const block = blockMinutes(p.type, d);
       // The crew rests until tomorrow. A rested crew can always fly one leg, however long (relief pilots come
@@ -4408,7 +4452,7 @@
     },
 
     // Why a plane that has somewhere to go (a ferry or its timetable) isn't leaving right now, in a few words
-    // ("at 06:00 (night curfew)"), or null when nothing holds it.
+    // ("at 06:00 (night curfew at JFK, 06:00 local)"), or null when nothing holds it.
     departNote(p) {
       const t = this.state.time;
       if (p.status === 'flying' && p.flight) return `after it lands at ${p.flight.to}`;
@@ -4417,8 +4461,11 @@
       if (!leg) return null;
       const hold = this.holdReason(p, leg.to);
       if (hold) return `when this ends: ${hold}`;
-      const tod = t % DAY;
-      if (tod < C.curfew.start || tod > C.curfew.end) return `at ${fmtClock(C.curfew.start)} (night curfew)`;
+      if (!curfewOpen(p.location, t)) {
+        const at = curfewOpensAt(p.location, t);
+        const local = aheadOf(p.location, t) ? `, ${fmtClock(C.curfew.start)} local` : '';
+        return `at ${fmtClock(Math.ceil(at % DAY))} (night curfew at ${p.location}${local})`;
+      }
       const crew = this.crewOf(p);
       if (!crew) return 'once it has a crew';
       if (crew.dutyToday && crew.dutyToday + blockMinutes(p.type, dist(p.location, leg.to)) > crewDutyMax(crew)) return 'tomorrow (the crew has flown its hours today)';
@@ -5059,12 +5106,10 @@
           const to = stops[(i + 1) % stops.length];
           const block = this.legBlock(type, from, to);
           for (let k = 0; k < 3; k++) {
-            const tod = t % DAY;
-            if (tod < C.curfew.start) t += C.curfew.start - tod;
-            else if (tod > C.curfew.end) t += DAY - tod + C.curfew.start;
+            t = curfewOpensAt(from, t); // (the curfew there, in local time)
             if (Math.floor(t / DAY) !== day) { day = Math.floor(t / DAY); duty = 0; }
             if (!duty || duty + block <= maxDuty) break;
-            t = (day + 1) * DAY + C.curfew.start; // the crews rest until tomorrow
+            t = (day + 1) * DAY; // the crews rest until tomorrow
           }
           legs.push({ from, to, dep: t });
           duty += block;
@@ -5093,7 +5138,7 @@
         stops.forEach((from, i) => {
           const to = stops[(i + 1) % stops.length];
           const block = this.legBlock(type, from, to);
-          if (tt < C.curfew.start || tt > C.curfew.end || dd + block > maxDuty) ok = false;
+          if (!curfewOpen(from, tt) || dd + block > maxDuty) ok = false; // (the curfew there, in local time)
           loop.push({ from, to, dep: tt % DAY });
           tt += block + turnaroundMin(type);
           dd += block;
@@ -5206,7 +5251,10 @@
           errors.push(`No slot at ${leg.from} big enough for the ${ac.name}: it needs class ${CLASSES[typeClass(p.type)]} or bigger.`);
         }
         if (leg.from === leg.to) errors.push(`${name} goes nowhere.`);
-        if (leg.dep % DAY < C.curfew.start || leg.dep % DAY > C.curfew.end) errors.push(`${name}: departures only ${fmtClock(C.curfew.start)}–${fmtClock(C.curfew.end)} (night curfew).`);
+        if (!curfewOpen(leg.from, leg.dep)) {
+          errors.push(`${name}: night curfew at ${leg.from}, departures only ${fmtClock(C.curfew.start)}–${fmtClock(C.curfew.end)} local` +
+            `${aheadOf(leg.from, leg.dep) ? ` (${curfewHome(leg.from, leg.dep)} your time)` : ''}.`);
+        }
         if (dist(leg.from, leg.to) > ac.rangeKm) errors.push(`${name} is out of range.`);
         const unfit = fitsReason(p.type, leg.to);
         if (unfit) errors.push(unfit);
@@ -5326,7 +5374,7 @@
       if (ultra) {
         for (let r = 0; r < stops.length; r++) {
           const rot = stops.slice(r).concat(stops.slice(0, r));
-          for (let first = C.curfew.start; first <= C.curfew.end; first += 5) {
+          for (const first of curfewStarts(rot[0], this.state.time, 5)) {
             const legs = this.buildLongTimetable(p.type, rot, first, rounds || 1);
             const days = this.cycleDays(p.type, legs);
             let over = 0;
@@ -5343,7 +5391,7 @@
       }
       for (let r = 0; r < stops.length; r++) {
         const rot = stops.slice(r).concat(stops.slice(0, r));
-        for (let first = C.curfew.start; first <= C.curfew.end; first += 5) {
+        for (const first of curfewStarts(rot[0], this.state.time, 5)) {
           const full = this.buildTimetable(p.type, rot, first, rounds);
           const loops = full.length / rot.length;
           for (let n = rounds ? loops : 1; n <= loops; n++) {

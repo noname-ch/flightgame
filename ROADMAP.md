@@ -14,8 +14,7 @@ realistic flight tracks in 2D and 3D, AI rival airlines, random events and a dev
   draws them; `js/view3d.js` only draws ours. Same models, painted in the rival's colour.
 - [ ] **A profit table per route** (S). Planes keep totals (`p.stats`), but there is no list of routes with
   load factor, revenue, cost and profit per week, sortable. It would show at a glance what to cut.
-- [ ] **Curfews per airport** (S/M). `C.curfew` is the same 06:00–22:00 everywhere, in home-base time (every airport
-  has its own local time now, `G.localTime`: curfews could follow it). Real airports differ:
+- [ ] **Curfews per airport** (S/M). `C.curfew` is 06:00–22:00 everywhere (in each airport's local time). Real airports differ:
   Zurich closes at 23:30, Frankfurt and London have night quotas, many hubs are open all night. Hand-written
   for the main airports, a default by size for the rest.
 - [ ] **Loans** (S). Today there is only the bankruptcy limit. A bank loan with interest and a credit

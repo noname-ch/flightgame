@@ -60,8 +60,9 @@ left last time. On a phone a click shows the plane's card in Fleet instead.
 local time there. The sun rises and sets where it really does: the night moves west over the 2D map, and in 3D the
 sky turns orange at dusk and dark at night, the ground and buildings darken, terminal windows, runway edges and
 taxiway centre lines light up, and planes show their red and green position lights, flashing beacons, strobes and
-landing lights. Settings → On the map → *Day and night* turns it off. (Timetables and the night curfew still run on
-home-base time.)
+landing lights. Settings → On the map → *Day and night* turns it off. Timetables are planned on your home base's
+clock, but the **night curfew** (no departures 22:00–06:00) is in each airport's local time: the planner's start time
+is local at the first airport, and a plane waits at an airport until morning there.
 
 **Weather**: clouds drift over both maps, from fair-weather puffs to grey rain bands and thunderstorms, and the
 storms in the newspaper show up as real storms. It is made up but steady: it drifts east, changes over a day or two,

@@ -93,8 +93,10 @@ Play online: https://noname-ch.github.io/flightgame/ (GitHub Pages, deployed fro
   local time from `js/data/timezones.js` (built by `tools/build_timezones.py` from GeoNames: UTC offsets in winter
   and summer and the days the clocks change; airports missing there take their nearest neighbour's): `G.utcOffset(code,
   t)`, `G.utcOf(t)`, `G.localTime(code, t)`, `G.fmtLocal`, `G.fmtZone`. `G.sunPoint(t)`, `G.sunAt(lat, lon, t, sp)`
-  (elevation, azimuth), `G.daylight(lat, lon, t, sp)` (1 day … 0 night), `G.sunTimes(code, t)`. Timetables and
-  `C.curfew` still run on home-base time. js/daynight.js (`FG.daynight`) draws the night on the 2D map (pane 'night',
+  (elevation, azimuth), `G.daylight(lat, lon, t, sp)` (1 day … 0 night), `G.sunTimes(code, t)`. Timetables keep
+  home-base times; `C.curfew` is local at the departure airport: `G.curfewOpen(code, t)`, `G.curfewOpensAt`,
+  `G.aheadOf(code, t)` (minutes ahead of home, today's: timetable times are times of day), `curfewStarts` for the fit;
+  the planner's first-departure slider is local at the first stop (`toLocal`/`toHome` in planner.js). js/daynight.js (`FG.daynight`) draws the night on the 2D map (pane 'night',
   under the game's layers; the "Day and night" overlay, `FG.daynight.enabled()` also switches the 3D night).
   view3d.js `daylight3d(map, layer, lat, lon, t, now, weather)` lights the planes from the sun every frame and, on a
   change, sets the sky (`skyOf(w, sun)`), `fg-night` (a dark flat layer over the ground), `fg-runway-lights` /
