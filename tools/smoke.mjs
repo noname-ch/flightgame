@@ -338,11 +338,34 @@ try {
     const pw = G.airportWeather(a.code);
     const placed = pw.windFrom === 135 && pw.windKt === 55;
     G.clearWinds();
-    return { puffs: FG.weather.stats.puffs2d, line: FG.weather.text(w), canvas: !!document.querySelector('canvas.fg-clouds'),
+    // a 55 kt crosswind at the runway: the crab builds up after lift-off instead of being all there at once
+    // (GitHub issue #5): little under 300 ft, plenty higher up
+    let lowCrab = null, highCrab = null;
+    const q = G.state.planes.find((x) => x.status === 'flying' && x.flight);
+    if (q) {
+      const f = q.flight;
+      const sts = [];
+      for (let t = f.dep; t < f.arr; t += 0.05) sts.push(t);
+      const first = sts.map((t) => G.flightState(q, t)).find((s) => s.phase === 'climb');
+      if (first) {
+        const at = G.airportByCode[f.from];
+        G.placeWind(at.lat, at.lon, (first.heading + 90) % 360, 55, 300);
+        for (const t of sts) {
+          const s = G.flightState(q, t);
+          if (s.phase !== 'climb') continue;
+          const agl = s.altFt - s.fieldFt;
+          if (agl < 300) lowCrab = Math.max(lowCrab || 0, Math.abs(s.crab));
+          else if (agl > 1500 && agl < 4000) highCrab = Math.max(highCrab || 0, Math.abs(s.crab));
+        }
+        G.clearWinds();
+      }
+    }
+    return { lowCrab, highCrab, puffs: FG.weather.stats.puffs2d, line: FG.weather.text(w), canvas: !!document.querySelector('canvas.fg-clouds'),
       crab: st ? st.crab : null, wind: st ? st.windKt : null, sane: !!w && w.tempC > -60 && w.tempC < 60 && w.windKt >= 0,
       placed, gone: G.airportWeather(a.code).windKt === w.windKt };
   });
   if (!wx.canvas || !wx.line || !wx.sane || !wx.placed || !wx.gone || (wx.crab != null && !Number.isFinite(wx.crab))) errors.push(`weather: ${JSON.stringify(wx)}`);
+  else if (wx.lowCrab > 3 || (wx.highCrab != null && wx.highCrab < 5)) errors.push(`crab in a 55 kt crosswind after lift-off: up to ${wx.lowCrab}° under 300 ft (at most 3°), ${wx.highCrab}° at 1500-4000 ft (at least 5°)`);
   else step(`weather at home: ${wx.line}; ${wx.puffs} cloud puffs in view${wx.crab != null ? `; a plane in the air crabs ${wx.crab}° in ${wx.wind} kt` : ''}`);
 
   step('sound: the engines through a flight (started in the pushback, take-off power, reverse thrust), heard following a plane on the 2D map; M off and on');
@@ -819,6 +842,9 @@ try {
     if (!near(again, 46.91, 7.5) || Math.abs(again.z - 13) > 0.01) errors.push(`3D did not open again where the 2D map was (${JSON.stringify(again)})`);
     await evaluate(() => FG.ui.follow && FG.ui.follow(G.state.planes[0].id));
     await sleep(8000);
+    // the chase camera starts close to the plane, in the air too (GitHub issue #6: at zoom 12 it was kilometres away)
+    const chase = await evaluate(() => ({ follow: FG.view3d.follow, z: FG.view3d.map.getZoom() }));
+    if (chase.follow && chase.z < 14.9) errors.push(`3D chase camera started far from the plane (zoom ${chase.z.toFixed(1)})`);
     // its model (once loaded) stands on landing gear (js/gear3d.js)
     const gear = await evaluate(() => { const e = FG.view3d.planes[G.state.planes[0].id]; return e ? { loaded: e.obj.userData.lift != null, gear: !!e.obj.userData.gear } : null; });
     if (gear && gear.loaded && !gear.gear) errors.push('3D view: the followed plane has no landing gear');
@@ -860,19 +886,20 @@ try {
     if (flex.air.some((f) => !(f > 0.01 && f < 0.1))) errors.push(`3D wing bending: wings in the air not bent up a little: ${flex.air.join(', ')}`);
     if (flex.ground.some((f) => !(f < 0 && f > -0.03))) errors.push(`3D wing bending: parked wings not drooping a little: ${flex.ground.join(', ')}`);
     if (!flex.air.length && !flex.ground.length) warnings.push('3D wing bending: no aircraft model drawn to check');
-    // (the Q400's and the ATR's propellers are found and turn: livHub; the A320's and the ATR's ailerons, flaps,
-    // elevators and rudder are found: livSurf, js/livery.js)
+    // (the Q400's, ATR's and DC-3's propellers and the A320's, A350's and A330's fans are found and turn: livHub;
+    // the A320's and the ATR's ailerons, flaps, elevators and rudder are found: livSurf, js/livery.js)
     const parts = await evaluate(async () => {
       const m = await import('/js/models3d.js');
       const out = {};
-      for (const file of ['q400', 'atr42', 'a320']) {
+      for (const file of ['q400', 'atr42', 'a320', 'a359', 'a333', 'dc3']) {
         const type = Object.keys(FG.data.models).find((t) => FG.data.models[t] === file);
         const s = await m.loadModel(type);
         out[file] = { props: s.userData.props, surfaces: s.userData.surfaces };
       }
       return out;
     });
-    for (const file of ['q400', 'atr42']) if (parts[file].props !== 2) errors.push(`3D propellers: ${file} has ${parts[file].props} propellers found, not 2`);
+    // (and the jets' fans: one in each engine, nothing else turning: GitHub issues #8, #9)
+    for (const file of ['q400', 'atr42', 'a320', 'a359', 'a333', 'dc3']) if (parts[file].props !== 2) errors.push(`3D propellers and fans: ${file} has ${parts[file].props} found, not 2`);
     for (const file of ['atr42', 'a320']) {
       const missing = ['aileron', 'flap', 'elevator', 'rudder'].filter((_, i) => !(parts[file].surfaces && parts[file].surfaces[i + 1] > 0));
       if (missing.length) errors.push(`3D control surfaces: ${file} has no ${missing.join(', ')}`);

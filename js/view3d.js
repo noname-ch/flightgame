@@ -1248,7 +1248,7 @@ const planeLayer = {
         const at = st || (G.gateOf ? G.gateOf(p.location, p.id) : G.airportByCode[p.location]);
         if (at && !inBox(view, at.lat, at.lon)) {
           e.obj.visible = false;
-          e.att = null; // eased afresh when it comes back
+          e.att = e.flex = e.ctl = null; // eased afresh when it comes back (its wings not still bent as when it left)
           continue;
         }
       }
@@ -1543,7 +1543,11 @@ function chaseTick(map, p, e, pose) {
   o.base += wrap180(heading - o.base) * (drawn ? 0.06 : 1);
   const opts = { center: [pose.lon, pose.lat], bearing: o.base + o.yaw, pitch: o.pitch != null ? o.pitch : Math.max(map.getPitch(), 62) };
   if (v.followStart) {
-    opts.zoom = pose.altM > 300 ? 12 : 17; // (on the ground close enough to see the plane itself)
+    // Close behind the plane, in the air too: its real length about a quarter of the view across (at zoom 12 in the
+    // air the camera started kilometres away, GitHub issue #6).
+    const w = map.getCanvas().clientWidth || 1000;
+    const z = Math.log2((40075016 * Math.cos(pose.lat * DEG) * 0.25 * w) / (512 * e.obj.userData.len));
+    opts.zoom = Math.max(15, Math.min(19.5, z));
     v.followStart = false;
   } else {
     opts.zoom = Math.max(map.getZoom(), 6.5);

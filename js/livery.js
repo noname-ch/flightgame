@@ -193,6 +193,46 @@ const LOGOS = {
 // piece beside the fuselage, about as wide as it is high and longer than half its width, and with it go the
 // pieces in it.
 // A model in one piece says so itself: the attribute _LIVPART of its file (tools/convert_model.html).
+// A jet's fan: in each engine (cowlings that overlap), the parts inside it that are flat across the nose (blades,
+// discs, stators) are taken in rings along it; the widest round ring is the fan, and turns round its own middle.
+// (Blades one by one are too small to pass for a propeller, so the A320's fan stood still and only a hidden disc
+// behind it turned; small parts beside the axis turned round their own middles and poked out of the A350's
+// nacelle; discs in the noses of the A330 and 747 turned too: GitHub issues #8, #9.)
+function spinFans(pieces, cowlings, engine, spin) {
+  const over = (a, b) => a[0] < b[1] && b[0] < a[1] && a[2] < b[3] && b[2] < a[3] && a[4] < b[5] && b[4] < a[5];
+  const engines = [];
+  let fans = 0;
+  for (const c of cowlings) {
+    const e = engines.find((e) => e.cowls.some((d) => over(d.box, c.box)));
+    if (e) { e.cowls.push(c); for (let k = 0; k < 6; k += 2) { e.box[k] = Math.min(e.box[k], c.box[k]); e.box[k + 1] = Math.max(e.box[k + 1], c.box[k + 1]); } }
+    else engines.push({ cowls: [c], box: [...c.box] });
+  }
+  for (const e of engines) {
+    const dia = Math.min(e.box[1] - e.box[0], e.box[5] - e.box[4]);
+    const inner = pieces.filter((p) => {
+      const b = p.box, wide = Math.max(b[1] - b[0], b[5] - b[4]);
+      return engine.has(p) && e.cowls.some((c) => c.box === engine.get(p)) && !cowlings.includes(p) &&
+        b[3] - b[2] < 0.3 * wide && wide > 0.08 * dia;
+    }).sort((p, q) => p.box[2] - q.box[2]);
+    let best = null;
+    for (let i = 0; i < inner.length;) {
+      const ring = { parts: [], box: [Infinity, -Infinity, Infinity, -Infinity, Infinity, -Infinity] };
+      do {
+        const b = inner[i].box;
+        ring.parts.push(inner[i]);
+        for (let k = 0; k < 6; k += 2) { ring.box[k] = Math.min(ring.box[k], b[k]); ring.box[k + 1] = Math.max(ring.box[k + 1], b[k + 1]); }
+        i++;
+      } while (i < inner.length && inner[i].box[2] < ring.box[3] + 0.1 * dia);
+      const dx = ring.box[1] - ring.box[0], dz = ring.box[5] - ring.box[4];
+      ring.wide = Math.max(dx, dz);
+      if (dx / dz < 0.75 || dx / dz > 1.33 || ring.wide < 0.4 * dia) continue;
+      if (!best || ring.wide > best.wide * 1.05 || (ring.wide > best.wide * 0.95 && ring.box[3] > best.box[3])) best = ring;
+    }
+    if (best) { spin(best.parts, best.box); fans++; }
+  }
+  return fans;
+}
+
 function markEngines(scene, hw, file) {
   const d = 2 * hw;
   const meshes = [];
@@ -232,8 +272,9 @@ function markEngines(scene, hw, file) {
     for (let i = 0; i < pos.count; i++) {
       const r = (root[i] = find(i));
       let p = byRoot.get(r);
-      if (!p) { p = { box: [Infinity, -Infinity, Infinity, -Infinity, Infinity, -Infinity], mesh: m, root: r }; byRoot.set(r, p); pieces.push(p); }
+      if (!p) { p = { box: [Infinity, -Infinity, Infinity, -Infinity, Infinity, -Infinity], mesh: m, root: r, sx: 0, sz: 0, n: 0 }; byRoot.set(r, p); pieces.push(p); }
       const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+      p.sx += x; p.sz += z; p.n++;
       const b = p.box;
       if (x < b[0]) b[0] = x;
       if (x > b[1]) b[1] = x;
@@ -258,39 +299,52 @@ function markEngines(scene, hw, file) {
     if (cowl) engine.set(p, cowl.box);
   }
   scene.userData.engines = cowlings.length;
-  // Propellers: blades are pieces thin along the nose, off the fuselage or in front of it (a Ju 52's nose
-  // engine). Touching ones (or one alone) make a
-  // propeller when together they are about as wide as high; its middle is the hub. Their vertices
-  // get the hub in livHub (x, z, 1), so the shader can turn them (livSpin).
-  const thin = pieces.filter(({ box: b }) => {
-    const wide = Math.max(b[1] - b[0], b[5] - b[4]);
-    return b[3] - b[2] < 0.3 * wide && wide > 0.15 * d && (Math.abs(b[0] + b[1]) / 2 > 1.2 * hw || b[2] > 0.43);
-  });
-  const group = thin.map((_, i) => i);
-  const top = (i) => { while (group[i] !== i) { group[i] = group[group[i]]; i = group[i]; } return i; };
-  const gap = 0.15 * d;
-  for (let i = 0; i < thin.length; i++) for (let j = i + 1; j < thin.length; j++) {
-    const p = thin[i].box, q = thin[j].box;
-    if (p[0] < q[1] + gap && q[0] < p[1] + gap && p[2] < q[3] + gap && q[2] < p[3] + gap && p[4] < q[5] + gap && q[4] < p[5] + gap) group[top(i)] = top(j);
-  }
-  const groups = new Map();
-  thin.forEach((p, i) => {
-    const g = groups.get(top(i)) || { box: [Infinity, -Infinity, Infinity, -Infinity, Infinity, -Infinity], parts: [] };
-    for (let k = 0; k < 6; k += 2) { g.box[k] = Math.min(g.box[k], p.box[k]); g.box[k + 1] = Math.max(g.box[k + 1], p.box[k + 1]); }
-    g.parts.push(p);
-    groups.set(top(i), g);
-  });
+  const jet = !(FG.data.props && FG.data.props[file]);
   const hubs = new Map(meshes.map((m) => [m, new Map()])); // mesh -> root -> [x, z]
-  for (const { box: b, parts } of groups.values()) {
-    const dx = b[1] - b[0], dz = b[5] - b[4];
-    if (dx / dz < 0.6 || dx / dz > 1.6 || b[3] - b[2] > 0.3 * Math.max(dx, dz)) continue;
-    for (const p of parts) hubs.get(p.mesh).set(p.root, [(b[0] + b[1]) / 2, (b[4] + b[5]) / 2]);
+  // (a propeller turns round the middle of its vertices: the middle of its box is off to one side where it has
+  // three blades, and a DC-3's or Twin Otter's propellers wobbled)
+  const spin = (parts, b, prop) => {
+    let at = [(b[0] + b[1]) / 2, (b[4] + b[5]) / 2];
+    if (prop) {
+      const n = parts.reduce((s, p) => s + p.n, 0);
+      at = [parts.reduce((s, p) => s + p.sx, 0) / n, parts.reduce((s, p) => s + p.sz, 0) / n];
+    }
+    for (const p of parts) hubs.get(p.mesh).set(p.root, at);
     parts[0].mesh.geometry.userData.livProps = (parts[0].mesh.geometry.userData.livProps || 0) + 1;
+  };
+  // (the Ju 52 has no propeller drawing of its own, FG.data.props: no fan in it, its propellers are found as below)
+  if (!jet || !spinFans(pieces, cowlings, engine, spin)) {
+    // Propellers: blades are pieces thin along the nose, off the fuselage or in front of it (a Ju 52's nose
+    // engine). Touching ones (or one alone) make a
+    // propeller when together they are about as wide as high; its middle is the hub. Their vertices
+    // get the hub in livHub (x, z, 1), so the shader can turn them (livSpin).
+    const thin = pieces.filter(({ box: b }) => {
+      const wide = Math.max(b[1] - b[0], b[5] - b[4]);
+      return b[3] - b[2] < 0.3 * wide && wide > 0.15 * d && (Math.abs(b[0] + b[1]) / 2 > 1.2 * hw || b[2] > 0.43);
+    });
+    const group = thin.map((_, i) => i);
+    const top = (i) => { while (group[i] !== i) { group[i] = group[group[i]]; i = group[i]; } return i; };
+    const gap = 0.15 * d;
+    for (let i = 0; i < thin.length; i++) for (let j = i + 1; j < thin.length; j++) {
+      const p = thin[i].box, q = thin[j].box;
+      if (p[0] < q[1] + gap && q[0] < p[1] + gap && p[2] < q[3] + gap && q[2] < p[3] + gap && p[4] < q[5] + gap && q[4] < p[5] + gap) group[top(i)] = top(j);
+    }
+    const groups = new Map();
+    thin.forEach((p, i) => {
+      const g = groups.get(top(i)) || { box: [Infinity, -Infinity, Infinity, -Infinity, Infinity, -Infinity], parts: [] };
+      for (let k = 0; k < 6; k += 2) { g.box[k] = Math.min(g.box[k], p.box[k]); g.box[k + 1] = Math.max(g.box[k + 1], p.box[k + 1]); }
+      g.parts.push(p);
+      groups.set(top(i), g);
+    });
+    for (const { box: b, parts } of groups.values()) {
+      const dx = b[1] - b[0], dz = b[5] - b[4];
+      if (dx / dz < 0.6 || dx / dz > 1.6 || b[3] - b[2] > 0.3 * Math.max(dx, dz)) continue;
+      spin(parts, b, true);
+    }
   }
   // A jet's cowling says how far back along it each vertex is: 1.01 at the inlet lip to 1.98 at the exhaust
   // (the shader paints the lip bare metal and the exhaust grey); what is inside it (fan, spinner) is 5 and keeps
   // the model's own colours. A turboprop's nacelle is plain 1.
-  const jet = !(FG.data.props && FG.data.props[file]);
   const marked = new Map(meshes.map((m) => [m, new Map()]));
   for (const [p, cowl] of engine) {
     marked.get(p.mesh).set(p.root, { box: cowl, inner: !cowlings.some((c) => c === p) });
@@ -663,6 +717,7 @@ uniform float livFinAngle; // it rises by this angle towards the top of the fin
 uniform vec3 livWinglet;
 uniform float livWingletX; // wing tips are beyond this |x|
 uniform float livStretch; // the model is drawn this much longer than it is
+uniform float livNoisy;   // its texture has noisy dark shading (NOISY)
 uniform float livHalfWidth; // of the fuselage
 uniform vec4 livClean;    // own details are dropped between these y and between these z
 varying vec3 vLivPos;
@@ -675,6 +730,11 @@ const FRAG_BODY = `
   float sat = max(own.r, max(own.g, own.b)) - min(own.r, min(own.g, own.b));
   // dark, colourless parts of the model's own texture stay: windows, tyres, engine intakes
   float detail = (1.0 - smoothstep(0.06, 0.16, lum)) * (1.0 - smoothstep(0.04, 0.12, sat));
+#ifdef USE_MAP
+  // ... in a noisy texture only where it is dark round about too: lone dark texels in the A220's baked shading
+  // speckled its wing root black (GitHub issue #7). (Not in every model: small windows would go.)
+  if (livNoisy > 0.5) detail *= 1.0 - smoothstep(0.04, 0.09, dot(texture2D(map, vMapUv, 2.0).rgb * diffuse, vec3(0.2126, 0.7152, 0.0722)));
+#endif
   // wings and tailplanes stay plain
   float upright = 1.0 - smoothstep(0.7, 0.85, abs(normalize(vLivNor).z));
   // the fuselage (not a propeller or an engine beside it)
@@ -749,6 +809,9 @@ const FRAG_BODY = `
   diffuseColor.rgb = mix(paint, own, detail);
 }`;
 
+// Models whose texture has dark noise baked into its shading (see FRAG_BODY).
+const NOISY = { cs100: 1, cs300: 1 };
+
 // Uniforms each material has its own of (in its userData), for the aircraft drawn with it.
 export const OWN_UNIFORMS = ['livFlex', 'livSpin', 'livAil', 'livFlap', 'livElev', 'livRud'];
 
@@ -806,6 +869,7 @@ export function paintLivery(scene, file, extra, stretch = 1, livery = FG.livery(
     livWingletX: { value: livery.winglet == null ? 99 : 0.955 * m.span },
     livClean: { value: m.clean },
     livStretch: { value: stretch },
+    livNoisy: { value: NOISY[file] ? 1 : 0 },
     livHalfWidth: { value: m.halfWidth },
     livHalfW: { value: m.halfWidth },
     livSpan: { value: m.span },

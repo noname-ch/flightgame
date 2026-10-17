@@ -123,8 +123,9 @@ Play online: https://noname-ch.github.io/flightgame/ (GitHub Pages, deployed fro
   the background (`LOADING_GROUND`, dark, where pictures are still loading) on the 3D map and the plane windows'
   cameras. The 3D buttons sit at the bottom centre: top left, the plane window covered them.
 - Moving parts (looks only), in the livery's vertex shader (js/livery.js `VERT_BODY`): the wings bend by `livFlex` (tip
-  rise in half spans); vertices with the attribute `livHub` (x, z of a hub, 1; `markEngines`: thin pieces in front of
-  the engines, grouped; jets' fan faces too) turn by `livSpin`; `livSurf` (kind 1 aileron, 2 flap, 3 elevator,
+  rise in half spans); vertices with the attribute `livHub` (x, z of a hub, 1; `markEngines`: propellers are thin pieces
+  in front of the engines, grouped, turning round the middle of their vertices; a jet's fan is `spinFans`: the widest
+  round ring of flat parts inside each engine's cowlings) turn by `livSpin`; `livSurf` (kind 1 aileron, 2 flap, 3 elevator,
   4 rudder, hinge y, z; `markSurfaces`: wing and tailplane read in strips across the span from flat faces, split at the
   empty gap between them, hinge lines interpolated over strips without vertices; the fin height by height) turns by
   `livAil`/`livFlap`/`livElev`/`livRud`. These `OWN_UNIFORMS` are per material: each drawn aircraft gets its own copies

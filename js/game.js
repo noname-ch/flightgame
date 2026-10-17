@@ -2442,8 +2442,9 @@
     // airFrac: how far between lift-off (0) and touchdown (1) the plane is, for blending the two field elevations.
     const airFrac = Math.min(1, Math.max(0, (sv - sLift) / Math.max(0.001, sTouch - sLift)));
     // Crab: in a crosswind the nose points partly into the wind so the plane still tracks its path (heading =
-    // track + crab). It builds up after lift-off and is kicked out with the rudder just before touchdown, so on
-    // the runway the nose is straight again. At most MAX_CRAB (a placed 120 kt wind would turn them 37° sideways).
+    // track + crab). It builds up slowly after lift-off (over the first 1000 ft: it used to be all there 3 s off the
+    // runway, GitHub issue #5 "planes fly turned even when starting") and is kicked out with the rudder just before
+    // touchdown, so on the runway the nose is straight. At most MAX_CRAB (a placed 120 kt wind would turn them 37° sideways).
     const fieldFt = Math.round(tr.fieldAt(sv));
     const ground = sv <= sLift || sv >= sTouch;
     // rollT: how far through its takeoff run the plane is in time (0 brakes off, 1 lift-off); with an even push the
@@ -2457,7 +2458,7 @@
       crab = Math.asin(Math.max(-1, Math.min(1, (wind.kt / kt) * Math.sin((wind.from - pos.heading) * Math.PI / 180)))) * 180 / Math.PI;
       crab = Math.max(-MAX_CRAB, Math.min(MAX_CRAB, crab));
       const agl = alt - fieldFt;
-      crab *= phase === 'takeoff' || phase === 'climb' && agl < 300 ? Math.min(1, Math.max(0, agl / 150)) : Math.min(1, Math.max(0, agl / 40));
+      crab *= phase === 'takeoff' || phase === 'climb' ? smooth(0, 1000, agl) : Math.min(1, Math.max(0, agl / 40));
       crab = Math.round(crab * 10) / 10;
     }
     // altFt: above sea level; fieldFt: the runways' height at this point (altFt - fieldFt = height above them).
