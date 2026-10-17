@@ -2451,6 +2451,9 @@
     // speed grows with it (the 3D view rotates the plane over the last part).
     const sThr = tr.cum[tr.idx.thr];
     const rollT = phase === 'takeoff' ? Math.sqrt(Math.min(1, Math.max(0, (sv - sThr) / Math.max(1e-6, sLift - sThr)))) : null;
+    // landT: the same through the landing run (0 touchdown, 1 where it leaves the runway), braking evenly
+    const sStop = tr.cum[tr.idx.stop];
+    const landT = phase === 'landing' ? 1 - Math.sqrt(1 - Math.min(1, Math.max(0, (sv - sTouch) / Math.max(1e-6, sStop - sTouch)))) : null;
     const wind = windAt(pos.lat, pos.lon, t, alt);
     let crab = 0;
     if (!ground) {
@@ -2461,9 +2464,10 @@
       crab *= phase === 'takeoff' || phase === 'climb' ? smooth(0, 1000, agl) : Math.min(1, Math.max(0, agl / 40));
       crab = Math.round(crab * 10) / 10;
     }
-    // altFt: above sea level; fieldFt: the runways' height at this point (altFt - fieldFt = height above them).
-    return { lat: pos.lat, lon: pos.lon, heading: pos.heading, altFt: alt, fieldFt,
-      ground, speedKmh: speed, phase, airFrac, rollT, crab, windFrom: wind.from, windKt: wind.kt, gusty: wind.gusty,
+    // altFt: above sea level; fieldFt: the runways' height at this point (altFt - fieldFt = height above them,
+    // aglM the same in metres, not rounded: for the last metres before touchdown).
+    return { lat: pos.lat, lon: pos.lon, heading: pos.heading, altFt: alt, fieldFt, aglM: ground ? 0 : Math.max(0, (tr.altAt(sv) - tr.fieldAt(sv)) * 0.3048),
+      ground, speedKmh: speed, phase, airFrac, rollT, landT, crab, windFrom: wind.from, windKt: wind.kt, gusty: wind.gusty,
       cruiseFt: tr.cruiseAlt, depRunway: designatorOf(tr.depRunway.hdg), arrRunway: designatorOf(tr.arrRunway.hdg) };
   }
   const MAX_CRAB = 15; // degrees: about the most an airliner crabs (35 kt across a 135 kt approach)

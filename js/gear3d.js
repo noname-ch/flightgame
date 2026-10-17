@@ -119,16 +119,16 @@ function layout(scene, gear, unit, len) {
     const belly = bottom ? bottom.z : zc;
     const pannier = Math.min(under(x, mainY), belly + 0.3 * (zc - belly));
     const fixed = spec.main === 'body' ? { at: x, top: pannier } : { at: x, top: under(x, mainY) };
-    legs.push({ kind: spec.main || 'wing', x, y: mainY, top: fixed.top, at: fixed.at, side: s, tyre, wheels: spec.wheels || '1x2' });
+    legs.push({ kind: spec.main || 'wing', x, y: mainY, top: fixed.top, at: fixed.at, side: s, tyre, wheels: spec.wheels || '1x2', tilt: spec.tilt });
   }
   if (spec.body) {
     const y = mainY - spec.body.aft;
     for (const s of spec.body.track ? [-1, 1] : [0]) {
       const x = s * spec.body.track * 2 * hw;
-      legs.push({ kind: 'centre', x, y, top: under(x, y), at: x, side: s, tyre, wheels: spec.body.wheels });
+      legs.push({ kind: 'centre', x, y, top: under(x, y), at: x, side: s, tyre, wheels: spec.body.wheels, tilt: spec.tilt });
     }
   }
-  return (layouts[gear] = { ground, legs, sit });
+  return (layouts[gear] = { ground, legs, sit, mainY });
 }
 
 // ---------- parts ----------
@@ -219,24 +219,27 @@ function leg(l, ground, stretch, mats, out) {
   const parts = [];
   const lights = [];
   const main = l.kind !== 'nose' && l.kind !== 'tail';
+  // A bogie that tilts in flight (l.tilt) is a mesh of its own, turning about its pivot below the piston.
+  const tilts = rows > 1 && l.tilt;
+  const wheels = tilts ? [] : parts;
   // tyres on their wheels, the axles, the bogie beam with its pivot
   for (let i = 0; i < rows; i++) {
     const dy = rows > 1 ? (i - (rows - 1) / 2) * pitch : 0;
     for (let k = 0; k < across; k++) {
       const dx = across > 1 ? (k - (across - 1) / 2) * gap : 0;
       const p = V(l.x + dx, dy, axle);
-      parts.push(paint(tyreAt(p, r, w, floor), PAINT.tyre));
-      wheelAt(p, r, w, dx ? Math.sign(dx) : l.side || 1, main, parts);
+      wheels.push(paint(tyreAt(p, r, w, floor), PAINT.tyre));
+      wheelAt(p, r, w, dx ? Math.sign(dx) : l.side || 1, main, wheels);
     }
-    if (across > 1) parts.push(paint(rod(V(l.x - gap / 2, dy, axle), V(l.x + gap / 2, dy, axle), r * 0.14, 10), PAINT.leg));
+    if (across > 1) wheels.push(paint(rod(V(l.x - gap / 2, dy, axle), V(l.x + gap / 2, dy, axle), r * 0.14, 10), PAINT.leg));
   }
   const foot = V(l.x, 0, axle + (rows > 1 ? r * 0.22 : r * 0.05));
   const head = V(l.at, 0, Math.max(l.top, axle + r * 1.25));
   const at = (f) => foot.clone().lerp(head, f);
   const thick = r * (main ? 0.25 : 0.2);
   if (rows > 1) {
-    parts.push(paint(rod(V(l.x, -((rows - 1) * pitch) / 2 - r * 0.3, axle + r * 0.08), V(l.x, ((rows - 1) * pitch) / 2 + r * 0.3, axle + r * 0.08), r * 0.17, 10), PAINT.leg));
-    parts.push(paint(rod(V(l.x - thick * 1.4, 0, foot.z), V(l.x + thick * 1.4, 0, foot.z), r * 0.13, 10), PAINT.chrome));
+    wheels.push(paint(rod(V(l.x, -((rows - 1) * pitch) / 2 - r * 0.3, axle + r * 0.08), V(l.x, ((rows - 1) * pitch) / 2 + r * 0.3, axle + r * 0.08), r * 0.17, 10), PAINT.leg));
+    wheels.push(paint(rod(V(l.x - thick * 1.4, 0, foot.z), V(l.x + thick * 1.4, 0, foot.z), r * 0.13, 10), PAINT.chrome));
     // the pitch trimmer: from the leg to the front of the bogie
     parts.push(paint(rod(at(0.38).add(V(0, thick * 1.1, 0)), V(l.x, ((rows - 1) * pitch) / 2, axle + r * 0.3), r * 0.06, 6), PAINT.leg));
   } else {
@@ -310,6 +313,20 @@ function leg(l, ground, stretch, mats, out) {
   group.position.copy(pivot);
   group.add(new THREE.Mesh(mergeGeometries(parts.map((g) => g.applyMatrix4(local))), mats.body));
   if (lights.length) group.add(new THREE.Mesh(mergeGeometries(lights.map((g) => g.applyMatrix4(local))), mats.light));
+  if (tilts) {
+    // the bogie in a frame as long as it is wide (undoing the squash, so it turns true), about its pivot pin;
+    // `half`: from the pin to the end axles along the bogie
+    const pin = V(l.x, 0, foot.z);
+    const frame = new THREE.Group();
+    frame.position.set(pin.x - pivot.x, l.y - pivot.y, pin.z - pivot.z);
+    frame.scale.set(1, 1 / stretch, 1);
+    const bogie = new THREE.Group();
+    bogie.name = 'bogie';
+    bogie.userData = { tilt: l.tilt, half: ((rows - 1) * pitch) / 2 };
+    bogie.add(new THREE.Mesh(mergeGeometries(wheels.map((g) => g.translate(-pin.x, -pin.y, -pin.z))), mats.body));
+    frame.add(bogie);
+    group.add(frame);
+  }
   const fold = FOLD[l.kind];
   group.userData = fold ? { axis: fold[0], angle: fold[1] * (fold[0] === 'y' ? l.side : 1) } : { fixed: true };
   out.push(group);
@@ -354,6 +371,7 @@ export function addGear(scene, raw, file, size, patchFacing, type) {
   scene.add(built[key].clone());
   // a tail-wheel aircraft sits nose up (js/view3d.js levels it in flight)
   scene.rotation.x = scene.userData.sit = layouts[gear].sit;
+  scene.userData.mainY = layouts[gear].mainY;   // (the main legs' y: the plane rotates about them on the ground)
   return scene;
 }
 
@@ -370,5 +388,27 @@ export function setGear(gear, f) {
     if (u.door) o.rotation.y = u.open + (u.shut - u.open) * doors;
     else if (u.axis) o.rotation[u.axis] = u.angle * legs;
     o.visible = f > 0.01;
+  }
+}
+
+// Tilts the bogies of the types whose bogies are tilted in flight (FG.data.gear tilt, degrees: + front axle up,
+// rear wheels hanging lowest; - front axle down). `h`: how high the main wheels are above the ground (in the gear's
+// units, as wide as the model is: metres / modelSize wide), `pitch`: the plane's (degrees, nose up +). On the
+// ground a bogie lies flat on it however the plane is pitched; coming down for a landing its lowest wheels touch
+// first and it is pushed flat as the plane settles onto it, and after lift-off it hangs at its angle again.
+const bogies = new WeakMap();   // gear -> its bogies
+export function setBogies(gear, h, pitch) {
+  if (!bogies.has(gear)) {
+    const list = [];
+    gear.traverse((o) => { if (o.name === 'bogie') list.push(o); });
+    bogies.set(gear, list);
+  }
+  for (const b of bogies.get(gear)) {
+    const { tilt, half } = b.userData;
+    // its angle to the ground: what it hangs at, but no lower than the ground lets its end wheels go
+    const want = tilt + pitch;
+    const most = Math.asin(Math.min(1, Math.max(0, h) / half)) * 180 / Math.PI;
+    const toGround = Math.sign(want) * Math.min(Math.abs(want), most);
+    b.rotation.x = (toGround - pitch) * Math.PI / 180;
   }
 }

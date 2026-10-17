@@ -4,7 +4,7 @@
 import * as maplibregl from 'maplibre-gl';
 import * as THREE from 'three';
 import { loadModel, modelSize, facing, patchFacing } from './models3d.js';
-import { setGear } from './gear3d.js';
+import { setGear, setBogies } from './gear3d.js';
 
 const G = FG.game;
 const D = FG.data;
@@ -59,6 +59,19 @@ const DEG = Math.PI / 180;
 const wrap180 = (d) => ((((d % 360) + 540) % 360) - 180);
 const AIRBORNE = { climb: 1, cruise: 1, descent: 1, approach: 1 };
 const ROTATE_DEG = 8; // nose up at lift-off
+// Nose up at touchdown (degrees): the plane flares onto its main wheels and holds the nose wheel off a few seconds.
+const TOUCH_DEG = { turboprop: 3, regional: 5, narrowbody: 5.5, widebody: 5.5, classic: 4 };
+const FLARE_FT = 120; // the nose comes up from here down
+const smooth01 = (x) => { const u = Math.max(0, Math.min(1, x)); return u * u * (3 - 2 * u); };
+// The last metres before touchdown, drawn: the track comes down its glide path all the way to the runway, but
+// a plane flares and sinks onto it slowly, so over the last SINK_M metres it is drawn coming down a little faster
+// at first (a quarter more at most) and at a quarter of its sink rate at the end, onto the same touchdown point.
+const SINK_M = 15;
+function flaredM(m) {
+  if (m >= SINK_M) return m;
+  const u = m / SINK_M;
+  return SINK_M * u * (0.25 + u * (1.5 - 0.75 * u));
+}
 
 // The landing gear (js/gear3d.js): down on the ground; after lift-off it folds away between 300 and 700 ft,
 // on the way down it comes out between 2200 and 1800 ft. From the height, so it moves at any game speed.
@@ -92,7 +105,8 @@ function attitude(p, st, t) {
   const vMs = st.speedKmh / 3.6;
   const pf = G.perf(p.type);
   const vLift = pf.vLof; // the type's lift-off speed
-  const agl = (st.altFt || 0) - (st.fieldFt || 0); // above the runways
+  const agl = st.aglM != null ? st.aglM / 0.3048 : (st.altFt || 0) - (st.fieldFt || 0); // above the runways (ft)
+  const touch = TOUCH_DEG[(D.aircraft[p.type] || {}).category] ?? 5;
   let bank = 0;
   let pitch = 0;
   if (AIRBORNE[st.phase] || (st.phase === 'takeoff' && !st.ground)) {
@@ -103,7 +117,7 @@ function attitude(p, st, t) {
     }
     const climbM = ((b.altFt || 0) - (a.altFt || 0)) * 0.3048;
     pitch = Math.atan2(climbM, Math.max(1, moved)) / DEG + 2.5;
-    if (st.phase === 'approach' && agl < 150) pitch += 4 * (1 - agl / 150); // flare
+    if (st.phase === 'approach' && agl < FLARE_FT) pitch += (touch - pitch) * smooth01(1 - agl / FLARE_FT); // flare
     // Gusty wind or a thunderstorm low down: the plane bumps about a little (looks only; js/weather.js wind).
     if (st.gusty && agl < 10000) {
       const k = Math.min(1, Math.max(0.15, (st.windKt - 12) / 25)) * (agl < 3000 ? 1 : 0.5);
@@ -119,7 +133,11 @@ function attitude(p, st, t) {
     // half way down the runway, and the tail dragged along the ground.)
     pitch = ROTATE_DEG * Math.max(0, Math.min(1, ((st.rollT ?? 0) - 0.9) / 0.1));
   } else if (st.phase === 'landing') {
-    pitch = 4 * Math.max(0, Math.min(1, (st.speedKmh - vLift * 0.5) / (vLift * 0.5))); // nose wheel down
+    // On the main wheels with the nose held up for the first 7% of the run (3 s or so in real time), then the nose
+    // wheel comes down over the next 10%. (It used to follow the speed, which is averaged over half a minute, so
+    // the nose was already coming down as the main wheels met the runway.)
+    pitch = st.landT != null ? touch * (1 - smooth01((st.landT - 0.07) / 0.1))
+      : 4 * Math.max(0, Math.min(1, (st.speedKmh - vLift * 0.5) / (vLift * 0.5)));
   }
   return { heading, bank, pitch };
 }
@@ -131,8 +149,10 @@ function planePose(p, t, st0) {
     const st = st0 || G.flightState(p, t);
     if (st) {
       const att = attitude(p, st, t);
-      // (altM: above the runways, as the 3D heights are drawn from their ground)
-      return { lat: st.lat, lon: st.lon, altM: Math.max(0, (st.altFt || 0) - (st.fieldFt || 0)) * 0.3048, flying: true, st, ...att };
+      // (altM: above the runways, as the 3D heights are drawn from their ground; sinking slowly onto them)
+      let altM = st.aglM != null ? st.aglM : Math.max(0, (st.altFt || 0) - (st.fieldFt || 0)) * 0.3048;
+      if (st.phase === 'approach') altM = flaredM(altM);
+      return { lat: st.lat, lon: st.lon, altM, flying: true, st, ...att };
     }
   }
   if (p.status === 'flying' && p.flight) {
@@ -183,6 +203,10 @@ function planeModel(type) {
     g.userData.lift = -new THREE.Box3().setFromObject(model).min.z;
     g.userData.gear = model.getObjectByName('gear');
     g.userData.sit = scene.userData.sit || 0;
+    // where the main wheels are (m ahead of the middle: behind it, so less than 0), which the plane pitches about
+    // on the ground, and the model's width (the gear's unit)
+    g.userData.mainY = (scene.userData.mainY ?? -0.05) * size.len;
+    g.userData.wide = size.wide;
     g.clear();
     g.add(model);
   }, () => {});
@@ -1044,6 +1068,15 @@ function placeModel(e, pose, altM, exag, globe, now, lineUp) {
   const wing = right.clone().multiplyScalar(Math.cos(bank)).addScaledVector(lift, -Math.sin(bank));
   const top = lift.clone().multiplyScalar(Math.cos(bank)).addScaledVector(right, Math.sin(bank));
   right.copy(wing);
+  // Pitched about the main wheels, not the middle: they stay on the runway as the nose comes up at rotation or
+  // down after touchdown (the tail used to dip into it and the main wheels sink in). Tail-wheel aircraft are left.
+  const ud = e.obj.userData;
+  if (ud.mainY != null && !ud.sit) {
+    const raise = ud.lift * (Math.cos(pitch) - 1) - ud.mainY * Math.sin(pitch);
+    pos.addScaledVector(up, raise * exag * unit);
+    // the bogies: flat on the runway, tilted in the air, the lowest wheels touching first
+    if (ud.gear) setBogies(ud.gear, (pose.altM || 0) * TERRAIN_EXAG / exag / ud.wide, e.att.pitch);
+  }
   // Zoomed out, enlarged parked planes would overlap at their gates: line them up instead.
   if (lineUp != null && !pose.flying && (!pose.gate || exag > 2.5)) {
     pos.addScaledVector(east, lineUp * len * exag * 1.1 * unit).addScaledVector(north, len * exag * 0.9 * unit);

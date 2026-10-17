@@ -61,7 +61,8 @@ FG.data.modelsOnGear = ['dhc6', 'ju52'];
 // gear's (m; else two thirds of the main ones), mainAt = the main legs' distance from the nose (share of the length;
 // else behind the middle of the wing root), nose = the nose gear's distance from
 // the nose (share of the length), tail = a tail wheel instead (leg = its main legs below the nacelles, m),
-// body = more legs under the fuselage { track, wheels, aft: behind the main legs (share of the length) }. A type
+// body = more legs under the fuselage { track, wheels, aft: behind the main legs (share of the length) }, tilt = how
+// far the bogies hang tilted in flight (degrees: + the rear wheels lowest, touching first; - the front ones). A type
 // can have an entry of its own, for other gear than its model's (js/gear3d.js gearKey).
 FG.data.gear = {
   do228: { main: 'body', track: 0.95, wheels: '1x1', tyre: 0.65 },
@@ -84,19 +85,19 @@ FG.data.gear = {
   b737: { main: 'wing', track: 0.76, wheels: '1x2', tyre: 1.1 },
   b738: { main: 'wing', track: 0.76, wheels: '1x2', tyre: 1.1 },
   b739: { main: 'wing', track: 0.76, wheels: '1x2', tyre: 1.1 },
-  b752: { main: 'wing', track: 0.9, wheels: '2x2', tyre: 1.17 },
-  b763: { main: 'wing', track: 0.92, wheels: '2x2', tyre: 1.17 },
-  a332: { main: 'wing', track: 0.95, wheels: '2x2', tyre: 1.27 },
-  a333: { main: 'wing', track: 0.95, wheels: '2x2', tyre: 1.27 },
-  a346: { main: 'wing', track: 0.95, wheels: '2x2', tyre: 1.4, body: { track: 0, wheels: '2x2', aft: 0.02 } },
-  a359: { main: 'wing', track: 0.89, wheels: '2x2', tyre: 1.4 },
-  a380: { main: 'wing', track: 0.88, wheels: '2x2', tyre: 1.4, nose: 0.1, body: { track: 0.35, wheels: '3x2', aft: 0.05 } },
-  b788: { main: 'wing', track: 0.85, wheels: '2x2', tyre: 1.3 },
-  b789: { main: 'wing', track: 0.85, wheels: '2x2', tyre: 1.3 },
-  b772: { main: 'wing', track: 0.89, wheels: '3x2', tyre: 1.32, nose: 0.1 },
-  b773: { main: 'wing', track: 0.89, wheels: '3x2', tyre: 1.32, nose: 0.1 },
-  b744: { main: 'wing', track: 0.85, wheels: '2x2', tyre: 1.25, nose: 0.1, body: { track: 0.3, wheels: '2x2', aft: 0.05 } },
-  b748: { main: 'wing', track: 0.85, wheels: '2x2', tyre: 1.25, nose: 0.1, body: { track: 0.3, wheels: '2x2', aft: 0.05 } },
+  b752: { main: 'wing', track: 0.9, wheels: '2x2', tyre: 1.17, tilt: 10 },
+  b763: { main: 'wing', track: 0.92, wheels: '2x2', tyre: 1.17, tilt: -10 },
+  a332: { main: 'wing', track: 0.95, wheels: '2x2', tyre: 1.27, tilt: 10 },
+  a333: { main: 'wing', track: 0.95, wheels: '2x2', tyre: 1.27, tilt: 10 },
+  a346: { main: 'wing', track: 0.95, wheels: '2x2', tyre: 1.4, body: { track: 0, wheels: '2x2', aft: 0.02 }, tilt: 10 },
+  a359: { main: 'wing', track: 0.89, wheels: '2x2', tyre: 1.4, tilt: 9 },
+  a380: { main: 'wing', track: 0.88, wheels: '2x2', tyre: 1.4, nose: 0.1, body: { track: 0.35, wheels: '3x2', aft: 0.05 }, tilt: -8 },
+  b788: { main: 'wing', track: 0.85, wheels: '2x2', tyre: 1.3, tilt: -9 },
+  b789: { main: 'wing', track: 0.85, wheels: '2x2', tyre: 1.3, tilt: -9 },
+  b772: { main: 'wing', track: 0.89, wheels: '3x2', tyre: 1.32, nose: 0.1, tilt: 12 },
+  b773: { main: 'wing', track: 0.89, wheels: '3x2', tyre: 1.32, nose: 0.1, tilt: 12 },
+  b744: { main: 'wing', track: 0.85, wheels: '2x2', tyre: 1.25, nose: 0.1, body: { track: 0.3, wheels: '2x2', aft: 0.05 }, tilt: 9 },
+  b748: { main: 'wing', track: 0.85, wheels: '2x2', tyre: 1.25, nose: 0.1, body: { track: 0.3, wheels: '2x2', aft: 0.05 }, tilt: 9 },
   dc3: { main: 'nacelle', wheels: '1x1', tyre: 1.15, tail: true, leg: 1.5 },
   concorde: { main: 'wing', track: 1.33, wheels: '2x2', tyre: 1.2, nose: 0.24 },
   // types with other gear than the model they borrow: the later propliners drawn with the DC-3 had a nose wheel
