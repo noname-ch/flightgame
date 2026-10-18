@@ -112,12 +112,14 @@ FG.data.story = {
     'B737-9': 'The longer 737 MAX.',
     'A330-900': 'The A330neo with Rolls-Royce Trent 7000 engines.',
     'A350-1000': 'The stretched A350.',
+    'A350-900ULR': 'Singapore Airlines flies to New York non-stop again: an A350 with bigger tanks and only 161 seats, for up to 19 hours.',
     'E190-E2': 'Embraer\'s second generation of E-Jets.',
     'B787-10': 'The longest Dreamliner.',
     'E195-E2': 'The biggest of the second-generation E-Jets.',
     'C919': 'China\'s own narrowbody enters service with China Eastern.',
     'A321XLR': 'An A321 that can cross the Atlantic.',
     'B777-9': 'The 777X with folding wing tips.',
+    'A350-1000ULR': 'Qantas\' Project Sunrise: an A350-1000 with an extra fuel tank flies Sydney to London and New York non-stop.',
   },
 
   // Aircraft of the rival airlines, by the year they switch to them (the newest entry not after the game

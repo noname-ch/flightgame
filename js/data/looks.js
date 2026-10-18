@@ -55,6 +55,8 @@ FG.data.looks = {
   'A340-600': { len: 75.4, span: 63.5, dia: 5.6, eng: 'uw4', winglet: true, gear: 2 },
   'A350-900': { len: 66.8, span: 64.8, dia: 6.1, eng: 'uw2', winglet: true, gear: 2, bigFan: true },
   'A350-1000': { len: 73.8, span: 64.8, dia: 6.1, eng: 'uw2', winglet: true, gear: 3, bigFan: true },
+  'A350-900ULR': { len: 66.8, span: 64.8, dia: 6.1, eng: 'uw2', winglet: true, gear: 2, bigFan: true },
+  'A350-1000ULR': { len: 73.8, span: 64.8, dia: 6.1, eng: 'uw2', winglet: true, gear: 3, bigFan: true },
   'B777-200ER': { len: 63.7, span: 60.9, dia: 6.2, eng: 'uw2', gear: 3, bigFan: true },
   'B777-300ER': { len: 73.9, span: 64.8, dia: 6.2, eng: 'uw2', gear: 3, bigFan: true },
   'B777-9': { len: 76.7, span: 64.9, dia: 6.2, eng: 'uw2', gear: 3, bigFan: true },

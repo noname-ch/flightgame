@@ -4,7 +4,7 @@ What we could add next, and what would be great. Nothing here is promised: it is
 Tick a box when it is done and move it to **Done** at the bottom. Effort: **S** = an evening, **M** = a few
 days, **L** = a big project.
 
-Where we are (October 2026): a world map with ~16,000 airports, 55 aircraft types in 3D, timetables and
+Where we are (October 2026): a world map with ~16,000 airports, 122 aircraft types in 3D, timetables and
 shared slots, a slot market with reputation, airport shares and construction, real airport layouts,
 realistic flight tracks in 2D and 3D, AI rival airlines, random events and a developer panel.
 

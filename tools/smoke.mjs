@@ -701,6 +701,20 @@ try {
   if (ul.err) errors.push(`ultra long-haul: ${ul.err}`);
   else step(`ultra long-haul: ${ul.legs}`);
 
+  step('A350-1000ULR: Sydney – London non-stop, out of the A350-1000\'s range');
+  const sun = await evaluate(() => {
+    const a = G.airportByCode.SYD, b = G.airportByCode.LHR, r = Math.PI / 180;
+    const km = 12742 * Math.asin(Math.sqrt(Math.sin((b.lat - a.lat) * r / 2) ** 2 +
+      Math.cos(a.lat * r) * Math.cos(b.lat * r) * Math.sin((b.lon - a.lon) * r / 2) ** 2));
+    const D = FG.data.aircraft;
+    if (!(km > D['A350-1000'].rangeKm && km < D['A350-1000ULR'].rangeKm && km < D['A350-900ULR'].rangeKm)) return { err: `SYD–LHR ${Math.round(km)} km` };
+    const legs = G.buildLongTimetable('A350-1000ULR', ['SYD', 'LHR'], 9 * 60, 1);
+    if (legs.length !== 2) return { err: `${legs.length} flights` };
+    return { legs: legs.map((l) => `${l.from}→${l.to}`).join(', '), km: Math.round(km) };
+  });
+  if (sun.err) errors.push(`A350-1000ULR: ${sun.err}`);
+  else step(`A350-1000ULR: ${sun.legs} (${sun.km} km)`);
+
   step('airport categories: every airport in one of the four, named in the airport panel');
   const cats = await evaluate((home) => {
     const n = {};
