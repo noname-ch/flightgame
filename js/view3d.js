@@ -927,7 +927,51 @@ function refreshData() {
 }
 
 // ---------- style ----------
-const LOD = { zoomLevels: 13, tileRatio: 2 }; // see map.setSourceTileLodParams in createMap
+const LOD = { zoomLevels: 13, tileRatio: 2 }; // see setLod
+// Tilted towards the horizon, far away tiles are loaded much coarser (and fewer of them) than MapLibre's default
+// (9.3 zoom levels on screen, 3× the tiles of a flat view): the distance shows early as a rough picture, the detail
+// only comes close to the camera.
+// MapLibre picks each tile's zoom from how far it is from the camera and how steeply it is seen, measured from the
+// height of the map's centre as if the ground were there. Following a plane the centre floats at the plane's height
+// (setCenterClampedToGround(false)), only some metres under the camera: every tile then counted as seen edge-on at
+// the horizon, and the ground under and ahead of a plane in the air came 3-5 zoom levels too coarse (blurred, and
+// sharpening only once the plane was past). So the tiles are measured from the real ground under the camera:
+// MapLibre's own sum, given the camera's height over the ground and a centre where its view meets the ground.
+function setLod(map, terrain = true) {
+  const lift = { key: null, h: 0 };
+  // (how far the centre floats over the ground, in the units of MercatorCoordinate; once per camera move)
+  const liftOf = () => {
+    const c = map.getCenter();
+    const el = map.getCenterElevation();
+    const key = `${el},${c.lng},${c.lat}`;
+    if (key !== lift.key) {
+      lift.key = key;
+      const ground = map.terrain ? map.queryTerrainElevation(c) || 0 : 0;
+      const m = el - ground;
+      lift.h = m > 1 ? maplibregl.MercatorCoordinate.fromLngLat(c, m).z : 0;
+    }
+    return lift.h;
+  };
+  const wrap = () => {
+    for (const id of Object.keys(map.getStyle().sources)) {
+      const s = map.getSource(id);
+      const own = s && s.calculateTileZoom;
+      if (!own) continue;
+      s.calculateTileZoom = (zoom, dist2d, distZ, distCenter, fov) => {
+        const h = liftOf();
+        if (!h || !(distCenter > 0)) return own(zoom, dist2d, distZ, distCenter, fov);
+        const height = distZ + h;
+        const ground = height / Math.max(0.02, distZ / distCenter); // (along the view to the ground)
+        return own(zoom + Math.log2(distCenter / ground), dist2d, height, ground, fov);
+      };
+    }
+  };
+  map.setSourceTileLodParams(LOD.zoomLevels, LOD.tileRatio);
+  // (the plane windows' cameras keep MapLibre's own for the ground's heights: 9.314 and 3 are its defaults)
+  map.setSourceTileLodParams(terrain ? LOD.zoomLevels + 2 : 9.314, terrain ? 1.5 : 3, 'terrain');
+  map.setSourceTileLodParams(terrain ? LOD.zoomLevels + 2 : 9.314, terrain ? 1.5 : 3, 'hillshade');
+  wrap();
+}
 // The flat layers are painted onto the terrain through a texture per terrain tile, 2048 px square (22 MB).
 // On phones half that (5.6 MB): a little softer, and iPhones close the page when it uses too much memory.
 // (MapLibre 6.13 has no option for it: the size is fixed when the terrain is set up, so it is set after that.)
@@ -1064,13 +1108,13 @@ function transformStyle(_prev, style) {
   // the view, from the sun at its centre (MapLibre doesn't draw a picture of the world that close in, and the view
   // is a few km across there anyway).
   style.sources['fg-night'] = { type: 'image', url: CLEAR_PNG, coordinates: NIGHT_CORNERS };
-  style.sources['fg-night-local'] = { type: 'geojson', data: { type: 'Feature', properties: {},
-    geometry: { type: 'Polygon', coordinates: [[[-180, -85], [180, -85], [180, 85], [-180, 85], [-180, -85]]] } } };
   style.layers.push(
     { id: 'fg-night', type: 'raster', source: 'fg-night', maxzoom: 9,
       paint: { 'raster-opacity': ['interpolate', ['linear'], ['zoom'], 7, 1, 9, 0], 'raster-fade-duration': 0, 'raster-resampling': 'linear' } },
-    { id: 'fg-night-local', type: 'fill', source: 'fg-night-local', minzoom: 7,
-      paint: { 'fill-color': NIGHT_GROUND, 'fill-opacity': 0, 'fill-antialias': false } },
+    // (a background layer, not a fill over the world: a fill is drawn from its tiles, and where those hadn't come yet
+    // on a new bit of ground, ahead of a followed plane, it was day there under the night sky)
+    { id: 'fg-night-local', type: 'background', minzoom: 7,
+      paint: { 'background-color': NIGHT_GROUND, 'background-opacity': 0 } },
     { id: 'fg-runway-lights', type: 'line', source: 'fg-gates', minzoom: 12, filter: kind('runway'),
       layout: { 'line-cap': 'round', 'line-join': 'round', visibility: 'none' },
       paint: { 'line-color': '#fff6d8', 'line-opacity': 0, 'line-blur': 0.8,
@@ -1650,7 +1694,7 @@ function daylight3d(map, layer, lat, lon, t, now, weather) {
     map.setSky(sky);
     const url = pic ? pic.url : CLEAR_PNG;
     if (url !== st.url) { st.url = url; st.pic = pic && pic.key; src.updateImage({ url, coordinates: NIGHT_CORNERS }); }
-    map.setPaintProperty('fg-night-local', 'fill-opacity', ['interpolate', ['linear'], ['zoom'], 7, 0, 9, 0.7 * night]);
+    map.setPaintProperty('fg-night-local', 'background-opacity', ['interpolate', ['linear'], ['zoom'], 7, 0, 9, 0.7 * night]);
     const lamps = Math.max(0, Math.min(1, (night - 0.25) / 0.4));
     for (const id of ['fg-runway-lights', 'fg-taxi-lights']) {
       map.setLayoutProperty(id, 'visibility', lamps > 0 ? 'visible' : 'none');
@@ -2302,12 +2346,7 @@ function createMap(fit) {
   map.addControl(new maplibregl.ScaleControl(), 'bottom-left');
   el.appendChild(controls());
   map.once('style.load', () => {
-    // Tilted towards the horizon, far away tiles are loaded much coarser (and fewer of them) than
-    // MapLibre's default (9.3 zoom levels on screen, 3× the tiles of a flat view): the distance shows
-    // early as a rough picture, the detail only comes close to the camera.
-    map.setSourceTileLodParams(LOD.zoomLevels, LOD.tileRatio);
-    map.setSourceTileLodParams(LOD.zoomLevels + 2, 1.5, 'terrain');
-    map.setSourceTileLodParams(LOD.zoomLevels + 2, 1.5, 'hillshade');
+    setLod(map);
     phoneDrapes(map);
     map.addLayer(planeLayer, 'fg-airport-labels');
     v.ready = true;
@@ -2438,7 +2477,7 @@ function chase(container, id) {
   chaseMaps.add(map);
   if (map.setCenterClampedToGround) map.setCenterClampedToGround(false);
   map.once('style.load', () => {
-    map.setSourceTileLodParams(LOD.zoomLevels, LOD.tileRatio);
+    setLod(map, false);
     phoneDrapes(map);
     map.addLayer(chaseLayer(cam), 'fg-airport-labels');
     map.getSource('fg-airports').setData(airportFeatures());
