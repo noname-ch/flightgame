@@ -1318,7 +1318,7 @@
     const f = p.flight;
     if (p.status === 'flying') {
       const verb = { ferry: 'Ferrying', delivery: 'Delivery flight' }[f.kind] || 'Flying';
-      return `${verb} ${f.from} → ${f.to}, arrives ${atClock(f.to, f.arr)}` +
+      return (f.emergency ? '⚠ MAYDAY · ' : '') + `${verb} ${f.from} → ${f.to}, arrives ${atClock(f.to, f.arr)}` +
         (f.kind === 'scheduled' ? ` · ${f.pax} pax` : '') + ` · ${flightText(p)}`;
     }
     if (p.status === 'turnaround' && p.repair) return `🔧 Grounded for repairs at ${p.location} until ${G.fmtTime(p.readyAt)}`;

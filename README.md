@@ -197,7 +197,10 @@ upgrades any more: you build terminals and stands yourself.
    press Continue; news that comes while the game runs in a background tab waits until you are back)
    and active events are listed above the tabs. Strikes and bad weather ground
    flights, festivals boost demand, and a crash costs you the plane, compensation and weeks of
-   bookings.
+   bookings. A crash always starts as an in-flight emergency (engine fire, hydraulics, lost cabin
+   pressure, gear fault, smoke in the cockpit; about 1 flight in 150) that makes the news while the
+   plane is still in the air (⚠ MAYDAY in its status). Only 5% of emergencies end in a crash; the rest
+   land safely at the destination and the plane is grounded for an inspection and repairs.
 
 8. **The whole world**: besides the ~50 main European airports, about 16,000 more airports and
    airfields worldwide (US, Canada, Latin America, Asia, Africa, Oceania) appear as you zoom in
@@ -241,7 +244,7 @@ upgrades any more: you build terminals and stands yourself.
     track coloured by altitude; its tooltip and card show flight level, speed and phase.
 
 Modes (chosen on the start screen, also via **New game**): **Arcade** uses normal accident rates for every maker;
-**Realistic** gives Boeing aircraft a 1000% higher crash and door-panel rate.
+**Realistic** gives Boeing aircraft a 1000% higher crash and door-panel rate (55% of their emergencies end in a crash).
 Difficulty: **Easy** (CHF 5M, +25% passengers, −15% flight costs, bankrupt below −2M), **Normal**
 (CHF 1.5M, bankrupt below −500k) or **Hard** (CHF 750k, −15% passengers, +15% flight costs,
 bankrupt below −250k). Both are set in `config.js` (`modes`, `difficulties`, `starterAircraft`).
@@ -357,8 +360,8 @@ The hangar marketplace shows the same models: the selected type as a live 3D
 model that you can turn by dragging (double-click to reset), the tiles as pictures.
 
 Developer tools: the 🛠 button (or F2) opens a cheat panel for testing: add or set money, add any
-aircraft for free (delivered instantly to the chosen or selected airport, slot included), crash /
-damage / repair / remove the selected plane, free slots and 100% airport ownership, finish all
+aircraft for free (delivered instantly to the chosen or selected airport, slot included), emergency /
+crash / damage / repair / remove the selected plane, free slots and 100% airport ownership, finish all
 construction, trigger or clear any world event, place wind, and skip an hour, day or week. Every cheat is
 noted in the log (`js/devtools.js`). **Wind**: pick where it blows from (degrees or N…NW), its speed (0-120 kt)
 and how far it reaches (50-1000 km), then *Place on the map* (click in 2D or 3D), *At the map centre* or *At* the

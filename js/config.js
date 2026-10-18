@@ -174,10 +174,13 @@ FG.config = {
 
   // Random events (catalogue in js/data/events.js). Real accident rates (~1 per 5M flights)
   // would never show up in a game, so they are scaled up here.
+  // A crash always starts as an in-flight emergency: crashShare of them (times the mode's maker
+  // multiplier) end in a crash, the rest land safely and are grounded for an inspection.
   events: {
-    crashPerFlight: 1 / 6000,     // hull loss chance per flight
-    incidentPerFlight: 1 / 400,   // minor incident (bird strike, tech fault…) chance per flight
-    perDay: 0.2,                  // chance of a world event (strike, weather, fuel…) each day
+    emergencyPerFlight: 1 / 150,  // mayday chance per flight (engine fire, hydraulics, …)
+    crashShare: 0.05,             // share of emergencies that end in a crash (~1 per 3000 flights)
+    incidentPerFlight: 1 / 150,   // minor incident (bird strike, tech fault…) chance per flight
+    perDay: 0.5,                  // chance of a world event (strike, weather, fuel…) each day
     crashPaxCompensation: 25000,  // per passenger on board, after insurance
     crashInvestigation: 300000,
     crashInsuranceShare: 0.6,     // insurance pays this share of an owned plane's value

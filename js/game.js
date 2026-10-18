@@ -3804,6 +3804,7 @@
 
     updatePlane(p) {
       const t = this.state.time;
+      if (p.status === 'flying' && p.flight.emergencyAt && !p.flight.emergency && t >= p.flight.emergencyAt) this.emergency(p);
       if (p.status === 'flying' && p.flight.crashAt && t >= p.flight.crashAt) { this.crash(p); return; }
       if (p.status === 'flying' && t >= p.flight.arr) this.land(p);
       if (p.status === 'turnaround' && t >= p.readyAt) {
@@ -3845,7 +3846,8 @@
       } else {
         this.log(`${nameOf(p)} ferried ${f.from}→${f.to} (cost ${fmtMoney(f.cost)}).`, 'cost');
       }
-      if (f.incident) this.incident(p, f);
+      if (f.emergency) this.emergencyLanded(p, f);
+      else if (f.incident) this.incident(p, f);
     },
 
     // Decide where an idle plane goes next, if anywhere.
@@ -3957,7 +3959,8 @@
     bankruptcyLimit() { return this.difficulty().bankruptcyLimit; },
     home() { return this.state.home || C.startAirport; },
     makerMult(type) { return this.mode().makerCrashMult[D.aircraft[type].maker] || 1; },
-    crashChance(type) { return C.events.crashPerFlight * this.makerMult(type); },
+    // An emergency ends in a crash this often (realistic mode: Boeing 5 % × 11).
+    crashChance(type) { return Math.min(1, C.events.crashShare * this.makerMult(type)); },
 
     // Developer tools: winds placed by hand (state.winds; see placedWind). Each returns an error string or null.
     get windRev() { return windRev; },
@@ -4308,15 +4311,60 @@
       if (story) this.news(story);
     },
 
-    // At take-off: will this flight crash, or have an incident?
+    // At take-off: will this flight declare an emergency (which may end in a crash), or have an incident?
     rollFlightEvents(p) {
       const f = p.flight;
       const r = Math.random();
-      if (r < this.crashChance(p.type)) {
-        f.crashAt = f.dep + Math.max(1, Math.round((f.arr - f.dep) * (0.1 + Math.random() * 0.8)));
-      } else if (r < this.crashChance(p.type) + C.events.incidentPerFlight) {
+      if (r < C.events.emergencyPerFlight) {
+        f.emergencyAt = f.dep + Math.max(1, Math.round((f.arr - f.dep) * (0.1 + Math.random() * 0.7)));
+      } else if (r < C.events.emergencyPerFlight + C.events.incidentPerFlight) {
         f.incident = true;
       }
+    },
+
+    // Mayday in the air: the news comes out now, and crashChance decides if it crashes a few minutes
+    // later (before it would land) or lands safely at its destination (emergencyLanded).
+    emergency(p) {
+      const s = this.state;
+      const f = p.flight;
+      const list = D.emergencies;
+      let r = Math.random() * list.reduce((sum, e) => sum + e.weight, 0);
+      const em = list.find((e) => (r -= e.weight) < 0) || list[0];
+      f.emergency = em.id;
+      f.emergencyAt = Math.min(f.emergencyAt || s.time, s.time);
+      f.incident = false;
+      if (Math.random() < this.crashChance(p.type)) {
+        f.crashAt = Math.max(s.time, Math.min(f.arr - 1, s.time + 3 + Math.floor(Math.random() * 13)));
+      }
+      const frac = (s.time - f.dep) / (f.arr - f.dep);
+      const [lat, lon] = interpolate(airportByCode[f.from], airportByCode[f.to], frac);
+      const ac = D.aircraft[p.type];
+      this.log(`⚠ MAYDAY: ${nameOf(p)} (${ac.name}) on ${f.from}→${f.to} reports ${em.what} – ` +
+        `heading for ${airportByCode[f.to].name}.`, 'bad');
+      this.news(em.story({
+        id: p.id, company: s.company, type: ac.name, from: f.from, to: f.to,
+        place: this.nearestPlace(lat, lon), airport: airportByCode[f.to].name, onBoard: f.pax + this.crewCount(p),
+      }));
+      this.dirty = true;
+    },
+
+    // The emergency ended well: the plane is grounded for an inspection and repairs.
+    emergencyLanded(p, f) {
+      const s = this.state;
+      const em = D.emergencies.find((e) => e.id === f.emergency) || D.emergencies[0];
+      s.money -= em.repair;
+      s.today.cost += em.repair;
+      record(p, { repair: em.repair, incidents: 1 });
+      p.readyAt = Math.max(p.readyAt, s.time + em.groundedHours * 60);
+      p.repair = em.id;
+      s.rep.incidents.push(s.time);
+      this.log(`✔ ${nameOf(p)} landed safely at ${airportByCode[f.to].name} after ${em.what}. ` +
+        `Everyone is fine; inspection and repairs cost ${fmtMoney(em.repair)}, grounded ${em.groundedHours} h.`, 'good');
+    },
+
+    crewCount(p) {
+      const crew = this.crewOf(p);
+      return crew ? crew.pilots + crew.cabin : 2;
     },
 
     nearestPlace(lat, lon) {
@@ -4336,8 +4384,7 @@
       const E = C.events;
       const frac = (s.time - f.dep) / (f.arr - f.dep);
       const [lat, lon] = interpolate(airportByCode[f.from], airportByCode[f.to], frac);
-      const crew = this.crewOf(p);
-      const onBoard = f.pax + (crew ? crew.pilots + crew.cabin : 2);
+      const onBoard = f.pax + this.crewCount(p);
       const r = Math.random();
       const survivors = r < 0.35 ? onBoard : r < 0.7 ? Math.floor(onBoard * Math.random()) : 0;
 

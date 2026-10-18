@@ -298,6 +298,27 @@ try {
   if (!result.flights) errors.push('no flight landed in 30 game days');
   if (result.gameOver) warnings.push('the airline went bankrupt during the test');
 
+  step('emergency: a mayday makes the news, a crash is set before it lands, else it lands and is grounded');
+  const em = await evaluate(() => {
+    const flying = () => G.state.planes.find((x) => x.status === 'flying' && !x.flight.emergency && x.flight.arr - G.state.time > 5);
+    for (let m = 0; m < 2 * 1440 && !flying(); m += 5) G.advance(5); // (wait for one to take off)
+    const p = flying();
+    if (!p) return { skip: true };
+    const share = FG.config.events.crashShare;
+    FG.config.events.crashShare = 1;
+    G.emergency(p);
+    FG.config.events.crashShare = share;
+    const f = p.flight;
+    const crashOk = f.crashAt >= G.state.time && f.crashAt < f.arr;
+    delete f.crashAt; // (and now it lands after all)
+    G.advance(f.arr - G.state.time + 1);
+    return { crashOk, landed: p.status !== 'flying', repair: p.repair,
+      alive: G.state.planes.includes(p) };
+  });
+  if (em.skip) warnings.push('emergency: no plane in the air to test');
+  else if (!em.crashOk || !em.alive || !em.landed || !em.repair) errors.push(`emergency: ${JSON.stringify(em)}`);
+  else step(`emergency: crash timed before landing, safe landing grounded for "${em.repair}"`);
+
   step('plane stats: its strip card clicked, then clicked again, opens its stats window');
   // (paused, as for the ferry: at full speed a long task can hold up the click's timer)
   const psRunning = await evaluate(() => {

@@ -259,6 +259,62 @@ FG.data.incidents = [
   },
 ];
 
+// In-flight emergencies (chance FG.config.events.emergencyPerFlight). The news comes out when the crew
+// declares it; crashShare of them end in a crash, the rest land at the destination and are grounded.
+// `what` finishes "reports …" and "landed safely after …". x has id, company, type, from, to, place, airport, onBoard.
+FG.data.emergencies = [
+  {
+    id: 'engineFire', weight: 4, groundedHours: 48, repair: 180000, what: 'an engine fire',
+    story: (x) => ({
+      kind: 'bad', picture: 'incident',
+      headline: `MAYDAY! ENGINE FIRE OVER ${x.place.toUpperCase()}`,
+      sub: `${x.company} ${x.type} with ${x.onBoard} on board heads for ${x.airport}`,
+      body: `Witnesses near ${x.place} saw flames trailing from an engine of flight ${x.id} (${x.from}–${x.to}). ` +
+        `The crew shut the engine down, declared an emergency and is flying on to ${x.airport}, where fire crews are waiting.`,
+    }),
+  },
+  {
+    id: 'hydraulics', weight: 3, groundedHours: 36, repair: 120000, what: 'a hydraulic failure',
+    story: (x) => ({
+      kind: 'bad', picture: 'incident',
+      headline: 'MAYDAY: JET LOSES HYDRAULICS',
+      sub: `${x.company} flight ${x.id} struggles towards ${x.airport}`,
+      body: `The pilots of the ${x.type} report a hydraulic failure near ${x.place}, leaving them with heavy controls ` +
+        `and gear that may have to be dropped by hand. ${x.onBoard} people are on board. Emergency services at ${x.airport} are on standby.`,
+    }),
+  },
+  {
+    id: 'depressurisation', weight: 3, groundedHours: 30, repair: 90000, what: 'a loss of cabin pressure',
+    story: (x) => ({
+      kind: 'bad', picture: 'incident',
+      headline: 'OXYGEN MASKS DROP IN DIVE',
+      sub: `${x.company} ${x.type} plunges 25,000 ft after losing pressure`,
+      body: `Passengers on flight ${x.id} from ${x.from} filmed oxygen masks swinging as the jet dived over ${x.place}. ` +
+        `The crew declared an emergency and is continuing at low altitude to ${x.airport}.`,
+    }),
+  },
+  {
+    id: 'gearFault', weight: 2, groundedHours: 24, repair: 70000, what: 'a landing gear fault',
+    story: (x) => ({
+      kind: 'bad', picture: 'incident',
+      headline: 'GEAR WON\'T COME DOWN',
+      sub: `${x.company} jet circles with ${x.onBoard} on board`,
+      body: `Flight ${x.id} (${x.type}) declared an emergency near ${x.place} after a landing gear warning. ` +
+        `The crew is burning off fuel before trying to land at ${x.airport}; the runway is being foamed.`,
+    }),
+  },
+  {
+    id: 'smokeCockpit', weight: 2, groundedHours: 30, repair: 60000, what: 'smoke in the cockpit',
+    story: (x) => ({
+      kind: 'bad', picture: 'incident',
+      headline: 'SMOKE IN THE COCKPIT',
+      sub: `Pilots of ${x.company} flight ${x.id} don oxygen masks`,
+      body: `The crew of the ${x.type} from ${x.from} to ${x.to} reported smoke in the cockpit over ${x.place} and ` +
+        `declared an emergency. The jet is heading for ${x.airport} as fast as it can.`,
+    }),
+  },
+];
+
 // Crash stories. x has id, company, type, maker, from, to, place, pax, survivors, cost.
 FG.data.crashStory = (x) => {
   const allSurvived = x.survivors === x.pax;

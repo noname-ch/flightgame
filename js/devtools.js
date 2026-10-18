@@ -84,6 +84,12 @@
         G.crash(p);
         done(`crashed ${p.id}.`);
         break;
+      case 'emergency':
+        if (p.status !== 'flying') { note(`${p.id} must be in the air for an emergency.`, true); return; }
+        if (p.flight.emergency) { note(`${p.id} has already declared an emergency.`, true); return; }
+        G.emergency(p);
+        done(`emergency on ${p.id}${p.flight.crashAt ? ' (it will crash)' : ' (it will land safely)'}.`);
+        break;
       case 'incident': {
         const f = p.flight || { from: p.location, to: p.location };
         G.incident(p, f);
@@ -325,6 +331,7 @@
       </section>
       <section><h4>Selected plane <span class="muted">${p ? `${esc(p.id)} · ${esc(D.aircraft[p.type].name)} · ${p.status}` : 'none'}</span></h4>
         <div class="dev-row">
+          <button data-dev="plane" data-kind="emergency"${p && p.status === 'flying' ? '' : ' disabled'}>Emergency</button>
           <button data-dev="plane" data-kind="crash"${p && p.status === 'flying' ? '' : ' disabled'}>Crash now</button>
           <button data-dev="plane" data-kind="incident"${p ? '' : ' disabled'}>Incident</button>
           <button data-dev="plane" data-kind="ready"${p ? '' : ' disabled'}>Repair &amp; ready</button>
