@@ -44,7 +44,7 @@
     let h = '';
     for (const g of G.groundTimes(p.type, legs)) {
       h += `<b class="tl-ground" style="left:${pct(g.from)};width:${pct(g.to - g.from)}" data-pl="slotAt" data-code="${g.code}"
-        title="${g.code}: on the ground ${clock(g.arr)}–${clock(g.dep)} (takes a slot) · double-click for the slot">${g.to - g.from >= 50 ? g.code : ''}</b>`;
+        title="${g.code}: on the ground ${clock(toLocal(g.code, g.arr))}–${clock(toLocal(g.code, g.dep))} local (takes a slot) · double-click for the slot">${g.to - g.from >= 50 ? g.code : ''}</b>`;
     }
     for (const l of legs) {
       const block = G.legBlock(p.type, l.from, l.to);
@@ -52,7 +52,7 @@
       const parts = dep + block > DAY ? [[dep, DAY - dep], [0, dep + block - DAY]] : [[dep, block]];
       for (const [s, w] of parts) {
         h += `<b class="tl-flight${draft ? ' draft' : ''}" style="left:${pct(s)};width:${pct(w)}"
-          title="${clock(l.dep)} ${l.from} → ${l.to} ${clock(l.dep + block)} · ${G.fmtDuration(block)}">${w >= 70 ? `${l.from}›${l.to}` : ''}</b>`;
+          title="${clock(toLocal(l.from, l.dep))} ${l.from} → ${l.to} ${clock(toLocal(l.to, l.dep + block))} (local times) · ${G.fmtDuration(block)}">${w >= 70 ? `${l.from}›${l.to}` : ''}</b>`;
       }
     }
     return h;
@@ -73,8 +73,8 @@
       const block = G.legBlock(p.type, l.from, l.to);
       const next = i + 1 < legs.length ? legs[i + 1].dep : legs[0].dep + days * DAY;
       const arr = l.dep + block;
-      piece('tl-ground', arr + 0, next, `data-pl="slotAt" data-code="${l.to}" title="${l.to}: on the ground ${G.fmtLegDep(arr, days)}–${G.fmtLegDep(next % (days * DAY), days)} (takes a slot) · double-click for the slot"`, l.to);
-      piece(`tl-flight${draft ? ' draft' : ''}`, l.dep, arr, `title="${G.fmtLegDep(l.dep, days)} ${l.from} → ${l.to} ${clock(arr)} · ${G.fmtDuration(block)}"`, `${l.from}›${l.to}`);
+      piece('tl-ground', arr + 0, next, `data-pl="slotAt" data-code="${l.to}" title="${l.to}: on the ground ${G.fmtLegDep(arr, days, l.to)}–${G.fmtLegDep(next % (days * DAY), days, l.to)} local (takes a slot) · double-click for the slot"`, l.to);
+      piece(`tl-flight${draft ? ' draft' : ''}`, l.dep, arr, `title="${G.fmtLegDep(l.dep, days, l.from)} ${l.from} → ${l.to} ${G.fmtLegDep(arr, days, l.to)} (local times) · ${G.fmtDuration(block)}"`, `${l.from}›${l.to}`);
     });
     return h;
   }
@@ -88,8 +88,8 @@
         <li><b>Pick its airports</b>. You need a slot at each one, and the route loops back to the start.</li>
         <li><b>Drag the start time</b> until its slot bars show no red (or press ✨), then <b>Save & fly</b>.</li>
       </ol>
-      <div class="muted">Blue = flying · grey = on the ground (in one of your slots) · striped = night, no departures
-      ${clock(C.curfew.end)}–${clock(C.curfew.start)}.</div>
+      <div class="muted">Blue = flying · grey = on the ground (in one of your slots) · striped = night at your home base. The bars
+      run on your home base's clock; times written out are local at each airport, and so is its night curfew (no departures ${clock(C.curfew.end)}–${clock(C.curfew.start)}).</div>
       <div class="timeline">${axis()}`;
     for (const p of s.planes) {
       const sch = p.schedule;
@@ -116,7 +116,7 @@
     const legs = sch.legs ? sch.legs.map((l) => ({ ...l })) : [];
     const at = p.status === 'flying' && p.flight ? p.flight.to : p.location;
     const stops = sch.legs ? loopOf(sch.legs) : G.ownsSlot(at) ? [at] : [];
-    const first = legs.length ? legs[0].dep : C.curfew.start + 60;
+    const first = legs.length ? legs[0].dep : toHome(stops[0], C.curfew.start + 60);
     pl.draft = { stops, first, rounds: 0, legs, ultra: (sch.days || 1) > 1 };
     if (!legs.length && stops.length >= 2) rebuild(p);
   }
@@ -130,12 +130,24 @@
     return stops;
   }
 
+  // The first departure is set in local time at the first stop (its curfew is): d.first stays in home-base time.
+  const norm = (m) => ((m % DAY) + DAY) % DAY;
+  const aheadAt = (code) => (code ? G.aheadOf(code, G.state.time) : 0);
+  const toLocal = (code, m) => norm(m + aheadAt(code));
+  const toHome = (code, m) => norm(m - aheadAt(code));
+
   function rebuild(p) {
     const d = pl.draft;
     d.legs = d.ultra ? G.buildLongTimetable(p.type, d.stops, d.first, d.rounds || 1) : G.buildTimetable(p.type, d.stops, d.first, d.rounds);
   }
   // One round of the loop, turnarounds included (a daily timetable must fit it into the day).
   const roundMin = (p, stops) => stops.reduce((n, c, i) => n + G.legBlock(p.type, c, stops[(i + 1) % stops.length]) + G.turnaroundMin(p.type), 0);
+
+  // "local at JFK · 12:00 your time" (nothing where the first stop keeps the home base's clock)
+  function firstNote(d) {
+    const c = d.stops[0];
+    return c && aheadAt(c) ? `local at ${c} · ${clock(d.first)} your time` : '';
+  }
 
   function editor(p) {
     const d = pl.draft;
@@ -164,22 +176,28 @@
         ${d.ultra && d.legs.length ? `(this one: every ${days} day${days === 1 ? '' : 's'})` : ''}</span></label>` : ''}
       <div class="label">2 · When does its ${d.ultra ? 'round' : 'day'} start? <span class="muted">(drag, and watch the slots below)</span></div>
       <div class="row pl-when"><button class="mini" data-pl="firstStep" data-by="-5" title="5 min earlier">−</button>
-        <input type="range" id="pl-first-range" min="${C.curfew.start}" max="${C.curfew.end}" step="5" value="${d.first}">
+        <input type="range" id="pl-first-range" min="${C.curfew.start}" max="${C.curfew.end}" step="5" value="${toLocal(d.stops[0], d.first)}">
         <button class="mini" data-pl="firstStep" data-by="5" title="5 min later">+</button>
-        <input type="time" id="pl-first" step="300" value="${clock(d.first)}">
+        <input type="time" id="pl-first" step="300" value="${clock(toLocal(d.stops[0], d.first))}" title="Local time at the first airport">
+        <span class="muted" id="pl-first-home">${firstNote(d)}</span>
         Loops <select id="pl-rounds">${d.ultra ? '' : `<option value="0"${d.rounds ? '' : ' selected'}>as many as fit</option>`}
         ${[1, 2, 3, 4, 5, 6, 8].map((n) => `<option value="${n}"${(d.rounds || (d.ultra ? 1 : 0)) === n ? ' selected' : ''}>${n}×</option>`).join('')}</select></div>
       ${d.stops.length >= 2 ? `<div class="row"><button class="primary" data-pl="fit" title="Tries every start time and every stop as the place it spends the night">✨ Find a time that fits the slots</button></div>` : ''}
       <div id="pl-fit">${fitView(p, d)}</div>`;
     if (d.legs.length) {
       const est = G.estimateTimetable(p.type, d.legs, G.costMult(p));
+      // (times in the table are local at the airport: the departure at the one it leaves, the arrival where it lands)
+      const n = days * DAY;
+      const local = (code, m) => (((m + aheadAt(code)) % n) + n) % n;
       const dayOf = (m) => (days > 1 ? `<small class="muted">day ${Math.floor(m / DAY) + 1}</small> ` : '');
-      h += `<table class="small legs"><tr><th>dep</th><th>flight</th><th>arr</th><th>pax</th><th>result</th><th></th></tr>`;
+      const zone = (code) => (aheadAt(code) ? ` <small class="muted">${G.fmtZone(code, G.state.time)}</small>` : '');
+      h += `<table class="small legs"><tr><th title="Local time at the airport it leaves">dep (local)</th><th>flight</th><th title="Local time at the airport it lands at">arr (local)</th><th>pax</th><th>result</th><th></th></tr>`;
       est.rows.forEach((r, i) => {
-        h += `<tr><td class="nowrap">${dayOf(r.dep)}<button class="mini" data-pl="shift" data-i="${i}" data-by="-15">−</button>
-          <input type="time" class="pl-dep" data-i="${i}" step="300" value="${clock(r.dep)}">
-          <button class="mini" data-pl="shift" data-i="${i}" data-by="15">+</button></td>
-          <td>${r.from} → ${r.to} <span class="muted">${G.fmtDuration(r.block)}</span></td><td class="nowrap">${dayOf(r.arr)}${clock(r.arr)}</td>
+        const dep = local(r.from, r.dep), arr = local(r.to, r.arr);
+        h += `<tr><td class="nowrap">${dayOf(dep)}<button class="mini" data-pl="shift" data-i="${i}" data-by="-15">−</button>
+          <input type="time" class="pl-dep" data-i="${i}" step="300" value="${clock(dep)}" title="Local time at ${r.from}${aheadAt(r.from) ? ` (${clock(r.dep)} your time)` : ''}">
+          <button class="mini" data-pl="shift" data-i="${i}" data-by="15">+</button>${zone(r.from)}</td>
+          <td>${r.from} → ${r.to} <span class="muted">${G.fmtDuration(r.block)}</span></td><td class="nowrap" title="${aheadAt(r.to) ? `${clock(r.arr)} your time` : ''}">${dayOf(arr)}${clock(arr)}${zone(r.to)}</td>
           <td>${r.pax}/${r.seats}</td><td class="${r.result >= 0 ? 'pos' : 'neg'}">${G.fmtMoney(r.result)}</td>
           <td><button class="mini" data-pl="legDel" data-i="${i}" title="Drop this flight and the ones after it on this loop">✕</button></td></tr>`;
       });
@@ -202,7 +220,8 @@
         ? `<div class="warn">Nothing fits: one round ${d.stops.join(' → ')} → ${d.stops[0]} takes ${G.fmtDuration(round)} with the
           turnarounds, and a timetable repeats every day. ${ultraOk ? '<b>Tick 🌏 Ultra long-haul</b> above: then it repeats every few days.'
             : `Pick an airport closer by: only planes with the range for flights longer than half a day fly ultra long-haul timetables over several days.`}</div>`
-        : `<div class="warn">Nothing fits: move the first departure into ${clock(C.curfew.start)}–${clock(C.curfew.end)} or shorten the route.</div>`;
+        : `<div class="warn">Nothing fits: move the first departure into ${clock(C.curfew.start)}–${clock(C.curfew.end)} local, or shorten the route (or start
+          from another of its airports: each one's night curfew is in its local time).</div>`;
     } else {
       h += `<div class="hint">Add ${d.stops.length ? 'a second airport' : 'two airports'} where you hold a slot.</div>`;
     }
@@ -227,12 +246,12 @@
       h += `<div class="tl-row"><div class="tl-label" data-pl="slotAt" data-code="${a.code}" title="Open the slots at ${a.code}">${a.code}
         <small>${a.have} slot${a.have === 1 ? '' : 's'}</small></div><div class="tl-bar fit">${nightAndNow()}`;
       for (const x of a.others) {
-        h += `<b class="fit-other" style="left:${pct(x.from)};width:${pct(x.to - x.from)}" title="${nameOf(x.planeId)} ${x.idle ? 'parked here all day (no timetable)' : `here ${clock(x.arr)}–${clock(x.dep)}`}">${x.to - x.from >= 70 ? nameOf(x.planeId) : ''}</b>`;
+        h += `<b class="fit-other" style="left:${pct(x.from)};width:${pct(x.to - x.from)}" title="${nameOf(x.planeId)} ${x.idle ? 'parked here all day (no timetable)' : `here ${clock(toLocal(a.code, x.arr))}–${clock(toLocal(a.code, x.dep))} local`}">${x.to - x.from >= 70 ? nameOf(x.planeId) : ''}</b>`;
       }
       for (const x of a.mine) {
-        h += `<b class="fit-mine" style="left:${pct(x.from)};width:${pct(x.to - x.from)}" title="${G.planeName(p)} here ${clock(x.arr)}–${clock(x.dep)}">${x.to - x.from >= 70 ? p.id : ''}</b>`;
+        h += `<b class="fit-mine" style="left:${pct(x.from)};width:${pct(x.to - x.from)}" title="${G.planeName(p)} here ${clock(toLocal(a.code, x.arr))}–${clock(toLocal(a.code, x.dep))} local">${x.to - x.from >= 70 ? p.id : ''}</b>`;
       }
-      for (const x of a.over) h += `<i class="fit-over" style="left:${pct(x.from)};width:${pct(x.to - x.from)}" title="No free slot ${clock(x.from)}–${clock(x.to)}"></i>`;
+      for (const x of a.over) h += `<i class="fit-over" style="left:${pct(x.from)};width:${pct(x.to - x.from)}" title="No free slot ${clock(toLocal(a.code, x.from))}–${clock(toLocal(a.code, x.to))} local"></i>`;
       h += '</div></div>';
     }
     h += `<div class="muted fit-legend"><b class="key mine"></b> ${G.planeName(p)} on the ground · <b class="key other"></b> your other planes ·
@@ -241,7 +260,7 @@
     else {
       h += '<ul class="slot-check">';
       for (const a of fit.airports.filter((x) => x.minutes)) {
-        const when = a.over.map((x) => `${clock(x.from)}–${clock(x.to)}`).join(', ');
+        const when = `${a.over.map((x) => `${clock(toLocal(a.code, x.from))}–${clock(toLocal(a.code, x.to))}`).join(', ')} local`;
         h += `<li class="warn-li">⚠ <b>${a.code}</b> ${when}: your ${a.have} slot${a.have === 1 ? ' is' : 's are'} taken, so a plane waits at its
           gate (delays). Drag the start time, press ✨, or ${G.freeSlots(a.code) ? `<button class="mini" data-pl="addSlot" data-code="${a.code}">lease another slot · ${G.fmtMoney(G.slotPrice(a.code))}</button>` : `get another slot (none is free: <button class="mini" data-pl="slotAt" data-code="${a.code}">make an offer</button>)`}.</li>`;
       }
@@ -332,7 +351,7 @@
       h += `<div class="tl-row slot${over ? ' over' : ''}"><div class="tl-label">${over ? '<span class="neg">no slot</span>' : `Slot ${k + 1}`}</div>
         <div class="tl-bar">${nightAndNow()}${u.uses.filter((x) => x.lane === k).map((x) => {
           const mine = draft && x.planeId === draft.planeId;
-          const title = x.idle ? `${nameOf(x.planeId)}: parked here (no running timetable) – it keeps this slot until it leaves` : `${nameOf(x.planeId)}: lands ${clock(x.arr)}, leaves ${clock(x.dep)}`;
+          const title = x.idle ? `${nameOf(x.planeId)}: parked here (no running timetable) – it keeps this slot until it leaves` : `${nameOf(x.planeId)}: lands ${clock(toLocal(code, x.arr))}, leaves ${clock(toLocal(code, x.dep))} local`;
           return `<b class="tl-use${x.idle ? ' idle' : ''}${mine ? ' draft' : ''}" style="left:${pct(x.from)};width:${pct(x.to - x.from)}" title="${title}">${x.to - x.from >= 60 ? nameOf(x.planeId) : ''}</b>`;
         }).join('')}</div></div>`;
     }
@@ -367,10 +386,12 @@
         if (l.to === code) rows.push({ t: (l.dep + G.legBlock(p.type, l.from, l.to)) % DAY, kind: 'arr', p, other: l.from });
       }
     }
+    // (the board shows the local time here, like the one in the terminal)
+    for (const r of rows) r.t = toLocal(code, r.t);
     rows.sort((a, b) => a.t - b.t);
     if (!rows.length) return '<div class="muted">No timetabled flights here yet.</div>';
-    const now = G.state.time % DAY;
-    return `<table class="small board"><tr><th>time</th><th></th><th>flight</th><th>aircraft</th></tr>${rows.map((r) =>
+    const now = toLocal(code, G.state.time);
+    return `<table class="small board"><tr><th title="Local time at ${code}">time (local)</th><th></th><th>flight</th><th>aircraft</th></tr>${rows.map((r) =>
       `<tr class="${r.t < now ? 'past' : ''}"><td>${clock(r.t)}</td><td>${r.kind === 'arr' ? '🛬' : '🛫'}</td>
         <td>${r.kind === 'arr' ? `from ${r.other}` : `to ${r.other}`}</td>
         <td class="click" data-pl="edit" data-plane="${r.p.id}">${r.p.id} <span class="muted">${r.p.type}</span></td></tr>`).join('')}</table>`;
@@ -441,7 +462,7 @@
         if (planes.length) {
           h += `<table class="small"><tr><th>Plane</th><th>route</th><th>here</th></tr>${planes.map((p) => {
             const legs = (p.schedule.legs || []).filter((l) => l.to === code);
-            const when = legs.length ? legs.map((l) => clock(l.dep + G.legBlock(p.type, l.from, l.to))).join(', ') : p.location === code && p.status !== 'flying' ? 'parked' : '–';
+            const when = legs.length ? legs.map((l) => clock(toLocal(code, l.dep + G.legBlock(p.type, l.from, l.to)))).join(', ') : p.location === code && p.status !== 'flying' ? 'parked' : '–';
             return `<tr class="click" data-pl="edit" data-plane="${p.id}"><td>${G.planeName(p)} <span class="muted">${p.name ? `${p.id} · ` : ''}${p.type}</span></td>
               <td>${p.schedule.stops.length >= 2 ? p.schedule.stops.join('→') : '–'}</td><td>${when}</td></tr>`;
           }).join('')}</table>`;
@@ -489,14 +510,14 @@
       case 'stopDel': d.stops.splice(i, 1); rebuild(p); break;
       case 'stopUp': [d.stops[i - 1], d.stops[i]] = [d.stops[i], d.stops[i - 1]]; rebuild(p); break;
       case 'rebuild': rebuild(p); break;
-      case 'firstStep': d.first = Math.min(C.curfew.end, Math.max(C.curfew.start, d.first + Number(el.dataset.by))); rebuild(p); break;
+      case 'firstStep': d.first = toHome(d.stops[0], Math.min(C.curfew.end, Math.max(C.curfew.start, toLocal(d.stops[0], d.first) + Number(el.dataset.by)))); rebuild(p); break;
       case 'fit': {
         const best = G.fitTimetable(p.id, d.stops, d.rounds, d.first, d.ultra);
         if (!best) { err = G.ultraCapable(p.type) && !d.ultra ? 'Nothing fits into the day: shorten the route, or tick 🌏 Ultra long-haul.' : 'Nothing fits into the day: shorten the route.'; break; }
         Object.assign(d, { stops: best.stops, first: best.first, rounds: best.rounds, legs: best.legs });
         const often = best.days > 1 ? `every ${best.days} days` : 'a day';
-        ctx.toast(best.over ? `Best there is: ${clock(best.first)} from ${best.stops[0]}, ${best.legs.length} flights ${often}, but still ${G.fmtDuration(best.over)} without a free slot – lease another one.`
-          : `Fits: first departure ${clock(best.first)} from ${best.stops[0]}, ${best.legs.length} flights ${often}.`, !!best.over);
+        ctx.toast(best.over ? `Best there is: ${clock(toLocal(best.stops[0], best.first))} local from ${best.stops[0]}, ${best.legs.length} flights ${often}, but still ${G.fmtDuration(best.over)} without a free slot – lease another one.`
+          : `Fits: first departure ${clock(toLocal(best.stops[0], best.first))} local from ${best.stops[0]}, ${best.legs.length} flights ${often}.`, !!best.over);
         break;
       }
       case 'shift': shift(i, Number(el.dataset.by)); break;
@@ -550,10 +571,15 @@
       d.stops.push(el.value);
       rebuild(p);
     }
-    else if (el.id === 'pl-first' || el.id === 'pl-first-range') { d.first = el.id === 'pl-first' ? parseClock(el.value) : Number(el.value); rebuild(p); }
+    else if (el.id === 'pl-first' || el.id === 'pl-first-range') { d.first = toHome(d.stops[0], el.id === 'pl-first' ? parseClock(el.value) : Number(el.value)); rebuild(p); }
     else if (el.id === 'pl-rounds') { d.rounds = Number(el.value); rebuild(p); }
     else if (el.id === 'pl-ultra') { d.ultra = el.checked; d.rounds = d.ultra ? Math.max(1, d.rounds) : 0; rebuild(p); }
-    else if (el.classList.contains('pl-dep')) { const i = Number(el.dataset.i); shift(i, parseClock(el.value) - (d.legs[i].dep % DAY)); }
+    else if (el.classList.contains('pl-dep')) {
+      // (typed in local time at the airport it leaves; moved the short way round the clock)
+      const i = Number(el.dataset.i);
+      const by = parseClock(el.value) - toLocal(d.legs[i].from, d.legs[i].dep);
+      shift(i, ((by % DAY) + DAY + 720) % DAY - 720);
+    }
     else return false;
     G.dirty = true;
     return true;
@@ -564,10 +590,12 @@
   function input(el) {
     const p = pl.edit && G.plane(pl.edit);
     if (!p || !pl.draft || el.id !== 'pl-first-range') return;
-    pl.draft.first = Number(el.value);
+    pl.draft.first = toHome(pl.draft.stops[0], Number(el.value));
     rebuild(p);
     const t = document.getElementById('pl-first');
-    if (t) t.value = clock(pl.draft.first);
+    if (t) t.value = clock(toLocal(pl.draft.stops[0], pl.draft.first));
+    const n = document.getElementById('pl-first-home');
+    if (n) n.textContent = firstNote(pl.draft);
     const f = document.getElementById('pl-fit');
     if (f) f.innerHTML = fitView(p, pl.draft);
   }

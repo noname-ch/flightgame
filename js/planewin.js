@@ -15,6 +15,8 @@
   const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const pad = (n) => String(n).padStart(2, '0');
   const clock = (m) => `${pad(Math.floor((((m % DAY) + DAY) % DAY) / 60))}:${pad(Math.floor(((m % 60) + 60) % 60))}`;
+  // The local clock at an airport (times in the game are the home base's).
+  const clockAt = (code, m) => clock(m + G.aheadOf(code, m));
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 
   // ---------- the plane window ----------
@@ -86,8 +88,8 @@
       const a = G.airportByCode[f.from];
       const b = G.airportByCode[f.to];
       h += `<div class="pw-phase">${st ? PHASE[st.phase] || 'Flying' : 'Flying'}${f.kind && f.kind !== 'scheduled' ? ` <span class="muted">(${esc(f.kind)})</span>` : ''}</div>
-        <div class="pw-route"><span><b>${f.from}</b> ${esc(a ? a.city : '')}<small>${clock(f.dep)}</small></span><span class="pw-arrow">→</span>
-          <span><b>${f.to}</b> ${esc(b ? b.city : '')}<small>${clock(f.arr)}</small></span></div>
+        <div class="pw-route"><span><b>${f.from}</b> ${esc(a ? a.city : '')}<small>${clockAt(f.from, f.dep)} local</small></span><span class="pw-arrow">→</span>
+          <span><b>${f.to}</b> ${esc(b ? b.city : '')}<small>${clockAt(f.to, f.arr)} local</small></span></div>
         <div class="pw-bar"><i style="width:${(frac * 100).toFixed(1)}%"></i></div>
         <div class="pw-grid">
           <span>Speed</span><b>${st ? `${st.speedKmh} km/h` : '–'}</b><small>${st ? `${Math.round(st.speedKmh / 1.852)} kt` : ''}</small>
@@ -103,9 +105,9 @@
       const gate = G.gateOf(p.location, p.id);
       h += `<div class="pw-phase">${p.status === 'turnaround' ? 'Turnaround' : 'At the gate'}</div>
         <div class="pw-route"><span><b>${p.location}</b> ${esc(ap ? ap.city : '')}<small>stand ${esc(gate.name || '–')}</small></span>
-          ${next ? `<span class="pw-arrow">→</span><span><b>${next.to}</b> ${esc(G.airportByCode[next.to].city)}<small>leaves ${clock(next.dep)}</small></span>` : ''}</div>
+          ${next ? `<span class="pw-arrow">→</span><span><b>${next.to}</b> ${esc(G.airportByCode[next.to].city)}<small>leaves ${clockAt(next.from, next.dep)} local</small></span>` : ''}</div>
         ${FG.weather ? `<div class="muted small pw-wx">${FG.weather.text(G.airportWeather(p.location))}</div>` : ''}
-        <div class="pw-grid"><span>Speed</span><b>0 km/h</b><small></small><span>Next</span><b>${next ? `${next.from} → ${next.to} at ${clock(next.dep)}` : 'no timetable'}</b><small></small></div>`;
+        <div class="pw-grid"><span>Speed</span><b>0 km/h</b><small></small><span>Next</span><b>${next ? `${next.from} → ${next.to} at ${clockAt(next.from, next.dep)} local` : 'no timetable'}</b><small></small></div>`;
     }
     h += `<div class="muted small">${p.schedule.legs ? `${p.schedule.legs.length} flights ${(p.schedule.days || 1) > 1 ? `every ${p.schedule.days} days (ultra long-haul)` : 'a day'}${p.schedule.active ? '' : ' · paused'}` : 'No timetable yet'}
       · ${p.stats.flights} flights flown · ${p.ownership === 'owned' ? 'owned' : 'leased'}

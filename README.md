@@ -66,8 +66,10 @@ end (white above the glide path, red below), and approach lights out in front wh
 size and the runway's length: the long ones with crossbars, red side rows and the sequenced flashers that run in
 towards the runway). Control towers carry a red light and the airport's rotating green and white beacon. In fog
 or heavy rain the lights are on by day too. Terminals, towers, aprons and taxiways show from zoom 11 near the
-middle of the view (everywhere from zoom 12), runways from zoom 9. Settings → On the map → *Day and night* turns it off. (Timetables and the night curfew still run on
-home-base time.)
+middle of the view (everywhere from zoom 12), runways from zoom 9. Settings → On the map → *Day and night* turns it off. The clock at the top is your home base's, but every
+time written out (departures, arrivals, the timetable, an airport's board) is **local at that airport**, as on a real
+timetable: a flight from Kathmandu at 07:00 leaves at 07:00 in Kathmandu. The **night curfew** (no departures
+22:00–06:00) is in local time too, and a plane waits at an airport until morning there.
 
 **Weather**: clouds drift over both maps, from fair-weather puffs to grey rain bands and thunderstorms, and the
 storms in the newspaper show up as real storms. It is made up but steady: it drifts east, changes over a day or two,

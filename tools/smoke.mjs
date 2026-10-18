@@ -372,6 +372,11 @@ try {
   const dn = await evaluate(() => {
     const out = { jfk: G.utcOffset('JFK', 0), syd: G.utcOffset('SYD', 0), ktm: G.utcOffset('KTM', 0), jfkJul: G.utcOffset('JFK', 190 * 1440) };
     const bern = G.sunTimes('BRN', 0);
+    // the night curfew is local: New York at 21:00 and 23:00 its time
+    const day = Math.floor(G.state.time / 1440) * 1440, ny = G.aheadOf('JFK', G.state.time);
+    out.curfew = [G.curfewOpen('JFK', day + 21 * 60 - ny), G.curfewOpen('JFK', day + 23 * 60 - ny)];
+    // timetable times are shown local: 07:00 at Kathmandu is 07:00 there, not at home
+    out.ktm7 = G.fmtAt('KTM', 7 * 60 - G.aheadOf('KTM', G.state.time));
     out.rise = bern && bern.rise;
     out.on = FG.daynight.enabled();
     FG.ui.map.setView([20, 0], 1, { animate: false });
@@ -386,6 +391,8 @@ try {
     return out;
   });
   if (dn.jfk !== -300 || dn.jfkJul !== -240 || dn.syd !== 660 || dn.ktm !== 345) errors.push(`time zones: ${JSON.stringify(dn)}`);
+  if (dn.ktm7 !== '07:00') errors.push(`local timetable time at Kathmandu: ${dn.ktm7} (07:00)`);
+  if (!dn.curfew[0] || dn.curfew[1]) errors.push(`night curfew at New York not in its local time: open at 21:00 ${dn.curfew[0]}, at 23:00 ${dn.curfew[1]}`);
   if (!dn.rise || dn.rise < '08:00' || dn.rise > '08:30') errors.push(`sunrise at Bern on 1 January: ${dn.rise} (about 08:15)`);
   if (!dn.on || !dn.alpha || dn.alpha[0] > 20 || dn.alpha[1] < 120) errors.push(`2D night: no day and night side on the world map (${JSON.stringify(dn)})`);
   else step(`local time: JFK UTC${dn.jfk / 60} (summer ${dn.jfkJul / 60}), Sydney +${dn.syd / 60}, Kathmandu +${dn.ktm / 60}; sunrise at Bern ${dn.rise}`);

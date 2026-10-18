@@ -1302,20 +1302,28 @@
     if (!st) return '';
     return st.polar ? (st.polar === 'day' ? 'midnight sun' : 'polar night') : `sunrise ${st.rise}, sunset ${st.set}`;
   }
-  function localNote(code, t) {
-    return G.utcOffset(code, t) === G.utcOffset(G.home(), t) ? '' : ` (${G.fmtLocal(code, t)} local)`;
+  // A time at an airport by its local clock, with the home base's beside it where that differs:
+  // "10:45 local (05:00 your time)".
+  function atClock(code, t) {
+    const local = G.fmtAt(code, t);
+    return G.aheadOf(code, t) ? `${local} local (${G.fmtClock(Math.round(t) % 1440)} your time)` : local;
+  }
+  // When the next timetabled flight of a plane leaves (local time at the airport it leaves).
+  function nextDep(sch, l) {
+    if ((sch.days || 1) <= 1) return atClock(l.from, l.dep);
+    return `${G.fmtDue(sch.due, l.from)}${G.aheadOf(l.from, sch.due) ? ' local' : ''}`;
   }
 
   function planeStatus(p) {
     const f = p.flight;
     if (p.status === 'flying') {
       const verb = { ferry: 'Ferrying', delivery: 'Delivery flight' }[f.kind] || 'Flying';
-      return `${verb} ${f.from} → ${f.to}, arrives ${G.fmtClock(f.arr)}${localNote(f.to, f.arr)}` +
+      return `${verb} ${f.from} → ${f.to}, arrives ${atClock(f.to, f.arr)}` +
         (f.kind === 'scheduled' ? ` · ${f.pax} pax` : '') + ` · ${flightText(p)}`;
     }
     if (p.status === 'turnaround' && p.repair) return `🔧 Grounded for repairs at ${p.location} until ${G.fmtTime(p.readyAt)}`;
     const gate = `gate ${G.gateOf(p.location, p.id).name}`;
-    if (p.status === 'turnaround') return `Turnaround at ${p.location} ${gate} until ${G.fmtClock(p.readyAt)}`;
+    if (p.status === 'turnaround') return `Turnaround at ${p.location} ${gate} until ${atClock(p.location, p.readyAt)}`;
     const crew = G.crewOf(p);
     const leg = p.pendingFerry || (p.schedule.active && p.schedule.stops.length >= 2);
     const sch = p.schedule;
@@ -1326,7 +1334,7 @@
     if (leg && crew && crew.dutyToday >= G.crewDutyMax(crew) - 60) return `At ${p.location} ${gate} · crew resting`;
     if (leg && sch.legs && !p.pendingFerry) {
       const l = sch.legs[sch.index % sch.legs.length];
-      if (l.from === p.location) return `At ${p.location} ${gate} · next ${(sch.days || 1) > 1 ? G.fmtDue(sch.due) : G.fmtClock(l.dep)} to ${l.to}`;
+      if (l.from === p.location) return `At ${p.location} ${gate} · next ${nextDep(sch, l)} to ${l.to}`;
     }
     if (leg) {
       const when = G.departNote(p);
@@ -1369,7 +1377,7 @@
 
       if (sch.legs) {
         h += `<div class="label">Timetable ${(sch.days || 1) > 1 ? `<span class="muted">🌏 every ${sch.days} days</span> ` : ''}${sch.active ? '<span class="pos">● running</span>' : '<span class="muted">⏸ paused</span>'}</div>
-          <div class="route">${sch.legs.map((l, i) => `<span class="${i === sch.index % sch.legs.length && p.status !== 'flying' ? 'here' : ''}">${G.fmtLegDep(l.dep, sch.days)} ${l.from}→${l.to}</span>`).join(' ')}</div>`;
+          <div class="route">${sch.legs.map((l, i) => `<span class="${i === sch.index % sch.legs.length && p.status !== 'flying' ? 'here' : ''}">${G.fmtLegDep(l.dep, sch.days, l.from)} ${l.from}→${l.to}</span>`).join(' ')}</div>`;
         h += fareTable(sch.stops);
         h += `<div class="row">${sch.active ? `<button data-action="pause" data-plane="${p.id}">⏸ Pause</button>`
             : `<button class="primary" data-action="start" data-plane="${p.id}">▶ Start timetable</button>`}
@@ -1937,14 +1945,14 @@
       h += `<div class="tt-route"><span>${f.from}<small>${G.airportByCode[f.from].city}</small></span><span class="arrow">✈</span>
           <span>${f.to}<small>${G.airportByCode[f.to].city}</small></span></div>
         <div class="tt-prog"><i style="width:${Math.min(100, ((t - f.dep) / Math.max(1, f.arr - f.dep)) * 100)}%"></i></div>
-        <div>⏱ <b>${G.fmtDuration(left)}</b> left · lands ${G.fmtClock(Math.round(f.arr))}${localNote(f.to, f.arr)}</div>
+        <div>⏱ <b>${G.fmtDuration(left)}</b> left · lands ${atClock(f.to, f.arr)}</div>
         <div class="muted">${flightText(p)}${f.kind === 'scheduled' ? ` · ${f.pax} pax` : ` · ${f.kind}`}</div>`;
     } else {
       const sch = p.schedule;
       let next = '';
       if (sch.active && sch.legs) {
         const l = sch.legs[sch.index % sch.legs.length];
-        next = `next ${l.from}→${l.to} at ${(sch.days || 1) > 1 ? G.fmtDue(sch.due) : G.fmtClock(l.dep)}`;
+        next = `next ${l.from}→${l.to} at ${nextDep(sch, l)}`;
       } else if (sch.active && sch.stops.length >= 2) next = `next to ${sch.stops[(sch.index + 1) % sch.stops.length]}`;
       h += `<div class="tt-route"><span>${p.location}<small>${G.airportByCode[p.location].city}</small></span></div>
         <div>${planeStatus(p)}</div>${next ? `<div class="muted">${next}</div>` : ''}`;
