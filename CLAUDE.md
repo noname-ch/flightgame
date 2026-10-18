@@ -98,8 +98,14 @@ Play online: https://noname-ch.github.io/flightgame/ (GitHub Pages, deployed fro
   under the game's layers; the "Day and night" overlay, `FG.daynight.enabled()` also switches the 3D night).
   view3d.js `daylight3d(map, layer, lat, lon, t, now, weather)` turns the planes' light by the sun at the view centre
   and, on a change, sets the sky (`skyOf(w, sun)`, from zoom 5), `fg-night` (zoomed out: an image of the night side
-  of the world, `nightImage`; from zoom 7-9 `fg-night-local`, one darkness from the centre's sun), `fg-runway-lights` /
-  `fg-taxi-lights`, `terminalColors(night)` and every other extrusion's colour, and `map.setLight`. Aircraft lights
+  of the world, `nightImage`; from zoom 7-9 `fg-night-local`, one darkness from the centre's sun),
+  `fg-taxi-lights`, `terminalColors(night)` and every other extrusion's colour, and `map.setLight`. Runway, approach
+  and tower lights: js/airportlights.js (`FG.airportLights.of(code)`: every light's spot, colour, size, the way it
+  faces, kind; approach systems by `system(len, size)`, no open data has them) and view3d.js `lightsLayer` (custom
+  layer 'fg-lights' before the planes, and 'fg-chase-lights' in the plane window's camera): one `THREE.Points` per
+  airport in `lightsWanted` (up to `LIGHTS_MAX` round the view centre from `LIGHTS_MINZOOM`), heights from
+  `FG.flat.heightsAt`, never under a few pixels so they show from far off, tested against MapLibre's depth (terrain
+  and buildings hide them), lit by each airport's own night (and fog); flashers and the beacon keep it drawing. Aircraft lights
   are `navLights(type, model)` (points read off the model, `navSpotsOf`), switched by phase in `setNavLights`. Each
   aircraft and cloud is dimmed for the light where it is (livery.js OWN_UNIFORM `livLight`, set in `placeModel`; the
   clouds' `lit` attribute): never light the whole view from its centre (zoomed out that lit New York at night).

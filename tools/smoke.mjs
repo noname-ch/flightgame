@@ -937,6 +937,20 @@ try {
     if (!level) warnings.push('3D ground: Istanbul\'s terrain tiles did not load in 30 s: levelling not tested');
     else if (level.some((r) => r.bump > 0.3 || r.rise > 40)) errors.push(`3D ground: Istanbul's runways not level: ${JSON.stringify(level)}`);
     else step(`levelled: bumps ≤ ${Math.max(...level.map((r) => r.bump)).toFixed(2)} m, rises ≤ ${Math.max(...level.map((r) => r.rise)).toFixed(0)} m`);
+    // airport lights (js/airportlights.js, view3d.js lightsLayer): Zurich's long runways have full approach lights,
+    // and zoomed out over it its lights are placed at their heights
+    step('3D airport lights: Zurich from 15 km out');
+    const sys = await evaluate(() => FG.airportLights.systems('ZRH').flat());
+    if (!sys.includes('full')) errors.push(`airport lights: Zurich has no full approach lights (${JSON.stringify(sys)})`);
+    await evaluate(() => { FG.view3d.lights.st.always = true; FG.view3d.map.jumpTo({ center: [8.40, 47.56], zoom: 11, pitch: 75, bearing: 140 }); });
+    const lit = await waitFor(() => { const e = FG.view3d.lights.st.airports.get('ZRH'); return !!(e && e.heights && e.heights.every(Number.isFinite)); }, 30000);
+    if (!lit) warnings.push('airport lights: Zurich\'s heights did not load in 30 s (terrain tiles?)');
+    else {
+      const n = await evaluate(() => ({ lights: FG.airportLights.of('ZRH').lights.length, airports: FG.view3d.lights.st.airports.size }));
+      if (n.lights < 1000) errors.push(`airport lights: only ${n.lights} lights at Zurich`);
+      else step(`${n.lights} lights at Zurich, ${n.airports} airports lit round the view`);
+    }
+    await evaluate(() => { FG.view3d.lights.st.always = false; });
     await evaluate(() => FG.ui.follow && FG.ui.follow(G.state.planes[0].id));
     await sleep(8000);
     // the chase camera starts close to the plane, in the air too (GitHub issue #6: at zoom 12 it was kilometres away)

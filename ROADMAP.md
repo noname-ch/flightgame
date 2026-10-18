@@ -122,6 +122,8 @@ Recent milestones, newest first (see `git log` for the rest):
 - Local time and day and night: every airport keeps its own clock (time zones with summer time), the sun rises
   and sets where it really does, the night moves over the 2D map, and in 3D the sky, ground and buildings darken
   with lit runways, taxiways and windows and the planes' position lights, beacons, strobes and landing lights
+- Airport lights in 3D: approach lights where airports have them (by size and runway length), runway edge,
+  threshold, centre-line, touchdown zone lights and PAPIs, tower beacons, seen from tens of km away
 - Aircraft sounds (off until turned on, M): engine start, idle, take-off power, climb, cruise, approach, reverse
   thrust and run-down for jets, turboprops and piston radials, heard from where you look (Web Audio; the jets'
   deep rumble, screech, engine start and planes far away are recordings made with ElevenLabs)

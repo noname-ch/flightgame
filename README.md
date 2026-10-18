@@ -58,9 +58,15 @@ left last time. On a phone a click shows the plane's card in Fleet instead.
 **Day and night**: the clock at the top is the time at your home base; every airport has its own local time
 (its real time zone, with summer time), shown in the airport panel with sunrise and sunset, and arrivals say the
 local time there. The sun rises and sets where it really does: the night moves west over the 2D map, and in 3D the
-sky turns orange at dusk and dark at night, the ground and buildings darken, terminal windows, runway edges and
-taxiway centre lines light up, and planes show their red and green position lights, flashing beacons, strobes and
-landing lights. Settings → On the map → *Day and night* turns it off. (Timetables and the night curfew still run on
+sky turns orange at dusk and dark at night, the ground and buildings darken, terminal windows and taxiway centre
+lines light up, and planes show their red and green position lights, flashing beacons, strobes and landing lights.
+Runways have their lights as at real airports, seen from far away (tens of km): white edge lights (yellow over the
+last 600 m), green thresholds, red ends, centre-line and touchdown zone lights on the big ones, a PAPI beside each
+end (white above the glide path, red below), and approach lights out in front where an airport has them (by its
+size and the runway's length: the long ones with crossbars, red side rows and the sequenced flashers that run in
+towards the runway). Control towers carry a red light and the airport's rotating green and white beacon. In fog
+or heavy rain the lights are on by day too. Terminals, towers, aprons and taxiways show from zoom 11 near the
+middle of the view (everywhere from zoom 12), runways from zoom 9. Settings → On the map → *Day and night* turns it off. (Timetables and the night curfew still run on
 home-base time.)
 
 **Weather**: clouds drift over both maps, from fair-weather puffs to grey rain bands and thunderstorms, and the
