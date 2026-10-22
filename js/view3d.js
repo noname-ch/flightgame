@@ -1488,6 +1488,171 @@ function smokeTick(e, dt) {
   sm.matrixWorldNeedsUpdate = true;
 }
 
+// ---------- crashes (G.blasts, js/game.js) ----------
+// A crash site is a fireball, a column of smoke, flares (sparks) and a flash: one batch of sprites in the planes'
+// layer, positioned in metres from the crash. Each sprite has a least size in pixels (BLAST_PX), so the blast still
+// shows when the whole world is in view. It burns for BLAST_SECS real seconds and stands still while the game is paused.
+const BLAST_SECS = 24;
+const BLAST_MAX = 8;               // blasts drawn at once (the newest)
+const BLAST_N = 110;               // sprites per blast: 40 fire, 44 smoke, 24 flares, 1 flash
+const BLAST_PX = [44, 16, 12, 90]; // least size in pixels: fire, smoke, flares, flash
+const BLAST_VS = `
+uniform float uScale; uniform float uDpr; uniform vec4 uClip; uniform float uClipOn;
+attribute float size; attribute float minPx; attribute float alpha; attribute vec3 col;
+varying vec3 vCol; varying float vA;
+void main() {
+  vec4 c = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  gl_Position = c;
+  float px = c.w > 0.0 ? size * uScale / c.w : 0.0;
+  float a = alpha;
+  if (uClipOn > 0.5 && dot(uClip.xyz, position) + uClip.w < -0.002) a = 0.0; // behind the globe
+  gl_PointSize = a > 0.0 ? clamp(max(px, minPx * uDpr), 1.0, 1000.0) : 0.0;
+  vCol = col; vA = a;
+}`;
+const BLAST_FS = `
+varying vec3 vCol; varying float vA;
+void main() {
+  float d = length(gl_PointCoord - 0.5) * 2.0;
+  float a = smoothstep(1.0, 0.1, d) * vA;
+  if (a < 0.01) discard;
+  gl_FragColor = vec4(vCol, a);
+}`;
+const blastState = new WeakMap(); // G blast -> { parts, age, last }
+
+function blastParts() {
+  const parts = [];
+  const rnd = Math.random;
+  for (let i = 0; i < BLAST_N; i++) {
+    const kind = i < 40 ? 0 : i < 84 ? 1 : i < 108 ? 2 : 3;
+    const a = rnd() * Math.PI * 2;
+    const q = { kind, rnd: rnd(), t0: 0, life: 1, drag: 0.001, vx: 0, vy: 0, vz: 0, s0: 0, grow: 0 };
+    if (kind === 0) {        // fireball: bursts out in the first seconds, then cools into smoke
+      const r = 14 + rnd() * 26;
+      Object.assign(q, { life: 5 + rnd() * 4, drag: 1.5, vx: Math.cos(a) * r, vy: Math.sin(a) * r, vz: 3 + rnd() * 6, s0: 22 + rnd() * 18, grow: 14 });
+    } else if (kind === 1) { // smoke: rises out of the fire, slow, spreading and drifting
+      Object.assign(q, { t0: 1 + rnd() * 2, life: 14 + rnd() * 8, drag: 0.25, vx: Math.cos(a) * 4 * rnd(), vy: Math.sin(a) * 4 * rnd(), vz: 7 + rnd() * 5, s0: 40 + rnd() * 30, grow: 10 });
+    } else if (kind === 2) { // flares: sparks thrown out fast, falling, flickering
+      const r = 40 + rnd() * 70;
+      Object.assign(q, { life: 1.2 + rnd() * 2.2, drag: 1.2, vx: Math.cos(a) * r, vy: Math.sin(a) * r, vz: 10 + rnd() * 30, s0: 3 });
+    } else {                 // the flash
+      Object.assign(q, { life: 0.9, s0: 110 });
+    }
+    parts.push(q);
+  }
+  return parts;
+}
+// Colour along a particle's life: [life fraction, r, g, b] stops.
+function blastRamp(stops, f) {
+  for (let i = 1; i < stops.length; i++) {
+    if (f <= stops[i][0]) {
+      const [f0, ...c0] = stops[i - 1];
+      const [f1, ...c1] = stops[i];
+      const k = (f - f0) / (f1 - f0);
+      return c0.map((c, j) => c + (c1[j] - c) * k);
+    }
+  }
+  return stops[stops.length - 1].slice(1);
+}
+const FIRE_COL = [[0, 1, 0.96, 0.75], [0.15, 1, 0.92, 0.55], [0.5, 1, 0.42, 0.08], [1, 0.22, 0.18, 0.16]];
+const SMOKE_COL = [[0, 0.16, 0.16, 0.18], [1, 0.46, 0.46, 0.48]];
+// Where a sprite is `age` seconds into the blast, in metres from the crash (east, north, up): null when it is gone.
+function blastPart(q, age) {
+  const a = age - q.t0;
+  if (a < 0 || a > q.life) return null;
+  const f = a / q.life;
+  const k = (1 - Math.exp(-q.drag * a)) / q.drag;    // (air slows it: the distance covered by the speed so far)
+  let x = q.vx * k;
+  let y = q.vy * k;
+  let z = q.vz * k;
+  if (q.kind === 0) {
+    return { x, y, z, size: q.s0 + q.grow * f, alpha: 0.95 * (f < 0.6 ? 1 : (1 - f) / 0.4), col: blastRamp(FIRE_COL, f) };
+  }
+  if (q.kind === 1) {
+    x += 3 * a;                                          // the wind carries it east
+    return { x, y, z, size: q.s0 + q.grow * a, alpha: 0.6 * Math.min(1, a / 1.5) * (1 - f), col: blastRamp(SMOKE_COL, f) };
+  }
+  if (q.kind === 2) {
+    z -= 2.5 * a * a;                                    // (falling)
+    return { x, y, z, size: q.s0, alpha: (1 - f) * (0.55 + 0.45 * Math.sin(a * 37 + q.rnd * 6.28)), col: [1, 0.9, 0.55] };
+  }
+  return { x: 0, y: 0, z: 0, size: q.s0 * (1 + 0.5 * f), alpha: (1 - f) * (1 - f), col: [1, 0.97, 0.88] };
+}
+
+function blastPoints() {
+  const g = new THREE.BufferGeometry();
+  const N = BLAST_MAX * BLAST_N;
+  const attr = (n) => new THREE.BufferAttribute(new Float32Array(N * n), n).setUsage(THREE.DynamicDrawUsage);
+  g.setAttribute('position', attr(3));
+  g.setAttribute('col', attr(3));
+  for (const a of ['size', 'minPx', 'alpha']) g.setAttribute(a, attr(1));
+  g.setDrawRange(0, 0);
+  const m = new THREE.ShaderMaterial({
+    uniforms: { uScale: { value: 1 }, uDpr: { value: 1 }, uClip: { value: new THREE.Vector4() }, uClipOn: { value: 0 } },
+    vertexShader: BLAST_VS, fragmentShader: BLAST_FS, transparent: true, depthWrite: false, depthTest: true,
+  });
+  const pts = new THREE.Points(g, m);
+  pts.frustumCulled = false;
+  pts.renderOrder = 11;
+  pts.visible = false;
+  return pts;
+}
+// The sprites of the newest blasts, each frame. Returns true while one still burns (so 3D keeps repainting).
+function updateBlasts(layer, map, globe, mpp, centerW, now) {
+  const pts = layer.blastPts;
+  if (!pts) return false;
+  const list = G.blasts.slice(-BLAST_MAX);
+  const dpr = window.devicePixelRatio || 1;
+  const u = pts.material.uniforms;
+  u.uScale.value = (centerW / mpp) * dpr;
+  u.uDpr.value = dpr;
+  u.uClipOn.value = v.clip ? 1 : 0;
+  if (v.clip) u.uClip.value.set(v.clip[0], v.clip[1], v.clip[2], v.clip[3]);
+  const g = pts.geometry;
+  const P = g.attributes.position.array;
+  const C = g.attributes.col.array;
+  const S = g.attributes.size.array;
+  const M = g.attributes.minPx.array;
+  const A = g.attributes.alpha.array;
+  let alive = false;
+  list.forEach((b, k) => {
+    let st = blastState.get(b);
+    if (!st) { st = { parts: blastParts(), age: 0, last: now }; blastState.set(b, st); }
+    const dt = Math.min(0.1, Math.max(0, (now - st.last) / 1000));
+    st.last = now;
+    if (FG.ui && FG.ui.speed > 0) st.age += dt;
+    const burning = st.age <= BLAST_SECS;
+    if (burning) alive = true;
+    const cosLat = Math.cos(b.lat * DEG);
+    st.parts.forEach((q, j) => {
+      const i = k * BLAST_N + j;
+      const s = burning ? blastPart(q, st.age) : null;
+      if (!s) { A[i] = 0; return; }
+      // metres from the crash to a lat/lon, then a point in the world
+      frameAt(b.lat + s.y / 111320, b.lon + s.x / (111320 * cosLat), b.altM + s.z, globe);
+      P[3 * i] = tmp.pos.x; P[3 * i + 1] = tmp.pos.y; P[3 * i + 2] = tmp.pos.z;
+      C[3 * i] = s.col[0]; C[3 * i + 1] = s.col[1]; C[3 * i + 2] = s.col[2];
+      S[i] = s.size;
+      M[i] = BLAST_PX[q.kind] * (q.kind === 2 ? 1 + 0.5 * q.rnd : 1);
+      A[i] = s.alpha;
+    });
+  });
+  for (const a of Object.values(g.attributes)) a.needsUpdate = true;
+  g.setDrawRange(0, list.length * BLAST_N);
+  pts.visible = alive;
+  return alive;
+}
+
+// ---------- the track ring (js/trackring.js) ----------
+// The ring round the plane being followed, on the screen; hidden while the plane is behind the globe.
+function updateTrackRing() {
+  const map = v.map;
+  if (!v.ring) v.ring = FG.trackRing.make(map.getContainer());
+  const sel = v.follow && FG.ui && FG.ui.selectedPlane;
+  const e = sel && v.planes[sel];
+  const c = map.getCanvas();
+  FG.trackRing.place(v.ring, e ? planeScreen(e) : null, c.clientWidth, c.clientHeight);
+}
+
 // ---------- clouds (js/weather.js puffs) ----------
 // One batch of sprites in the planes' layer: one draw call however many clouds there are. Each puff is a point
 // with its size in metres; the vertex shader turns that into pixels from how far it is (clip w) compared with the
@@ -1984,6 +2149,8 @@ const planeLayer = {
     this.world = new THREE.Group();
     this.scene.add(this.world);
     if (FG.weather) { this.clouds = cloudPoints(); this.world.add(this.clouds); }
+    this.blastPts = blastPoints();
+    this.world.add(this.blastPts);
     this.v4 = new THREE.Vector4();
     this.renderer = new THREE.WebGLRenderer({ canvas: map.getCanvas(), context: gl, antialias: true });
     this.renderer.autoClear = false;
@@ -2079,6 +2246,7 @@ const planeLayer = {
       if (!alive.has(id)) { this.world.remove(v.planes[id].obj); delete v.planes[id]; }
     }
     if (this.track && (cine || !(sel && v.planes[sel] && G.plane(sel) && G.plane(sel).status === 'flying'))) this.track.visible = false;
+    if (updateBlasts(this, map, globe, mpp, centerW, now)) animating = true;
     updateClouds(this, map, globe, mpp, centerW, now);
 
     this.renderer.resetState();
@@ -2639,7 +2807,7 @@ function createMap(fit) {
   window.addEventListener('pointerup', up);
   window.addEventListener('pointercancel', up);
   map.on('moveend', () => { v.gatesDirty = true; });
-  map.on('render', () => { if (v.ready && v.on) { refreshData(); followTick(); if (v.hoverId) updateHover(); } });
+  map.on('render', () => { if (v.ready && v.on) { refreshData(); followTick(); updateTrackRing(); if (v.hoverId) updateHover(); } });
   // Keep mouse events away from the Leaflet map underneath.
   for (const t of ['mousedown', 'click', 'dblclick', 'wheel', 'touchstart', 'pointerdown', 'contextmenu']) {
     el.addEventListener(t, (ev) => ev.stopPropagation());

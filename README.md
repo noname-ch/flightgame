@@ -35,7 +35,7 @@ developer tools, exit) and the ✈ button next to it sets the game speed. The ta
 top bar open the sections (Fleet, Airports, Slots, Schedule, Marketplace, Finance, Rivals, Log; icons only on
 narrower screens), and the airline, money, time and day are on its right. Every plane has a card at the bottom: hover it for
 where it comes from and goes to, the time left and its fuel; click to select, click again for its stats,
-double-click to follow it (2D or 3D).
+double-click to follow it (2D or 3D). A yellow ring marks the plane you follow, with an arrow at the screen's edge when it is off screen.
 
 **Plane window**: clicking a plane (on the map, in 3D or its card) opens its window, as in OpenTTD: a live 3D
 camera behind it (the wheel zooms), what it is doing, its speed and height, where it comes from and goes to, the
@@ -201,6 +201,7 @@ upgrades any more: you build terminals and stands yourself.
    pressure, gear fault, smoke in the cockpit; about 1 flight in 150) that makes the news while the
    plane is still in the air (⚠ MAYDAY in its status). Only 5% of emergencies end in a crash; the rest
    land safely at the destination and the plane is grounded for an inspection and repairs.
+   Where a plane goes down, a fireball and flares burn for a while, visible from far away on the map too.
 
 8. **The whole world**: besides the ~50 main European airports, about 16,000 more airports and
    airfields worldwide (US, Canada, Latin America, Asia, Africa, Oceania) appear as you zoom in

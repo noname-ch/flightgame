@@ -249,10 +249,13 @@
     ui.follow = id;
     const badge = $('follow-badge');
     if (badge) badge.remove();
+    if (ui.ring) { ui.ring.remove(); ui.ring = null; }
     if (!id) return;
     const p = G.plane(id);
     const pos = planePosition(p);
-    ui.map.setView(pos.latlng, Math.max(ui.map.getZoom(), pos.ground ? 14 : 8));
+    // (in the air close enough to see the plane: at 8 it was a speck among the others)
+    ui.map.setView(pos.latlng, Math.max(ui.map.getZoom(), pos.ground ? 14 : 11));
+    ui.ring = FG.trackRing.make($('map'));
     const el = document.createElement('div');
     el.id = 'follow-badge';
     el.innerHTML = `🎥 Following <b>${id}</b> <button class="mini" title="Stop following">✕</button>`;
@@ -1017,10 +1020,12 @@
       }
     }
     if (map._animatingZoom) return; // Leaflet places the markers itself during a zoom animation
+    if (tick) updateBlasts();
     const t = nowMinutes(tick || ui.frameAt == null ? undefined : ui.frameAt); // (in a frame: at its timestamp)
     const z = map.getZoom();
     const view = map.getBounds().pad(0.15);
     const parked = {}; // airport code -> planes on the ground there so far
+    let followAt = null; // where the followed plane is (its ring goes there)
     for (const p of G.state.planes) {
       const flying = p.status === 'flying';
       if (!flying && !tick) continue;
@@ -1029,6 +1034,7 @@
       // would run into the map's edge)
       if (ui.follow === p.id && !(map._panAnim && map._panAnim._inProgress)) map.panTo([pos.latlng[0], wrapLon(pos.latlng[1])], { animate: false });
       pos.latlng = nearView(pos.latlng);
+      if (ui.follow === p.id) followAt = pos.latlng;
       // Zoomed in on an airport, planes on the ground are drawn at their gate at real size;
       // further out, parked planes line up above their airport so it stays clickable.
       const close = pos.ground && z >= GATE_ZOOM;
@@ -1073,6 +1079,30 @@
       glyph.classList.toggle('pushback', !!(pos.st && pos.st.phase === 'pushback'));
       glyph.classList.toggle('grounded', !flying || pos.ground);
       glyph.classList.toggle('selected', ui.selectedPlane === p.id);
+    }
+    if (ui.ring && (tick || followAt)) FG.trackRing.place(ui.ring, followAt && map.latLngToContainerPoint(followAt), map.getSize().x, map.getSize().y);
+  }
+
+  // Crashes (G.blasts): a fireball and flares at the crash site, a marker of fixed size on the map so it shows from far
+  // away. It burns for BLAST_SECS, and stops while the game is paused.
+  const BLAST_SECS = 24;
+  const blastMarkers = new Map(); // blast -> { marker, age, last }
+  function updateBlasts() {
+    const now = performance.now();
+    for (const b of G.blasts) {
+      if (blastMarkers.has(b)) continue;
+      const marker = L.marker([b.lat, b.lon], {
+        icon: L.divIcon({ className: 'blast-icon', html: '<div class="blast"><i></i></div>', iconSize: [96, 96], iconAnchor: [48, 48] }),
+        interactive: false, keyboard: false, zIndexOffset: 1500,
+      }).addTo(ui.map);
+      blastMarkers.set(b, { marker, age: 0, last: now });
+    }
+    for (const [b, bm] of blastMarkers) {
+      bm.age += ((now - bm.last) / 1000) * (FG.ui.speed > 0 ? 1 : 0);
+      bm.last = now;
+      if (bm.age > BLAST_SECS) { bm.marker.remove(); blastMarkers.delete(b); continue; }
+      const el = bm.marker.getElement();
+      if (el) el.classList.toggle('late', bm.age > BLAST_SECS - 6);
     }
   }
 

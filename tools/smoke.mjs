@@ -1013,6 +1013,9 @@ try {
     // the chase camera starts close to the plane, in the air too (GitHub issue #6: at zoom 12 it was kilometres away)
     const chase = await evaluate(() => ({ follow: FG.view3d.follow, z: FG.view3d.map.getZoom() }));
     if (chase.follow && chase.z < 14.9) errors.push(`3D chase camera started far from the plane (zoom ${chase.z.toFixed(1)})`);
+    // the ring round the followed plane (js/trackring.js) shows on the 3D map too
+    const ring = await evaluate(() => !!document.querySelector('#view3d .track-ring:not([hidden])'));
+    if (chase.follow && !ring) errors.push('track ring: not shown on the followed plane in 3D');
     // its model (once loaded) stands on landing gear (js/gear3d.js)
     const gear = await evaluate(() => { const e = FG.view3d.planes[G.state.planes[0].id]; return e ? { loaded: e.obj.userData.lift != null, gear: !!e.obj.userData.gear } : null; });
     if (gear && gear.loaded && !gear.gear) errors.push('3D view: the followed plane has no landing gear');

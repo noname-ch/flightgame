@@ -2968,6 +2968,7 @@
   const Game = {
     state: null,
     dirty: true, // UI needs a full re-render
+    blasts: [], // crash sites, for the views to draw (looks only: not saved, see crash())
 
     airportByCode, distanceKm, dist, bearing, interpolate, catchment, dailyDemand,
     ticketPrice, routeKey, blockMinutes, turnaroundMin, landingFee, slotUpfront, slotWeekly,
@@ -4410,6 +4411,11 @@
       const rep = E.crashReputation;
       s.effects.push({ label: `Bookings slump after the ${nameOf(p)} crash`, where: { all: true },
         demandMult: rep.demandMult, until: s.time + rep.days * DAY });
+
+      // Where it went in: the views draw the blast (not saved: it is only to look at).
+      const st = this.flightState(p, s.time);
+      this.blasts.push({ id: p.id, lat, lon, altM: st ? st.altFt * 0.3048 : 0 });
+      if (this.blasts.length > 10) this.blasts.shift();
 
       const place = this.nearestPlace(lat, lon);
       this.log(`✖ ${nameOf(p)} (${ac.name}) crashed near ${place} on ${f.from}→${f.to}. ` +
