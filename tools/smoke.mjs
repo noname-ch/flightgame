@@ -319,6 +319,21 @@ try {
   else if (!em.crashOk || !em.alive || !em.landed || !em.repair) errors.push(`emergency: ${JSON.stringify(em)}`);
   else step(`emergency: crash timed before landing, safe landing grounded for "${em.repair}"`);
 
+  step('developer tools: spawn a chosen incident (bird strike) and a chosen emergency (hydraulics) on planes');
+  const sp = await evaluate(() => {
+    const p = G.state.planes[0];
+    G.incident(p, { from: p.location, to: p.location }, 'birdStrike');
+    const incOk = p.repair === 'birdStrike';
+    p.repair = null; // (ready again)
+    p.readyAt = G.state.time;
+    const q = G.state.planes.find((x) => x.status === 'flying' && !x.flight.emergency);
+    if (!q) return { incOk, skip: true };
+    G.emergency(q, 'hydraulics');
+    return { incOk, emOk: q.flight.emergency === 'hydraulics' };
+  });
+  if (!sp.incOk || (!sp.skip && !sp.emOk)) errors.push(`developer tools spawns: ${JSON.stringify(sp)}`);
+  else step(`developer tools spawns: incident ${sp.incOk ? 'bird strike' : ''}, emergency ${sp.skip ? 'skipped (no plane in the air)' : 'hydraulics'}`);
+
   step('plane stats: its strip card clicked, then clicked again, opens its stats window');
   // (paused, as for the ferry: at full speed a long task can hold up the click's timer)
   const psRunning = await evaluate(() => {

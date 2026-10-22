@@ -13,6 +13,8 @@
     count: 1,
     ownership: 'owned',
     event: null, // world event id
+    incident: 'birdStrike', // in-flight incident to spawn on the selected plane
+    emergency: 'engineFire', // in-flight emergency to spawn on the selected plane
     wdir: 270, // wind to place: from (°), speed (kt), radius (km)
     wkt: 40,
     wkm: 200,
@@ -116,6 +118,29 @@
         break;
       default:
     }
+  }
+
+  // Spawn a chosen incident or emergency on the selected plane (the game's own stories, costs and groundings).
+  const INCIDENT_NAMES = {
+    birdStrike: 'Bird strike (a flock of geese)', techFault: 'Smoke in the cabin',
+    unruly: 'Unruly passenger', doorPlug: 'Door panel blows out',
+  };
+  function spawnIncident() {
+    const p = selectedPlane();
+    if (!p) { note('Select a plane first (click it on the map or in the fleet).', true); return; }
+    const f = p.flight || { from: p.location, to: p.location };
+    G.incident(p, f, dv.incident);
+    if (p.status === 'idle') p.status = 'turnaround';
+    done(`${INCIDENT_NAMES[dv.incident] || dv.incident} on ${p.id}.`);
+  }
+
+  function spawnEmergency() {
+    const p = selectedPlane();
+    if (!p) { note('Select a plane first (click it on the map or in the fleet).', true); return; }
+    if (p.status !== 'flying') { note(`${p.id} must be in the air for an emergency.`, true); return; }
+    if (p.flight.emergency) { note(`${p.id} has already declared an emergency.`, true); return; }
+    G.emergency(p, dv.emergency);
+    done(`${D.emergencies.find((e) => e.id === dv.emergency).what} on ${p.id}${p.flight.crashAt ? ' (it will crash)' : ' (it will land safely)'}.`);
   }
 
   function airportAction(kind) {
@@ -304,6 +329,7 @@
       .map((c) => [c, `${c} – ${G.airportByCode[c].name}${s.slots[c] ? '' : ' (no slot yet)'}`]);
     if (!dv.event) dv.event = D.worldEvents[0].id;
     const p = selectedPlane();
+    const flying = p && p.status === 'flying';
     const ap = selectedAirport();
 
     el.innerHTML = `
@@ -337,6 +363,14 @@
           <button data-dev="plane" data-kind="ready"${p ? '' : ' disabled'}>Repair &amp; ready</button>
           <button data-dev="plane" data-kind="own"${p && p.ownership === 'leased' ? '' : ' disabled'}>Make owned</button>
           <button data-dev="plane" data-kind="remove"${p ? '' : ' disabled'}>Remove</button>
+        </div>
+        <div class="dev-row">
+          <select id="dev-incident" title="An in-flight incident: the plane is grounded for repairs">${options(D.incidents.map((i) => [i.id, INCIDENT_NAMES[i.id] || i.id]), dv.incident)}</select>
+          <button data-dev="spawnIncident"${p ? '' : ' disabled'}>Spawn incident</button>
+        </div>
+        <div class="dev-row">
+          <select id="dev-emergency" title="An in-flight emergency: needs a plane in the air">${options(D.emergencies.map((e) => [e.id, e.what]), dv.emergency)}</select>
+          <button data-dev="spawnEmergency"${flying && !p.flight.emergency ? '' : ' disabled'}>Spawn emergency</button>
         </div>
       </section>
       <section><h4>Airport <span class="muted">${ap ? `${esc(ap)} – ${esc(G.airportByCode[ap].name)}` : 'none'}</span></h4>
@@ -413,6 +447,8 @@
       case 'airportCheck': if (FG.checks && FG.checks.toggle) { FG.checks.toggle(); render(); } break;
       case 'examples': exampleAirports(); break;
       case 'event': triggerEvent(); break;
+      case 'spawnIncident': spawnIncident(); break;
+      case 'spawnEmergency': spawnEmergency(); break;
       case 'clearEffects': clearEffects(); break;
       case 'skip': skip(Number(d.min), d.label); break;
       case 'rest': refreshCrews(); break;
@@ -433,6 +469,8 @@
     if (t.id === 'dev-at') dv.at = t.value;
     if (t.id === 'dev-own') dv.ownership = t.value;
     if (t.id === 'dev-event') dv.event = t.value;
+    if (t.id === 'dev-incident') dv.incident = t.value;
+    if (t.id === 'dev-emergency') dv.emergency = t.value;
     if (t.id === 'dev-style') setStyle(t.value);
     if (t.id === 'dev-count') dv.count = Math.max(1, Math.min(20, Math.round(Number(t.value)) || 1));
     if (t.id === 'dev-wdir') dv.wdir = ((Math.round(Number(t.value)) || 0) % 360 + 360) % 360;

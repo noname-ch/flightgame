@@ -4324,12 +4324,13 @@
 
     // Mayday in the air: the news comes out now, and crashChance decides if it crashes a few minutes
     // later (before it would land) or lands safely at its destination (emergencyLanded).
-    emergency(p) {
+    // `only`: the id of the emergency to have (developer tools); otherwise one is drawn by weight.
+    emergency(p, only = null) {
       const s = this.state;
       const f = p.flight;
       const list = D.emergencies;
       let r = Math.random() * list.reduce((sum, e) => sum + e.weight, 0);
-      const em = list.find((e) => (r -= e.weight) < 0) || list[0];
+      const em = only ? list.find((e) => e.id === only) : (list.find((e) => (r -= e.weight) < 0) || list[0]);
       f.emergency = em.id;
       f.emergencyAt = Math.min(f.emergencyAt || s.time, s.time);
       f.incident = false;
@@ -4420,13 +4421,15 @@
       this.dirty = true;
     },
 
-    incident(p, f) {
+    // `only`: the id of the incident to have (developer tools); otherwise one is drawn by weight.
+    incident(p, f, only = null) {
       const s = this.state;
       const maker = D.aircraft[p.type].maker;
       const list = D.incidents.filter((i) => !i.maker || i.maker === maker)
         .map((i) => ({ i, w: i.weight * (i.maker ? this.makerMult(p.type) : 1) }));
       let r = Math.random() * list.reduce((sum, x) => sum + x.w, 0);
-      const inc = (list.find((x) => (r -= x.w) < 0) || list[0]).i;
+      const inc = only ? D.incidents.find((i) => i.id === only)
+        : (list.find((x) => (r -= x.w) < 0) || list[0]).i;
       s.money -= inc.repair;
       s.today.cost += inc.repair;
       record(p, { repair: inc.repair, incidents: 1 });

@@ -362,7 +362,8 @@ model that you can turn by dragging (double-click to reset), the tiles as pictur
 Developer tools: the 🛠 button (or F2) opens a cheat panel for testing: add or set money, add any
 aircraft for free (delivered instantly to the chosen or selected airport, slot included), emergency /
 crash / damage / repair / remove the selected plane, free slots and 100% airport ownership, finish all
-construction, trigger or clear any world event, place wind, and skip an hour, day or week. Every cheat is
+construction, trigger or clear any world event, spawn an incident (a bird strike, smoke in the cabin, a door panel
+blowing out…) or an emergency (engine fire, hydraulics…) on the selected plane, place wind, and skip an hour, day or week. Every cheat is
 noted in the log (`js/devtools.js`). **Wind**: pick where it blows from (degrees or N…NW), its speed (0-120 kt)
 and how far it reaches (50-1000 km), then *Place on the map* (click in 2D or 3D), *At the map centre* or *At* the
 selected airport. It blows at every height and fades into the weather's own wind at its edge; planes crab into it
