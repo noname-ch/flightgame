@@ -107,6 +107,9 @@ FG.data.gear = {
   'DC-6B': { main: 'nacelle', wheels: '1x2', tyre: 1.25, nose: 0.13 },
   'L-1049G': { main: 'nacelle', wheels: '1x2', tyre: 1.3, nose: 0.12 },
   'DC-7C': { main: 'nacelle', wheels: '1x2', tyre: 1.3, nose: 0.13 },
+  // the A350-1000 stands on six-wheel bogies, the -900 it is drawn with on four
+  'A350-1000': { main: 'wing', track: 0.89, wheels: '3x2', tyre: 1.4, tilt: 9 },
+  'A350-1000ULR': { main: 'wing', track: 0.89, wheels: '3x2', tyre: 1.4, tilt: 9 },
 };
 
 // Propellers of the models that have them, for their colours (js/livery.js): hub x (either side) and z, the y
