@@ -20,24 +20,38 @@ cache folder.
 - **The economy** (`src/game.rs`, from `js/game.js`): catchments, demand by distance, fares and price elasticity,
   block times, turnarounds, landing and passenger fees, ageing costs, crews (a second crew past 12 h a day), weekly
   leases, crews and slots, bankruptcy and the difficulties and modes.
-- **Slots**: leasing and giving back, holders (rivals and other airlines), offers for someone else's slot by
-  reputation, planes waiting at the gate when every slot is taken, the home base where parked planes need none.
-- **Timetables**: built round a route like the planner (as many loops as fit into the day), shifted flight by
-  flight, checked (curfew, range, runway, stand class, turnarounds, crew duty), with a forecast and slot warnings.
+- **Local time**: every airport has its time zone (`js/data/timezones.js`, summer time included); the clock at the top
+  is the home base's, times written out are local at each airport, and the night curfew (no departures 22:00–06:00)
+  is in each airport's local time. The airport window shows the local time, the zone, sunrise and sunset.
+- **Slots by stand class** (A–F by wingspan): one slot per stand, as many and of the classes the browser game counts
+  (`data/stands.json` for the airports it knows the real layout of, taken from the online game; every other airport
+  has the made-up apron of its size). A plane needs a slot of its class or bigger. Leasing and giving back by class,
+  holders (rivals and other airlines), offers for someone else's slot by reputation, planes waiting at the gate when
+  every slot is taken, the home base where parked planes need none.
+- **Timetables**: built round a route like the planner (as many loops as fit into the day), ✨ for the best start
+  time, shifted flight by flight, checked (local curfew, range, runway, stand class, turnarounds, crew duty), with a
+  forecast and slot warnings; every plane's day as bars.
+- **Quick start**: the browser game's ready-made airlines (`js/data/presets.js`).
 - **Fleet and market**: leasing and buying new aircraft (delivery flights from the factory), pre-owned ones every
-  Monday, selling and returning, ferry flights, renaming, each plane's stats with its last 12 weeks.
+  Monday, selling and returning, ferry flights, renaming, each plane's stats with its last 12 weeks, tickets per route
+  on its card.
 - **Rivals**: the same airlines and rules: routes from their hubs, sized for their target load, weekly growth,
-  fare wars and attacks on your routes; their planes fly on the map.
-- **Events and newspapers**: strikes, storms, volcanic ash, fuel prices, festivals, a rival going bust, incidents and
-  crashes, with their stories.
-- **Map**: Esri's dark or light grey canvas, airports by size, your slots, timetable route lines, your planes and the
-  rivals'. Click a plane or an airport for its window.
+  fare wars and attacks on your routes; their routes and planes on the map, your routes with competition.
+- **Events and newspapers**: strikes, storms, volcanic ash, fuel prices, festivals, a rival going bust, incidents,
+  in-flight emergencies (1 in 150 flights; 5 % of them end in a crash, the rest land and are grounded) and crashes,
+  with their stories.
+- **Sections**: Fleet, Airports (by category), Slots (per airport by class, today's plan per slot, arrivals and
+  departures), Schedule, Market, Finance (cash with the bankruptcy line, revenue against costs, daily result,
+  history), Rivals, Log.
+- **Map**: Esri's satellite pictures (as the browser game), or its dark or light grey canvas; airports by size,
+  your slots, timetable route lines, your planes, the rivals' routes and planes. Click a plane or an airport for its
+  window.
 
 ## What it leaves out (for now)
 
-The 3D view, sound, weather, airport layouts (stands, taxiways, the airport editor and building), airport shares and
-construction, story mode, quick-start presets and ultra long-haul timetables. Without layouts an airport's stands
-(and so its slots) and its biggest stand class go by its size (`SLOT_CAPACITY` in `src/config.rs`).
+The 3D view, sound, weather, day and night on the map, airport layouts (stands drawn, taxiways, the airport editor
+and building), airport shares and construction, story mode and ultra long-haul timetables. The stands of airports
+the browser game reads from OpenStreetMap while it runs are the made-up ones of their size here.
 
 One difference: a plane more than half a day behind its timetable (after a strike, say) takes it up again from its
 next departure instead of flying the missed flights late for good.
@@ -48,5 +62,7 @@ next departure instead of flying the missed flights late for good.
   `game.rs` (state and simulation), `events.rs` (world events, incidents, crashes).
 - `src/main.rs`, `src/app.rs` (window, sections, plane and airport windows, newspaper), `src/mapview.rs` (map).
 
-`cargo test --release` loads the data and flies a month of a timetable. `FLIGHTGAME_SELFTEST=<folder>` starts the
-app, plays about 50 days by itself, saves four screenshots and a report there and quits (it never touches the save).
+`cargo test --release` loads the data, checks local times, stands and a quick start, and flies a month of a timetable.
+`FLIGHTGAME_SELFTEST=<folder>` starts the
+app with the "European network" quick start, plays a few weeks by itself, saves four screenshots and a report there
+and quits (it never touches the save).

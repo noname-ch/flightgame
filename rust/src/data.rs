@@ -16,6 +16,15 @@ const AIRCRAFT_JS: &str = include_str!("../../js/data/aircraft.js");
 const LOOKS_JS: &str = include_str!("../../js/data/looks.js");
 const FACTORIES_JS: &str = include_str!("../../js/data/factories.js");
 const RIVALS_JS: &str = include_str!("../../js/data/rivals.js");
+const TIMEZONES_JS: &str = include_str!("../../js/data/timezones.js");
+const PRESETS_JS: &str = include_str!("../../js/data/presets.js");
+/// The stands (by class A–F) of the airports whose real layout the browser game knows, as it counts them
+/// (taken from the online game; every other airport has the made-up apron of its size, `DEFAULT_STANDS`).
+const STANDS_JSON: &str = include_str!("../data/stands.json");
+
+/// The stands by class of a made-up apron, by airport size (as the browser game lays it out).
+pub const DEFAULT_STANDS: [[u32; 6]; 6] =
+    [[0, 0, 2, 0, 0, 0], [0, 0, 6, 0, 0, 0], [0, 0, 8, 4, 0, 0], [0, 0, 0, 16, 8, 0], [0, 0, 0, 0, 40, 0], [0, 0, 0, 0, 42, 22]];
 
 #[derive(Clone, Debug)]
 pub struct Airport {
@@ -34,6 +43,12 @@ pub struct Airport {
     pub runway: f64,
     pub runway_paved: f64,
     pub runways: Vec<[f64; 6]>,
+    /// time zone: UTC offset in quarter hours, or [winter, summer, first day of summer, first day after it]
+    pub zone: Vec<i32>,
+    /// stands (= slots) by class A–F
+    pub stands: [u32; 6],
+    /// true where the stands come from a real layout
+    pub real_stands: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -71,6 +86,20 @@ pub struct RivalTemplate {
     pub hubs: Vec<String>,
 }
 
+/// A ready-made airline for Quick start (js/data/presets.js).
+#[derive(Clone, Debug)]
+pub struct Preset {
+    pub id: String,
+    pub name: String,
+    pub desc: String,
+    pub company: String,
+    pub home: String,
+    pub mode: String,
+    pub difficulty: String,
+    pub money: Option<f64>,
+    pub planes: Vec<(String, Vec<String>)>,
+}
+
 #[derive(Clone, Debug)]
 pub struct Factory {
     pub code: String,
@@ -87,6 +116,7 @@ pub struct Data {
     pub rival_templates: Vec<RivalTemplate>,
     pub rival_colors: Vec<String>,
     pub factory_of: HashMap<String, String>,
+    pub presets: Vec<Preset>,
     town_grid: HashMap<(i32, i32), Vec<usize>>,
 }
 
@@ -142,6 +172,9 @@ impl Data {
             runway: 0.0,
             runway_paved: 0.0,
             runways: Vec::new(),
+            zone: Vec::new(),
+            stands: [0; 6],
+            real_stands: false,
         };
         if let Value::Array(list) = jsdata::assigned(AIRPORTS_JS, "airports")? {
             for a in &list {
@@ -261,6 +294,72 @@ impl Data {
             .map(|a| a.iter().map(s).collect())
             .unwrap_or_default();
 
+        // ---------- time zones ----------
+        if let Value::Object(map) = jsdata::assigned(TIMEZONES_JS, "timezones")? {
+            for (key, codes) in map {
+                let z: Vec<i32> = key.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+                for c in s(&codes).split(' ') {
+                    if let Some(&i) = by_code.get(c) {
+                        airports[i].zone = z.clone();
+                    }
+                }
+            }
+        }
+        // one the data has none for takes its nearest neighbour's within about 400 km, or the sun's
+        let zoned: Vec<(f64, f64, Vec<i32>)> =
+            airports.iter().filter(|a| !a.zone.is_empty()).map(|a| (a.lat, a.lon, a.zone.clone())).collect();
+        for a in airports.iter_mut().filter(|a| a.zone.is_empty()) {
+            let mut best: Option<(f64, &Vec<i32>)> = None;
+            for (lat, lon, z) in &zoned {
+                if (lat - a.lat).abs() > 4.0 || (lon - a.lon).abs() > 4.0 {
+                    continue;
+                }
+                let d = (lat - a.lat).hypot((lon - a.lon) * a.lat.to_radians().cos());
+                if d < 4.0 && best.is_none_or(|(b, _)| d < b) {
+                    best = Some((d, z));
+                }
+            }
+            a.zone = best.map(|(_, z)| z.clone()).unwrap_or_else(|| vec![(a.lon / 15.0).round() as i32 * 4]);
+        }
+
+        // ---------- stands ----------
+        let real: HashMap<String, [u32; 6]> = serde_json::from_str(STANDS_JSON).map_err(|e| format!("stands.json: {e}"))?;
+        for a in airports.iter_mut() {
+            match real.get(&a.code) {
+                Some(st) => {
+                    a.stands = *st;
+                    a.real_stands = true;
+                }
+                None => a.stands = DEFAULT_STANDS[a.size.min(5)],
+            }
+        }
+
+        // ---------- quick start ----------
+        let mut presets = Vec::new();
+        if let Value::Object(map) = jsdata::assigned(PRESETS_JS, "presets")? {
+            for (id, p) in map {
+                let planes = p["planes"]
+                    .as_array()
+                    .map(|l| {
+                        l.iter()
+                            .map(|x| (s(&x[0]), x[1].as_array().map(|st| st.iter().map(s).collect()).unwrap_or_default()))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                presets.push(Preset {
+                    id,
+                    name: s(&p["name"]),
+                    desc: s(&p["desc"]),
+                    company: s(&p["company"]),
+                    home: s(&p["home"]),
+                    mode: s(&p["mode"]),
+                    difficulty: s(&p["difficulty"]),
+                    money: of(&p["money"]),
+                    planes,
+                });
+            }
+        }
+
         let mut d = Data {
             airports,
             by_code,
@@ -271,6 +370,7 @@ impl Data {
             rival_templates,
             rival_colors,
             factory_of,
+            presets,
             town_grid,
         };
         let catchments: Vec<f64> = d.airports.iter().map(|a| d.catchment_of(a.lat, a.lon)).collect();

@@ -24,9 +24,6 @@ pub const LANDING_FEE_PER_SIZE: f64 = 400.0;
 // Slot prices by airport size (index 1..5)
 pub const SLOT_UPFRONT: [f64; 6] = [0.0, 60000.0, 120000.0, 250000.0, 450000.0, 750000.0];
 pub const SLOT_WEEKLY: [f64; 6] = [0.0, 1500.0, 4000.0, 9000.0, 18000.0, 32000.0];
-/// Stands (= slots) an airport has, by size. The browser game counts the stands of the real layout; this
-/// app has no layouts, so it goes by size.
-pub const SLOT_CAPACITY: [u32; 6] = [2, 4, 12, 30, 70, 140];
 /// Share of the slots airlines that aren't in the game hold, by size.
 pub const OTHER_AIRLINES: [f64; 6] = [0.0, 0.1, 0.25, 0.4, 0.55, 0.7];
 pub const MINOR_FACTOR: f64 = 0.3;
@@ -121,9 +118,12 @@ pub fn rival_fleet(kind: &str) -> &'static str {
 }
 
 // Random events
-pub const CRASH_PER_FLIGHT: f64 = 1.0 / 6000.0;
-pub const INCIDENT_PER_FLIGHT: f64 = 1.0 / 400.0;
-pub const EVENTS_PER_DAY: f64 = 0.2;
+/// A crash always starts as an in-flight emergency: CRASH_SHARE of them (times the mode's maker multiplier) end
+/// in a crash, the rest land safely and are grounded for an inspection.
+pub const EMERGENCY_PER_FLIGHT: f64 = 1.0 / 150.0;
+pub const CRASH_SHARE: f64 = 0.05;
+pub const INCIDENT_PER_FLIGHT: f64 = 1.0 / 150.0;
+pub const EVENTS_PER_DAY: f64 = 0.5;
 pub const CRASH_PAX_COMPENSATION: f64 = 25000.0;
 pub const CRASH_INVESTIGATION: f64 = 300000.0;
 pub const CRASH_INSURANCE_SHARE: f64 = 0.6;

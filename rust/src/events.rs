@@ -48,6 +48,66 @@ struct IncidentInfo {
     repair: String,
 }
 
+/// In-flight emergencies (EMERGENCY_PER_FLIGHT). The news comes out when the crew declares it; CRASH_SHARE of
+/// them end in a crash, the rest land at the destination and are grounded. `what` finishes "reports …".
+struct Emergency {
+    id: &'static str,
+    weight: f64,
+    grounded_hours: i64,
+    repair: f64,
+    what: &'static str,
+    story: fn(&EmergencyInfo) -> Story,
+}
+
+struct EmergencyInfo {
+    id: String,
+    company: String,
+    kind: String,
+    from: String,
+    to: String,
+    place: String,
+    airport: String,
+    on_board: u32,
+}
+
+const EMERGENCIES: [Emergency; 5] = [
+    Emergency { id: "engineFire", weight: 4.0, grounded_hours: 48, repair: 180000.0, what: "an engine fire", story: |x| story(
+        false,
+        format!("MAYDAY! ENGINE FIRE OVER {}", x.place.to_uppercase()),
+        format!("{} {} with {} on board heads for {}", x.company, x.kind, x.on_board, x.airport),
+        format!("Witnesses near {} saw flames trailing from an engine of flight {} ({}–{}). The crew shut the engine down, \
+                 declared an emergency and is flying on to {}, where fire crews are waiting.", x.place, x.id, x.from, x.to, x.airport),
+    ) },
+    Emergency { id: "hydraulics", weight: 3.0, grounded_hours: 36, repair: 120000.0, what: "a hydraulic failure", story: |x| story(
+        false,
+        "MAYDAY: JET LOSES HYDRAULICS".into(),
+        format!("{} flight {} struggles towards {}", x.company, x.id, x.airport),
+        format!("The pilots of the {} report a hydraulic failure near {}, leaving them with heavy controls and gear that may \
+                 have to be dropped by hand. {} people are on board. Emergency services at {} are on standby.", x.kind, x.place, x.on_board, x.airport),
+    ) },
+    Emergency { id: "depressurisation", weight: 3.0, grounded_hours: 30, repair: 90000.0, what: "a loss of cabin pressure", story: |x| story(
+        false,
+        "OXYGEN MASKS DROP IN DIVE".into(),
+        format!("{} {} plunges 25,000 ft after losing pressure", x.company, x.kind),
+        format!("Passengers on flight {} from {} filmed oxygen masks swinging as the jet dived over {}. The crew declared an \
+                 emergency and is continuing at low altitude to {}.", x.id, x.from, x.place, x.airport),
+    ) },
+    Emergency { id: "gearFault", weight: 2.0, grounded_hours: 24, repair: 70000.0, what: "a landing gear fault", story: |x| story(
+        false,
+        "GEAR WON'T COME DOWN".into(),
+        format!("{} jet circles with {} on board", x.company, x.on_board),
+        format!("Flight {} ({}) declared an emergency near {} after a landing gear warning. The crew is burning off fuel before \
+                 trying to land at {}; the runway is being foamed.", x.id, x.kind, x.place, x.airport),
+    ) },
+    Emergency { id: "smokeCockpit", weight: 2.0, grounded_hours: 30, repair: 60000.0, what: "smoke in the cockpit", story: |x| story(
+        false,
+        "SMOKE IN THE COCKPIT".into(),
+        format!("Pilots of {} flight {} don oxygen masks", x.company, x.id),
+        format!("The crew of the {} from {} to {} reported smoke in the cockpit over {} and declared an emergency. The jet is \
+                 heading for {} as fast as it can.", x.kind, x.from, x.to, x.place, x.airport),
+    ) },
+];
+
 const INCIDENTS: [Incident; 4] = [
     Incident { weight: 4.0, grounded_hours: 36, repair: 80000.0, maker: None, story: |x| story(
         false,
@@ -237,6 +297,77 @@ impl Game {
             }
             _ => None,
         }
+    }
+
+    /// Mayday in the air: the news comes out now, and crash_chance decides if it crashes a few minutes later
+    /// (before it would land) or lands safely at its destination (emergency_landed).
+    pub(crate) fn emergency(&mut self, i: usize) {
+        let d = data();
+        let t = self.state.time;
+        let mut r = rand::random::<f64>() * EMERGENCIES.iter().map(|e| e.weight).sum::<f64>();
+        let em = EMERGENCIES.iter().find(|e| {
+            r -= e.weight;
+            r < 0.0
+        }).unwrap_or(&EMERGENCIES[0]);
+        let crash = rand::random::<f64>() < self.crash_chance(&self.state.planes[i].kind.clone());
+        let p = &mut self.state.planes[i];
+        let Some(f) = p.flight.as_mut() else { return };
+        f.emergency = Some(em.id.into());
+        f.incident = false;
+        if crash {
+            f.crash_at = Some(t.max((f.arr - 1).min(t + 3 + rand::random_range(0..13))));
+        }
+        let f = f.clone();
+        let p = p.clone();
+        let frac = (t - f.dep) as f64 / (f.arr - f.dep).max(1) as f64;
+        let (a, b) = (d.airport(&f.from), d.airport(&f.to));
+        let (lat, lon) = interpolate(a.lat, a.lon, b.lat, b.lon, frac);
+        let ac = d.ac(&p.kind);
+        self.log(
+            format!("⚠ MAYDAY: {} ({}) on {}→{} reports {} – heading for {}.", Game::name_of(&p), ac.name, f.from, f.to, em.what, b.name),
+            LogKind::Bad,
+        );
+        let x = EmergencyInfo {
+            id: p.id.clone(),
+            company: self.state.company.clone(),
+            kind: ac.name.clone(),
+            from: f.from.clone(),
+            to: f.to.clone(),
+            place: d.nearest_town(lat, lon),
+            airport: b.name.clone(),
+            on_board: f.pax + p.crew.pilots + p.crew.cabin,
+        };
+        self.news((em.story)(&x));
+    }
+
+    /// The emergency ended well: the plane is grounded for an inspection and repairs.
+    pub(crate) fn emergency_landed(&mut self, i: usize, f: &Flight) {
+        let id = f.emergency.clone().unwrap_or_default();
+        let em = EMERGENCIES.iter().find(|e| e.id == id).unwrap_or(&EMERGENCIES[0]);
+        let t = self.state.time;
+        self.state.money -= em.repair;
+        self.state.today.cost += em.repair;
+        let p = &mut self.state.planes[i];
+        p.stats.repair += em.repair;
+        p.stats.incidents += 1;
+        let w = t.div_euclid(DAY * 7);
+        if let Some(wk) = p.stats.weeks.iter_mut().find(|x| x.week == w) {
+            wk.repair += em.repair;
+        }
+        p.ready_at = p.ready_at.max(t + em.grounded_hours * 60);
+        p.repair = true;
+        let name = Game::name_of(p);
+        self.state.rep.incidents.push(t);
+        self.log(
+            format!(
+                "✔ {name} landed safely at {} after {}. Everyone is fine; inspection and repairs cost {}, grounded {} h.",
+                data().airport(&f.to).name,
+                em.what,
+                fmt_money(em.repair),
+                em.grounded_hours
+            ),
+            LogKind::Good,
+        );
     }
 
     pub(crate) fn incident(&mut self, i: usize, f: &Flight) {

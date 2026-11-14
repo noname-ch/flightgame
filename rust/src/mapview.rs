@@ -25,6 +25,21 @@ impl TileSource for EsriDark {
     }
 }
 
+/// Esri's satellite pictures (the browser game's default "Satellite" style).
+pub struct EsriImagery;
+
+impl TileSource for EsriImagery {
+    fn tile_url(&self, t: TileId) -> String {
+        format!("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{}/{}/{}", t.zoom, t.y, t.x)
+    }
+    fn attribution(&self) -> Attribution {
+        Attribution { text: "Tiles © Esri — Esri, Maxar, Earthstar Geographics", url: "https://www.esri.com", logo_light: None, logo_dark: None }
+    }
+    fn max_zoom(&self) -> u8 {
+        18
+    }
+}
+
 /// Esri's light grey canvas (the browser game's "Standard" map style, without its recolouring).
 pub struct EsriLight;
 
@@ -61,6 +76,10 @@ pub struct Layers {
     pub rivals: bool,
     pub routes: bool,
     pub all_airports: bool,
+    /// the rivals' routes as thin lines in their colours
+    pub rival_routes: bool,
+    /// darken the map a little (the satellite pictures), so the game stands out
+    pub dim: bool,
 }
 
 /// Draws the game over the map and says what is under the pointer and what was clicked.
@@ -89,6 +108,21 @@ pub fn draw(
         }
     };
 
+    if layers.dim {
+        painter.rect_filled(rect, 0.0, Color32::from_black_alpha(90));
+    }
+
+    // ---------- the rivals' routes ----------
+    if layers.rival_routes {
+        for r in &game.state.rivals {
+            let color = hex(&r.color).gamma_multiply(0.45);
+            for rt in &r.routes {
+                let (Some(a), Some(b)) = (d.try_airport(&rt.a), d.try_airport(&rt.b)) else { continue };
+                great_circle(&painter, &pos, (a.lat, a.lon), (b.lat, b.lon), Stroke::new(1.0, color));
+            }
+        }
+    }
+
     // ---------- route lines of the timetables ----------
     if layers.routes {
         let mut seen = std::collections::HashSet::new();
@@ -100,7 +134,7 @@ pub fn draw(
                 }
                 let (a, b) = (d.airport(&l.from), d.airport(&l.to));
                 let color = if p.schedule.active { ROUTE } else { ROUTE.gamma_multiply(0.4) };
-                great_circle(&painter, &pos, (a.lat, a.lon), (b.lat, b.lon), Stroke::new(2.0, color));
+                great_circle(&painter, &pos, (a.lat, a.lon), (b.lat, b.lon), Stroke::new(4.0, color));
             }
         }
         // the selected plane's flight
@@ -139,15 +173,16 @@ pub fn draw(
             continue;
         }
         let r = 2.0 + a.size as f32 * 0.9 + if own { 1.5 } else { 0.0 };
-        let fill = if own { OWN } else { Color32::from_gray(200) };
-        painter.circle(at, r, fill, Stroke::new(1.0, Color32::from_black_alpha(160)));
+        // as on the browser game's map: blue airports with a white rim, small airfields as white dots, yours green
+        let fill = if own { OWN } else if a.size >= 2 { ROUTE } else { Color32::from_gray(235) };
+        painter.circle(at, r, fill, Stroke::new(1.5, Color32::WHITE));
         if sel {
             painter.circle_stroke(at, r + 4.0, Stroke::new(2.0, Color32::YELLOW));
         }
         let show_code = own || sel || zoom >= 9.0 - a.size as f64;
         if show_code {
             painter.text(at + Vec2::new(r + 3.0, 0.0), Align2::LEFT_CENTER, &a.code, FontId::proportional(11.0 + a.size as f32 * 0.5),
-                if own { OWN } else { Color32::from_gray(220) });
+                if own { OWN } else { Color32::from_rgb(120, 180, 255) });
         }
         consider(Pick::Airport(k), at, r + 6.0, &mut hover);
     }

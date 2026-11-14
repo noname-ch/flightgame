@@ -69,6 +69,11 @@ pub struct Flight {
     pub cost: f64,
     pub crash_at: Option<i64>,
     pub incident: bool,
+    /// when the crew declares an emergency (it may end in a crash), and which one once declared
+    #[serde(default)]
+    pub emergency_at: Option<i64>,
+    #[serde(default)]
+    pub emergency: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -154,6 +159,17 @@ pub struct Plane {
 pub struct SlotHolding {
     pub since: i64,
     pub count: u32,
+    /// the slots by stand class A–F (a plane needs one of its class or bigger)
+    #[serde(default)]
+    pub by_class: Vec<u32>,
+}
+
+/// The slots of an airport by class: capacity, yours, held by others, free.
+pub struct SlotTable {
+    pub cap: [u32; 6],
+    pub mine: [u32; 6],
+    pub held: [u32; 6],
+    pub free: [u32; 6],
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -434,9 +450,61 @@ pub fn type_class(kind: &str) -> usize {
     CLASS_SPAN.iter().position(|&m| span < m).unwrap_or(5)
 }
 
+/// The biggest stand class an airport has: from its real stands where the game knows them, else by its size.
 pub fn max_class(code: &str) -> usize {
     let a = data().airport(code);
-    if a.minor && a.size <= 1 { 1 } else { CLASS_BY_SIZE[a.size.min(5)] }
+    if a.factory {
+        return 5;
+    }
+    if a.real_stands {
+        return (0..6).rev().find(|&c| a.stands[c] > 0).unwrap_or(0);
+    }
+    CLASS_BY_SIZE[a.size.min(5)]
+}
+
+/// Do planes of these classes fit into slots `have` (by class)? Each needs one of its class or bigger.
+pub fn slots_fit(have: &[u32; 6], needs: &[usize]) -> bool {
+    let (mut h, mut n) = (0, 0);
+    for c in (0..6).rev() {
+        h += have[c];
+        n += needs.iter().filter(|&&x| x == c).count() as u32;
+        if n > h {
+            return false;
+        }
+    }
+    true
+}
+
+pub fn class_list(n: &[u32; 6]) -> String {
+    let parts: Vec<String> = (0..6).filter(|&c| n[c] > 0).map(|c| format!("{}× {}", n[c], CLASSES[c])).collect();
+    if parts.is_empty() { "none".into() } else { parts.join(", ") }
+}
+
+// ---------- local time ----------
+// The game clock is the time at the home airport. Every airport has its own local time (its zone's UTC offsets in
+// winter and summer and the days the clocks change), and the night curfew is in local time.
+
+pub fn day_of_year(t: i64) -> i64 {
+    t.div_euclid(DAY).rem_euclid(365)
+}
+
+/// Minutes ahead of UTC at an airport on game day t (summer time included), as the browser game reckons it.
+pub fn utc_offset(code: &str, t: i64) -> i64 {
+    let z = &data().airport(code).zone;
+    if z.len() < 4 {
+        return *z.first().unwrap_or(&0) as i64 * 15;
+    }
+    let doy = day_of_year(t) as i32;
+    let north = z[2] < z[3];
+    let summer = if north { doy >= z[2] && doy < z[3] } else { doy >= z[2] || doy < z[3] };
+    (if summer == north { z[1] } else { z[0] }) as i64 * 15
+}
+
+/// "UTC+2", "UTC−4", "UTC+5:45"
+pub fn fmt_zone(code: &str, t: i64) -> String {
+    let m = utc_offset(code, t);
+    let (h, mm) = (m.abs() / 60, m.abs() % 60);
+    format!("UTC{}{h}{}", if m < 0 { '−' } else { '+' }, if mm > 0 { format!(":{mm:02}") } else { String::new() })
 }
 
 /// The runway a type needs (m) and whether it must be paved.
@@ -559,6 +627,35 @@ pub fn fmt_duration(m: i64) -> String {
     format!("{}h{:02}", m / 60, m % 60)
 }
 
+/// Where the sun is at UTC minute `u` of day-of-year `doy`: (declination, longitude overhead, equation of time).
+fn sun_point(doy: f64, u: f64) -> (f64, f64, f64) {
+    let doy = doy + u.rem_euclid(DAY as f64) / DAY as f64;
+    let g = 2.0 * std::f64::consts::PI * (doy - 1.0) / 365.0;
+    let dec = 0.006918 - 0.399912 * g.cos() + 0.070257 * g.sin() - 0.006758 * (2.0 * g).cos() + 0.000907 * (2.0 * g).sin()
+        - 0.002697 * (3.0 * g).cos()
+        + 0.00148 * (3.0 * g).sin();
+    let eot = 229.18
+        * (0.000075 + 0.001868 * g.cos() - 0.032077 * g.sin() - 0.014615 * (2.0 * g).cos() - 0.040849 * (2.0 * g).sin());
+    let lon = ((720.0 - u.rem_euclid(DAY as f64) - eot) / 4.0 + 540.0).rem_euclid(360.0) - 180.0;
+    (dec.to_degrees(), lon, eot)
+}
+
+/// Sunrise and sunset at an airport on game day t, as local clock times; None in polar day or night.
+pub fn sun_times(code: &str, t: i64) -> Option<(String, String)> {
+    let a = data().airport(code);
+    let (dec, _, eot) = sun_point(day_of_year(t) as f64, 720.0);
+    let c = ((-0.833f64).to_radians().sin() - a.lat.to_radians().sin() * dec.to_radians().sin())
+        / (a.lat.to_radians().cos() * dec.to_radians().cos());
+    if !(-1.0..=1.0).contains(&c) {
+        return None;
+    }
+    let h0 = c.acos().to_degrees() / 15.0 * 60.0;
+    let transit = 720.0 - 4.0 * a.lon - eot;
+    let off = utc_offset(code, t) as f64;
+    let clock = |m: f64| fmt_clock((m + off).round() as i64);
+    Some((clock(transit - h0), clock(transit + h0)))
+}
+
 // ---------- the game ----------
 
 pub struct Game {
@@ -574,6 +671,40 @@ impl Game {
         g
     }
 
+    // ---------- local time and the night curfew ----------
+
+    /// Minutes an airport's clock is ahead of the home base's, today.
+    pub fn ahead_of(&self, code: &str) -> i64 {
+        let now = self.state.time;
+        utc_offset(code, now) - utc_offset(&self.state.home, now)
+    }
+
+    /// Local time of day at an airport for game time t.
+    pub fn local_tod(&self, code: &str, t: i64) -> i64 {
+        (t + self.ahead_of(code)).rem_euclid(DAY)
+    }
+
+    /// A game time as the local clock at an airport ("07:00").
+    pub fn fmt_at(&self, code: &str, t: i64) -> String {
+        fmt_clock(self.local_tod(code, t))
+    }
+
+    /// Departures from an airport only between CURFEW_START and CURFEW_END there, local time.
+    pub fn curfew_open(&self, code: &str, t: i64) -> bool {
+        (CURFEW_START..=CURFEW_END).contains(&self.local_tod(code, t))
+    }
+
+    /// When planes may next leave an airport (game time; t itself while its curfew is open).
+    pub fn curfew_opens_at(&self, code: &str, t: i64) -> i64 {
+        if self.curfew_open(code, t) { t } else { t + (CURFEW_START - self.local_tod(code, t)).rem_euclid(DAY) }
+    }
+
+    /// An airport's curfew window on the home base's clock ("12:00–04:00"), for messages.
+    pub fn curfew_home(&self, code: &str) -> String {
+        let a = self.ahead_of(code);
+        format!("{}–{}", fmt_clock(CURFEW_START - a), fmt_clock(CURFEW_END - a))
+    }
+
     pub fn new_game(opts: &NewGame) -> Self {
         let d = data();
         let home = if d.try_airport(&opts.airport).is_some() { opts.airport.clone() } else { START_AIRPORT.into() };
@@ -581,7 +712,9 @@ impl Game {
         let diff = difficulty(&opts.difficulty);
         let company = opts.company.trim().chars().take(40).collect::<String>();
         let mut slots = BTreeMap::new();
-        slots.insert(home.clone(), SlotHolding { since: 0, count: 1 });
+        let mut by_class = vec![0; 6];
+        by_class[type_class(&kind)] = 1;
+        slots.insert(home.clone(), SlotHolding { since: 0, count: 1, by_class });
         let state = State {
             version: 1,
             mode: mode(&opts.mode).id.into(),
@@ -659,6 +792,71 @@ impl Game {
         self.state.planes[i].name = if n.is_empty() { None } else { Some(n) };
     }
 
+    /// Quick start: a ready-made airline whose planes already fly daily timetables (js/data/presets.js). Slots are
+    /// given free: one per plane at home and per plane that stops there elsewhere. Returns the game and any problems.
+    pub fn from_preset(pr: &crate::data::Preset) -> (Game, Vec<String>) {
+        let d = data();
+        let home = if d.try_airport(&pr.home).is_some() { pr.home.clone() } else { START_AIRPORT.into() };
+        let planes: Vec<&(String, Vec<String>)> = pr.planes.iter().filter(|(t, _)| d.try_ac(t).is_some()).collect();
+        let mut g = Game::new_game(&NewGame {
+            company: pr.company.clone(),
+            mode: pr.mode.clone(),
+            difficulty: pr.difficulty.clone(),
+            airport: home.clone(),
+            aircraft: planes.first().map(|p| p.0.clone()).unwrap_or_else(|| START_AIRCRAFT.into()),
+        });
+        let mut errors = Vec::new();
+        let mut need: BTreeMap<String, [u32; 6]> = BTreeMap::new();
+        for (kind, stops) in &planes {
+            let c = type_class(kind);
+            need.entry(home.clone()).or_insert([0; 6])[c] += 1;
+            for s in stops {
+                if d.try_airport(s).is_some() {
+                    need.entry(s.clone()).or_insert([0; 6])[c] += 1;
+                } else {
+                    errors.push(format!("Unknown airport {s}."));
+                }
+            }
+        }
+        for (code, by) in need {
+            g.set_slot_classes(&code, by);
+        }
+        let mut idx = vec![0];
+        for (kind, _) in planes.iter().skip(1) {
+            g.add_plane(kind, &home, Ownership::Leased, 0.0, None);
+            idx.push(g.state.planes.len() - 1);
+        }
+        for (k, (kind, stops)) in planes.iter().enumerate() {
+            if stops.is_empty() {
+                continue;
+            }
+            let mut route = vec![home.clone()];
+            route.extend(stops.iter().cloned());
+            // departures 10 minutes apart, so a busy hub doesn't send everything off at once
+            let legs = g.build_timetable(kind, &route, CURFEW_START + 60 + (k as i64 % 12) * 10, 0);
+            let r = if legs.len() < 2 {
+                Err(format!("{} does not fit into one day.", route.join("→")))
+            } else {
+                g.set_timetable(idx[k], legs).and_then(|_| g.set_schedule_active(idx[k], true))
+            };
+            if let Err(e) = r {
+                errors.push(format!("{} ({}): {e}", g.state.planes[idx[k]].id, d.ac(kind).name));
+            }
+        }
+        if let Some(m) = pr.money {
+            g.state.money = m;
+        }
+        let msg = format!(
+            "Quick start \"{}\": {} plane{} at {home}.{}",
+            pr.name,
+            planes.len(),
+            if planes.len() == 1 { "" } else { "s" },
+            if errors.is_empty() { String::new() } else { format!(" Problems: {}", errors.join(" ")) }
+        );
+        g.log(msg, LogKind::Info);
+        (g, errors)
+    }
+
     // ---------- slots ----------
 
     pub fn owns_slot(&self, code: &str) -> bool {
@@ -684,7 +882,94 @@ impl Game {
     }
 
     pub fn slot_capacity(&self, code: &str) -> u32 {
-        self.slot_count(code).max(SLOT_CAPACITY[airport_size(code)])
+        let stands: u32 = data().airport(code).stands.iter().sum();
+        self.slot_count(code).max(2).max(stands)
+    }
+
+    /// Your slots at an airport by class (A–F). Slots from before classes get those your planes there need, then
+    /// the class most of the stands there have.
+    pub fn my_slot_classes(&self, code: &str) -> [u32; 6] {
+        let Some(sl) = self.state.slots.get(code) else { return [0; 6] };
+        let n = self.slot_count(code);
+        if sl.by_class.len() == 6 && sl.by_class.iter().sum::<u32>() == n {
+            let mut out = [0; 6];
+            out.copy_from_slice(&sl.by_class);
+            return out;
+        }
+        let stands = data().airport(code).stands;
+        let common = (0..6).max_by_key(|&c| (stands[c], c)).unwrap_or(2);
+        let mut need: Vec<usize> = self
+            .state
+            .planes
+            .iter()
+            .filter(|p| {
+                p.location == code || p.flight.as_ref().is_some_and(|f| f.to == code) || p.schedule.stops.iter().any(|s| s == code)
+            })
+            .map(|p| type_class(&p.kind))
+            .collect();
+        need.sort_by(|a, b| b.cmp(a));
+        let mut out = [0; 6];
+        for k in 0..n as usize {
+            out[*need.get(k).unwrap_or(&common)] += 1;
+        }
+        out
+    }
+
+    fn set_slot_classes(&mut self, code: &str, by: [u32; 6]) {
+        let t = self.state.time;
+        let n: u32 = by.iter().sum();
+        let sl = self.state.slots.entry(code.into()).or_insert(SlotHolding { since: t, count: 0, by_class: Vec::new() });
+        sl.count = n;
+        sl.by_class = by.to_vec();
+    }
+
+    /// The slots of an airport by class. The holders' slots are spread over the classes as the stands are (what
+    /// is left of each after yours).
+    pub fn slot_table(&self, code: &str) -> SlotTable {
+        let mine = self.my_slot_classes(code);
+        let stands = data().airport(code).stands;
+        let mut cap = [0u32; 6];
+        for c in 0..6 {
+            cap[c] = stands[c].max(mine[c]);
+        }
+        let total: u32 = cap.iter().sum();
+        let want = self.slot_capacity(code);
+        if total < want {
+            cap[2] += want - total;
+        }
+        let rest: Vec<u32> = (0..6).map(|c| cap[c] - mine[c]).collect();
+        let rest_n: u32 = rest.iter().sum();
+        let held_n = rest_n.min(self.slot_holders(code).iter().map(|h| h.n).sum());
+        let share: Vec<f64> =
+            rest.iter().map(|&r| if rest_n > 0 { held_n as f64 * r as f64 / rest_n as f64 } else { 0.0 }).collect();
+        let mut held = [0u32; 6];
+        for c in 0..6 {
+            held[c] = share[c].floor() as u32;
+        }
+        let mut left = held_n - held.iter().sum::<u32>();
+        let mut order: Vec<usize> = (0..6).collect();
+        order.sort_by(|&x, &y| (share[y] - held[y] as f64).total_cmp(&(share[x] - held[x] as f64)));
+        for c in order {
+            if left == 0 {
+                break;
+            }
+            if held[c] < rest[c] {
+                held[c] += 1;
+                left -= 1;
+            }
+        }
+        let mut free = [0u32; 6];
+        for c in 0..6 {
+            free[c] = rest[c].saturating_sub(held[c]);
+        }
+        SlotTable { cap, mine, held, free }
+    }
+
+    /// The class a new slot should have: the smallest free one your biggest plane fits, else the biggest free one.
+    pub fn lease_class_for(&self, code: &str) -> Option<usize> {
+        let free = self.slot_table(code).free;
+        let big = self.state.planes.iter().map(|p| type_class(&p.kind)).max().unwrap_or(0);
+        (big..6).find(|&c| free[c] > 0).or_else(|| (0..big).rev().find(|&c| free[c] > 0))
     }
 
     /// Slots a rival's flights need at an airport: one per 4 daily flights on each route, 2 more at a hub.
@@ -711,9 +996,16 @@ impl Game {
                 continue;
             }
             left -= n;
-            out.push(SlotHolder { id: r.id.clone(), name: r.name.clone(), color: r.color.clone(), n, hub: r.hubs.iter().any(|h| h == code) });
+            out.push(SlotHolder {
+                id: r.id.clone(),
+                name: r.name.clone(),
+                color: r.color.clone(),
+                n,
+                hub: r.hubs.iter().any(|h| h == code),
+            });
         }
-        let others = ((cap as f64 * OTHER_AIRLINES[airport_size(code)]).round() as u32).saturating_sub(*bought.get("others").unwrap_or(&0));
+        let others = ((cap as f64 * OTHER_AIRLINES[airport_size(code)]).round() as u32)
+            .saturating_sub(*bought.get("others").unwrap_or(&0));
         let n = left.min(others);
         if n > 0 {
             out.push(SlotHolder { id: "others".into(), name: "Other airlines".into(), color: "#64748b".into(), n, hub: false });
@@ -721,38 +1013,59 @@ impl Game {
         out
     }
 
-    pub fn free_slots(&self, code: &str) -> u32 {
+    /// Free slots at an airport (of class `cls`, or all).
+    pub fn free_slots(&self, code: &str, cls: Option<usize>) -> u32 {
+        if let Some(c) = cls {
+            return self.slot_table(code).free[c];
+        }
         let held: u32 = self.slot_holders(code).iter().map(|h| h.n).sum();
         self.slot_capacity(code).saturating_sub(self.slot_count(code) + held)
     }
 
-    pub fn lease_slot(&mut self, code: &str) -> Result<(), String> {
+    /// Leases a free slot of class `cls` (None: the one `lease_class_for` picks).
+    pub fn lease_slot(&mut self, code: &str, cls: Option<usize>) -> Result<(), String> {
         let d = data();
         let a = d.airport(code);
         if a.factory {
             return Err(format!("{} is a factory, not an airport.", a.name));
         }
-        if self.free_slots(code) == 0 {
-            return Err(format!("All {} slots at {code} are taken – make one of the holders an offer.", self.slot_capacity(code)));
+        if self.free_slots(code, None) == 0 {
+            return Err(format!(
+                "All {} slots at {code} are taken – make one of the holders an offer.",
+                self.slot_capacity(code)
+            ));
+        }
+        let Some(cls) = cls.or_else(|| self.lease_class_for(code)) else {
+            return Err(format!("No slot is free at {code}."));
+        };
+        if self.free_slots(code, Some(cls)) == 0 {
+            return Err(format!("No class {} slot is free at {code}.", CLASSES[cls]));
         }
         let cost = slot_upfront(code);
         if self.state.money < cost {
             return Err(format!("Not enough money ({} needed).", fmt_money(cost)));
         }
         self.state.money -= cost;
-        let t = self.state.time;
-        self.state.slots.entry(code.into()).and_modify(|s| s.count += 1).or_insert(SlotHolding { since: t, count: 1 });
+        let mut by = self.my_slot_classes(code);
+        by[cls] += 1;
+        self.set_slot_classes(code, by);
         let n = self.slot_count(code);
         self.log(
-            format!("Leased a slot at {} ({n} there) for {} (+{}/week).", a.name, fmt_money(cost), fmt_money(self.slot_fee(code))),
+            format!(
+                "Leased a class {} slot at {} ({n} there) for {} (+{}/week).",
+                CLASSES[cls],
+                a.name,
+                fmt_money(cost),
+                fmt_money(self.slot_fee(code))
+            ),
             LogKind::Cost,
         );
         self.seat_cache.replace(None);
         Ok(())
     }
 
-    /// Gives one slot back (the last one: the airport is dropped).
-    pub fn drop_slot(&mut self, code: &str) -> Result<(), String> {
+    /// Gives one slot back, of class `cls` (None: the smallest you hold); the last one drops the airport.
+    pub fn drop_slot(&mut self, code: &str, cls: Option<usize>) -> Result<(), String> {
         if !self.owns_slot(code) {
             return Err("You have no slot there.".into());
         }
@@ -773,10 +1086,27 @@ impl Game {
             self.state.slots.remove(code);
             self.state.fares.retain(|k, _| !k.split('-').any(|c| c == code));
             self.log(format!("Released the slot at {}.", data().airport(code).name), LogKind::Info);
-        } else {
-            self.state.slots.get_mut(code).unwrap().count -= 1;
-            self.log(format!("Gave back a slot at {code} ({} left).", n - 1), LogKind::Info);
+            return Ok(());
         }
+        let mut by = self.my_slot_classes(code);
+        let Some(cls) = cls.or_else(|| (0..6).find(|&c| by[c] > 0)) else {
+            return Err("No slot to give back.".into());
+        };
+        if by[cls] == 0 {
+            return Err(format!("You hold no class {} slot at {code}.", CLASSES[cls]));
+        }
+        by[cls] -= 1;
+        let busy: Vec<usize> = self
+            .slot_occupants(code)
+            .into_iter()
+            .filter(|o| o.1 != "leaving" && o.1 != "parked at base")
+            .map(|o| type_class(&self.state.planes[o.0].kind))
+            .collect();
+        if !slots_fit(&by, &busy) {
+            return Err(format!("Your planes at {code} need that slot right now."));
+        }
+        self.set_slot_classes(code, by);
+        self.log(format!("Gave back a class {} slot at {code} ({} left).", CLASSES[cls], n - 1), LogKind::Info);
         Ok(())
     }
 
@@ -806,13 +1136,13 @@ impl Game {
         sch.due.max(q.ready_at) > t
     }
 
-    /// Is one of your slots at `code` free for a plane landing at time t (not counting plane `me`)?
+    /// Is one of your slots at `code` (of its class or bigger) free for plane `me` landing at time t?
     pub fn slot_free_at(&self, code: &str, t: i64, me: usize) -> bool {
         let p = &self.state.planes[me];
         if self.parks_at_base(p, code) {
             return true;
         }
-        let mut used = 0;
+        let mut used = Vec::new();
         for (i, q) in self.state.planes.iter().enumerate() {
             if i == me || self.parks_at_base(q, code) {
                 continue;
@@ -825,13 +1155,14 @@ impl Game {
                     && sch.legs[sch.index % sch.legs.len()].from == code
                     && sch.due.max(f.arr + turnaround_min(&q.kind)) < t;
                 if !gone {
-                    used += 1;
+                    used.push(type_class(&q.kind));
                 }
             } else if self.stays_until(q, code, t) {
-                used += 1;
+                used.push(type_class(&q.kind));
             }
         }
-        used < self.slot_count(code)
+        used.push(type_class(&p.kind));
+        slots_fit(&self.my_slot_classes(code), &used)
     }
 
     /// Your planes in or heading for a slot at an airport, with what they do there.
@@ -868,9 +1199,18 @@ impl Game {
         if code == self.home() {
             return None;
         }
-        let mine = self.slot_count(code);
-        if mine == 0 {
+        if self.slot_count(code) == 0 {
             return Some(format!("You need a slot at {code} first."));
+        }
+        let need = type_class(kind);
+        let mine = self.my_slot_classes(code);
+        if !slots_fit(&mine, &[need]) {
+            return Some(format!(
+                "Your slot at {code} is too small ({}): the {} needs a class {} stand or bigger. Lease one there first.",
+                class_list(&mine),
+                data().ac(kind).name,
+                CLASSES[need]
+            ));
         }
         let stay: Vec<&Plane> = self
             .state
@@ -888,14 +1228,15 @@ impl Game {
             })
             .map(|(_, q)| q)
             .collect();
-        if stay.len() as u32 + 1 > mine {
+        let mut classes: Vec<usize> = stay.iter().map(|q| type_class(&q.kind)).collect();
+        classes.push(need);
+        if !slots_fit(&mine, &classes) {
             let names: Vec<String> = stay.iter().map(|q| Self::name_of(q)).collect();
             return Some(format!(
-                "Every slot at {code} is taken by {}, parked there with no running timetable. Move one away or lease another slot first.",
+                "Every slot at {code} it fits in is taken by {}, parked there with no running timetable. Move one away or lease another slot first.",
                 names.join(", ")
             ));
         }
-        let _ = kind;
         None
     }
 
@@ -945,7 +1286,7 @@ impl Game {
         let Some(h) = self.slot_holders(code).into_iter().find(|h| h.id == holder) else {
             return Err("They hold no slot there any more.".into());
         };
-        if self.free_slots(code) > 0 {
+        if self.free_slots(code, None) > 0 {
             return Err("A slot is free there: lease that one.".into());
         }
         let amount = amount.round();
@@ -967,8 +1308,13 @@ impl Game {
         self.state.money -= amount;
         self.state.today.cost += amount;
         self.state.offers.remove(&key);
-        let t = self.state.time;
-        self.state.slots.entry(code.into()).and_modify(|s| s.count += 1).or_insert(SlotHolding { since: t, count: 1 });
+        // the slot comes in the class of theirs your biggest plane fits best
+        let held = self.slot_table(code).held;
+        let big = self.state.planes.iter().map(|p| type_class(&p.kind)).max().unwrap_or(2);
+        let cls = (big..6).find(|&c| held[c] > 0).or_else(|| (0..big).rev().find(|&c| held[c] > 0)).unwrap_or(2);
+        let mut by = self.my_slot_classes(code);
+        by[cls] += 1;
+        self.set_slot_classes(code, by);
         let mut dropped = String::new();
         let mut freed = 0;
         if let Some(ri) = self.state.rivals.iter().position(|r| r.id == holder) {
@@ -1420,9 +1766,10 @@ impl Game {
                 let block = block_minutes(&rt.kind, distance_km(a.lat, a.lon, b.lat, b.lon)) as f64;
                 for dir in 0..2 {
                     let (f, g) = if dir == 1 { (b, a) } else { (a, b) };
+                    let ahead = self.ahead_of(&f.code);
                     let phase = hash01(r.id.len() as f64 + r.since as f64, (rt.a.as_bytes()[0] as f64) * 131.0 + rt.b.as_bytes()[2 % rt.b.len()] as f64, dir as f64);
                     for i in 0..rt.per_day {
-                        let dep = CURFEW_START as f64 + (i as f64 + phase) * span / rt.per_day as f64;
+                        let dep = ((CURFEW_START - ahead) as f64 + (i as f64 + phase) * span / rt.per_day as f64).rem_euclid(DAY as f64); // (local time there)
                         for back in [0.0, DAY as f64] {
                             let x = (tod + back - dep) / block;
                             if !(0.0..1.0).contains(&x) {
@@ -1573,6 +1920,10 @@ impl Game {
         let p = &self.state.planes[i];
         if p.status == Status::Flying {
             let f = p.flight.as_ref().unwrap();
+            if f.emergency.is_none() && f.emergency_at.is_some_and(|e| t >= e) {
+                self.emergency(i);
+            }
+            let f = self.state.planes[i].flight.as_ref().unwrap();
             if f.crash_at.is_some_and(|c| t >= c) {
                 self.crash(i);
                 return;
@@ -1658,7 +2009,9 @@ impl Game {
                 self.log(format!("{name} ferried {}→{} (cost {}).", f.from, f.to, fmt_money(f.cost)), LogKind::Cost);
             }
         }
-        if f.incident {
+        if f.emergency.is_some() {
+            self.emergency_landed(i, &f);
+        } else if f.incident {
             self.incident(i, &f);
         }
     }
@@ -1722,9 +2075,8 @@ impl Game {
             self.stop_plane(i, format!("{to} is out of range for {name} – stopped."));
             return;
         }
-        let tod = t % DAY;
-        if !(CURFEW_START..=CURFEW_END).contains(&tod) {
-            return; // night curfew
+        if !self.curfew_open(&from, t) {
+            return; // night curfew there (local time)
         }
         if self.hold_reason(&from, &to).is_some() || self.state.planes[i].repair {
             return;
@@ -1779,13 +2131,14 @@ impl Game {
             cost,
             crash_at: None,
             incident: false,
+            emergency_at: None,
+            emergency: None,
         };
-        // at take-off: will this flight crash, or have an incident?
+        // at take-off: will this flight declare an emergency (which may end in a crash), or have an incident?
         let r = rand::random::<f64>();
-        let crash = self.crash_chance(&ptype);
-        if r < crash {
-            flight.crash_at = Some(t + ((block as f64 * (0.1 + rand::random::<f64>() * 0.8)).round() as i64).max(1));
-        } else if r < crash + INCIDENT_PER_FLIGHT {
+        if r < EMERGENCY_PER_FLIGHT {
+            flight.emergency_at = Some(t + ((block as f64 * (0.1 + rand::random::<f64>() * 0.7)).round() as i64).max(1));
+        } else if r < EMERGENCY_PER_FLIGHT + INCIDENT_PER_FLIGHT {
             flight.incident = true;
         }
         let _ = pid;
@@ -1803,8 +2156,9 @@ impl Game {
         self.log(msg, LogKind::Bad);
     }
 
+    /// How often an emergency ends in a crash (realistic mode: Boeing 5 % × 11).
     pub fn crash_chance(&self, kind: &str) -> f64 {
-        CRASH_PER_FLIGHT * self.maker_mult(kind)
+        (CRASH_SHARE * self.maker_mult(kind)).min(1.0)
     }
 
     pub fn maker_mult(&self, kind: &str) -> f64 {
@@ -1840,9 +2194,11 @@ impl Game {
             return Some(format!("held: {h}"));
         }
         if sch.due > t {
-            let tod = sch.due % DAY;
-            let curfew = !(CURFEW_START..=CURFEW_END).contains(&tod);
-            return Some(format!("{}→{} at {}{}", leg.from, leg.to, fmt_clock(sch.due), if curfew { " (night curfew)" } else { "" }));
+            return Some(format!("{}→{} at {} local", leg.from, leg.to, self.fmt_at(&leg.from, sch.due)));
+        }
+        if !self.curfew_open(&p.location, t) {
+            let at = self.curfew_opens_at(&p.location, t);
+            return Some(format!("at {} local (night curfew at {}, {} your time)", fmt_clock(CURFEW_START), p.location, fmt_clock(at)));
         }
         None
     }
@@ -1938,6 +2294,8 @@ impl Game {
                 cost: 0.0,
                 crash_at: None,
                 incident: false,
+                emergency_at: None,
+                emergency: None,
             });
         }
         self.state.planes.push(p);
@@ -2066,8 +2424,9 @@ impl Game {
 
     // ---------- timetables ----------
 
-    /// A day plan for a route: as many loops as fit into the day (or `rounds`), from `first_dep`.
-    pub fn build_timetable(kind: &str, stops: &[String], first_dep: i64, rounds: usize) -> Vec<Leg> {
+    /// A day plan for a route: as many loops as fit into the day (or `rounds`), from `first_dep` (home-base clock).
+    /// Each departure must fall within the night curfew window of its airport, local time.
+    pub fn build_timetable(&self, kind: &str, stops: &[String], first_dep: i64, rounds: usize) -> Vec<Leg> {
         let mut legs = Vec::new();
         if stops.len() < 2 {
             return legs;
@@ -2086,7 +2445,7 @@ impl Game {
             for i in 0..stops.len() {
                 let (from, to) = (&stops[i], &stops[(i + 1) % stops.len()]);
                 let block = leg_block(kind, from, to);
-                if !(CURFEW_START..=CURFEW_END).contains(&tt) || dd + block > max_duty {
+                if !self.curfew_open(from, tt) || dd + block > max_duty {
                     ok = false;
                 }
                 lp.push(Leg { from: from.clone(), to: to.clone(), dep: tt % DAY });
@@ -2120,7 +2479,7 @@ impl Game {
         for (k, leg) in legs.iter().enumerate() {
             let next = &legs[(k + 1) % legs.len()];
             duty += leg_block(&p.kind, &leg.from, &leg.to);
-            let name = format!("{} {}→{}", fmt_clock(leg.dep), leg.from, leg.to);
+            let name = format!("{} {}→{}", self.fmt_at(&leg.from, leg.dep), leg.from, leg.to);
             if leg.to != next.from {
                 errors.push(format!("{name} ends at {}, but the next flight leaves from {}.", leg.to, next.from));
             }
@@ -2130,11 +2489,25 @@ impl Game {
             if leg.from == leg.to {
                 errors.push(format!("{name} goes nowhere."));
             }
-            if !(CURFEW_START..=CURFEW_END).contains(&(leg.dep % DAY)) {
+            if !self.curfew_open(&leg.from, leg.dep) {
+                let yours = if self.ahead_of(&leg.from) != 0 {
+                    format!(" ({} your time)", self.curfew_home(&leg.from))
+                } else {
+                    String::new()
+                };
                 errors.push(format!(
-                    "{name}: departures only {}–{} (night curfew).",
+                    "{name}: night curfew at {}, departures only {}–{} local{yours}.",
+                    leg.from,
                     fmt_clock(CURFEW_START),
                     fmt_clock(CURFEW_END)
+                ));
+            }
+            if !self.my_slot_classes(&leg.from).iter().enumerate().any(|(c, &n)| n > 0 && c >= type_class(&p.kind)) && self.owns_slot(&leg.from) {
+                errors.push(format!(
+                    "No slot at {} big enough for the {}: it needs class {} or bigger.",
+                    leg.from,
+                    ac.name,
+                    CLASSES[type_class(&p.kind)]
                 ));
             }
             if data().dist(&leg.from, &leg.to) > ac.range_km {
@@ -2168,11 +2541,11 @@ impl Game {
             if next_dep < ready {
                 errors.push(format!(
                     "After {} {}→{} the plane is ready at {} – too late for the next flight at {}.",
-                    fmt_clock(leg.dep),
+                    self.fmt_at(&leg.from, leg.dep),
                     leg.from,
                     leg.to,
-                    fmt_clock(ready),
-                    fmt_clock(next_dep)
+                    self.fmt_at(&leg.to, ready),
+                    self.fmt_at(&leg.to, next_dep)
                 ));
             }
         }
@@ -2236,10 +2609,10 @@ impl Game {
         p.schedule = Schedule { stops: legs.iter().map(|l| l.from.clone()).collect(), legs, index: 0, active, due: 0 };
         self.sync_timetable(i);
         let p = &self.state.planes[i];
-        let list: Vec<String> = p.schedule.legs.iter().map(|l| format!("{} {}→{}", fmt_clock(l.dep), l.from, l.to)).collect();
+        let list: Vec<String> = p.schedule.legs.iter().map(|l| format!("{} {}→{}", self.fmt_at(&l.from, l.dep), l.from, l.to)).collect();
         let name = Self::name_of(p);
         let n = crews_for(&p.kind, &p.schedule.legs);
-        self.log(format!("{name} timetable: {}.", list.join(", ")), LogKind::Info);
+        self.log(format!("{name} timetable: {} (local times).", list.join(", ")), LogKind::Info);
         self.set_crews(i, n);
         self.seat_cache.replace(None);
         Ok(())
@@ -2493,9 +2866,11 @@ mod tests {
         g.state.money += 1e6;
         // London City is too short for the A220
         assert!(fits_reason("A220-300", "LCY").is_some());
-        g.lease_slot("VIE").unwrap();
-        let stops = vec!["BRN".to_string(), "VIE".to_string()];
-        let legs = Game::build_timetable("A220-300", &stops, CURFEW_START + 60, 0);
+        g.lease_slot("MAD", None).unwrap();
+        // the A220 is class C: the slot leased for it
+        assert_eq!(g.my_slot_classes("MAD")[2], 1);
+        let stops = vec!["BRN".to_string(), "MAD".to_string()];
+        let legs = g.build_timetable("A220-300", &stops, CURFEW_START + 60, 0);
         assert!(legs.len() >= 2, "{legs:?}");
         g.set_timetable(0, legs).unwrap();
         g.set_schedule_active(0, true).unwrap();
@@ -2508,6 +2883,35 @@ mod tests {
         let saved = g.save_json();
         let g2 = Game::load_json(&saved).unwrap();
         assert_eq!(g2.state.planes.len(), g.state.planes.len());
+    }
+
+    #[test]
+    fn local_time_and_curfew() {
+        let g = Game::new_game(&NewGame { airport: "ZRH".into(), ..Default::default() });
+        // London is an hour behind Zurich, New York six
+        assert_eq!(g.ahead_of("LHR"), -60);
+        assert_eq!(g.ahead_of("JFK"), -360);
+        // 06:00 in Zurich is 00:00 in New York: no departures there yet
+        assert!(g.curfew_open("ZRH", CURFEW_START));
+        assert!(!g.curfew_open("JFK", CURFEW_START));
+        assert_eq!(g.curfew_opens_at("JFK", CURFEW_START), CURFEW_START + 360);
+        assert!(sun_times("ZRH", 0).is_some());
+        // the stands the browser game counts at Zurich, and a made-up apron elsewhere
+        assert_eq!(g.slot_capacity("ZRH"), 42);
+        assert_eq!(max_class("ZRH"), 5);
+        assert_eq!(g.slot_capacity("SIR"), crate::data::DEFAULT_STANDS[airport_size("SIR")].iter().sum::<u32>());
+    }
+
+    #[test]
+    fn quick_start() {
+        let pr = data().presets.iter().find(|p| p.id == "europe").expect("europe preset");
+        let (mut g, errors) = Game::from_preset(pr);
+        assert!(errors.is_empty(), "{errors:?}");
+        assert_eq!(g.state.planes.len(), 8);
+        assert!(g.state.planes.iter().all(|p| p.schedule.active));
+        // ZRH→LHR leaves at 07:00 Zurich time, 06:00 in London; the way back leaves London by its clock
+        g.advance(3 * DAY);
+        assert!(g.state.planes.iter().map(|p| p.stats.flights).sum::<u32>() > 100);
     }
 
     #[test]
