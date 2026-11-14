@@ -1,0 +1,345 @@
+//! Random events: world events once a day, incidents and crashes on flights, and their newspaper stories
+//! (from the browser game's `js/data/events.js`).
+
+use crate::config::*;
+use crate::data::{data, interpolate};
+use crate::game::*;
+
+fn pick<'a>(list: &[&'a str]) -> &'a str {
+    list[rand::random_range(0..list.len())]
+}
+
+fn rand_int(a: i64, b: i64) -> i64 {
+    rand::random_range(a..=b)
+}
+
+fn story(good: bool, headline: String, sub: String, body: String) -> Story {
+    Story { good, headline, sub, body, paper: String::new(), t: 0 }
+}
+
+fn country_name(code: &str) -> String {
+    match code {
+        "AT" => "Austria", "BE" => "Belgium", "BG" => "Bulgaria", "CH" => "Switzerland", "CZ" => "Czechia",
+        "DE" => "Germany", "DK" => "Denmark", "ES" => "Spain", "FI" => "Finland", "FR" => "France", "GB" => "Britain",
+        "GR" => "Greece", "HR" => "Croatia", "HU" => "Hungary", "IE" => "Ireland", "IS" => "Iceland", "IT" => "Italy",
+        "LV" => "Latvia", "NL" => "the Netherlands", "NO" => "Norway", "PL" => "Poland", "PT" => "Portugal",
+        "RO" => "Romania", "RS" => "Serbia", "SE" => "Sweden", "TR" => "Türkiye", "US" => "the United States",
+        "CA" => "Canada", "AU" => "Australia", "JP" => "Japan", "CN" => "China", "IN" => "India", "BR" => "Brazil",
+        _ => code,
+    }
+    .to_string()
+}
+
+struct Incident {
+    weight: f64,
+    grounded_hours: i64,
+    repair: f64,
+    maker: Option<&'static str>,
+    story: fn(&IncidentInfo) -> Story,
+}
+
+struct IncidentInfo {
+    id: String,
+    company: String,
+    kind: String,
+    from: String,
+    to: String,
+    airport: String,
+    repair: String,
+}
+
+const INCIDENTS: [Incident; 4] = [
+    Incident { weight: 4.0, grounded_hours: 36, repair: 80000.0, maker: None, story: |x| story(
+        false,
+        "BIRD STRIKE FORCES RETURN".into(),
+        format!("{} {} lands safely at {}", x.company, x.kind, x.airport),
+        format!("Shortly after take-off from {}, flight {} flew through a flock of geese. The crew reported a damaged engine \
+                 and landed safely at {}. The aircraft is grounded for repairs costing {}.", x.from, x.id, x.airport, x.repair),
+    ) },
+    Incident { weight: 4.0, grounded_hours: 24, repair: 40000.0, maker: None, story: |x| story(
+        false,
+        "SMOKE IN THE CABIN".into(),
+        format!("{} jet evacuated at {}", x.company, x.airport),
+        format!("Passengers on {} slid down emergency chutes at {} after an electrical fault filled the cabin with smoke. \
+                 Nobody was seriously hurt. The {} is out of service for a day; repairs cost {}.", x.id, x.airport, x.kind, x.repair),
+    ) },
+    Incident { weight: 2.0, grounded_hours: 3, repair: 15000.0, maker: None, story: |x| story(
+        false,
+        "PASSENGER DUCT-TAPED TO SEAT".into(),
+        format!("Unruly traveller causes chaos on {}–{} flight", x.from, x.to),
+        format!("A passenger on {} flight {} tried to open a door in mid-air, shouting about \"the lizard people\". Fellow \
+                 travellers restrained the passenger until police met the plane at {}. The airline faces cleaning and delay \
+                 costs of {}.", x.company, x.id, x.airport, x.repair),
+    ) },
+    Incident { weight: 2.0, grounded_hours: 72, repair: 250000.0, maker: Some("Boeing"), story: |x| story(
+        false,
+        "DOOR PANEL BLOWS OUT AT 16,000 FT".into(),
+        format!("Terrifying moments aboard {} {}", x.company, x.kind),
+        format!("A panel tore off the fuselage of {} minutes after leaving {}, leaving a gaping hole in the cabin. The crew made \
+                 an emergency landing at {}; everyone on board survived. Investigators found bolts missing. The plane is \
+                 grounded for three days, repairs cost {}.", x.id, x.from, x.airport, x.repair),
+    ) },
+];
+
+impl Game {
+    /// A random airport where you hold a slot (that `ok` accepts).
+    fn slot_airport(&self, ok: impl Fn(&crate::data::Airport) -> bool) -> Option<crate::data::Airport> {
+        let d = data();
+        let list: Vec<&crate::data::Airport> = self.state.slots.keys().map(|c| d.airport(c)).filter(|a| ok(a)).collect();
+        if list.is_empty() { None } else { Some(list[rand::random_range(0..list.len())].clone()) }
+    }
+
+    fn effect(&mut self, label: String, hours: i64, at: Where, f: impl FnOnce(&mut Effect)) {
+        let mut e = Effect { label, until: self.state.time + hours * 60, at, ..Default::default() };
+        f(&mut e);
+        self.state.effects.push(e);
+    }
+
+    /// Once a day: maybe a world event (strike, weather, fuel prices, festivals…).
+    pub fn roll_world_event(&mut self) {
+        let t = self.state.time;
+        self.state.effects.retain(|e| e.until > t);
+        if rand::random::<f64>() >= EVENTS_PER_DAY {
+            return;
+        }
+        // (id, weight) as in events.js
+        const LIST: [(&str, f64); 12] = [
+            ("airportStrike", 3.0), ("atcStrike", 2.0), ("pilotStrike", 1.0), ("volcano", 1.0), ("storm", 3.0),
+            ("fuelSpike", 2.0), ("fuelDrop", 2.0), ("festival", 3.0), ("football", 2.0), ("rivalBankrupt", 1.0),
+            ("flu", 1.0), ("influencer", 2.0),
+        ];
+        let mut r = rand::random::<f64>() * LIST.iter().map(|x| x.1).sum::<f64>();
+        let id = LIST.iter().find(|x| { r -= x.1; r < 0.0 }).unwrap_or(&LIST[0]).0;
+        if let Some(s) = self.make_event(id) {
+            self.news(s);
+        }
+    }
+
+    fn make_event(&mut self, id: &str) -> Option<Story> {
+        let company = self.state.company.clone();
+        match id {
+            "airportStrike" => {
+                let a = self.slot_airport(|_| true)?;
+                let days = rand_int(1, 2);
+                self.effect(format!("Ground staff strike at {}", a.code), days * 24,
+                    Where { airport: Some(a.code.clone()), ..Default::default() }, |e| e.no_flights = true);
+                Some(story(false, format!("{} AIRPORT PARALYSED BY STRIKE", a.city.to_uppercase()),
+                    format!("Baggage handlers and ground staff walk out for {}", if days == 1 { "one day".into() } else { format!("{days} days") }),
+                    format!("Travellers at {} faced empty check-in desks this morning as ground staff downed tools over pay. \
+                             \"Nothing moves until management listens,\" a union spokesperson told reporters outside Terminal 1. \
+                             All departures and arrivals are cancelled.", a.name)))
+            }
+            "atcStrike" => {
+                let a = self.slot_airport(|x| x.country != "CH").or_else(|| self.slot_airport(|_| true))?;
+                let country = country_name(&a.country);
+                self.effect(format!("Air traffic control strike in {country}"), 24,
+                    Where { country: Some(a.country.clone()), ..Default::default() }, |e| e.no_flights = true);
+                Some(story(false, format!("CONTROLLERS STRIKE: {}'S SKIES EMPTY", country.to_uppercase()),
+                    "Air traffic controllers walk out for 24 hours".into(),
+                    format!("Air traffic control in {country} ground to a halt at dawn. No flights may take off or land at any \
+                             airport in the country until tomorrow. Airlines called the strike \"the {}th this year\" and demanded \
+                             compensation.", rand_int(3, 9))))
+            }
+            "pilotStrike" => {
+                for p in &mut self.state.planes {
+                    p.crew.weekly_salary = (p.crew.weekly_salary * 1.04).round();
+                }
+                self.effect("Your pilots are on strike".into(), 24, Where { all: true, ..Default::default() }, |e| e.no_flights = true);
+                Some(story(false, format!("{} PILOTS STRIKE", company.to_uppercase()),
+                    "Entire fleet grounded for a day – management concedes 4% pay rise".into(),
+                    format!("Pilots of {company} gathered on the apron with hand-painted signs reading \"Fair pay for fair skies\". \
+                             After a tense night of negotiations the airline agreed to raise all crew salaries by 4%. Flights resume tomorrow.")))
+            }
+            "volcano" => {
+                let days = rand_int(2, 4);
+                self.effect("Volcanic ash cloud over the North Atlantic".into(), days * 24,
+                    Where { near: Some((60.0, -8.0)), radius_km: 1500.0, ..Default::default() }, |e| e.no_flights = true);
+                Some(story(false, "ICELANDIC VOLCANO ERUPTS – ASH CLOSES NORTHERN SKIES".into(),
+                    format!("Airspace over Iceland, Britain, Ireland and Scandinavia shut for {days} days"),
+                    "A towering plume of ash rose from an Icelandic volcano overnight. Aviation authorities closed airspace across \
+                     the North Atlantic and northern Europe as the cloud drifted south-east. Volcanologists could not say how long it will last.".into()))
+            }
+            "storm" => {
+                let a = self.slot_airport(|_| true)?;
+                let name = pick(&["Anna", "Bruno", "Ciara", "Dieter", "Elsa", "Franz", "Greta", "Hugo", "Ingrid", "Jules"]);
+                let doy = (self.state.time / DAY) % 365;
+                let winter = !(60..=270).contains(&doy);
+                self.effect(format!("Storm {name}"), 18, Where { near: Some((a.lat, a.lon)), radius_km: 400.0, ..Default::default() },
+                    |e| { e.no_flights = true; e.storm = true; });
+                Some(story(false, format!("STORM {} BATTERS {}", name.to_uppercase(), a.city.to_uppercase()),
+                    if winter { "Blizzard closes runways across the region".into() } else { "Hurricane-force gusts ground all flights".into() },
+                    format!("Storm {name} swept in with gusts of up to {} km/h. Airports within 400 km of {} suspended operations as \
+                             crews struggled to keep runways clear. Forecasters expect calmer weather by tomorrow.", rand_int(110, 160), a.city)))
+            }
+            "fuelSpike" => {
+                let pct = rand_int(15, 35);
+                self.effect(format!("Fuel price +{pct}%"), 7 * 24, Where { all: true, ..Default::default() },
+                    |e| e.cost_mult = Some(1.0 + pct as f64 / 100.0));
+                Some(story(false, format!("OIL SHOCK: JET FUEL UP {pct}%"), "Airlines brace for a costly week".into(),
+                    format!("Crude prices surged after producers announced surprise output cuts. Jet fuel now costs {pct}% more, \
+                             and analysts warn that thin-margin airlines will feel it in their operating costs all week.")))
+            }
+            "fuelDrop" => {
+                let pct = rand_int(10, 20);
+                self.effect(format!("Fuel price −{pct}%"), 7 * 24, Where { all: true, ..Default::default() },
+                    |e| e.cost_mult = Some(1.0 - pct as f64 / 100.0));
+                Some(story(true, format!("JET FUEL PRICES TUMBLE {pct}%"), "Good week for airline accountants".into(),
+                    format!("A glut of crude oil sent fuel prices sliding. Operating costs for airlines drop by about {pct}% \
+                             this week, though experts doubt the relief will last.")))
+            }
+            "festival" => {
+                let a = self.slot_airport(|_| true)?;
+                let what = pick(&["music festival", "film festival", "wine fair", "marathon", "trade fair", "royal wedding"]);
+                let mut label = what.to_string();
+                label[..1].make_ascii_uppercase();
+                self.effect(format!("{label} in {}", a.city), 5 * 24, Where { airport: Some(a.code.clone()), ..Default::default() },
+                    |e| e.demand_mult = Some(1.6));
+                Some(story(true, format!("{} {} DRAWS RECORD CROWDS", a.city.to_uppercase(), what.to_uppercase()),
+                    "Hotels fully booked, flights selling out".into(),
+                    format!("Visitors are pouring into {} for this year's {what}. Demand for flights to and from {} is up by around \
+                             60% for the next five days, and travel agents report a rush on last-minute tickets.", a.city, a.name)))
+            }
+            "football" => {
+                let a = self.slot_airport(|x| x.size >= 3).or_else(|| self.slot_airport(|_| true))?;
+                self.effect(format!("Cup final in {}", a.city), 2 * 24, Where { airport: Some(a.code.clone()), ..Default::default() },
+                    |e| e.demand_mult = Some(2.0));
+                Some(story(true, format!("CUP FINAL FEVER GRIPS {}", a.city.to_uppercase()), "Tens of thousands of fans on their way".into(),
+                    format!("With the cup final kicking off in {} on Saturday, supporters are booking every seat they can find. \
+                             Airlines serving the city expect twice the usual traffic for two days.", a.city)))
+            }
+            "rivalBankrupt" => {
+                let gone = self.bust_rival();
+                let (rival, what, routes) = match &gone {
+                    Some(r) => (r.name.clone(), match r.kind.as_str() { "flag" => "Flag carrier", "low" => "Low-cost carrier", _ => "Regional airline" }, Some(r.routes.len())),
+                    None => (pick(&["Air Edelweissbrot", "FlyCheapo", "Alpenwind Airways", "SkyBudget", "Eurojumbo"]).to_string(), "Low-cost carrier", None),
+                };
+                self.effect(format!("{rival} collapsed – more passengers for you"), 10 * 24, Where { all: true, ..Default::default() },
+                    |e| e.demand_mult = Some(1.25));
+                Some(story(true, format!("{} GOES BUST", rival.to_uppercase()), "Thousands of passengers stranded – rivals step in".into(),
+                    format!("{what} {rival} ceased operations overnight after failing to find new investors{}. {company} and other \
+                             airlines expect about 25% more bookings over the next ten days.",
+                        routes.map(|n| format!(" – its {n} routes are gone")).unwrap_or_default())))
+            }
+            "flu" => {
+                self.effect("Flu wave – fewer travellers".into(), 7 * 24, Where { all: true, ..Default::default() }, |e| e.demand_mult = Some(0.65));
+                Some(story(false, "FLU WAVE SWEEPS THE CONTINENT".into(), "Holidaymakers cancel trips by the thousand".into(),
+                    "Health authorities report the worst flu season in a decade. Travel bookings have dropped by a third, and \
+                     airlines are flying half-empty planes.".into()))
+            }
+            "influencer" => {
+                let a = self.slot_airport(|_| true)?;
+                self.effect(format!("{} is trending online", a.city), 7 * 24, Where { airport: Some(a.code.clone()), ..Default::default() },
+                    |e| e.demand_mult = Some(1.35));
+                Some(story(true, format!("\"HIDDEN GEM\": {} GOES VIRAL", a.city.to_uppercase()),
+                    "A travel video with 40 million views sends tourists flocking".into(),
+                    format!("A famous travel influencer called {} \"the most underrated city around\". Bookings to {} jumped 35% \
+                             within hours. Locals are less impressed.", a.city, a.code)))
+            }
+            _ => None,
+        }
+    }
+
+    pub(crate) fn incident(&mut self, i: usize, f: &Flight) {
+        let d = data();
+        let (kind, id) = (self.state.planes[i].kind.clone(), self.state.planes[i].id.clone());
+        let ac = d.ac(&kind);
+        let mm = self.maker_mult(&kind);
+        let list: Vec<(&Incident, f64)> = INCIDENTS
+            .iter()
+            .filter(|x| x.maker.is_none_or(|m| m == ac.maker))
+            .map(|x| (x, x.weight * if x.maker.is_some() { mm } else { 1.0 }))
+            .collect();
+        let mut r = rand::random::<f64>() * list.iter().map(|x| x.1).sum::<f64>();
+        let inc = list.iter().find(|x| { r -= x.1; r < 0.0 }).unwrap_or(&list[0]).0;
+        let t = self.state.time;
+        self.state.money -= inc.repair;
+        self.state.today.cost += inc.repair;
+        let p = &mut self.state.planes[i];
+        p.stats.repair += inc.repair;
+        p.stats.incidents += 1;
+        let w = t.div_euclid(DAY * 7);
+        if let Some(wk) = p.stats.weeks.iter_mut().find(|x| x.week == w) {
+            wk.repair += inc.repair;
+        }
+        p.ready_at = p.ready_at.max(t + inc.grounded_hours * 60);
+        p.repair = true;
+        self.state.rep.incidents.push(t);
+        let info = IncidentInfo {
+            id,
+            company: self.state.company.clone(),
+            kind: ac.name.clone(),
+            from: f.from.clone(),
+            to: f.to.clone(),
+            airport: d.airport(&f.to).name.clone(),
+            repair: fmt_money(inc.repair),
+        };
+        self.news((inc.story)(&info));
+    }
+
+    pub(crate) fn crash(&mut self, i: usize) {
+        let d = data();
+        let t = self.state.time;
+        let p = self.state.planes[i].clone();
+        let f = p.flight.clone().unwrap();
+        let ac = d.ac(&p.kind);
+        let frac = (t - f.dep) as f64 / (f.arr - f.dep).max(1) as f64;
+        let (a, b) = (d.airport(&f.from), d.airport(&f.to));
+        let (lat, lon) = interpolate(a.lat, a.lon, b.lat, b.lon, frac);
+        let on_board = f.pax + p.crew.pilots + p.crew.cabin;
+        let r = rand::random::<f64>();
+        let survivors = if r < 0.35 { on_board } else if r < 0.7 { (on_board as f64 * rand::random::<f64>()).floor() as u32 } else { 0 };
+        let compensation = f.pax as f64 * CRASH_PAX_COMPENSATION + CRASH_INVESTIGATION;
+        let (hull, cash) = if p.ownership == Ownership::Owned {
+            let value = self.sale_value(i);
+            let insurance = (value * CRASH_INSURANCE_SHARE).round();
+            (value - insurance, insurance - compensation)
+        } else {
+            let hull = ac.lease_per_week * CRASH_LEASE_PENALTY_WEEKS;
+            (hull, -hull - compensation)
+        };
+        self.state.money += cash;
+        if cash < 0.0 { self.state.today.cost += -cash } else { self.state.today.revenue += cash }
+        self.state.planes.remove(i);
+        self.state.rep.crashes.push(t);
+        let name = Game::name_of(&p);
+        self.state.effects.push(Effect {
+            label: format!("Bookings slump after the {name} crash"),
+            until: t + CRASH_REP_DAYS * DAY,
+            at: Where { all: true, ..Default::default() },
+            demand_mult: Some(CRASH_REP_DEMAND),
+            ..Default::default()
+        });
+        let place = d.nearest_town(lat, lon);
+        self.log(
+            format!("✖ {name} ({}) crashed near {place} on {}→{}. {survivors}/{on_board} survived. Cash effect {}.",
+                ac.name, f.from, f.to, fmt_money(cash)),
+            LogKind::Bad,
+        );
+        let company = self.state.company.clone();
+        let all = survivors == on_board;
+        let none = survivors == 0;
+        self.news(story(
+            false,
+            if all {
+                format!("MIRACLE NEAR {}: ALL {on_board} SURVIVE CRASH", place.to_uppercase())
+            } else {
+                format!("{} JET CRASHES NEAR {}", company.to_uppercase(), place.to_uppercase())
+            },
+            if all {
+                format!("{} {} destroyed in emergency landing", ac.name, p.id)
+            } else if none {
+                format!("No survivors among {on_board} on board flight {}–{}", f.from, f.to)
+            } else {
+                format!("{survivors} of {on_board} on board survive")
+            },
+            format!(
+                "{company} flight {} from {} to {}, a {}, went down near {place}. {}Accident investigators have recovered the flight \
+                 recorders. Bookings with {company} are expected to slump for weeks; compensation, investigation and the lost \
+                 aircraft cost the airline {}.",
+                p.id, f.from, f.to, ac.name,
+                if all { "Rescue teams found everyone alive in the wreckage, an outcome experts called \"astonishing\". " } else { "Rescue teams are searching the crash site. " },
+                fmt_money(compensation + hull)
+            ),
+        ));
+    }
+}
