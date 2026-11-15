@@ -78,6 +78,28 @@ pub struct App {
     /// FLIGHTGAME_SELFTEST=<folder>: plays a little by itself, saves screenshots there and quits
     selftest: Option<(PathBuf, u32, f64)>,
     sound: crate::sound::Sound,
+    settings: crate::style::Settings,
+    /// the style tried on the first start's picker
+    style_try: String,
+    dev_open: bool,
+    dev_unlocked: bool,
+    dev_pw: String,
+    dev_pw2: String,
+    dev_type: String,
+    dev_at: String,
+    dev_count: usize,
+    dev_owned: bool,
+    pics: crate::pictures::Pictures,
+    autosave: bool,
+    /// the Aircraft Marketplace window (as in the browser game)
+    market_open: bool,
+    /// the plane the map keeps in its middle (🎥 Follow on the map)
+    follow: Option<String>,
+    /// the plane whose stats window is open
+    stats_open: Option<String>,
+    market_used: bool,
+    market_sort: u8,
+    market_pick: Option<String>,
     /// where sound is heard from: the map's centre (lat, lon) and a height (m) by the zoom
     listener: (f64, f64, f64),
 }
@@ -87,12 +109,19 @@ fn save_path() -> PathBuf {
 }
 
 fn money_color(v: f64) -> Color32 {
-    if v < 0.0 { Color32::from_rgb(255, 105, 97) } else { Color32::from_rgb(120, 220, 140) }
+    // darker on the light styles (Tycoon, Metropolis), so it can be read on grey and white
+    match (v < 0.0, crate::style::is_light()) {
+        (true, false) => Color32::from_rgb(255, 105, 97),
+        (false, false) => Color32::from_rgb(120, 220, 140),
+        (true, true) => Color32::from_rgb(180, 30, 25),
+        (false, true) => Color32::from_rgb(20, 120, 40),
+    }
 }
 
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        cc.egui_ctx.set_theme(egui::ThemePreference::Dark);
+        let settings = crate::style::Settings::load();
+        crate::style::apply(&cc.egui_ctx, settings.style.as_deref().unwrap_or("night"));
         let cache = dirs::cache_dir().map(|d| d.join("Flightgame").join("tiles"));
         let opts = || HttpOptions { cache: cache.clone(), ..Default::default() };
         // load the world while the window opens
@@ -108,7 +137,7 @@ impl App {
             tiles_dark: HttpTiles::with_options(EsriDark, opts(), cc.egui_ctx.clone()),
             tiles_light: HttpTiles::with_options(EsriLight, opts(), cc.egui_ctx.clone()),
             tiles_sat: HttpTiles::with_options(EsriImagery, opts(), cc.egui_ctx.clone()),
-            map_style: 0,
+            map_style: settings.map_style,
             slot_code: String::new(),
             map,
             t: 0.0,
@@ -116,7 +145,7 @@ impl App {
             paused: false,
             section: Some(Section::Fleet),
             selected: None,
-            layers: Layers { rivals: true, routes: true, all_airports: false, rival_routes: true, dim: true, night: true, weather: true },
+            layers: Layers { rivals: true, routes: true, all_airports: false, rival_routes: true, dim: true, night: true, weather: true, towns: true, place_names: false, legend: false },
             newspapers: true,
             toast: None,
             draft: None,
@@ -129,7 +158,29 @@ impl App {
             show_help: false,
             menu: if save_path().exists() { 1 } else { 0 },
             selftest: std::env::var_os("FLIGHTGAME_SELFTEST").map(|d| (PathBuf::from(d), 0, 0.0)),
-            sound: crate::sound::Sound::new(),
+            sound: {
+                let mut s = crate::sound::Sound::new();
+                s.volume = settings.volume;
+                s
+            },
+            settings: settings.clone(),
+            style_try: settings.style.clone().unwrap_or_else(|| "night".into()),
+            dev_open: false,
+            dev_unlocked: false,
+            dev_pw: String::new(),
+            dev_pw2: String::new(),
+            dev_type: String::new(),
+            dev_at: String::new(),
+            dev_count: 1,
+            dev_owned: true,
+            pics: crate::pictures::Pictures::default(),
+            autosave: settings.autosave,
+            market_open: false,
+            follow: None,
+            stats_open: None,
+            market_used: false,
+            market_sort: 0,
+            market_pick: None,
             listener: (0.0, 0.0, 10000.0),
         }
     }
@@ -168,6 +219,30 @@ impl App {
 
     fn load(&mut self, ctx: &egui::Context) {
         match std::fs::read_to_string(save_path()).map_err(|e| e.to_string()).and_then(|t| Game::load_json(&t)) {
+            Ok(g) => {
+                self.start(g);
+                self.info(ctx, "Game loaded.");
+            }
+            Err(e) => self.toast = Some((format!("Could not load: {e}"), true, ctx.input(|i| i.time) + 6.0)),
+        }
+    }
+
+    /// Menu → Save to file: the game as a .json file wherever you like (as the browser game's "Save to file").
+    fn save_file(&mut self, ctx: &egui::Context) {
+        let Some(g) = &self.game else { return };
+        let name = format!("{}.json", g.state.company.replace(|c: char| !c.is_alphanumeric(), "-"));
+        if let Some(path) = rfd::FileDialog::new().add_filter("Flightgame save", &["json"]).set_file_name(name).save_file() {
+            match std::fs::write(&path, g.save_json()) {
+                Ok(()) => self.info(ctx, format!("Saved to {}.", path.display())),
+                Err(e) => self.toast = Some((format!("Could not save: {e}"), true, ctx.input(|i| i.time) + 6.0)),
+            }
+        }
+    }
+
+    /// Menu → Load from file: a save made with Save to file (the browser game's saves have another format).
+    fn load_file(&mut self, ctx: &egui::Context) {
+        let Some(path) = rfd::FileDialog::new().add_filter("Flightgame save", &["json"]).pick_file() else { return };
+        match std::fs::read_to_string(&path).map_err(|e| e.to_string()).and_then(|t| Game::load_json(&t)) {
             Ok(g) => {
                 self.start(g);
                 self.info(ctx, "Game loaded.");
@@ -348,15 +423,25 @@ impl App {
                 let c = c.as_str();
                 let Some(a) = d.try_ac(c) else { continue };
                 let ok = fits_airport(c, &self.setup.airport);
-                let text = RichText::new(format!(
-                    "{}\n{} seats · {:.0} km · {}/wk",
-                    a.name,
-                    a.seats,
-                    a.range_km,
-                    fmt_money(a.lease_per_week)
-                ));
-                let r = ui.add_enabled(ok, egui::Button::selectable(self.setup.aircraft == c, text).min_size(Vec2::new(190.0, 44.0)));
-                let r = if ok { r } else { r.on_disabled_hover_text(fits_reason(c, &self.setup.airport).unwrap_or_default()) };
+                // a card with the plane in the hangar, as the browser game's start screen
+                let tex = self.pics.hangar(ui.ctx(), c);
+                let sense = if ok { egui::Sense::click() } else { egui::Sense::hover() };
+                let (rect, r) = ui.allocate_exact_size(Vec2::new(196.0, 132.0), sense);
+                let p = ui.painter_at(rect);
+                hangar_scene(&p, egui::Rect::from_min_size(rect.min, Vec2::new(196.0, 86.0)), tex.as_ref(), "");
+                if self.setup.aircraft == c {
+                    p.rect_stroke(rect, 6.0, Stroke::new(2.0, Color32::from_rgb(10, 132, 255)), egui::StrokeKind::Inside);
+                }
+                let dim = if ok { Color32::WHITE } else { Color32::from_gray(110) };
+                p.text(rect.left_top() + Vec2::new(6.0, 90.0), Align2::LEFT_TOP, &a.name, egui::FontId::proportional(13.0), dim);
+                p.text(
+                    rect.left_top() + Vec2::new(6.0, 108.0),
+                    Align2::LEFT_TOP,
+                    format!("{} seats · {} km · {}/wk", a.seats, fmt_thousands(a.range_km), fmt_money(a.lease_per_week)),
+                    egui::FontId::proportional(10.5),
+                    Color32::GRAY,
+                );
+                let r = if ok { r } else { r.on_hover_text(fits_reason(c, &self.setup.airport).unwrap_or_default()) };
                 if r.clicked() {
                     self.setup.aircraft = c.to_string();
                 }
@@ -389,6 +474,14 @@ impl App {
                         self.load(&ctx);
                         ui.close();
                     }
+                    if ui.button("⬇ Save to file").clicked() {
+                        self.save_file(&ctx);
+                        ui.close();
+                    }
+                    if ui.button("⬆ Load from file").clicked() {
+                        self.load_file(&ctx);
+                        ui.close();
+                    }
                     if ui.button("✚ New game").clicked() {
                         self.save(&ctx);
                         self.game = None;
@@ -404,11 +497,15 @@ impl App {
                     ui.checkbox(&mut self.layers.dim, "Darker map");
                     ui.checkbox(&mut self.layers.night, "Day and night");
                     ui.checkbox(&mut self.layers.weather, "Clouds and weather");
+                    ui.checkbox(&mut self.layers.towns, "Towns");
+                    ui.checkbox(&mut self.layers.place_names, "Place names");
+                    ui.checkbox(&mut self.layers.legend, "Legend");
                     ui.checkbox(&mut self.layers.routes, "Route lines");
                     ui.checkbox(&mut self.layers.rivals, "Rival planes");
                     ui.checkbox(&mut self.layers.rival_routes, "Rival routes");
                     ui.checkbox(&mut self.layers.all_airports, "All airports");
                     ui.checkbox(&mut self.newspapers, "Newspapers");
+                    ui.checkbox(&mut self.autosave, "Save automatically every 30 s");
                     ui.horizontal(|ui| {
                         ui.label("Sound");
                         ui.add(egui::Slider::new(&mut self.sound.volume, 0.0..=1.0).show_value(false));
@@ -417,6 +514,21 @@ impl App {
                         ui.weak(&self.sound.status);
                     }
                     ui.separator();
+                    ui.label("Style");
+                    ui.horizontal_wrapped(|ui| {
+                        for t in &crate::style::THEMES {
+                            if ui.selectable_label(self.settings.style.as_deref().unwrap_or("night") == t.id, t.name).on_hover_text(t.desc).clicked() {
+                                self.settings.style = Some(t.id.to_string());
+                                crate::style::apply(&ctx, t.id);
+                                self.settings.save();
+                            }
+                        }
+                    });
+                    ui.separator();
+                    if ui.button("🛠 Developer tools  F2").clicked() {
+                        self.dev_open = true;
+                        ui.close();
+                    }
                     if ui.button("❓ How to play").clicked() {
                         self.show_help = true;
                         ui.close();
@@ -434,15 +546,24 @@ impl App {
                 if ui.button(pause_label).on_hover_text("Pause (Space)").clicked() {
                     self.paused = !self.paused;
                 }
-                for (k, s) in SPEEDS.iter().enumerate() {
-                    if ui.selectable_label(!self.paused && self.speed == k, format!("{s}×")).on_hover_text("Game minutes per second").clicked() {
+                for (k, label) in SPEED_LABELS.iter().enumerate() {
+                    let tip = format!("{} game minutes per second (← → change the speed)", SPEEDS[k]);
+                    if ui.selectable_label(!self.paused && self.speed == k, *label).on_hover_text(tip).clicked() {
                         self.speed = k;
                         self.paused = false;
                     }
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let Some(g) = &self.game else { return };
-                    ui.label(RichText::new(fmt_time(self.t as i64)).monospace());
+                    // as the browser game: the clock big, the day small under it, the sun or the moon at home
+                    let t = self.t as i64;
+                    let home = data().airport(g.home());
+                    let day = flightgame::weather::daylight(home.lat, home.lon, g.sun_point(self.t)) > 0.5;
+                    let date = fmt_time(t);
+                    let date = date.trim_end_matches(&format!(" {}", fmt_clock(t))).to_string();
+                    ui.label(if day { "☀" } else { "🌙" });
+                    ui.label(RichText::new(date).small().weak());
+                    ui.label(RichText::new(fmt_clock(t)).monospace().strong().size(16.0));
                     ui.separator();
                     ui.label(RichText::new(fmt_money(g.state.money)).strong().color(money_color(g.state.money)));
                     ui.separator();
@@ -458,6 +579,10 @@ impl App {
             ui.horizontal_wrapped(|ui| {
                 for (s, label) in SECTIONS {
                     if ui.selectable_label(self.section == Some(s), label).clicked() {
+                        if s == Section::Market {
+                            self.market_open = !self.market_open;
+                            continue;
+                        }
                         self.section = if self.section == Some(s) { None } else { Some(s) };
                     }
                 }
@@ -472,35 +597,79 @@ impl App {
 
     // ---------- plane cards at the bottom ----------
 
+    /// The plane cards at the bottom, as in the browser game: each plane's picture with its type, a dot for what it
+    /// does (green flying, blue on the ground, amber held or waiting), and "+ Buy" for the marketplace. Hover for where
+    /// it goes; click selects it.
     fn plane_strip(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
         let Some(g) = &self.game else { return };
         let mut pick = None;
+        let mut buy = false;
+        let kinds: Vec<String> = g.state.planes.iter().map(|p| p.kind.clone()).collect();
+        let pics: Vec<Option<egui::TextureHandle>> = kinds.iter().map(|k| self.pics.hangar(&ctx, k)).collect();
         egui::Panel::bottom("strip").show(ui, |ui| {
             egui::ScrollArea::horizontal().show(ui, |ui| {
                 ui.horizontal(|ui| {
                     for (i, p) in g.state.planes.iter().enumerate() {
-                        let what = match (&p.flight, p.status) {
-                            (Some(f), Status::Flying) => format!("{}→{}", f.from, f.to),
-                            (_, Status::Turnaround) => format!("{} ⟳", p.location),
-                            _ => p.location.clone(),
-                        };
                         let sel = self.selected == Some(Pick::Plane(i));
-                        let text = RichText::new(format!("{}\n{}", Game::name_of(p), what)).size(12.0);
-                        let r = ui.add(egui::Button::selectable(sel, text)).on_hover_ui(|ui| {
+                        let (rect, resp) = ui.allocate_exact_size(Vec2::new(116.0, 62.0), egui::Sense::click());
+                        let painter = ui.painter_at(rect);
+                        painter.rect_filled(rect, 6.0, if sel { Color32::from_rgb(60, 30, 34) } else { Color32::from_gray(32) });
+                        if sel {
+                            painter.rect_stroke(rect, 6.0, Stroke::new(1.5, Color32::from_rgb(255, 69, 58)), egui::StrokeKind::Inside);
+                        }
+                        if let Some(tex) = &pics[i] {
+                            let img = egui::Rect::from_center_size(rect.center_top() + Vec2::new(0.0, 22.0), Vec2::new(96.0, 43.6));
+                            painter.image(tex.id(), img, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), Color32::WHITE);
+                        }
+                        let short = p.kind.replace("ceo", "");
+                        painter.text(rect.center_bottom() + Vec2::new(0.0, -6.0), Align2::CENTER_BOTTOM, &short, egui::FontId::proportional(11.0), Color32::from_gray(225));
+                        let dot = match p.status {
+                            Status::Flying => Color32::from_rgb(52, 199, 89),
+                            _ if p.wait_slot.is_some() || p.repair => Color32::from_rgb(255, 159, 10),
+                            _ => Color32::from_rgb(120, 140, 170),
+                        };
+                        painter.circle_filled(rect.right_top() + Vec2::new(-8.0, 8.0), 3.5, dot);
+                        let resp = resp.on_hover_ui(|ui| {
+                            ui.strong(Game::name_of(p));
                             ui.label(&data().ac(&p.kind).name);
+                            match (&p.flight, p.status) {
+                                (Some(f), Status::Flying) => {
+                                    ui.label(format!(
+                                        "{} → {} · {} left · {} pax",
+                                        f.from,
+                                        f.to,
+                                        fmt_duration((f.arr as f64 - self.t).max(0.0) as i64),
+                                        f.pax
+                                    ));
+                                }
+                                _ => {
+                                    ui.label(format!("At {}", p.location));
+                                }
+                            }
                             if let Some(n) = g.depart_note(i) {
                                 ui.label(format!("Next: {n}"));
                             }
                         });
-                        if r.clicked() {
+                        if resp.clicked() {
                             pick = Some(i);
                         }
+                    }
+                    let (rect, resp) = ui.allocate_exact_size(Vec2::new(54.0, 62.0), egui::Sense::click());
+                    ui.painter().rect_filled(rect, 6.0, Color32::from_gray(32));
+                    ui.painter().text(rect.center() + Vec2::new(0.0, -8.0), Align2::CENTER_CENTER, "+", egui::FontId::proportional(22.0), Color32::from_gray(200));
+                    ui.painter().text(rect.center() + Vec2::new(0.0, 14.0), Align2::CENTER_CENTER, "Buy", egui::FontId::proportional(11.0), Color32::from_gray(200));
+                    if resp.on_hover_text("Aircraft marketplace").clicked() {
+                        buy = true;
                     }
                 });
             });
         });
         if let Some(i) = pick {
             self.select_plane(i);
+        }
+        if buy {
+            self.market_open = true;
         }
     }
 
@@ -720,7 +889,7 @@ impl App {
             ultra: sch.days > 1,
             days: sch.days.max(1),
         });
-        self.section = Some(Section::Schedule);
+
     }
 
     /// Your airports grouped by category (as the browser game), and a search over all of them.
@@ -1038,8 +1207,94 @@ impl App {
     fn schedule(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         let Some(g) = &mut self.game else { return };
-        let d = data();
         ui.heading("Schedule");
+        // ---------- planes ----------
+        ui.add_space(8.0);
+        ui.strong("Timetables");
+        ui.weak("Click a plane to plan its day. Blue = flying · grey = on the ground (in one of your slots). The bars run on your \n                 home base's clock; times written out are local at each airport, and so is its night curfew (no departures \n                 22:00–06:00).");
+        if let Some(k) = day_bars(ui, g, &plane_rows(g)) {
+            self.open_draft(k);
+        }
+        let Some(g) = &mut self.game else { return };
+        let mut edit = None;
+        let mut toggle = None;
+        let mut clear = None;
+        for (i, p) in g.state.planes.iter().enumerate() {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(Game::name_of(p)).strong());
+                if p.schedule.legs.is_empty() {
+                    ui.weak("none");
+                } else {
+                    let first = &p.schedule.legs[0];
+                    ui.label(format!("{} from {} · {} flights", p.schedule.stops.join("–"), g.fmt_at(&first.from, first.dep), p.schedule.legs.len()));
+                    if ui.small_button(if p.schedule.active { "⏸" } else { "▶" }).clicked() {
+                        toggle = Some((i, !p.schedule.active));
+                    }
+                    if ui.small_button("✖").on_hover_text("Clear the timetable").clicked() {
+                        clear = Some(i);
+                    }
+                }
+                if ui.small_button("✏").clicked() {
+                    edit = Some(i);
+                }
+            });
+        }
+        if let Some((i, a)) = toggle {
+            let r = g.set_schedule_active(i, a);
+            self.say(&ctx, r);
+        }
+        let Some(g) = &mut self.game else { return };
+        if let Some(i) = clear {
+            g.clear_timetable(i);
+        }
+        if let Some(i) = edit {
+            self.open_draft(i);
+        }
+        // ---------- routes and fares ----------
+        let Some(g) = &mut self.game else { return };
+        ui.add_space(8.0);
+        ui.strong("Routes and fares");
+        ui.weak("Dearer tickets sell fewer seats. Rivals on a route split the passengers by seats and fares.");
+        let mut change = None;
+        egui::Grid::new("routes").striped(true).show(ui, |ui| {
+            ui.weak("route");
+            ui.weak("fare");
+            ui.weak("pax/day");
+            ui.weak("seats/day");
+            ui.weak("rivals");
+            ui.end_row();
+            for (a, b, seats, pax) in g.player_routes() {
+                ui.label(format!("{a}–{b}"));
+                ui.horizontal(|ui| {
+                    if ui.small_button("−").clicked() {
+                        change = Some((a.clone(), b.clone(), -1));
+                    }
+                    ui.label(format!("{} ({:.0}%)", fmt_money(g.fare(&a, &b)), g.fare_factor(&a, &b) * 100.0));
+                    if ui.small_button("+").clicked() {
+                        change = Some((a.clone(), b.clone(), 1));
+                    }
+                });
+                ui.label(format!("{pax:.0}"));
+                ui.label(format!("{:.0}", seats / 2.0));
+                let names: Vec<String> = g.rivals_on(&a, &b).iter().map(|&(r, k)| {
+                    let rv = &g.state.rivals[r];
+                    format!("{} {}×", rv.name, rv.routes[k].per_day)
+                }).collect();
+                ui.label(if names.is_empty() { "–".into() } else { names.join(", ") });
+                ui.end_row();
+            }
+        });
+        if let Some((a, b, s)) = change {
+            g.change_fare(&a, &b, s);
+        }
+    }
+
+
+    /// The timetable editor in a window of its own, as in the browser game (from a plane's 🗓 Timetable).
+    fn timetable_window(&mut self, ctx: &egui::Context) {
+        let ctx = ctx.clone();
+        let Some(g) = &mut self.game else { return };
+        let d = data();
         // ---------- timetable editor ----------
         let mut close = false;
         let mut result: Option<Result<(), String>> = None;
@@ -1048,9 +1303,15 @@ impl App {
             if let Some(i) = g.plane_idx(&dr.plane) {
                 let p = &g.state.planes[i];
                 let ac = d.ac(&p.kind);
-                egui::Frame::group(ui.style()).show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.strong(format!("Timetable for {} ({})", Game::name_of(p), ac.name));
+                let mut open = true;
+                egui::Window::new(format!("🗓 Timetable · {}", Game::name_of(p)))
+                    .id(egui::Id::new("timetablewin"))
+                    .open(&mut open)
+                    .default_width(560.0)
+                    .default_pos([440.0, 90.0])
+                    .vscroll(true)
+                    .show(&ctx, |ui| {
+                    ui.strong(ac.name.clone());
                     ui.weak(format!("Range {:.0} km · turnaround {} min · {} seats", ac.range_km, turnaround_min(&p.kind), ac.seats));
                     ui.label("1. Route (the plane flies round it, back to the start):");
                     let mut remove = None;
@@ -1200,6 +1461,9 @@ impl App {
                         }
                     });
                 });
+                if !open {
+                    close = true;
+                }
             } else {
                 close = true;
             }
@@ -1217,180 +1481,204 @@ impl App {
         if let Some(r) = result {
             self.say(&ctx, r);
         }
-        let Some(g) = &mut self.game else { return };
-        // ---------- planes ----------
-        ui.add_space(8.0);
-        ui.strong("Timetables");
-        ui.weak("Click a plane to plan its day. Blue = flying · grey = on the ground (in one of your slots). The bars run on your \n                 home base's clock; times written out are local at each airport, and so is its night curfew (no departures \n                 22:00–06:00).");
-        if let Some(k) = day_bars(ui, g, &plane_rows(g)) {
-            self.open_draft(k);
-        }
-        let Some(g) = &mut self.game else { return };
-        let mut edit = None;
-        let mut toggle = None;
-        let mut clear = None;
-        for (i, p) in g.state.planes.iter().enumerate() {
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(Game::name_of(p)).strong());
-                if p.schedule.legs.is_empty() {
-                    ui.weak("none");
-                } else {
-                    let first = &p.schedule.legs[0];
-                    ui.label(format!("{} from {} · {} flights", p.schedule.stops.join("–"), g.fmt_at(&first.from, first.dep), p.schedule.legs.len()));
-                    if ui.small_button(if p.schedule.active { "⏸" } else { "▶" }).clicked() {
-                        toggle = Some((i, !p.schedule.active));
-                    }
-                    if ui.small_button("✖").on_hover_text("Clear the timetable").clicked() {
-                        clear = Some(i);
-                    }
-                }
-                if ui.small_button("✏").clicked() {
-                    edit = Some(i);
-                }
-            });
-        }
-        if let Some((i, a)) = toggle {
-            let r = g.set_schedule_active(i, a);
-            self.say(&ctx, r);
-        }
-        let Some(g) = &mut self.game else { return };
-        if let Some(i) = clear {
-            g.clear_timetable(i);
-        }
-        if let Some(i) = edit {
-            self.open_draft(i);
-        }
-        // ---------- routes and fares ----------
-        let Some(g) = &mut self.game else { return };
-        ui.add_space(8.0);
-        ui.strong("Routes and fares");
-        ui.weak("Dearer tickets sell fewer seats. Rivals on a route split the passengers by seats and fares.");
-        let mut change = None;
-        egui::Grid::new("routes").striped(true).show(ui, |ui| {
-            ui.weak("route");
-            ui.weak("fare");
-            ui.weak("pax/day");
-            ui.weak("seats/day");
-            ui.weak("rivals");
-            ui.end_row();
-            for (a, b, seats, pax) in g.player_routes() {
-                ui.label(format!("{a}–{b}"));
-                ui.horizontal(|ui| {
-                    if ui.small_button("−").clicked() {
-                        change = Some((a.clone(), b.clone(), -1));
-                    }
-                    ui.label(format!("{} ({:.0}%)", fmt_money(g.fare(&a, &b)), g.fare_factor(&a, &b) * 100.0));
-                    if ui.small_button("+").clicked() {
-                        change = Some((a.clone(), b.clone(), 1));
-                    }
-                });
-                ui.label(format!("{pax:.0}"));
-                ui.label(format!("{:.0}", seats / 2.0));
-                let names: Vec<String> = g.rivals_on(&a, &b).iter().map(|&(r, k)| {
-                    let rv = &g.state.rivals[r];
-                    format!("{} {}×", rv.name, rv.routes[k].per_day)
-                }).collect();
-                ui.label(if names.is_empty() { "–".into() } else { names.join(", ") });
-                ui.end_row();
-            }
-        });
-        if let Some((a, b, s)) = change {
-            g.change_fare(&a, &b, s);
+    }
+
+    /// The Market section opens the marketplace window (as in the browser game).
+    fn market(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Marketplace");
+        ui.label("The Aircraft Marketplace is open in its own window.");
+        if ui.button("Open the marketplace").clicked() {
+            self.market_open = true;
         }
     }
 
-
-    fn market(&mut self, ui: &mut egui::Ui) {
-        let ctx = ui.ctx().clone();
-        let Some(g) = &mut self.game else { return };
+    /// The Aircraft Marketplace as in the browser game: new and pre-owned aircraft, by category, sorted, delivered to
+    /// one of your airports; the chosen one standing in the hangar with everything about it, and a tile for each.
+    fn market_window(&mut self, ctx: &egui::Context) {
+        if !self.market_open {
+            return;
+        }
+        let Some(g) = &self.game else { return };
         let d = data();
-        ui.heading("Marketplace");
         if !g.owns_slot(&self.delivery) {
             self.delivery = g.home().to_string();
         }
-        ui.horizontal(|ui| {
-            ui.label("Deliver to");
-            egui::ComboBox::from_id_salt("delivery").selected_text(self.delivery.clone()).show_ui(ui, |ui| {
-                for code in g.state.slots.keys() {
-                    ui.selectable_value(&mut self.delivery, code.clone(), format!("{} {}", code, d.airport(code).city));
-                }
-            });
-        });
-        ui.horizontal_wrapped(|ui| {
-            ui.selectable_value(&mut self.market_cat, String::new(), "All");
-            for (k, name) in &d.categories {
-                ui.selectable_value(&mut self.market_cat, k.clone(), name);
-            }
-        });
-        let mut action: Option<(u8, String)> = None;
-        ui.collapsing(RichText::new("Pre-owned (new offers every Monday)").strong(), |ui| {
-            for l in &g.state.market.listings {
-                let ac = d.ac(&l.kind);
-                ui.horizontal(|ui| {
-                    ui.label(format!("{} · {} years · {} seats · from {}", ac.name, l.age, ac.seats, l.at));
-                    if ui.button(format!("Buy {}", fmt_money(l.price))).clicked() {
-                        action = Some((2, l.id.clone()));
-                    }
-                });
-            }
-        });
-        ui.separator();
-        ui.strong("New aircraft");
         let year = g.year();
-        if let (Some(y), Some((ny, types))) = (year, g.next_arrival()) {
-            let names: Vec<String> = types.iter().map(|t| d.ac(t).name.clone()).collect();
-            ui.weak(format!("{y}: the types built this year. Next new: the {} in {ny}.", name_list(&names)));
+        // what is offered: (key, type, age, price, seller's airport) – key is the type, or the listing for pre-owned
+        let mut offers: Vec<(String, String, i64, f64, Option<String>)> = if self.market_used {
+            g.state.market.listings.iter().map(|l| (l.id.clone(), l.kind.clone(), l.age, l.price, Some(l.at.clone()))).collect()
+        } else {
+            d.aircraft.iter().filter(|a| on_sale(&a.code, year)).map(|a| (a.code.clone(), a.code.clone(), 0, price_new(&a.code), None)).collect()
+        };
+        offers.retain(|o| self.market_cat.is_empty() || d.ac(&o.1).category == self.market_cat);
+        let key = |o: &(String, String, i64, f64, Option<String>)| -> f64 {
+            let a = d.ac(&o.1);
+            match self.market_sort {
+                1 => -(a.seats as f64),
+                2 => -a.range_km,
+                3 => a.cost_per_block_hour / a.seats.max(1) as f64,
+                4 => 0.0,
+                _ => o.3,
+            }
+        };
+        offers.sort_by(|x, y| key(x).total_cmp(&key(y)).then_with(|| d.ac(&x.1).name.cmp(&d.ac(&y.1).name)));
+        if !offers.iter().any(|o| Some(&o.0) == self.market_pick.as_ref()) {
+            self.market_pick = offers.first().map(|o| o.0.clone());
         }
-        let mut list: Vec<&flightgame::data::Aircraft> = d
-            .aircraft
-            .iter()
-            .filter(|a| (self.market_cat.is_empty() || a.category == self.market_cat) && on_sale(&a.code, year))
-            .collect();
-        list.sort_by_key(|a| a.seats);
-        for ac in list {
-            let fits = fits_reason(&ac.code, &self.delivery);
-            egui::Frame::group(ui.style()).show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.horizontal(|ui| {
-                    ui.strong(&ac.name);
-                    ui.weak(format!("{} · class {}", ac.maker, CLASSES[type_class(&ac.code)]));
+        let picked = offers.iter().find(|o| Some(&o.0) == self.market_pick.as_ref()).cloned();
+        let pics: Vec<Option<egui::TextureHandle>> = offers.iter().map(|o| self.pics.hangar(ctx, &o.1)).collect();
+        let big = picked.as_ref().and_then(|o| self.pics.hangar(ctx, &o.1));
+        let mut open = true;
+        let mut action: Option<(u8, String)> = None;
+        let company = g.state.company.to_uppercase();
+        egui::Window::new("AIRCRAFT MARKETPLACE")
+            .id(egui::Id::new("marketwin"))
+            .open(&mut open)
+            .default_size([980.0, 680.0])
+            .default_pos([60.0, 70.0])
+            .vscroll(true)
+            .show(ctx, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new(fmt_money(g.state.money)).color(money_color(g.state.money)).strong());
+                    ui.separator();
+                    ui.selectable_value(&mut self.market_used, false, "New");
+                    ui.selectable_value(&mut self.market_used, true, format!("Pre-owned {}", g.state.market.listings.len()));
+                    ui.separator();
+                    ui.selectable_value(&mut self.market_cat, String::new(), "All");
+                    for (k, name) in &d.categories {
+                        ui.selectable_value(&mut self.market_cat, k.clone(), name);
+                    }
+                    ui.separator();
+                    ui.label("Sort");
+                    let sorts = ["Price", "Seats", "Range", "Cost per seat-hour", "Name"];
+                    egui::ComboBox::from_id_salt("msort").selected_text(sorts[self.market_sort as usize]).show_ui(ui, |ui| {
+                        for (k, s) in sorts.iter().enumerate() {
+                            ui.selectable_value(&mut self.market_sort, k as u8, *s);
+                        }
+                    });
+                    ui.label("Deliver to");
+                    let cur = d.airport(&self.delivery);
+                    egui::ComboBox::from_id_salt("mdeliver")
+                        .selected_text(format!("{} · {} (size {}, {} m)", cur.code, cur.city, airport_size(&cur.code), fmt_thousands(longest_runway(&cur.code, false))))
+                        .show_ui(ui, |ui| {
+                            for code in g.state.slots.keys() {
+                                let a = d.airport(code);
+                                ui.selectable_value(&mut self.delivery, code.clone(), format!("{} · {} (size {}, {} m)", code, a.city, airport_size(code), fmt_thousands(longest_runway(code, false))));
+                            }
+                        });
                 });
-                ui.label(format!(
-                    "{} seats · {:.0} km · {:.0} km/h · {}/block hour · runway {:.0} m",
-                    ac.seats,
-                    ac.range_km,
-                    ac.speed_kmh,
-                    fmt_money(ac.cost_per_block_hour),
-                    runway_need(&ac.code).0
-                ));
-                ui.horizontal(|ui| {
-                    let ok = fits.is_none();
-                    if ui.add_enabled(ok, egui::Button::new(format!("Lease {}/week", fmt_money(ac.lease_per_week))))
-                        .on_hover_text(format!("Deposit {}", fmt_money(lease_deposit(&ac.code))))
-                        .clicked()
-                    {
-                        action = Some((0, ac.code.clone()));
-                    }
-                    if ui.add_enabled(ok, egui::Button::new(format!("Buy {}", fmt_money(price_new(&ac.code))))).clicked() {
-                        action = Some((1, ac.code.clone()));
-                    }
-                    if let Some(why) = &fits {
-                        ui.weak(why);
+                if let (Some(y), Some((ny, types))) = (year, g.next_arrival()) {
+                    let names: Vec<String> = types.iter().map(|t| d.ac(t).name.clone()).collect();
+                    ui.weak(format!("{y}: the types built this year. Next new: the {} in {ny}.", name_list(&names)));
+                }
+                ui.separator();
+                // ---------- the chosen one in the hangar, and all about it ----------
+                if let Some((okey, kind, age, price, seller)) = &picked {
+                    let a = d.ac(kind);
+                    ui.horizontal(|ui| {
+                        let (rect, _) = ui.allocate_exact_size(Vec2::new((ui.available_width() * 0.6).max(360.0), 300.0), egui::Sense::hover());
+                        hangar_scene(ui.painter(), rect, big.as_ref(), &format!("{company} · HANGAR 1"));
+                        ui.vertical(|ui| {
+                            ui.weak(format!("{} · {}", a.maker.to_uppercase(), d.categories.iter().find(|c| c.0 == a.category).map(|c| c.1.to_uppercase()).unwrap_or_default()));
+                            ui.label(RichText::new(&a.name).size(22.0).strong());
+                            ui.label(RichText::new(if seller.is_some() { format!("PRE-OWNED · {age} YEARS") } else { "FACTORY NEW".into() }).small().strong().color(Color32::from_rgb(120, 170, 255)));
+                            let (rw, paved) = runway_need(kind);
+                            let crew = crew_for(kind);
+                            egui::Grid::new("mspecs").num_columns(2).min_col_width(140.0).spacing([18.0, 4.0]).show(ui, |ui| {
+                                let cell = |ui: &mut egui::Ui, l: &str, v: String| {
+                                    ui.vertical(|ui| {
+                                        ui.add(egui::Label::new(RichText::new(l).small().weak()).extend());
+                                        ui.add(egui::Label::new(RichText::new(v).strong()).extend());
+                                    });
+                                };
+                                cell(ui, "SEATS", a.seats.to_string());
+                                cell(ui, "RANGE", format!("{} km", fmt_thousands(a.range_km)));
+                                ui.end_row();
+                                cell(ui, "CRUISE", format!("{:.0} km/h", a.speed_kmh));
+                                cell(ui, "LENGTH", format!("{:.1} m", a.len));
+                                ui.end_row();
+                                cell(ui, "OPERATING", format!("{}/h", fmt_money(a.cost_per_block_hour)));
+                                cell(ui, "CREW", format!("{}/wk", fmt_money(crew.weekly_salary)));
+                                ui.end_row();
+                                cell(ui, "STAND", format!("class {} · {:.1} m", CLASSES[type_class(kind)], a.span));
+                                cell(ui, "RUNWAY", format!("{} m{}", fmt_thousands(rw), if paved { "" } else { " (grass ok)" }));
+                                ui.end_row();
+                                cell(ui, "LEASE RATE", format!("{}/wk", fmt_money(a.lease_per_week)));
+                                cell(ui, "SEAT-HOUR", fmt_money(a.cost_per_block_hour / a.seats.max(1) as f64));
+                                ui.end_row();
+                            });
+                            // where it comes from
+                            let from = match seller {
+                                Some(at) => Some(at.clone()),
+                                None => d.factory_of.get(kind).cloned(),
+                            };
+                            let from_txt = match (&from, seller) {
+                                (Some(f), None) => format!("Built at {}.", d.try_airport(f).map(|x| x.name.clone()).unwrap_or_default()),
+                                (Some(f), Some(_)) => format!("For sale at {} · {}.", f, d.try_airport(f).map(|x| x.city.clone()).unwrap_or_default()),
+                                _ => String::new(),
+                            };
+                            ui.label(from_txt);
+                            if let Some(f) = from.filter(|f| *f != self.delivery) {
+                                let km = d.dist(&f, &self.delivery);
+                                ui.label(format!(
+                                    "Delivery flight {f} → {} · {} km · {}",
+                                    self.delivery,
+                                    fmt_thousands(km),
+                                    fmt_duration(block_minutes(kind, km))
+                                ));
+                            }
+                            if let Some(why) = fits_reason(kind, &self.delivery) {
+                                ui.colored_label(Color32::LIGHT_RED, why);
+                            }
+                            ui.horizontal(|ui| {
+                                let ok = fits_reason(kind, &self.delivery).is_none();
+                                if ui.add_enabled(ok, egui::Button::new(RichText::new(format!("Buy {}", fmt_money(*price))).strong()).fill(Color32::from_rgb(200, 50, 45))).clicked() {
+                                    action = Some((if seller.is_some() { 2 } else { 1 }, okey.clone()));
+                                }
+                                if seller.is_none() && ui.add_enabled(ok, egui::Button::new(format!("Lease {}/wk\n{} deposit", fmt_money(a.lease_per_week), fmt_money(lease_deposit(kind))))).clicked() {
+                                    action = Some((0, okey.clone()));
+                                }
+                            });
+                        });
+                    });
+                }
+                ui.separator();
+                // ---------- a tile for each ----------
+                ui.horizontal_wrapped(|ui| {
+                    for (k, o) in offers.iter().enumerate() {
+                        let a = d.ac(&o.1);
+                        let sel = Some(&o.0) == self.market_pick.as_ref();
+                        let (rect, resp) = ui.allocate_exact_size(Vec2::new(176.0, 128.0), egui::Sense::click());
+                        let p = ui.painter_at(rect);
+                        hangar_scene(&p, egui::Rect::from_min_size(rect.min, Vec2::new(176.0, 80.0)), pics[k].as_ref(), "");
+                        if sel {
+                            p.rect_stroke(rect, 6.0, Stroke::new(2.0, Color32::from_rgb(255, 69, 58)), egui::StrokeKind::Inside);
+                        }
+                        p.text(rect.left_top() + Vec2::new(6.0, 84.0), Align2::LEFT_TOP, &a.name, egui::FontId::proportional(12.0), Color32::WHITE);
+                        let sub = if o.4.is_some() { format!("{} seats · {} years", a.seats, o.2) } else { format!("{} seats · {} km", a.seats, fmt_thousands(a.range_km)) };
+                        p.text(rect.left_top() + Vec2::new(6.0, 100.0), Align2::LEFT_TOP, sub, egui::FontId::proportional(10.5), Color32::GRAY);
+                        p.text(rect.left_top() + Vec2::new(6.0, 113.0), Align2::LEFT_TOP, short_money(o.3), egui::FontId::proportional(11.0), Color32::from_rgb(120, 220, 140));
+                        if resp.clicked() {
+                            self.market_pick = Some(o.0.clone());
+                        }
                     }
                 });
             });
+        if !open {
+            self.market_open = false;
         }
         if let Some((k, what)) = action {
             let at = self.delivery.clone();
+            let g = self.game.as_mut().unwrap();
             let r = match k {
                 0 => g.lease_new(&what, &at),
                 1 => g.buy_new(&what, &at),
                 _ => g.buy_used(&what, &at),
             };
             let ok = r.is_ok();
-            self.say(&ctx, r);
+            self.say(ctx, r);
             if ok {
-                self.info(&ctx, "Done – see the Fleet.");
+                self.info(ctx, "Done – see the Fleet.");
             }
         }
     }
@@ -1582,168 +1870,316 @@ impl App {
 
     // ---------- windows ----------
 
+    /// The plane window as in the browser game: the plane (its picture where the browser game shows its 3D camera),
+    /// what it does, where it comes from and goes to (stand, local times), the weather there, its speed and height,
+    /// its runways at each airport of its day, and Stats · Timetable · Follow on the map · Fleet.
     fn plane_window(&mut self, ctx: &egui::Context) {
         let Some(Pick::Plane(i)) = self.selected else { return };
-        let Some(g) = &mut self.game else { return };
+        let Some(g) = &self.game else { return };
         if i >= g.state.planes.len() {
             self.selected = None;
             return;
         }
         let d = data();
-        let mut open = true;
-        let mut action: Option<u8> = None;
-        let mut send: Option<String> = None;
         let p = g.state.planes[i].clone();
         let ac = d.ac(&p.kind);
-        egui::Window::new(format!("✈ {}", Game::name_of(&p)))
+        let pos = g.flight_pos(i, self.t);
+        let pic = self.pics.hangar(ctx, &p.kind);
+        let mut open = true;
+        let mut action: Option<(u8, String, Option<String>)> = None;
+        egui::Window::new(format!("✈ {} · {}", Game::name_of(&p), ac.name))
             .id(egui::Id::new("planewin"))
             .open(&mut open)
-            .default_pos([ctx.content_rect().right() - 380.0, 80.0])
-            .default_width(340.0)
+            .default_pos([20.0, 90.0])
+            .default_width(360.0)
+            .vscroll(true)
             .show(ctx, |ui| {
-                ui.label(RichText::new(&ac.name).strong());
-                ui.weak(format!(
-                    "{} · {} · {:.1} years old · {} seats · {:.0} km range · class {}",
-                    ac.maker,
-                    if p.ownership == Ownership::Owned { "owned" } else { "leased" },
-                    g.plane_age(i),
-                    ac.seats,
-                    ac.range_km,
-                    CLASSES[type_class(&p.kind)]
-                ));
-                ui.separator();
-                match (&p.flight, p.status) {
-                    (Some(f), Status::Flying) => {
-                        let frac = ((self.t - f.dep as f64) / (f.arr - f.dep).max(1) as f64).clamp(0.0, 1.0);
-                        ui.label(format!(
-                            "{} {} → {} ({:.0} km)",
-                            match f.kind {
-                                FlightKind::Scheduled => "Flight",
-                                FlightKind::Ferry => "Ferry",
-                                FlightKind::Delivery => "Delivery",
-                            },
-                            d.airport(&f.from).city,
-                            d.airport(&f.to).city,
-                            f.distance
-                        ));
-                        ui.add(egui::ProgressBar::new(frac as f32).text(format!(
-                            "{} left · lands {}",
-                            fmt_duration((f.arr as f64 - self.t).max(0.0) as i64),
-                            fmt_clock(f.arr)
-                        )));
-                        if f.kind == FlightKind::Scheduled {
-                            ui.label(format!("{}/{} passengers · revenue {}", f.pax, ac.seats, fmt_money(f.revenue)));
-                        }
+                let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 150.0), egui::Sense::hover());
+                hangar_scene(ui.painter(), rect, pic.as_ref(), "");
+                ui.label(RichText::new(pos.phase).strong());
+                // from → to
+                let t = g.state.time;
+                ui.horizontal(|ui| match &p.flight {
+                    Some(f) if p.status == Status::Flying => {
+                        let (_, _, _, sf) = g.stand_of(&f.from, i);
+                        let (_, _, _, st) = g.stand_of(&f.to, i);
+                        ui.vertical(|ui| {
+                            ui.label(RichText::new(format!("{} {}", f.from, d.airport(&f.from).city)).strong());
+                            ui.weak(format!("{}left {} local", if sf.is_empty() { String::new() } else { format!("stand {sf} · ") }, g.fmt_at(&f.from, f.dep)));
+                        });
+                        ui.label("→");
+                        ui.vertical(|ui| {
+                            ui.label(RichText::new(format!("{} {}", f.to, d.airport(&f.to).city)).strong());
+                            ui.weak(format!("{}lands {} local", if st.is_empty() { String::new() } else { format!("stand {st} · ") }, g.fmt_at(&f.to, f.arr)));
+                        });
                     }
                     _ => {
-                        ui.label(format!("At {} {}", p.location, d.airport(&p.location).name));
-                    }
-                }
-                if let Some(n) = g.depart_note(i) {
-                    ui.weak(format!("Next: {n}"));
-                }
-                ui.separator();
-                ui.horizontal(|ui| {
-                    if ui.button("🗓 Timetable").clicked() {
-                        action = Some(0);
-                    }
-                    if !p.schedule.legs.is_empty() && ui.button(if p.schedule.active { "⏸ Pause" } else { "▶ Start" }).clicked() {
-                        action = Some(1);
-                    }
-                    egui::ComboBox::from_id_salt("sendto").selected_text("Send to…").show_ui(ui, |ui| {
-                        for code in g.state.slots.keys() {
-                            if *code != p.location && ui.selectable_label(false, format!("{} {}", code, d.airport(code).city)).clicked() {
-                                send = Some(code.clone());
+                        let (_, _, _, s) = g.stand_of(&p.location, i);
+                        ui.vertical(|ui| {
+                            ui.label(RichText::new(format!("{} {}", p.location, d.airport(&p.location).city)).strong());
+                            if !s.is_empty() {
+                                ui.weak(format!("stand {s}"));
                             }
+                        });
+                        let sch = &p.schedule;
+                        if sch.active && !sch.legs.is_empty() {
+                            let leg = &sch.legs[sch.index % sch.legs.len()];
+                            ui.label("→");
+                            ui.vertical(|ui| {
+                                ui.label(RichText::new(format!("{} {}", leg.to, d.airport(&leg.to).city)).strong());
+                                ui.weak(format!("leaves {} local", g.fmt_at(&leg.from, sch.due.max(t))));
+                            });
                         }
-                    });
+                    }
+                });
+                let wx = g.weather_at(pos.lat, pos.lon, t);
+                ui.label(format!("{} {} · {} °C · wind {:03}° {} kt", wx.icon, wx.name, wx.temp_c, wx.wind_from, wx.wind_kt));
+                egui::Grid::new("pw").num_columns(2).show(ui, |ui| {
+                    ui.weak("Speed");
+                    ui.label(RichText::new(format!("{:.0} km/h", pos.speed_kt * 1.852)).strong());
+                    ui.end_row();
+                    ui.weak("Height");
+                    ui.label(RichText::new(if pos.alt_ft > 0.0 { format!("{} ft", fmt_thousands((pos.alt_ft / 100.0).round() * 100.0)) } else { "on the ground".into() }).strong());
+                    ui.end_row();
+                    if let Some(f) = p.flight.as_ref().filter(|_| p.status == Status::Flying) {
+                        ui.weak("Left");
+                        ui.label(format!("{} · {:.0} km", fmt_duration((f.arr as f64 - self.t).max(0.0) as i64), f.distance));
+                        ui.end_row();
+                        if f.kind == FlightKind::Scheduled {
+                            ui.weak("On board");
+                            ui.label(format!("{}/{} passengers", f.pax, ac.seats));
+                            ui.end_row();
+                        }
+                    }
+                    if let Some(n) = g.depart_note(i) {
+                        ui.weak("Next");
+                        ui.label(RichText::new(n).strong());
+                        ui.end_row();
+                    }
+                });
+                let per_day = if p.schedule.days > 1 {
+                    format!("{} flights every {} days", p.schedule.legs.len(), p.schedule.days)
+                } else {
+                    format!("{} flights a day", p.schedule.legs.len())
+                };
+                ui.weak(format!(
+                    "{per_day} · {} flights flown · {} · class {}",
+                    p.stats.flights,
+                    if p.ownership == Ownership::Owned { "owned" } else { "leased" },
+                    CLASSES[type_class(&p.kind)]
+                ));
+                // runways at each airport of its day
+                let mut codes: Vec<String> = p.schedule.legs.iter().map(|l| l.from.clone()).collect();
+                codes.dedup();
+                if codes.is_empty() {
+                    codes.push(p.location.clone());
+                }
+                let mut seen = std::collections::HashSet::new();
+                codes.retain(|c| seen.insert(c.clone()));
+                ui.label(RichText::new("Runways").strong()).on_hover_text("At once while it boards, else from its next flight there");
+                egui::Grid::new("pwrw").num_columns(2).show(ui, |ui| {
+                    for code in codes {
+                        ui.label(&code);
+                        let choices = flightgame::track::runway_choices(&p.kind, &code);
+                        let cur = p.runways.get(&code).cloned();
+                        let label = match &cur {
+                            None => "Auto · the shortest it can use".to_string(),
+                            Some(k) => choices.iter().find(|c| &c.0 == k).map(|c| format!("{} · {} m", c.1, c.2)).unwrap_or_else(|| "Auto".into()),
+                        };
+                        egui::ComboBox::from_id_salt(("rw", &code)).selected_text(label).width(220.0).show_ui(ui, |ui| {
+                            if ui.selectable_label(cur.is_none(), "Auto · the shortest it can use").clicked() {
+                                action = Some((5, code.clone(), None));
+                            }
+                            for (key, name, len, why) in &choices {
+                                let text = if why.is_empty() { format!("{name} · {len:.0} m") } else { format!("{name} · {len:.0} m – {why}") };
+                                let r = ui.add_enabled(why.is_empty(), egui::Button::selectable(cur.as_deref() == Some(key.as_str()), text));
+                                if r.clicked() {
+                                    action = Some((5, code.clone(), Some(key.clone())));
+                                }
+                            }
+                        });
+                        ui.end_row();
+                    }
+                });
+                ui.horizontal_wrapped(|ui| {
+                    if ui.button("📊 Stats").clicked() {
+                        action = Some((0, String::new(), None));
+                    }
+                    if ui.button("🗓 Timetable").clicked() {
+                        action = Some((1, String::new(), None));
+                    }
+                    let following = self.follow.as_deref() == Some(p.id.as_str());
+                    if ui.selectable_label(following, "🎥 Follow on the map").clicked() {
+                        action = Some((2, String::new(), None));
+                    }
+                    if ui.button("Fleet").clicked() {
+                        action = Some((3, String::new(), None));
+                    }
                 });
                 ui.horizontal(|ui| {
                     ui.label("Name");
                     ui.add(egui::TextEdit::singleline(&mut self.rename).desired_width(140.0));
-                    if ui.button("Rename").clicked() {
-                        action = Some(3);
+                    if ui.small_button("✏ Rename").clicked() {
+                        action = Some((4, String::new(), None));
                     }
                 });
-                // ---------- stats ----------
-                ui.separator();
-                let st = &p.stats;
-                let profit = st.rev - st.cost - st.fixed - st.repair;
-                egui::Grid::new("pstats").show(ui, |ui| {
-                    ui.label("Flights / pax");
-                    ui.label(format!("{} / {}", st.flights, st.pax));
-                    ui.end_row();
-                    ui.label("Seats filled");
-                    ui.label(if st.seats > 0 { format!("{:.0}%", st.pax as f64 / st.seats as f64 * 100.0) } else { "–".into() });
-                    ui.end_row();
-                    ui.label("On time");
-                    let n = st.on_time + st.late;
-                    ui.label(if n > 0 { format!("{:.0}%", st.on_time as f64 / n as f64 * 100.0) } else { "–".into() });
-                    ui.end_row();
-                    ui.label("Flown");
-                    ui.label(format!("{:.0} km, {}", st.km, fmt_duration(st.mins)));
-                    ui.end_row();
-                    ui.label("Revenue / costs");
-                    ui.label(format!("{} / {}", fmt_money(st.rev), fmt_money(st.cost + st.fixed + st.repair)));
-                    ui.end_row();
-                    ui.label("Profit");
-                    ui.label(RichText::new(fmt_money(profit)).color(money_color(profit)).strong());
-                    ui.end_row();
-                    ui.label("Running cost");
-                    ui.label(format!("{}/block hour", fmt_money(ac.cost_per_block_hour * g.cost_mult(i))));
-                    ui.end_row();
-                });
-                week_bars(ui, &st.weeks);
-                if !st.recent.is_empty() {
-                    ui.collapsing("Last flights", |ui| {
-                        for r in &st.recent {
-                            ui.horizontal(|ui| {
-                                ui.monospace(fmt_clock(r.t));
-                                ui.label(format!("{}→{} {}/{}", r.from, r.to, r.pax, r.seats));
-                                ui.label(RichText::new(fmt_money(r.result)).color(money_color(r.result)));
-                            });
-                        }
-                    });
-                }
-                ui.separator();
-                let label = if p.ownership == Ownership::Owned {
-                    format!("Sell for {}", fmt_money(g.sale_value(i)))
-                } else {
-                    format!("Return (fee {})", fmt_money(g.return_fee(i)))
-                };
-                if ui.button(label).clicked() {
-                    action = Some(2);
-                }
             });
         if !open {
             self.selected = None;
         }
-        let r = match action {
-            Some(0) => {
-                self.open_draft(i);
-                Ok(())
-            }
-            Some(1) => g.set_schedule_active(i, !p.schedule.active),
-            Some(2) => {
-                let r = g.dispose_plane(i);
-                if r.is_ok() {
-                    self.selected = None;
+        let Some((k, code, key)) = action else { return };
+        match k {
+            0 => self.stats_open = Some(p.id.clone()),
+            1 => self.open_draft(i),
+            2 => self.follow = if self.follow.as_deref() == Some(p.id.as_str()) { None } else { Some(p.id.clone()) },
+            3 => self.section = Some(Section::Fleet),
+            4 => {
+                if let Some(g) = self.game.as_mut() {
+                    g.rename_plane(i, &self.rename);
                 }
-                r
             }
-            Some(3) => {
-                g.rename_plane(i, &self.rename);
-                Ok(())
+            _ => {
+                if let Some(g) = self.game.as_mut() {
+                    g.set_runway(i, &code, key);
+                }
             }
-            _ => Ok(()),
-        };
-        self.say(ctx, r);
-        if let (Some(code), Some(g)) = (send, &mut self.game) {
-            let r = g.send_plane(i, &code);
-            self.say(ctx, r);
         }
     }
 
+    /// A plane's records in a window of their own, as the browser game's stats window (like OpenTTD's vehicle details).
+    fn stats_window(&mut self, ctx: &egui::Context) {
+        let Some(id) = self.stats_open.clone() else { return };
+        let Some(g) = &self.game else { return };
+        let Some(i) = g.plane_idx(&id) else {
+            self.stats_open = None;
+            return;
+        };
+        let d = data();
+        let p = &g.state.planes[i];
+        let ac = d.ac(&p.kind);
+        let st = &p.stats;
+        let mut open = true;
+        egui::Window::new(format!("📊 {} · {}", Game::name_of(p), ac.name))
+            .id(egui::Id::new("statswin"))
+            .open(&mut open)
+            .default_pos([400.0, 100.0])
+            .default_width(460.0)
+            .vscroll(true)
+            .show(ctx, |ui| {
+                let age = g.plane_age(i);
+                let crew = &p.crew;
+                ui.label(format!(
+                    "{} · {:.1} years old · {} · {:.0} km/h · {} km · {} seats · class {} · runway {:.0} m",
+                    ac.maker,
+                    age,
+                    if p.ownership == Ownership::Owned {
+                        format!("value {}", fmt_money(g.sale_value(i)))
+                    } else {
+                        format!("leased {}/week", fmt_money(ac.lease_per_week))
+                    },
+                    ac.speed_kmh,
+                    fmt_thousands(ac.range_km),
+                    ac.seats,
+                    CLASSES[type_class(&p.kind)],
+                    runway_need(&p.kind).0
+                ));
+                ui.weak(format!(
+                    "Running cost {}/block hour (more as it ages) · crew {} pilots, {} cabin{} · {}/week",
+                    fmt_money(ac.cost_per_block_hour * g.cost_mult(i)),
+                    crew.pilots,
+                    crew.cabin,
+                    if crew.sets > 1 { " ×2" } else { "" },
+                    fmt_money(crew_weekly(crew))
+                ));
+                ui.separator();
+                let y = year_of(g.state.time);
+                let name = |yy: i64| if g.state.story.is_some() { yy.to_string() } else { format!("Year {yy}") };
+                let this = st.years.iter().find(|x| x.week == y).cloned().unwrap_or_default();
+                let last = st.years.iter().find(|x| x.week == y - 1).cloned().unwrap_or_default();
+                let all = Tally {
+                    week: 0,
+                    rev: st.rev,
+                    cost: st.cost,
+                    fixed: st.fixed,
+                    repair: st.repair,
+                    flights: st.flights,
+                    pax: st.pax as u32,
+                    seats: st.seats as u32,
+                    km: st.km,
+                };
+                egui::Grid::new("stt").striped(true).show(ui, |ui| {
+                    ui.label("");
+                    ui.strong(name(y));
+                    if y > 1 || g.state.story.is_some() {
+                        ui.strong(name(y - 1));
+                    } else {
+                        ui.label("");
+                    }
+                    ui.strong("All time");
+                    ui.end_row();
+                    let has_last = y > 1 || g.state.story.is_some();
+                    let cols = [&this, &last, &all];
+                    let row = |ui: &mut egui::Ui, label: &str, f: &dyn Fn(&Tally) -> String| {
+                        ui.weak(label);
+                        for c in cols {
+                            ui.label(if !has_last && std::ptr::eq(c, &last) { String::new() } else { f(c) });
+                        }
+                        ui.end_row();
+                    };
+                    row(ui, "Flights", &|x| x.flights.to_string());
+                    row(ui, "Passengers", &|x| x.pax.to_string());
+                    row(ui, "Seats filled", &|x| if x.seats > 0 { format!("{:.0}%", x.pax as f64 / x.seats as f64 * 100.0) } else { "–".into() });
+                    row(ui, "Revenue", &|x| fmt_money(x.rev));
+                    row(ui, "Flying costs", &|x| fmt_money(x.cost));
+                    row(ui, "Lease and crew", &|x| fmt_money(x.fixed));
+                    row(ui, "Repairs", &|x| fmt_money(x.repair));
+                    ui.strong("Profit");
+                    for c in cols {
+                        if !has_last && std::ptr::eq(c, &last) {
+                            ui.label("");
+                            continue;
+                        }
+                        ui.label(RichText::new(fmt_money(c.profit())).strong().color(money_color(c.profit())));
+                    }
+                    ui.end_row();
+                });
+                ui.separator();
+                ui.weak("Profit by week (hover for the numbers)");
+                week_bars(ui, &st.weeks);
+                let n = st.on_time + st.late;
+                ui.label(format!(
+                    "{} km and {} flown · {} on time · {} incidents · {} ferry flights",
+                    fmt_thousands(st.km),
+                    fmt_duration(st.mins),
+                    if n > 0 { format!("{:.0}%", st.on_time as f64 / n as f64 * 100.0) } else { "–".into() },
+                    st.incidents,
+                    st.ferries
+                ));
+                if !st.recent.is_empty() {
+                    ui.strong("Last flights");
+                    egui::Grid::new("strecent").striped(true).show(ui, |ui| {
+                        for r in &st.recent {
+                            ui.monospace(fmt_time(r.t));
+                            ui.label(format!("{}→{}", r.from, r.to));
+                            ui.label(match r.kind {
+                                FlightKind::Scheduled => format!("{}/{}", r.pax, r.seats),
+                                FlightKind::Ferry => "ferry".into(),
+                                FlightKind::Delivery => "delivery".into(),
+                            });
+                            ui.label(RichText::new(fmt_money(r.result)).color(money_color(r.result)));
+                            ui.end_row();
+                        }
+                    });
+                }
+            });
+        if !open {
+            self.stats_open = None;
+        }
+    }
+
+    /// The airport panel as in the browser game: what the airport is (size dots, catchment, landing fee, runways,
+    /// local time, the sun, the weather, rivals), its slots by class with the holders and offers, your planes to
+    /// send there, the passengers and tickets to your other airports, its shares and construction.
     fn airport_window(&mut self, ctx: &egui::Context) {
         let Some(Pick::Airport(k)) = self.selected else { return };
         let Some(g) = &mut self.game else { return };
@@ -1751,23 +2187,58 @@ impl App {
         let a = &d.airports[k];
         let code = a.code.clone();
         let mut open = true;
-        let mut action: Option<(u8, String)> = None;
-        egui::Window::new(format!("🏢 {} {}", a.code, a.name))
+        // (kind, class, holder or plane id or route)
+        let mut action: Option<(u8, usize, String)> = None;
+        egui::Window::new(format!("🏢 {} · {}", a.code, a.city))
             .id(egui::Id::new("airportwin"))
             .open(&mut open)
-            .default_pos([ctx.content_rect().right() - 380.0, 80.0])
-            .default_width(340.0)
+            .default_pos([ctx.content_rect().right() - 400.0, 80.0])
+            .default_width(370.0)
+            .vscroll(true)
             .show(ctx, |ui| {
-                ui.label(format!("{}, {} · {} (size {})", a.city, a.country, airport_category(&code), a.size));
+                let size = airport_size(&code);
+                let dots: String = (1..=5).map(|i| if i <= size { '●' } else { '○' }).collect();
+                ui.horizontal(|ui| {
+                    ui.label(format!("{}, {} ·", a.city, a.country));
+                    ui.label(RichText::new(airport_category(&code)).strong().color(Color32::from_rgb(120, 170, 255)));
+                    ui.weak(format!("· size {dots}"));
+                });
+                ui.label(format!(
+                    "Catchment: {:.1}M people · landing fee {}",
+                    a.catchment / 1e6,
+                    fmt_money(landing_fee(&code))
+                ));
+                let mut rws: Vec<[f64; 6]> = airport_runways(&code);
+                rws.sort_by(|x, y| runway_length(y).total_cmp(&runway_length(x)));
+                let list: Vec<String> = rws
+                    .iter()
+                    .map(|r| format!("{} m{}", fmt_thousands(runway_length(r)), if r[5] > 0.0 { "" } else { " grass" }))
+                    .collect();
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(if list.is_empty() {
+                        format!("Runways: about {} m (no data)", fmt_thousands(longest_runway(&code, false)))
+                    } else {
+                        format!("Runways: {}", list.join(" · "))
+                    });
+                    if ui.link("zoom in").clicked() {
+                        action = Some((9, 0, String::new()));
+                    }
+                });
                 let now = g.state.time;
+                let day = flightgame::weather::daylight(a.lat, a.lon, g.sun_point(now as f64)) > 0.5;
                 let sun = match sun_times(&code, now) {
                     Some((rise, set)) => format!(" · sunrise {rise}, sunset {set}"),
                     None => String::new(),
                 };
-                ui.label(format!("🕒 {} local ({}){sun}", g.fmt_at(&code, now), fmt_zone(&code, now)));
+                ui.label(format!(
+                    "🕗 {} local ({}) · {}{sun}",
+                    g.fmt_at(&code, now),
+                    fmt_zone(&code, now),
+                    if day { "☀ day" } else { "🌙 night" }
+                ));
                 let wx = g.airport_weather(&code);
                 ui.label(format!(
-                    "{} {} {}°C · wind {:03}° {} kt{}",
+                    "{} {} · {} °C · wind {:03}° {} kt{}",
                     wx.icon,
                     wx.name,
                     wx.temp_c,
@@ -1775,166 +2246,257 @@ impl App {
                     wx.wind_kt,
                     if wx.gust_kt > 0 { format!(", gusts {} kt", wx.gust_kt) } else { String::new() }
                 ));
-                ui.weak(format!(
-                    "Catchment {:.0}k people · longest runway {:.0} m{} · stands up to class {}",
-                    a.catchment / 1000.0,
-                    a.runway,
-                    if a.runway_paved < a.runway { format!(" ({:.0} m paved)", a.runway_paved) } else { String::new() },
-                    CLASSES[max_class(&code)]
-                ));
+                let rivals: Vec<(String, String, bool, usize)> = g
+                    .state
+                    .rivals
+                    .iter()
+                    .filter_map(|r| {
+                        let n = r.routes.iter().filter(|rt| rt.a == code || rt.b == code).count();
+                        let hub = r.hubs.contains(&code);
+                        (n > 0 || hub).then(|| (r.name.clone(), r.color.clone(), hub, n))
+                    })
+                    .collect();
+                if !rivals.is_empty() {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.weak("Rivals here:");
+                        for (name, color, hub, n) in &rivals {
+                            ui.colored_label(hex(color), "●");
+                            ui.label(format!("{name}{} · {n} routes", if *hub { " (hub)" } else { "" }));
+                        }
+                    });
+                }
+                for e in g.active_effects().filter(|e| Game::effect_hits(e, &code) && !e.at.all) {
+                    ui.colored_label(Color32::from_rgb(255, 200, 90), format!("⚠ {}", e.label));
+                }
+                // ---------- slots ----------
                 ui.separator();
+                ui.strong("Slots");
                 let mine = g.slot_count(&code);
                 let cap = g.slot_capacity(&code);
                 let free = g.free_slots(&code, None);
-                ui.strong(format!("Slots: {cap} · yours {mine} · free {free}"));
-                ui.weak(format!("Lease {} upfront + {}/week. A slot holds one of your planes on the ground at a time.",
-                    fmt_money(slot_upfront(&code)), fmt_money(slot_weekly(&code))));
-                ui.horizontal(|ui| {
-                    if ui.add_enabled(free > 0, egui::Button::new(if mine == 0 { "Lease a slot" } else { "Lease another slot" })).clicked() {
-                        action = Some((0, String::new()));
+                let holders = g.slot_holders(&code);
+                ui.label(format!(
+                    "{cap} slots (one per aircraft stand) · {mine} yours · {}",
+                    if free == 0 { "none free".to_string() } else { format!("{free} free") }
+                ));
+                // the bar: yours, the holders', free
+                let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 8.0), egui::Sense::hover());
+                let mut x = rect.left();
+                let w = rect.width() / cap.max(1) as f32;
+                let mut seg = |n: u32, c: Color32| {
+                    let r = egui::Rect::from_min_size(egui::pos2(x, rect.top()), Vec2::new(w * n as f32, rect.height()));
+                    ui.painter().rect_filled(r, 0.0, c);
+                    x += w * n as f32;
+                };
+                seg(mine, Color32::from_rgb(255, 69, 58));
+                for h in &holders {
+                    seg(h.n, hex(&h.color));
+                }
+                seg(free, Color32::from_gray(90));
+                egui::Grid::new("aslots").striped(true).show(ui, |ui| {
+                    ui.colored_label(Color32::from_rgb(255, 69, 58), "● You");
+                    ui.label(mine.to_string());
+                    ui.label(format!("{}/week each", fmt_money(g.slot_fee(&code))));
+                    ui.end_row();
+                    ui.colored_label(Color32::from_gray(150), "○ Free");
+                    ui.label(free.to_string());
+                    ui.label(format!("{} + {}/week", fmt_money(g.slot_price(&code)), fmt_money(g.slot_fee(&code))));
+                    ui.end_row();
+                });
+                let tab = g.slot_table(&code);
+                egui::Grid::new("aclasses").striped(true).show(ui, |ui| {
+                    for h in ["Class", "stands", "yours", "free", ""] {
+                        ui.weak(h);
                     }
-                    if mine > 0 && ui.button(if mine == 1 { "Give up the airport" } else { "Give one back" }).clicked() {
-                        action = Some((1, String::new()));
+                    ui.end_row();
+                    for c in (0..6).rev() {
+                        if tab.cap[c] == 0 && tab.mine[c] == 0 {
+                            continue;
+                        }
+                        ui.label(CLASSES[c]);
+                        ui.label(tab.cap[c].to_string());
+                        ui.label(if tab.mine[c] > 0 { tab.mine[c].to_string() } else { String::new() });
+                        ui.label(if tab.free[c] > 0 { tab.free[c].to_string() } else { String::new() });
+                        ui.horizontal(|ui| {
+                            if tab.mine[c] > 0 && ui.small_button("−").on_hover_text("Give one back").clicked() {
+                                action = Some((1, c, String::new()));
+                            }
+                            if tab.free[c] > 0 && ui.small_button("+").on_hover_text("Lease one").clicked() {
+                                action = Some((0, c, String::new()));
+                            }
+                        });
+                        ui.end_row();
                     }
                 });
-                let holders = g.slot_holders(&code);
                 if !holders.is_empty() {
-                    ui.collapsing("Who holds the other slots", |ui| {
+                    if self.offer <= 0.0 {
+                        self.offer = g.slot_offer_price(&code, &holders[0].id);
+                    }
+                    egui::Grid::new("aholders").striped(true).show(ui, |ui| {
                         for h in &holders {
+                            ui.colored_label(hex(&h.color), format!("● {}{}", h.name, if h.hub { " (hub)" } else { "" }));
+                            ui.label(h.n.to_string());
                             ui.horizontal(|ui| {
-                                ui.colored_label(hex(&h.color), "■");
-                                ui.label(format!("{} – {}{}", h.name, h.n, if h.hub { " (hub)" } else { "" }));
-                            });
-                        }
-                        if free == 0 {
-                            ui.separator();
-                            ui.label("No slot is free: offer a holder money for one of theirs.");
-                            if self.offer <= 0.0 {
-                                self.offer = g.slot_offer_price(&code, &holders[0].id);
-                            }
-                            ui.add(egui::DragValue::new(&mut self.offer).speed(1000.0).range(0.0..=1e9).prefix("CHF "));
-                            for h in &holders {
-                                let chance = g.slot_offer_chance(&code, &h.id, self.offer);
-                                if ui.button(format!("Offer to {} ({:.0}% chance)", h.name, chance * 100.0)).clicked() {
-                                    action = Some((2, h.id.clone()));
+                                if ui.small_button("−").clicked() {
+                                    self.offer = (self.offer - 50_000.0).max(0.0);
                                 }
+                                ui.label(fmt_money(self.offer));
+                                if ui.small_button("+").clicked() {
+                                    self.offer += 50_000.0;
+                                }
+                                ui.weak(format!("{:.0}%", g.slot_offer_chance(&code, &h.id, self.offer) * 100.0));
+                            });
+                            if ui.add_enabled(free == 0, egui::Button::new("Make offer").small()).clicked() {
+                                action = Some((2, 0, h.id.clone()));
+                            }
+                            ui.end_row();
+                        }
+                    });
+                }
+                let (rep, _) = g.reputation(Some(&code));
+                ui.weak(format!(
+                    "Your reputation at {code}: {rep:.0}/100 · when no slot is free, offer a holder money for one of theirs: \
+                     the airport decides by your offer and reputation"
+                ));
+                // ---------- your planes ----------
+                let here: Vec<&Plane> = g.state.planes.iter().filter(|p| p.location != code && p.status != Status::Flying).collect();
+                if mine > 0 && !here.is_empty() {
+                    ui.horizontal_wrapped(|ui| {
+                        for p in here.iter().take(8) {
+                            if ui.small_button(format!("Send {} here", p.id)).clicked() {
+                                action = Some((3, 0, p.id.clone()));
                             }
                         }
                     });
                 }
                 let occ = g.slot_occupants(&code);
                 if !occ.is_empty() {
-                    ui.separator();
-                    ui.strong("Your planes here");
-                    for (i, how) in occ {
-                        ui.label(format!("{} – {how}", Game::name_of(&g.state.planes[i])));
-                    }
+                    ui.weak(
+                        occ.iter().map(|(i, how)| format!("{} {how}", g.state.planes[*i].id)).collect::<Vec<_>>().join(" · "),
+                    );
                 }
-                // ---------- shares and construction ----------
+                // ---------- passengers and tickets to your airports ----------
                 ui.separator();
-                let st = g.stake(&code);
-                ui.strong(format!("Shares · you own {st}%"));
-                ui.weak(format!(
-                    "{:.0}k passengers a year · profit {}/week · value {} · your dividend {}/week",
-                    g.airport_pax_year(&code) / 1000.0,
-                    fmt_money(g.airport_profit(&code)),
-                    fmt_money(g.airport_value(&code)),
-                    fmt_money(g.dividend(&code))
-                ));
-                ui.horizontal(|ui| {
-                    if st < 100 && ui.small_button(format!("Buy {SHARE_STEP}% ({})", fmt_money(g.share_price(&code, SHARE_STEP)))).clicked() {
-                        action = Some((3, String::new()));
+                egui::Grid::new("aroutes").striped(true).show(ui, |ui| {
+                    for h in ["From your slot", "km", "pax/day", "ticket"] {
+                        ui.weak(h);
                     }
-                    if st > 0 && ui.small_button(format!("Sell {SHARE_STEP}% ({})", fmt_money(g.share_sale(&code, SHARE_STEP)))).clicked() {
-                        action = Some((4, String::new()));
-                    }
-                });
-                ui.weak(format!(
-                    "From {BOARD_STAKE}% you can order construction, from {MAJORITY_STAKE}% your slots there cost nothing."
-                ));
-                for p in g.state.projects.iter().filter(|p| p.code == code) {
-                    let frac = (g.state.time - p.start) as f32 / (p.done - p.start).max(1) as f32;
-                    ui.add(egui::ProgressBar::new(frac).text(format!("{} – ready {}", p.label, fmt_time(p.done))));
-                }
-                if st >= BOARD_STAKE {
-                    ui.collapsing("Construction", |ui| {
-                        for o in g.project_options(&code) {
-                            ui.horizontal(|ui| {
-                                let r = ui.add_enabled(
-                                    o.err.is_none(),
-                                    egui::Button::new(format!("{} · {} · {} weeks", o.label, fmt_money(o.cost), o.weeks)).small(),
-                                );
-                                let r = match &o.err {
-                                    Some(e) => r.on_disabled_hover_text(e),
-                                    None => r.on_hover_text(format!("Whole cost {}, your share {}", fmt_money(o.full), fmt_money(o.cost))),
-                                };
-                                if r.clicked() {
-                                    action = Some((5, format!("{}|{}", o.kind, o.len)));
-                                }
-                            });
-                        }
-                    });
-                }
-                // passengers to and from your airports
-                ui.separator();
-                ui.strong("Passengers a day to your airports");
-                egui::Grid::new("dem").striped(true).show(ui, |ui| {
-                    ui.weak("to");
-                    ui.weak("km");
-                    ui.weak("pax/day");
-                    ui.weak("fare");
                     ui.end_row();
-                    let mut rows: Vec<(String, f64, f64)> = g
+                    let mut rows: Vec<(String, f64, f64, f64)> = g
                         .state
                         .slots
                         .keys()
                         .filter(|c| **c != code)
-                        .map(|c| (c.clone(), d.dist(&code, c), g.pax_demand(&code, c, 0.0)))
+                        .map(|c| (c.clone(), d.dist(c, &code), g.pax_demand(c, &code, 0.0), g.market_share(c, &code, 0.0)))
                         .collect();
                     rows.sort_by(|x, y| y.2.total_cmp(&x.2));
-                    for (c, km, pax) in rows.into_iter().take(12) {
-                        ui.label(c.clone());
+                    for (c, km, pax, share) in rows.into_iter().take(14) {
+                        ui.label(format!("{c} → {code}"));
                         ui.label(format!("{km:.0}"));
-                        ui.label(format!("{pax:.0}"));
-                        ui.label(fmt_money(g.fare(&code, &c)));
+                        ui.label(if share < 0.999 { format!("{pax:.0} you {:.0}%", share * 100.0) } else { format!("{pax:.0}") });
+                        ui.horizontal(|ui| {
+                            if ui.small_button("−").clicked() {
+                                action = Some((4, 0, c.clone()));
+                            }
+                            ui.label(format!("{} {:.0}%", fmt_money(g.fare(&c, &code)), g.fare_factor(&c, &code) * 100.0));
+                            if ui.small_button("+").clicked() {
+                                action = Some((5, 0, c.clone()));
+                            }
+                        });
                         ui.end_row();
                     }
                 });
-                let rivals: Vec<String> = g.state.rivals.iter().filter(|r| r.hubs.contains(&code)).map(|r| r.name.clone()).collect();
-                if !rivals.is_empty() {
-                    ui.weak(format!("Hub of {}", rivals.join(", ")));
+                // ---------- shares and construction ----------
+                ui.separator();
+                let st = g.stake(&code);
+                ui.strong(if st > 0 { format!("Shares · you own {st}%") } else { "Shares".to_string() });
+                ui.label(format!(
+                    "Value {} · profit ≈ {}/week · {:.1}M pax/year",
+                    fmt_money(g.airport_value(&code)),
+                    fmt_money(g.airport_profit(&code)),
+                    g.airport_pax_year(&code) / 1e6
+                ));
+                if st > 0 {
+                    ui.label(format!("Your dividend ≈ {}/week", fmt_money(g.dividend(&code))));
                 }
-                let effects: Vec<String> = g.active_effects().filter(|e| Game::effect_hits(e, &code) && !e.at.all).map(|e| e.label.clone()).collect();
-                for e in effects {
-                    ui.colored_label(Color32::from_rgb(255, 200, 90), format!("⚠ {e}"));
+                ui.horizontal(|ui| {
+                    if st < 100 && ui.button(format!("Buy {SHARE_STEP}% · {}", fmt_money(g.share_price(&code, SHARE_STEP)))).clicked() {
+                        action = Some((6, 0, String::new()));
+                    }
+                    if st > 0 && ui.button(format!("Sell {SHARE_STEP}% · {}", fmt_money(g.share_sale(&code, SHARE_STEP)))).clicked() {
+                        action = Some((7, 0, String::new()));
+                    }
+                });
+                ui.weak(format!("{BOARD_STAKE}%: order runways and terminals · {MAJORITY_STAKE}%: no weekly slot fee here."));
+                ui.strong("Construction");
+                for p in g.state.projects.iter().filter(|p| p.code == code) {
+                    let frac = (g.state.time - p.start) as f32 / (p.done - p.start).max(1) as f32;
+                    ui.add(egui::ProgressBar::new(frac).text(format!("{} – ready {}", p.label, fmt_time(p.done))));
+                }
+                if st < BOARD_STAKE {
+                    ui.weak(format!("Own {BOARD_STAKE}% of the airport to build runways and terminals."));
+                } else {
+                    for o in g.project_options(&code) {
+                        let r = ui.add_enabled(
+                            o.err.is_none(),
+                            egui::Button::new(format!("{} · {} · {} weeks", o.label, fmt_money(o.cost), o.weeks)).small(),
+                        );
+                        let r = match &o.err {
+                            Some(e) => r.on_disabled_hover_text(e),
+                            None => r.on_hover_text(format!("Whole cost {}, your share {}", fmt_money(o.full), fmt_money(o.cost))),
+                        };
+                        if r.clicked() {
+                            action = Some((8, 0, format!("{}|{}", o.kind, o.len)));
+                        }
+                    }
                 }
             });
         if !open {
             self.selected = None;
         }
-        if let Some((k, holder)) = action {
-            let r = match k {
-                0 => g.lease_slot(&code, None),
-                1 => g.drop_slot(&code, None),
-                3 => g.buy_shares(&code, SHARE_STEP),
-                4 => g.sell_shares(&code, SHARE_STEP),
-                5 => {
-                    let (kind, len) = holder.split_once('|').unwrap_or(("", "0"));
-                    g.start_project(&code, kind, len.parse().unwrap_or(0.0))
+        let Some((kind, c, s)) = action else { return };
+        let r = match kind {
+            0 => g.lease_slot(&code, Some(c)),
+            1 => g.drop_slot(&code, Some(c)),
+            2 => match g.make_slot_offer(&code, &s, self.offer) {
+                Ok(true) => {
+                    self.info(ctx, "Accepted! The slot is yours.");
+                    Ok(())
                 }
-                _ => match g.make_slot_offer(&code, &holder, self.offer) {
-                    Ok(true) => {
-                        self.info(ctx, "Accepted! The slot is yours.");
-                        Ok(())
-                    }
-                    Ok(false) => Err("The airport turned your offer down. Try again tomorrow, with more money or a better reputation.".into()),
-                    Err(e) => Err(e),
-                },
-            };
-            self.say(ctx, r);
-        }
+                Ok(false) => Err("The airport turned your offer down. Try again tomorrow, with more money or a better reputation.".into()),
+                Err(e) => Err(e),
+            },
+            3 => match g.plane_idx(&s) {
+                Some(i) => g.send_plane(i, &code),
+                None => Ok(()),
+            },
+            4 => {
+                g.change_fare(&s, &code, -1);
+                Ok(())
+            }
+            5 => {
+                g.change_fare(&s, &code, 1);
+                Ok(())
+            }
+            6 => g.buy_shares(&code, SHARE_STEP),
+            7 => g.sell_shares(&code, SHARE_STEP),
+            8 => {
+                let (kind, len) = s.split_once('|').unwrap_or(("", "0"));
+                g.start_project(&code, kind, len.parse().unwrap_or(0.0))
+            }
+            _ => {
+                // zoom in: close enough for its gates, as the browser game's showAirport
+                let a = &data().airports[k];
+                self.map.center_at(lat_lon(a.lat, a.lon));
+                let _ = self.map.set_zoom(13.0);
+                Ok(())
+            }
+        };
+        self.say(ctx, r);
     }
 
+    /// The newspaper as in the browser game: a sheet of paper with the paper's name, the date and a price, the
+    /// headline, the subhead, a picture and the story in two columns; "Next story (n more)". The game waits meanwhile.
     fn newspaper(&mut self, ctx: &egui::Context) -> bool {
         let Some(g) = &mut self.game else { return false };
         if !self.newspapers {
@@ -1942,30 +2504,65 @@ impl App {
             return false;
         }
         let Some(story) = g.state.news.first().cloned() else { return false };
+        let more = g.state.news.len() - 1;
         let mut done = false;
-        egui::Modal::new(egui::Id::new("news")).show(ctx, |ui| {
-            ui.set_width(520.0);
-            ui.vertical_centered(|ui| {
-                ui.label(RichText::new(story.paper.to_uppercase()).size(14.0).weak());
-                ui.label(RichText::new(fmt_time(story.t)).weak());
-                ui.separator();
-                ui.label(RichText::new(&story.headline).size(24.0).strong().color(if story.good {
-                    Color32::from_rgb(140, 230, 150)
-                } else {
-                    Color32::from_rgb(255, 150, 140)
-                }));
-                ui.label(RichText::new(&story.sub).size(16.0).italics());
+        let ink = Color32::from_rgb(26, 24, 20);
+        let paper = Color32::from_rgb(243, 236, 216);
+        egui::Modal::new(egui::Id::new("news"))
+            .frame(egui::Frame::new().fill(paper).inner_margin(24.0).corner_radius(2.0).stroke(Stroke::new(1.0, Color32::from_rgb(200, 190, 165))))
+            .show(ctx, |ui| {
+                ui.set_width(560.0);
+                ui.visuals_mut().override_text_color = Some(ink);
+                ui.vertical_centered(|ui| {
+                    ui.label(RichText::new(&story.paper).size(30.0).strong().family(egui::FontFamily::Proportional).color(ink));
+                });
+                let (r, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 3.0), egui::Sense::hover());
+                ui.painter().line_segment([r.left_center(), r.right_center()], Stroke::new(1.5, ink));
+                ui.horizontal(|ui| {
+                    let day = fmt_time(story.t);
+                    let day = day.trim_end_matches(&format!(" {}", fmt_clock(story.t))).to_uppercase();
+                    ui.label(RichText::new(day).small().color(ink));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(RichText::new(format!("{CURRENCY} 1.50")).small().color(ink));
+                        ui.add_space(ui.available_width() / 2.0 - 40.0);
+                        ui.label(RichText::new("LATE EDITION").small().color(ink));
+                    });
+                });
+                let (r, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 3.0), egui::Sense::hover());
+                ui.painter().line_segment([r.left_center(), r.right_center()], Stroke::new(1.0, ink));
+                ui.add_space(6.0);
+                ui.vertical_centered(|ui| {
+                    ui.label(RichText::new(&story.headline).size(25.0).strong().color(ink));
+                    ui.label(RichText::new(&story.sub).size(15.0).italics().color(Color32::from_rgb(70, 64, 54)));
+                });
+                ui.add_space(8.0);
+                ui.horizontal_top(|ui| {
+                    // the picture: a print plate for what the story is about
+                    let (rect, _) = ui.allocate_exact_size(Vec2::new(200.0, 150.0), egui::Sense::hover());
+                    news_picture(ui.painter(), rect, &story.headline);
+                    ui.vertical(|ui| {
+                        ui.set_width(ui.available_width());
+                        let mut body = story.body.clone();
+                        if let Some(first) = body.chars().next() {
+                            // the drop cap
+                            body = body[first.len_utf8()..].to_string();
+                            ui.horizontal_wrapped(|ui| {
+                                ui.label(RichText::new(first.to_string()).size(34.0).strong().color(ink));
+                                ui.label(RichText::new(body).color(ink));
+                            });
+                        }
+                    });
+                });
+                ui.add_space(12.0);
+                ui.vertical_centered(|ui| {
+                    let label = if more > 0 { format!("Next story ({more} more)") } else { "Continue".to_string() };
+                    let b = egui::Button::new(RichText::new(label).strong().color(Color32::WHITE)).fill(Color32::from_rgb(220, 50, 45));
+                    if ui.add(b).clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        done = true;
+                    }
+                    ui.checkbox(&mut self.newspapers, "Show newspapers");
+                });
             });
-            ui.add_space(8.0);
-            ui.label(&story.body);
-            ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                if ui.button("Continue").clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    done = true;
-                }
-                ui.checkbox(&mut self.newspapers, "Show newspapers");
-            });
-        });
         if done {
             g.state.news.remove(0);
         }
@@ -2025,8 +2622,15 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.selftest_tick(&ctx);
+        if ctx.input(|i| i.key_pressed(egui::Key::F2)) {
+            self.dev_open = !self.dev_open;
+        }
         if self.game.is_none() {
-            self.start_screen(ui);
+            if self.settings.style.is_none() && self.selftest.is_none() {
+                self.style_picker(ui);
+            } else {
+                self.start_screen(ui);
+            }
             return;
         }
         // keys
@@ -2038,7 +2642,20 @@ impl eframe::App for App {
                 if i.key_pressed(egui::Key::Space) {
                     self.paused = !self.paused;
                 }
-                for (k, key) in [egui::Key::Num1, egui::Key::Num2, egui::Key::Num3, egui::Key::Num4, egui::Key::Num5, egui::Key::Num6].iter().enumerate() {
+                if i.key_pressed(egui::Key::ArrowRight) {
+                    self.speed = (self.speed + 1).min(SPEEDS.len() - 1);
+                    self.paused = false;
+                }
+                if i.key_pressed(egui::Key::ArrowLeft) {
+                    self.speed = self.speed.saturating_sub(1);
+                }
+                if i.key_pressed(egui::Key::Escape) {
+                    // closes the windows, as Esc does in the browser game before it opens the menu
+                    self.selected = None;
+                    self.draft = None;
+                    self.market_open = false;
+                }
+                for (k, key) in [egui::Key::Num1, egui::Key::Num2, egui::Key::Num3, egui::Key::Num4, egui::Key::Num5, egui::Key::Num6, egui::Key::Num7].iter().enumerate() {
                     if i.key_pressed(*key) {
                         self.speed = k;
                         self.paused = false;
@@ -2055,7 +2672,7 @@ impl eframe::App for App {
                 self.t += dt * SPEEDS[self.speed];
                 let target = self.t.floor() as i64;
                 if target > g.state.time {
-                    g.advance((target - g.state.time).min(6 * 60));
+                    g.advance((target - g.state.time).min(DAY));
                 }
                 self.t = self.t.clamp(g.state.time as f64, g.state.time as f64 + 1.0);
                 ctx.request_repaint();
@@ -2065,7 +2682,11 @@ impl eframe::App for App {
             }
         }
         let now = ctx.input(|i| i.time);
-        if now - self.last_save > 60.0 && self.selftest.is_none() {
+        if self.autosave && now - self.last_save > 30.0 && self.selftest.is_none() {
+            self.settings.autosave = self.autosave;
+            self.settings.map_style = self.map_style;
+            self.settings.volume = self.sound.volume;
+            self.settings.save();
             self.save(&ctx);
         }
 
@@ -2073,6 +2694,20 @@ impl eframe::App for App {
         self.plane_strip(ui);
         self.side_panel(ui);
         self.plane_window(&ctx);
+        self.timetable_window(&ctx);
+        self.market_window(&ctx);
+        self.stats_window(&ctx);
+        self.dev_window(&ctx);
+        // 🎥 Follow on the map: keep the plane in the middle
+        if let (Some(id), Some(g)) = (self.follow.clone(), &self.game) {
+            match g.plane_idx(&id) {
+                Some(i) => {
+                    let (lat, lon, _, _) = g.plane_position(i, self.t);
+                    self.map.center_at(lat_lon(lat, lon));
+                }
+                None => self.follow = None,
+            }
+        }
         self.airport_window(&ctx);
         self.help(&ctx);
 
@@ -2087,16 +2722,81 @@ impl eframe::App for App {
                 _ => &mut self.tiles_sat,
             };
             let home = data().airport(g.home());
+            // the planes' top views for the map
+            let mut icons: std::collections::HashMap<String, egui::TextureId> = std::collections::HashMap::new();
+            let ctx2 = ui.ctx().clone();
+            let kinds = g.state.planes.iter().map(|p| p.kind.clone()).chain(g.state.rivals.iter().flat_map(|r| r.routes.iter().map(|rt| rt.kind.clone())));
+            for k in kinds {
+                if !icons.contains_key(&k) {
+                    if let Some(tex) = self.pics.icon(&ctx2, &k) {
+                        icons.insert(k, tex.id());
+                    }
+                }
+            }
             let (t, selected, layers) = (self.t, self.selected, &self.layers);
+            let mut map_rect = egui::Rect::NOTHING;
             Map::new(Some(tiles), &mut self.map, lat_lon(home.lat, home.lon)).show(ui, |ui, response, projector, _memory| {
-                let (_, clicked) = mapview::draw(ui, response, projector, g, t, selected, layers);
+                let (_, clicked) = mapview::draw(ui, response, projector, g, t, selected, layers, &icons);
                 let c = projector.unproject(response.rect.center().to_vec2());
                 let mpp = 1.0 / projector.scale_pixel_per_meter(c).max(1e-9) as f64;
                 listener = (c.y(), c.x(), mpp * 60.0);
+                map_rect = response.rect;
                 if response.clicked() {
                     picked = Some(clicked);
                 }
             });
+            // ---------- on the map, as the browser game: + − ⌂, the weather chip, the scale and the legend ----------
+            let mpp = listener.2 / 60.0;
+            let zoom = self.map.zoom();
+            egui::Area::new(egui::Id::new("mapbtns")).fixed_pos(map_rect.left_top() + Vec2::new(10.0, 10.0)).show(ui.ctx(), |ui| {
+                egui::Frame::window(ui.style()).inner_margin(2.0).show(ui, |ui| {
+                    if ui.button(" + ").on_hover_text("Zoom in").clicked() {
+                        let _ = self.map.zoom_in();
+                    }
+                    if ui.button(" − ").on_hover_text("Zoom out").clicked() {
+                        let _ = self.map.zoom_out();
+                    }
+                    if ui.button(" ⌂ ").on_hover_text("Show my network").clicked() {
+                        fit_network(&mut self.map, g, map_rect);
+                    }
+                });
+            });
+            if zoom >= 6.0 && self.layers.weather {
+                let wx = g.weather_at(listener.0, listener.1, g.state.time);
+                egui::Area::new(egui::Id::new("wxchip")).pivot(Align2::CENTER_TOP).fixed_pos(map_rect.center_top() + Vec2::new(0.0, 8.0)).show(ui.ctx(), |ui| {
+                    egui::Frame::window(ui.style()).inner_margin(egui::Margin::symmetric(8, 2)).show(ui, |ui| {
+                        ui.add(egui::Label::new(format!("{} {} · {} °C · wind {:03}° {} kt", wx.icon, wx.name, wx.temp_c, wx.wind_from, wx.wind_kt)).extend());
+                    });
+                });
+            }
+            egui::Area::new(egui::Id::new("scale")).fixed_pos(map_rect.left_bottom() + Vec2::new(10.0, -54.0)).show(ui.ctx(), |ui| {
+                // a round length about 100 px long
+                let want = mpp * 100.0;
+                let step = 10f64.powf(want.log10().floor());
+                let len = [1.0, 2.0, 5.0, 10.0].iter().map(|k| k * step).filter(|l| *l <= want).last().unwrap_or(step);
+                let px = (len / mpp) as f32;
+                let (r, _) = ui.allocate_exact_size(Vec2::new(px + 4.0, 16.0), egui::Sense::hover());
+                let p = ui.painter();
+                p.line_segment([r.left_bottom() + Vec2::new(0.0, -3.0), r.left_bottom() + Vec2::new(px, -3.0)], Stroke::new(2.0, Color32::WHITE));
+                p.text(r.left_top(), Align2::LEFT_TOP, if len >= 1000.0 { format!("{:.0} km", len / 1000.0) } else { format!("{len:.0} m") },
+                    egui::FontId::proportional(11.0), Color32::WHITE);
+            });
+            egui::Area::new(egui::Id::new("legend")).fixed_pos(map_rect.left_bottom() + Vec2::new(10.0, -32.0)).show(ui.ctx(), |ui| {
+                ui.toggle_value(&mut self.layers.legend, "▸ Legend");
+            });
+            if self.layers.legend {
+                egui::Area::new(egui::Id::new("legendbox")).anchor(Align2::LEFT_BOTTOM, [map_rect.left() + 10.0, -(ui.ctx().content_rect().bottom() - map_rect.bottom()) - 80.0]).show(ui.ctx(), |ui| {
+                    egui::Frame::window(ui.style()).show(ui, |ui| {
+                        ui.colored_label(mapview::OWN, "● your airports (slots)");
+                        ui.colored_label(mapview::ROUTE, "● airports · ━ your routes");
+                        ui.colored_label(Color32::from_gray(235), "● small airfields");
+                        ui.colored_label(mapview::PLAYER, "▲ your planes");
+                        ui.colored_label(Color32::from_rgb(249, 115, 22), "▲ ─ rival airlines");
+                        ui.colored_label(Color32::from_rgb(255, 214, 10), "● stands (zoomed in)");
+                        ui.weak("Airports grow with their size: small, regional, large, hub.");
+                    });
+                });
+            }
             if g.state.game_over {
                 egui::Area::new(egui::Id::new("over")).anchor(Align2::CENTER_CENTER, [0.0, 0.0]).show(ui.ctx(), |ui| {
                     egui::Frame::window(ui.style()).show(ui, |ui| {
@@ -2125,6 +2825,12 @@ impl eframe::App for App {
     }
 
     fn on_exit(&mut self) {
+        if self.selftest.is_none() {
+            self.settings.autosave = self.autosave;
+            self.settings.map_style = self.map_style;
+            self.settings.volume = self.sound.volume;
+            self.settings.save();
+        }
         if let Some(g) = &self.game {
             let path = save_path();
             let _ = std::fs::create_dir_all(path.parent().unwrap());
@@ -2234,6 +2940,62 @@ impl App {
             }
             11 => {
                 shot("6-world-shares.png");
+                next(self, 1.0);
+            }
+            12 => {
+                self.market_open = true;
+                self.selected = None;
+                next(self, 3.0);
+            }
+            13 => {
+                shot("7-market.png");
+                next(self, 1.0);
+            }
+            14 => {
+                self.market_open = false;
+                self.select_plane(1);
+                if let Some(g) = &self.game {
+                    self.stats_open = Some(g.state.planes[1].id.clone());
+                }
+                let _ = self.map.set_zoom(7.0);
+                next(self, 3.0);
+            }
+            15 => {
+                shot("8-plane-stats.png");
+                next(self, 1.0);
+            }
+            16 => {
+                // the developer tools ask for their password (the test never sets one)
+                self.stats_open = None;
+                self.dev_open = true;
+                if let Some(g) = self.game.as_mut() {
+                    g.dev_world_event("festival");
+                }
+                next(self, 2.0);
+            }
+            17 => {
+                shot("9-dev-news.png");
+                next(self, 1.0);
+            }
+            18 => {
+                if let Some(g) = self.game.as_mut() {
+                    g.state.news.clear();
+                }
+                self.dev_open = false;
+                self.section = Some(Section::Fleet);
+                crate::style::apply(ctx, "tycoon");
+                next(self, 2.0);
+            }
+            19 => {
+                shot("10-style-tycoon.png");
+                next(self, 1.0);
+            }
+            20 => {
+                crate::style::apply(ctx, "board");
+                next(self, 2.0);
+            }
+            21 => {
+                shot("11-style-board.png");
                 next(self, 1.0);
             }
             _ => {
@@ -2509,5 +3271,343 @@ fn result_bars(ui: &mut egui::Ui, values: &[f64]) {
     painter.line_segment([egui::pos2(rect.left(), mid), egui::pos2(rect.right(), mid)], Stroke::new(0.5, Color32::from_gray(80)));
     if let Some(k) = hover_index(&resp, rect, n) {
         resp.on_hover_text(format!("{}: {}", day_name(values.len(), k), fmt_money(values[k])));
+    }
+}
+
+/// 3704 → "3'704", as the browser game writes numbers (de-CH).
+fn fmt_thousands(v: f64) -> String {
+    let digits = (v.round() as i64).unsigned_abs().to_string();
+    let mut out = String::new();
+    for (i, ch) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i) % 3 == 0 {
+            out.push('\'');
+        }
+        out.push(ch);
+    }
+    out
+}
+
+/// ⌂: the map over all your airports.
+fn fit_network(map: &mut MapMemory, g: &Game, rect: egui::Rect) {
+    let d = data();
+    let pts: Vec<(f64, f64)> = g.state.slots.keys().map(|c| (d.airport(c).lat, d.airport(c).lon)).collect();
+    if pts.is_empty() {
+        return;
+    }
+    let (mut la0, mut la1, mut lo0, mut lo1) = (90.0f64, -90.0f64, 180.0f64, -180.0f64);
+    for (la, lo) in &pts {
+        la0 = la0.min(*la);
+        la1 = la1.max(*la);
+        lo0 = lo0.min(*lo);
+        lo1 = lo1.max(*lo);
+    }
+    map.center_at(lat_lon((la0 + la1) / 2.0, (lo0 + lo1) / 2.0));
+    // the zoom at which the box fits (256 px tiles: 360° of longitude = 256 × 2^z px)
+    let span = ((lo1 - lo0).max(0.5) / 360.0 * 256.0) as f32;
+    let span_y = ((la1 - la0).max(0.5) / 170.0 * 256.0) as f32;
+    let z = ((rect.width() * 0.8 / span).min(rect.height() * 0.8 / span_y)).log2().clamp(2.0, 12.0);
+    let _ = map.set_zoom(z as f64);
+}
+
+/// 440000 → "CHF 440k", 1250000 → "CHF 1.3M" (the marketplace tiles).
+fn short_money(v: f64) -> String {
+    if v >= 1e6 {
+        format!("{CURRENCY} {:.1}M", v / 1e6)
+    } else {
+        format!("{CURRENCY} {:.0}k", v / 1e3)
+    }
+}
+
+/// The hangar the browser game shows its aircraft in: dark walls, roof trusses, lamps with light cones, a lit floor
+/// with a yellow line, the plane standing in the middle with its reflection.
+fn hangar_scene(p: &egui::Painter, rect: egui::Rect, tex: Option<&egui::TextureHandle>, label: &str) {
+    let ground = rect.top() + rect.height() * 0.8;
+    p.rect_filled(rect, 6.0, Color32::from_rgb(20, 27, 37));
+    let floor = egui::Rect::from_min_max(egui::pos2(rect.left(), ground), rect.max);
+    p.rect_filled(floor, 0.0, Color32::from_rgb(36, 42, 50));
+    p.line_segment([egui::pos2(rect.left(), ground + rect.height() * 0.09), egui::pos2(rect.right(), ground + rect.height() * 0.09)],
+        Stroke::new(1.5, Color32::from_rgba_unmultiplied(250, 204, 21, 110)));
+    let truss_y = rect.top() + rect.height() * 0.13;
+    p.line_segment([egui::pos2(rect.left(), truss_y), egui::pos2(rect.right(), truss_y)], Stroke::new(1.5, Color32::from_rgba_unmultiplied(200, 210, 224, 36)));
+    for k in 0..5 {
+        let x = rect.left() + rect.width() * (0.125 + 0.1875 * k as f32);
+        let top = egui::pos2(x, truss_y + 3.0);
+        let w = rect.width() * 0.11;
+        p.add(egui::Shape::convex_polygon(
+            vec![top + Vec2::new(-3.0, 0.0), top + Vec2::new(3.0, 0.0), egui::pos2(x + w, ground), egui::pos2(x - w, ground)],
+            Color32::from_rgba_unmultiplied(255, 246, 220, 14),
+            Stroke::NONE,
+        ));
+        p.circle_filled(top, (rect.height() * 0.025).max(2.0), Color32::from_rgba_unmultiplied(255, 240, 190, 200));
+    }
+    if !label.is_empty() {
+        p.text(rect.left_top() + Vec2::new(rect.width() * 0.13, rect.height() * 0.2), Align2::LEFT_TOP, label,
+            egui::FontId::proportional(11.0), Color32::from_rgba_unmultiplied(255, 255, 255, 50));
+    }
+    if let Some(tex) = tex {
+        // the picture: 1320 × 600 with the plane standing on its lower part
+        let w = rect.width() * 0.92;
+        let h = w * 600.0 / 1320.0;
+        let img = egui::Rect::from_min_size(egui::pos2(rect.center().x - w / 2.0, ground - h * 0.93), Vec2::new(w, h));
+        let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+        p.image(tex.id(), img, uv, Color32::WHITE);
+        // its reflection on the floor
+        let refl = egui::Rect::from_min_size(egui::pos2(img.left(), ground - h * 0.07), Vec2::new(w, h * 0.35));
+        p.image(tex.id(), refl, egui::Rect::from_min_max(egui::pos2(0.0, 0.93), egui::pos2(1.0, 0.58)), Color32::from_white_alpha(40));
+    }
+}
+
+/// The newspaper's picture, by what the story is about (as the browser game's print plates: a crash, an incident,
+/// a strike, a storm, a volcano, fuel, a party, a crowd, a chart or a plane).
+fn news_picture(p: &egui::Painter, rect: egui::Rect, headline: &str) {
+    let h = headline.to_uppercase();
+    let has = |words: &[&str]| words.iter().any(|w| h.contains(w));
+    let (icon, caption) = if has(&["CRASH", "MIRACLE"]) {
+        ("🔥", "The scene of the accident.")
+    } else if has(&["MAYDAY", "BIRD", "SMOKE", "DOOR", "OXYGEN", "GEAR", "PASSENGER", "HYDRAULIC"]) {
+        ("✈", "The aircraft after landing.")
+    } else if has(&["STRIKE", "WALK OUT", "PARALYSED"]) {
+        ("✊", "Pickets at the terminal.")
+    } else if has(&["STORM", "BLIZZARD"]) {
+        ("⛈", "The storm over the region.")
+    } else if has(&["VOLCANO", "ASH"]) {
+        ("🌋", "The ash cloud seen from space.")
+    } else if has(&["FUEL", "OIL"]) {
+        ("⛽", "Prices at the pump.")
+    } else if has(&["FESTIVAL", "FAIR", "MARATHON", "WEDDING", "VIRAL", "GEM", "CROWDS"]) {
+        ("🎉", "Visitors pour into the city.")
+    } else if has(&["CUP", "FINAL"]) {
+        ("🏟", "Fans on their way to the match.")
+    } else if has(&["ENTERS SERVICE", "AIRLINER", "TAKES OFF", "TAKE OFF"]) {
+        ("✈", "Rolled out for the press.")
+    } else {
+        ("📈", "The figures.")
+    };
+    let ink = Color32::from_rgb(26, 24, 20);
+    p.rect_filled(rect, 0.0, Color32::from_rgb(222, 214, 192));
+    // a halftone screen
+    let mut y = rect.top() + 3.0;
+    while y < rect.bottom() - 18.0 {
+        let mut x = rect.left() + 3.0;
+        while x < rect.right() {
+            p.circle_filled(egui::pos2(x, y), 0.8, Color32::from_rgba_unmultiplied(26, 24, 20, 40));
+            x += 5.0;
+        }
+        y += 5.0;
+    }
+    p.text(rect.center() + Vec2::new(0.0, -10.0), Align2::CENTER_CENTER, icon, egui::FontId::proportional(56.0), ink);
+    p.text(rect.left_bottom() + Vec2::new(4.0, -4.0), Align2::LEFT_BOTTOM, caption, egui::FontId::proportional(10.0), ink);
+    p.rect_stroke(rect, 0.0, Stroke::new(1.0, ink), egui::StrokeKind::Inside);
+}
+
+impl App {
+    /// The very first start asks for a style, as the browser game ("Welcome to Flightgame – pick a style").
+    fn style_picker(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        egui::CentralPanel::default().show(ui, |ui| {
+            ui.vertical_centered(|ui| {
+                ui.add_space(40.0);
+                ui.heading(RichText::new("✈ Welcome to Flightgame").size(32.0).strong());
+                ui.label("Pick a style for the game – click one to try it. You can change it any time in the menu.");
+                ui.add_space(14.0);
+            });
+            let cur = self.settings.style.clone().unwrap_or_else(|| self.style_try.clone());
+            ui.horizontal_wrapped(|ui| {
+                for t in &crate::style::THEMES {
+                    let (rect, r) = ui.allocate_exact_size(Vec2::new(230.0, 110.0), egui::Sense::click());
+                    let p = ui.painter_at(rect);
+                    p.rect_filled(rect, 8.0, ui.visuals().widgets.inactive.weak_bg_fill);
+                    if cur == t.id {
+                        p.rect_stroke(rect, 8.0, Stroke::new(2.0, Color32::from_rgb(239, 68, 68)), egui::StrokeKind::Inside);
+                    }
+                    let w = (rect.width() - 20.0) / 4.0;
+                    for (k, h) in t.swatch.iter().enumerate() {
+                        let r2 = egui::Rect::from_min_size(rect.min + Vec2::new(10.0 + k as f32 * w, 10.0), Vec2::new(w, 16.0));
+                        p.rect_filled(r2, 0.0, Color32::from_hex(h).unwrap_or(Color32::GRAY));
+                    }
+                    p.text(rect.min + Vec2::new(10.0, 34.0), Align2::LEFT_TOP, t.name, egui::FontId::proportional(15.0), ui.visuals().strong_text_color());
+                    let galley = p.layout(t.desc.to_string(), egui::FontId::proportional(11.0), ui.visuals().weak_text_color(), rect.width() - 20.0);
+                    p.galley(rect.min + Vec2::new(10.0, 56.0), galley, Color32::WHITE);
+                    if r.clicked() {
+                        self.style_try = t.id.to_string();
+                        crate::style::apply(&ctx, t.id);
+                    }
+                }
+            });
+            ui.add_space(14.0);
+            let name = crate::style::THEMES.iter().find(|t| t.id == self.style_try).map(|t| t.name).unwrap_or("Night");
+            if ui.add(egui::Button::new(RichText::new(format!("Continue with {name} →")).strong().color(Color32::WHITE)).fill(Color32::from_rgb(220, 50, 45))).clicked() {
+                self.settings.style = Some(self.style_try.clone());
+                self.settings.save();
+            }
+        });
+    }
+
+    /// The developer tools (F2, or Menu → Developer tools), behind a password: the first time you set one, after that
+    /// they ask for it once per start. Only a hash of it is kept (settings.json); delete "dev_hash" there to set a
+    /// new one if you forget it.
+    fn dev_window(&mut self, ctx: &egui::Context) {
+        if !self.dev_open {
+            return;
+        }
+        let mut open = true;
+        let mut msg: Option<Result<String, String>> = None;
+        egui::Window::new("🛠 Developer tools")
+            .id(egui::Id::new("devwin"))
+            .open(&mut open)
+            .default_pos([300.0, 120.0])
+            .default_width(380.0)
+            .vscroll(true)
+            .show(ctx, |ui| {
+                if !self.dev_unlocked {
+                    let first = self.settings.dev_hash.is_none();
+                    ui.label(if first {
+                        "Set a password for the developer tools. They ask for it from now on."
+                    } else {
+                        "The developer tools need their password."
+                    });
+                    let r = ui.add(egui::TextEdit::singleline(&mut self.dev_pw).password(true).hint_text("Password"));
+                    if first {
+                        ui.add(egui::TextEdit::singleline(&mut self.dev_pw2).password(true).hint_text("Once more"));
+                    }
+                    let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    if ui.button(if first { "Set password" } else { "Unlock" }).clicked() || enter {
+                        if first {
+                            if self.dev_pw.chars().count() < 4 {
+                                msg = Some(Err("At least 4 characters.".into()));
+                            } else if self.dev_pw != self.dev_pw2 {
+                                msg = Some(Err("The two don't match.".into()));
+                            } else {
+                                self.settings.dev_hash = Some(crate::style::hash(&self.dev_pw));
+                                self.settings.save();
+                                self.dev_unlocked = true;
+                                msg = Some(Ok("Password set.".into()));
+                            }
+                        } else if Some(crate::style::hash(&self.dev_pw)) == self.settings.dev_hash {
+                            self.dev_unlocked = true;
+                        } else {
+                            msg = Some(Err("Wrong password.".into()));
+                        }
+                        self.dev_pw.clear();
+                        self.dev_pw2.clear();
+                    }
+                    return;
+                }
+                let Some(g) = self.game.as_mut() else {
+                    ui.label("Start a game first.");
+                    return;
+                };
+                let d = data();
+                ui.weak("Every use is written to the log.");
+                ui.strong("Money");
+                ui.horizontal(|ui| {
+                    for (label, v) in [("+1M", 1e6), ("+10M", 1e7), ("+100M", 1e8), ("−1M", -1e6)] {
+                        if ui.button(label).clicked() {
+                            g.dev_money(v);
+                        }
+                    }
+                });
+                ui.strong("Planes");
+                if self.dev_type.is_empty() {
+                    self.dev_type = g.state.planes.first().map(|p| p.kind.clone()).unwrap_or_else(|| START_AIRCRAFT.into());
+                }
+                if !g.owns_slot(&self.dev_at) {
+                    self.dev_at = g.home().to_string();
+                }
+                ui.horizontal_wrapped(|ui| {
+                    egui::ComboBox::from_id_salt("devtype").selected_text(d.ac(&self.dev_type).name.clone()).width(170.0).show_ui(ui, |ui| {
+                        let mut list: Vec<&flightgame::data::Aircraft> = d.aircraft.iter().collect();
+                        list.sort_by(|a, b| a.name.cmp(&b.name));
+                        for a in list {
+                            ui.selectable_value(&mut self.dev_type, a.code.clone(), &a.name);
+                        }
+                    });
+                    ui.label("at");
+                    egui::ComboBox::from_id_salt("devat").selected_text(self.dev_at.clone()).show_ui(ui, |ui| {
+                        for c in g.state.slots.keys() {
+                            ui.selectable_value(&mut self.dev_at, c.clone(), c);
+                        }
+                    });
+                    ui.add(egui::DragValue::new(&mut self.dev_count).range(1..=20).prefix("× "));
+                    ui.checkbox(&mut self.dev_owned, "owned");
+                    if ui.button("Add").clicked() {
+                        msg = Some(g.dev_add_planes(&self.dev_type, &self.dev_at, self.dev_count, self.dev_owned).map(|_| "Added.".into()));
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Slot at the selected airport");
+                    if let Some(Pick::Airport(k)) = self.selected {
+                        let code = d.airports[k].code.clone();
+                        if ui.button(format!("+1 at {code}")).clicked() {
+                            g.dev_slot(&code);
+                        }
+                    } else {
+                        ui.weak("(click an airport)");
+                    }
+                });
+                ui.strong("World events");
+                ui.horizontal_wrapped(|ui| {
+                    for id in flightgame::dev::WORLD_EVENTS {
+                        if ui.small_button(id).clicked() {
+                            g.dev_world_event(id);
+                        }
+                    }
+                });
+                ui.strong("The selected plane");
+                match self.selected {
+                    Some(Pick::Plane(i)) if i < g.state.planes.len() => {
+                        let name = Game::name_of(&g.state.planes[i]);
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(name);
+                            if ui.small_button("Incident").clicked() {
+                                msg = Some(g.dev_trouble(i, true).map(|_| "On its way.".into()));
+                            }
+                            if ui.small_button("Emergency").clicked() {
+                                msg = Some(g.dev_trouble(i, false).map(|_| "Mayday.".into()));
+                            }
+                            if ui.small_button("Crash").clicked() {
+                                msg = Some(g.dev_crash(i).map(|_| "It will crash.".into()));
+                            }
+                        });
+                    }
+                    _ => {
+                        ui.weak("(click a plane)");
+                    }
+                }
+                ui.strong("World");
+                ui.horizontal_wrapped(|ui| {
+                    if ui.button("Finish construction").clicked() {
+                        g.dev_finish_projects();
+                    }
+                    if ui.button("New market offers").clicked() {
+                        g.dev_market();
+                    }
+                    if ui.button("+1 day").clicked() {
+                        g.dev_time(DAY);
+                    }
+                    if ui.button("+1 week").clicked() {
+                        g.dev_time(7 * DAY);
+                    }
+                });
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if ui.button("🔒 Lock").clicked() {
+                        self.dev_unlocked = false;
+                    }
+                    if ui.button("Change password").clicked() {
+                        self.settings.dev_hash = None;
+                        self.settings.save();
+                        self.dev_unlocked = false;
+                    }
+                });
+            });
+        if !open {
+            self.dev_open = false;
+        }
+        match msg {
+            Some(Ok(m)) => self.info(ctx, m),
+            Some(Err(e)) => self.say(ctx, Err(e)),
+            None => {}
+        }
     }
 }

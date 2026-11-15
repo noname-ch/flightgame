@@ -46,7 +46,7 @@ fn hash01(a: f64, b: f64, c: f64, d: f64) -> f64 {
 }
 
 /// The surface wind's direction (degrees it blows from) in a 4° cell on a day: mostly westerlies.
-fn wind_from(lat: f64, lon: f64, day: i64) -> f64 {
+pub fn wind_from(lat: f64, lon: f64, day: i64) -> f64 {
     let (a, b, c) = ((lat / 4.0).floor(), (lon / 4.0).floor(), day as f64);
     let r = hash01(a, b, c, 1.0);
     let easterly = hash01(a, b, c, 2.0) < 0.2;

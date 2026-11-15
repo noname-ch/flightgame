@@ -175,7 +175,7 @@ impl Game {
         }
     }
 
-    fn make_event(&mut self, id: &str) -> Option<Story> {
+    pub(crate) fn make_event(&mut self, id: &str) -> Option<Story> {
         let company = self.state.company.clone();
         match id {
             "airportStrike" => {
@@ -351,7 +351,8 @@ impl Game {
         p.stats.repair += em.repair;
         p.stats.incidents += 1;
         let w = t.div_euclid(DAY * 7);
-        if let Some(wk) = p.stats.weeks.iter_mut().find(|x| x.week == w) {
+        let y = year_of(t);
+        for wk in p.stats.weeks.iter_mut().filter(|x| x.week == w).chain(p.stats.years.iter_mut().filter(|x| x.week == y)) {
             wk.repair += em.repair;
         }
         p.ready_at = p.ready_at.max(t + em.grounded_hours * 60);
@@ -389,7 +390,8 @@ impl Game {
         p.stats.repair += inc.repair;
         p.stats.incidents += 1;
         let w = t.div_euclid(DAY * 7);
-        if let Some(wk) = p.stats.weeks.iter_mut().find(|x| x.week == w) {
+        let y = year_of(t);
+        for wk in p.stats.weeks.iter_mut().filter(|x| x.week == w).chain(p.stats.years.iter_mut().filter(|x| x.week == y)) {
             wk.repair += inc.repair;
         }
         p.ready_at = p.ready_at.max(t + inc.grounded_hours * 60);

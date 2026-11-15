@@ -62,14 +62,32 @@ cache folder.
 - **Sound** (🔇 / M, off until turned on; volume in the menu): the browser game's recordings mixed by what the planes
   near the map's centre do (taxiing, take-off, climb, cruise, approach, reverse thrust), the wash of planes a few
   kilometres off, and a jet whistling up when it starts at its gate. Above 300× it fades out, paused it is quiet.
+- **Looks as the browser game**: the five styles (Night, Tycoon, Metropolis, Pixel, Departure board; the first start
+  asks), each type's picture from `models/hangar` on the plane cards, the start screen and in the marketplace's
+  hangar, its top view from `models/icons` on the map, the newspaper on paper with a picture and "Next story".
+- **Windows as the browser game**: the Aircraft Marketplace (new and pre-owned, categories, sorting by price, seats,
+  range, cost per seat-hour or name, delivery airport, everything about a type, its delivery flight), the plane
+  window (what it does, stands, local times, weather, speed, height, the runway it takes at each airport: Auto or
+  one you pick), the stats window (this year, last year, all time, weeks, last flights), the timetable editor, the
+  airport panel (runways, landing fee, size, slots with the holders' bar, "Send … here", tickets, shares).
+- **Flights as the browser game draws them**: pushed back from a real stand (where the layout is known), taxiing to
+  the runway the wind gives (the shortest that fits within 45° of it) or the pilot picks, take-off run, climb, cruise
+  at the type's height, descent, final, landing, taxi to the stand. 🎥 Follow on the map keeps a plane in the middle.
+- **Map**: + − ⌂ (my network), towns and place names, the legend, the scale, the weather chip.
+- **Saving and speed**: autosave every 30 s (can be turned off), Save to file / Load from file, speeds up to 36k×,
+  ← → change the speed, Esc closes the windows.
+- **Developer tools** (F2 or the menu): money, planes, slots, world events, an incident, emergency or crash on the
+  selected plane, finishing construction, new market offers, time. Unlike the browser game they have a password:
+  the first time you set one, after that they ask for it once per start. Only a SHA-256 hash of it is kept, in
+  `settings.json` beside the save (with the style and other settings); remove its `dev_hash` to set a new one.
 
 ## What it leaves out (for now)
 
-The 3D view (with its cameras, aircraft models and plane window camera), the airport editor and the build mode
-(placing runways, aprons, stands and terminals by hand, new airports), the developer tools, the styles (Tycoon,
-Metropolis, Pixel, Departure board) and the bug reports. The stands of airports the browser game reads from
-OpenStreetMap while it runs are the made-up ones of their size here, and the sound is a mix of recordings, not the
-browser game's engine voices made up as they play.
+The 3D view (with its cameras and aircraft models; the plane window shows the type's picture instead of a camera),
+the airport editor and the build mode (placing runways, aprons, stands and terminals by hand, new airports), the
+airport checklist, the bug reports, the liveries to choose from and the sound mixer. The stands of airports the
+browser game reads from OpenStreetMap while it runs are the made-up ones of their size here, and the sound is a mix
+of recordings, not the browser game's engine voices made up as they play.
 
 One difference: a plane more than half a day behind its timetable (after a strike, say) takes it up again from its
 next departure instead of flying the missed flights late for good.
@@ -78,12 +96,14 @@ next departure instead of flying the missed flights late for good.
 
 - `src/lib.rs`: the game without the window: `config.rs` (balance, from `js/config.js`), `data.rs`, `jsdata.rs`,
   `game.rs` (state and simulation), `events.rs` (world events, emergencies, incidents, crashes), `weather.rs` (weather,
-  day and night), `layouts.rs` (the real airport layouts, embedded by `build.rs`).
+  day and night), `layouts.rs` (the real airport layouts, embedded by `build.rs`), `track.rs` (runways and
+  where a flight is), `dev.rs` (what the developer tools do).
 - `src/main.rs`, `src/app.rs` (window, sections, plane and airport windows, newspaper), `src/mapview.rs` (map),
-  `src/sound.rs` (sound).
+  `src/sound.rs` (sound), `src/pictures.rs` (the aircraft pictures, embedded by `build.rs`), `src/style.rs` (styles,
+  settings, the password hash).
 
 `cargo test --release` loads the data and layouts, checks local times, stands, a quick start, story mode, shares and
 construction, an ultra long-haul timetable and the sound recordings, and flies a month of a timetable.
 `FLIGHTGAME_SELFTEST=<folder>` starts the
-app with the "European network" quick start, plays a few weeks by itself, saves six screenshots and a report there
+app with the "European network" quick start, plays a few weeks by itself, saves eleven screenshots and a report there
 and quits (it never touches the save).

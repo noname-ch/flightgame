@@ -206,7 +206,8 @@ pub const START_AIRPORTS: [(&str, &[&str]); 6] = [
 pub const STARTER_AIRCRAFT: [&str; 6] = ["ATR72-600", "Q400", "E190", "A220-300", "A320neo", "B737-800"];
 
 /// Game minutes per real second, as in the browser game's speed menu.
-pub const SPEEDS: [f64; 6] = [1.0, 10.0, 60.0, 300.0, 1200.0, 3600.0];
+pub const SPEEDS: [f64; 7] = [1.0, 10.0, 60.0, 300.0, 1200.0, 3600.0, 36000.0];
+pub const SPEED_LABELS: [&str; 7] = ["Real", "10×", "60×", "300×", "1.2k×", "3.6k×", "36k×"];
 
 // Story mode: the game starts on the first Monday of one of these years, and each aircraft type reaches the market
 // in its real first year of airline service. A type is built new from its year to its endYear and flies on, sold

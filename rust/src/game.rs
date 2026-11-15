@@ -80,6 +80,11 @@ pub struct Flight {
     pub emergency_at: Option<i64>,
     #[serde(default)]
     pub emergency: Option<String>,
+    /// the runways it was given when it started (choices made later count from its next flight)
+    #[serde(default)]
+    pub rw_from: Option<String>,
+    #[serde(default)]
+    pub rw_to: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -94,6 +99,7 @@ pub struct Crew {
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct Tally {
+    /// the week (or, in Stats::years, the year) it counts
     pub week: i64,
     pub rev: f64,
     pub cost: f64,
@@ -101,6 +107,10 @@ pub struct Tally {
     pub repair: f64,
     pub flights: u32,
     pub pax: u32,
+    #[serde(default)]
+    pub seats: u32,
+    #[serde(default)]
+    pub km: f64,
 }
 
 impl Tally {
@@ -136,6 +146,9 @@ pub struct Stats {
     pub incidents: u32,
     pub ferries: u32,
     pub weeks: Vec<Tally>,
+    /// this year and last year (a year is the calendar year in story mode, else 365 game days)
+    #[serde(default)]
+    pub years: Vec<Tally>,
     pub recent: Vec<Recent>,
 }
 
@@ -159,6 +172,9 @@ pub struct Plane {
     pub schedule: Schedule,
     pub crew: Crew,
     pub stats: Stats,
+    /// the runway it takes at an airport (runway key; missing: auto, the shortest that fits into the wind)
+    #[serde(default)]
+    pub runways: BTreeMap<String, String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -331,6 +347,9 @@ pub struct State {
     /// "code|holder" -> time a slot offer was turned down
     pub offers: HashMap<String, i64>,
     pub game_over: bool,
+    /// the developer tools were used in this game
+    #[serde(default)]
+    pub dev_used: bool,
     /// story mode: the year the game started in and the year it is now
     #[serde(default)]
     pub story: Option<StoryYears>,
@@ -389,6 +408,8 @@ pub struct MapPlane {
     pub color: String,
     pub plane: Option<usize>,
     pub label: String,
+    /// the aircraft type
+    pub kind: String,
 }
 
 // ---------- the model: free functions on the data ----------
@@ -1023,6 +1044,7 @@ impl Game {
             projects: Vec::new(),
             offers: HashMap::new(),
             game_over: false,
+            dev_used: false,
             story: opts.story.map(|y| StoryYears { start: y, year: y }),
         };
         let mut g = Game::from_state(state);
@@ -2544,6 +2566,7 @@ impl Game {
                                 color: r.color.clone(),
                                 plane: None,
                                 label: format!("{} {}→{}", r.name, f.code, g.code),
+                                kind: rt.kind.clone(),
                             });
                         }
                     }
@@ -2725,13 +2748,15 @@ impl Game {
         p.stats.cost += f.cost;
         p.stats.km += f.distance;
         p.stats.mins += f.arr - f.dep;
-        let (rev, cost, pax) = (f.revenue, f.cost, f.pax);
+        let (rev, cost, pax, dist) = (f.revenue, f.cost, f.pax, f.distance);
         record(p, t, |w| {
             w.rev += rev;
             w.cost += cost;
+            w.km += dist;
             if f.kind == FlightKind::Scheduled {
                 w.flights += 1;
                 w.pax += pax;
+                w.seats += seats;
             }
         });
         match f.kind {
@@ -2907,6 +2932,8 @@ impl Game {
             incident: false,
             emergency_at: None,
             emergency: None,
+            rw_from: None,
+            rw_to: None,
         };
         // at take-off: will this flight declare an emergency (which may end in a crash), or have an incident?
         let r = rand::random::<f64>();
@@ -2915,6 +2942,9 @@ impl Game {
         } else if r < EMERGENCY_PER_FLIGHT + INCIDENT_PER_FLIGHT {
             flight.incident = true;
         }
+        let pl = &self.state.planes[i];
+        flight.rw_from = pl.runways.get(&flight.from).cloned();
+        flight.rw_to = pl.runways.get(&flight.to).cloned();
         let _ = pid;
         let p = &mut self.state.planes[i];
         p.flight = Some(flight);
@@ -3082,6 +3112,8 @@ impl Game {
                 incident: false,
                 emergency_at: None,
                 emergency: None,
+                rw_from: None,
+                rw_to: None,
             });
         }
         self.state.planes.push(p);
@@ -3640,26 +3672,8 @@ impl Game {
 
     /// Where plane i is at fractional time t: (lat, lon, heading, airborne).
     pub fn plane_position(&self, i: usize, t: f64) -> (f64, f64, f64, bool) {
-        let d = data();
-        let p = &self.state.planes[i];
-        match &p.flight {
-            Some(f) if p.status == Status::Flying => {
-                let (a, b) = (d.airport(&f.from), d.airport(&f.to));
-                // taxi and climb/approach take some of the block time: the plane moves along the great circle
-                // over the rest
-                let taxi = 10.0f64.min((f.arr - f.dep) as f64 * 0.2);
-                let x = ((t - f.dep as f64 - taxi) / ((f.arr - f.dep) as f64 - 2.0 * taxi)).clamp(0.0, 1.0);
-                let x = x * x * (3.0 - 2.0 * x) * 0.3 + x * 0.7; // a little slower at both ends
-                let (lat, lon) = interpolate(a.lat, a.lon, b.lat, b.lon, x);
-                let ahead = interpolate(a.lat, a.lon, b.lat, b.lon, (x + 0.01).min(1.0));
-                let h = if x < 0.99 { bearing(lat, lon, ahead.0, ahead.1) } else { bearing(a.lat, a.lon, b.lat, b.lon) };
-                (lat, lon, h, x > 0.0 && x < 1.0)
-            }
-            _ => {
-                let a = d.airport(&p.location);
-                (a.lat, a.lon, 0.0, false)
-            }
-        }
+        let f = self.flight_pos(i, t);
+        (f.lat, f.lon, f.heading, f.airborne)
     }
 
     // ---------- saving ----------
@@ -3696,23 +3710,33 @@ fn new_plane(id: &str, kind: &str, code: &str, ownership: Ownership, age: f64, t
         schedule: Schedule::default(),
         crew: crew_for(kind),
         stats: Stats::default(),
+        runways: BTreeMap::new(),
     }
 }
 
 /// Adds to the tally of the week of time t (the last 12 weeks are kept).
-fn record(p: &mut Plane, t: i64, add: impl FnOnce(&mut Tally)) {
-    let w = t.div_euclid(DAY * 7);
-    let weeks = &mut p.stats.weeks;
-    if !weeks.iter().any(|x| x.week == w) {
-        if weeks.iter().any(|x| x.week > w) {
-            return;
-        }
-        weeks.push(Tally { week: w, ..Default::default() });
-        if weeks.len() > STATS_WEEKS {
-            weeks.remove(0);
-        }
+/// The year of game time t: the calendar year in a story game, else Year 1, 2, … of 365 game days.
+pub fn year_of(t: i64) -> i64 {
+    match date_of(t) {
+        Some((y, _, _)) => y as i64,
+        None => t.div_euclid(DAY * 365) + 1,
     }
-    add(weeks.iter_mut().find(|x| x.week == w).unwrap());
+}
+
+/// Adds to the tallies of the week and of the year of time t (the last 12 weeks and 2 years are kept).
+fn record(p: &mut Plane, t: i64, add: impl Fn(&mut Tally)) {
+    for (list, key, keep) in [(&mut p.stats.weeks, t.div_euclid(DAY * 7), STATS_WEEKS), (&mut p.stats.years, year_of(t), 2)] {
+        if !list.iter().any(|x| x.week == key) {
+            if list.iter().any(|x| x.week > key) {
+                continue;
+            }
+            list.push(Tally { week: key, ..Default::default() });
+            if list.len() > keep {
+                list.remove(0);
+            }
+        }
+        add(list.iter_mut().find(|x| x.week == key).unwrap());
+    }
 }
 
 /// Where a plane with these legs stands at `code` during the day: [from, to) minutes, split at midnight.
@@ -3928,5 +3952,21 @@ mod tests {
     fn money_format() {
         assert_eq!(fmt_money(1500000.0), "CHF 1’500’000");
         assert_eq!(fmt_money(-12.4), "-CHF 12");
+    }
+}
+
+// (for the developer tools, src/dev.rs)
+impl Game {
+    pub(crate) fn dev_set_slots(&mut self, code: &str, by: [u32; 6]) {
+        self.set_slot_classes(code, by);
+    }
+    pub(crate) fn dev_plane(&mut self, kind: &str, code: &str, owned: bool) -> String {
+        self.add_plane(kind, code, if owned { Ownership::Owned } else { Ownership::Leased }, 0.0, None)
+    }
+    pub(crate) fn finish_projects_pub(&mut self) {
+        self.finish_projects();
+    }
+    pub(crate) fn make_event_pub(&mut self, id: &str) -> Option<Story> {
+        self.make_event(id)
     }
 }

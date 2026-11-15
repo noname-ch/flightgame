@@ -83,6 +83,10 @@ pub struct Layers {
     /// night where the sun is down, and the clouds and rain
     pub night: bool,
     pub weather: bool,
+    /// towns as circles by their population, and their names (the browser game's "Towns" and "Place names")
+    pub towns: bool,
+    pub place_names: bool,
+    pub legend: bool,
 }
 
 /// Draws the game over the map and says what is under the pointer and what was clicked.
@@ -94,6 +98,7 @@ pub fn draw(
     t: f64,
     selected: Option<Pick>,
     layers: &Layers,
+    icons: &std::collections::HashMap<String, egui::TextureId>,
 ) -> (Option<Pick>, Option<Pick>) {
     let d = data();
     let painter = ui.painter().with_clip_rect(response.rect);
@@ -120,6 +125,10 @@ pub fn draw(
     }
     if layers.night || layers.weather {
         sky(&painter, projector, rect, game, t, layers);
+    }
+
+    if layers.towns && zoom >= 4.0 {
+        towns(&painter, projector, rect, zoom, layers.place_names);
     }
 
     // ---------- the rivals' routes ----------
@@ -202,26 +211,32 @@ pub fn draw(
         for rp in game.rival_flights(t) {
             let at = pos(rp.lat, rp.lon);
             if rect.contains(at) {
-                plane_shape(&painter, at, rp.heading, 5.0, hex(&rp.color).gamma_multiply(0.85));
+                match icons.get(&rp.kind) {
+                    Some(tex) => plane_icon(&painter, *tex, at, rp.heading, 15.0, hex(&rp.color)),
+                    None => plane_shape(&painter, at, rp.heading, 5.0, hex(&rp.color).gamma_multiply(0.85)),
+                }
             }
         }
     }
 
     // ---------- your planes ----------
-    let mut stacked: std::collections::HashMap<String, f32> = std::collections::HashMap::new();
     for (i, p) in game.state.planes.iter().enumerate() {
-        let (lat, lon, heading, airborne) = game.plane_position(i, t);
-        let mut at = pos(lat, lon);
-        if !airborne {
-            // planes on the ground stand side by side under their airport
-            let n = stacked.entry(p.location.clone()).or_insert(0.0);
-            at += Vec2::new(*n * 12.0 - 6.0, 14.0);
-            *n += 1.0;
-        }
+        // where it really is: at its stand, taxiing, on the runway or in the air (game.flight_pos)
+        let (lat, lon, heading, _airborne) = game.plane_position(i, t);
+        let at = pos(lat, lon);
         let sel = selected == Some(Pick::Plane(i));
         let size = if sel { 10.0 } else { 8.0 };
         let color = if p.status == Status::Flying { PLAYER } else { PLAYER.gamma_multiply(0.75) };
-        plane_shape(&painter, at, if airborne { heading } else { 0.0 }, size, color);
+        let hdg = heading;
+        match icons.get(&p.kind) {
+            // the type seen from above, real size when zoomed in, never smaller than a symbol
+            Some(tex) => {
+                let ppm = projector.scale_pixel_per_meter(lat_lon(lat, lon));
+                let px = (data().ac(&p.kind).span as f32 * ppm * 1.15).clamp(size * 2.6, 160.0);
+                plane_icon(&painter, *tex, at, hdg, px, if p.status == Status::Flying { Color32::WHITE } else { Color32::from_gray(215) });
+            }
+            None => plane_shape(&painter, at, hdg, size, color),
+        }
         if sel {
             painter.circle_stroke(at, size + 4.0, Stroke::new(2.0, Color32::YELLOW));
         }
@@ -448,5 +463,49 @@ fn fill_polygon(painter: &egui::Painter, pts: &[Pos2], color: Color32) {
     if idx.len() == 3 {
         mesh.add_triangle(idx[0], idx[1], idx[2]);
     }
+    painter.add(Shape::mesh(mesh));
+}
+
+/// Towns as small circles by their population (more of them the closer you zoom), with their names.
+fn towns(painter: &egui::Painter, projector: &Projector, rect: egui::Rect, zoom: f64, names: bool) {
+    let min_pop = if zoom < 5.0 {
+        3_000_000.0
+    } else if zoom < 6.0 {
+        1_000_000.0
+    } else if zoom < 7.0 {
+        300_000.0
+    } else if zoom < 8.5 {
+        100_000.0
+    } else {
+        30_000.0
+    };
+    for t in &data().towns {
+        if t.pop < min_pop {
+            continue;
+        }
+        let p = projector.project(lat_lon(t.lat, t.lon)).to_pos2();
+        if !rect.contains(p) {
+            continue;
+        }
+        let r = (t.pop.log10() - 4.0).max(0.5) as f32 * 1.4;
+        painter.circle(p, r, Color32::from_rgba_unmultiplied(255, 236, 200, 60), Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 230, 190, 140)));
+        if names && (t.pop > min_pop * 3.0 || zoom >= 9.0) {
+            painter.text(p + Vec2::new(0.0, r + 2.0), Align2::CENTER_TOP, &t.name, FontId::proportional(10.0), Color32::from_rgba_unmultiplied(255, 240, 215, 200));
+        }
+    }
+}
+
+/// A plane's top view (its icon, nose up) turned to `heading`, `px` wide, tinted with `tint` (white: as it is).
+fn plane_icon(painter: &egui::Painter, tex: egui::TextureId, at: Pos2, heading: f64, px: f32, tint: Color32) {
+    let h = (heading as f32).to_radians();
+    let (s, c) = h.sin_cos();
+    let half = px / 2.0;
+    let rot = |x: f32, y: f32| at + Vec2::new(x * c - y * s, x * s + y * c);
+    let mut mesh = egui::Mesh::with_texture(tex);
+    for (x, y, u, v) in [(-half, -half, 0.0, 0.0), (half, -half, 1.0, 0.0), (half, half, 1.0, 1.0), (-half, half, 0.0, 1.0)] {
+        mesh.vertices.push(egui::epaint::Vertex { pos: rot(x, y), uv: egui::pos2(u, v), color: tint });
+    }
+    mesh.add_triangle(0, 1, 2);
+    mesh.add_triangle(0, 2, 3);
     painter.add(Shape::mesh(mesh));
 }

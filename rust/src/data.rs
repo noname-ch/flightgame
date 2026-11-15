@@ -78,6 +78,14 @@ pub struct Aircraft {
     pub runway_m: Option<f64>,
     pub pilots: Option<u32>,
     pub span: f64,
+    /// length (m), from looks.js
+    pub len: f64,
+    /// flight performance where the type sets it (else its category's): cruise height, climb near the ground,
+    /// lift-off and approach speeds (km/h)
+    pub cruise_ft: Option<f64>,
+    pub climb_fpm: Option<f64>,
+    pub v_lof: Option<f64>,
+    pub v_app: Option<f64>,
 }
 
 #[derive(Clone, Debug)]
@@ -270,6 +278,11 @@ impl Data {
             for (code, a) in map {
                 aircraft.push(Aircraft {
                     span: of(&looks[&code]["span"]).unwrap_or(35.0),
+                    len: of(&looks[&code]["len"]).unwrap_or(37.0),
+                    cruise_ft: of(&a["cruiseFt"]),
+                    climb_fpm: of(&a["climbFpm"]),
+                    v_lof: of(&a["vLofKmh"]),
+                    v_app: of(&a["vAppKmh"]),
                     name: s(&a["name"]),
                     maker: s(&a["maker"]),
                     category: s(&a["category"]),
