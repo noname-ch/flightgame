@@ -34,6 +34,12 @@ pub struct Schedule {
     pub active: bool,
     /// when the next leg is due to leave (absolute minutes)
     pub due: i64,
+    /// ultra long-haul: the timetable repeats every `days` days (0 or 1: daily), its rounds starting `offset`
+    /// minutes into the period
+    #[serde(default)]
+    pub days: u32,
+    #[serde(default)]
+    pub offset: i64,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -313,12 +319,32 @@ pub struct State {
     pub rep: Rep,
     /// code -> holder id -> slots bought from it
     pub slot_buys: HashMap<String, HashMap<String, u32>>,
+    /// the player's shares and what they built, by airport
+    #[serde(default)]
+    pub infra: BTreeMap<String, Infra>,
+    /// landing and passenger fees paid at each airport this week (for the dividends)
+    #[serde(default)]
+    pub fees: HashMap<String, f64>,
+    /// construction under way
+    #[serde(default)]
+    pub projects: Vec<Project>,
     /// "code|holder" -> time a slot offer was turned down
     pub offers: HashMap<String, i64>,
     pub game_over: bool,
+    /// story mode: the year the game started in and the year it is now
+    #[serde(default)]
+    pub story: Option<StoryYears>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct StoryYears {
+    pub start: i32,
+    pub year: i32,
 }
 
 pub struct NewGame {
+    /// story mode: the year to start in (None: today, every type on sale)
+    pub story: Option<i32>,
     pub company: String,
     pub mode: String,
     pub difficulty: String,
@@ -334,6 +360,7 @@ impl Default for NewGame {
             difficulty: "normal".into(),
             airport: START_AIRPORT.into(),
             aircraft: START_AIRCRAFT.into(),
+            story: None,
         }
     }
 }
@@ -366,8 +393,124 @@ pub struct MapPlane {
 
 // ---------- the model: free functions on the data ----------
 
+
+/// A construction project that can be ordered at an airport.
+pub struct ProjectOption {
+    pub kind: String,
+    pub len: f64,
+    pub label: String,
+    /// the whole cost, and your share of it
+    pub full: f64,
+    pub cost: f64,
+    pub weeks: i64,
+    pub err: Option<String>,
+}
+
+/// Construction under way.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct Project {
+    pub code: String,
+    pub kind: String,
+    pub len: f64,
+    pub label: String,
+    pub cost: f64,
+    pub full: f64,
+    pub start: i64,
+    pub done: i64,
+}
+
+pub fn category_name(size: usize) -> &'static str {
+    match size {
+        0 | 1 => "Small airport",
+        2 => "Regional airport",
+        3 | 4 => "Large airport",
+        _ => "Major hub",
+    }
+}
+
+/// Point m metres from lat/lon along a bearing (flat earth is fine at airport scale).
+pub fn offset_point(lat: f64, lon: f64, bearing_deg: f64, m: f64) -> (f64, f64) {
+    let b = bearing_deg.to_radians();
+    (lat + m * b.cos() / 111320.0, lon + m * b.sin() / (111320.0 * lat.to_radians().cos()))
+}
+
+/// Where a new runway goes: parallel to the longest one, 1.5 km to its side (away from the other runways), or
+/// across the airport from west to east where it has none.
+fn new_runway(code: &str, rws: &[[f64; 6]], len: f64) -> [f64; 6] {
+    let a = data().airport(code);
+    let Some(main) = rws.iter().max_by(|x, y| runway_length(x).total_cmp(&runway_length(y))) else {
+        let w = offset_point(a.lat, a.lon, 270.0, len / 2.0);
+        let e = offset_point(a.lat, a.lon, 90.0, len / 2.0);
+        return [w.0, w.1, e.0, e.1, 45.0, 1.0];
+    };
+    let h = bearing(main[0], main[1], main[2], main[3]);
+    let mid = ((main[0] + main[2]) / 2.0, (main[1] + main[3]) / 2.0);
+    // the side with fewer runways
+    let side = |s: f64| {
+        let c = offset_point(mid.0, mid.1, h + s, 1500.0);
+        rws.iter()
+            .map(|r| distance_km(c.0, c.1, (r[0] + r[2]) / 2.0, (r[1] + r[3]) / 2.0))
+            .fold(f64::INFINITY, f64::min)
+    };
+    let s = if side(90.0) >= side(-90.0) { 90.0 } else { -90.0 };
+    let c = offset_point(mid.0, mid.1, h + s, 1500.0);
+    let p1 = offset_point(c.0, c.1, h + 180.0, len / 2.0);
+    let p2 = offset_point(c.0, c.1, h, len / 2.0);
+    [p1.0, p1.1, p2.0, p2.1, 45.0, 1.0]
+}
+
+// ---------- what the player built: terminal levels and runways on top of the data ----------
+// The game state keeps them (State::infra); this copy lets the model's free functions see them.
+
+/// The player's changes at one airport: shares, terminal expansions, runways (replacing the data's), invested.
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct Infra {
+    pub stake: u32,
+    pub terminal: u32,
+    pub runways: Option<Vec<[f64; 6]>>,
+    pub invested: f64,
+}
+
+thread_local! {
+    static INFRA: RefCell<HashMap<String, Infra>> = RefCell::new(HashMap::new());
+}
+
+fn set_infra(map: &BTreeMap<String, Infra>) {
+    INFRA.with(|i| *i.borrow_mut() = map.iter().map(|(k, v)| (k.clone(), v.clone())).collect());
+}
+
+fn infra_of(code: &str) -> Infra {
+    INFRA.with(|i| i.borrow().get(code).cloned().unwrap_or_default())
+}
+
+/// An airport's runways: the player's where they built some, else the data's.
+pub fn airport_runways(code: &str) -> Vec<[f64; 6]> {
+    infra_of(code).runways.unwrap_or_else(|| data().airport(code).runways.clone())
+}
+
+pub fn runway_length(r: &[f64; 6]) -> f64 {
+    distance_km(r[0], r[1], r[2], r[3]) * 1000.0
+}
+
+/// The longest runway (paved only, or any); airports without runway data have a typical one for their size.
+pub fn longest_runway(code: &str, paved: bool) -> f64 {
+    let a = data().airport(code);
+    match infra_of(code).runways {
+        Some(rws) => rws.iter().filter(|r| !paved || r[5] > 0.0).map(runway_length).fold(0.0, f64::max).round(),
+        None if paved => a.runway_paved.round(),
+        None => a.runway.round(),
+    }
+}
+
+/// The data's size plus the terminal expansions built there (at most 5).
 pub fn airport_size(code: &str) -> usize {
-    data().airport(code).size.min(5)
+    (data().airport(code).size + infra_of(code).terminal as usize).min(5)
+}
+
+/// An airport's stands by class: its real ones, or the made-up apron of its size (which grows with terminals).
+pub fn stands_of(code: &str) -> [u32; 6] {
+    let a = data().airport(code);
+    if a.real_stands { a.stands } else { crate::data::DEFAULT_STANDS[airport_size(code)] }
 }
 
 pub fn airport_category(code: &str) -> &'static str {
@@ -382,7 +525,9 @@ pub fn airport_category(code: &str) -> &'static str {
 /// Small airfields without an IATA code get fewer passengers.
 pub fn attraction(code: &str) -> f64 {
     let a = data().airport(code);
-    if a.minor && a.size < 2 { MINOR_FACTOR } else { 1.0 }
+    let base = if a.minor && airport_size(code) < 2 { MINOR_FACTOR } else { 1.0 };
+    // every terminal expansion the player builds draws more passengers
+    base * (1.0 + TERMINAL_DEMAND * infra_of(code).terminal as f64)
 }
 
 /// Short hops lose to trains and cars, very long ones get less demand.
@@ -459,7 +604,7 @@ pub fn max_class(code: &str) -> usize {
     if a.real_stands {
         return (0..6).rev().find(|&c| a.stands[c] > 0).unwrap_or(0);
     }
-    CLASS_BY_SIZE[a.size.min(5)]
+    CLASS_BY_SIZE[airport_size(code)]
 }
 
 /// Do planes of these classes fit into slots `have` (by class)? Each needs one of its class or bigger.
@@ -485,7 +630,93 @@ pub fn class_list(n: &[u32; 6]) -> String {
 // winter and summer and the days the clocks change), and the night curfew is in local time.
 
 pub fn day_of_year(t: i64) -> i64 {
-    t.div_euclid(DAY).rem_euclid(365)
+    match date_of(t) {
+        Some((y, m, d)) => days_from_civil(y, m, d) - days_from_civil(y, 1, 1),
+        None => t.div_euclid(DAY).rem_euclid(365),
+    }
+}
+
+// ---------- story mode: the calendar ----------
+// A story game starts in a past year. Day 0 is that year's first Monday, so weeks still start on Mondays. Without a
+// story there is no calendar and every type is on sale. (The year a game started in is kept here for the
+// formatting functions; 0 = no story.)
+thread_local! {
+    static STORY_START: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
+}
+
+fn set_story_start(y: Option<i32>) {
+    STORY_START.with(|s| s.set(y.unwrap_or(0)));
+}
+
+/// Days since 1 January 1970 of a date (Howard Hinnant's algorithm).
+pub fn days_from_civil(y: i32, m: u32, d: u32) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y } as i64;
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let mp = (m as i64 + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + d as i64 - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146097 + doe - 719468
+}
+
+/// The date of a day since 1 January 1970: (year, month 1–12, day).
+pub fn civil_from_days(z: i64) -> (i32, u32, u32) {
+    let z = z + 719468;
+    let era = z.div_euclid(146097);
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    ((yoe + era * 400 + if m <= 2 { 1 } else { 0 }) as i32, m, d)
+}
+
+fn first_monday(year: i32) -> i64 {
+    let jan1 = days_from_civil(year, 1, 1);
+    let wd = (jan1 + 4).rem_euclid(7); // (0 = Sunday: 1 January 1970 was a Thursday)
+    jan1 + (8 - wd) % 7
+}
+
+/// The calendar date of game time t in a story game, else None.
+pub fn date_of(t: i64) -> Option<(i32, u32, u32)> {
+    let start = STORY_START.with(|s| s.get());
+    (start != 0).then(|| civil_from_days(first_monday(start) + t.div_euclid(DAY)))
+}
+
+pub const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/// Built new in year y (None: free play, everything)?
+pub fn on_sale(kind: &str, y: Option<i32>) -> bool {
+    let ac = data().ac(kind);
+    y.is_none_or(|y| ac.year <= y && y <= ac.end_year.unwrap_or(i32::MAX))
+}
+
+/// Still flying with airlines in year y (pre-owned ones for sale)?
+pub fn in_service(kind: &str, y: i32) -> bool {
+    let ac = data().ac(kind);
+    ac.year <= y && y <= ac.end_year.unwrap_or(i32::MAX - STORY_SERVICE_YEARS) + STORY_SERVICE_YEARS
+}
+
+/// The first aircraft a game starting in `year` offers (None: today's): leased ones flying then, smallest first.
+pub fn starter_types(year: Option<i32>) -> Vec<String> {
+    let d = data();
+    let Some(y) = year else { return STARTER_AIRCRAFT.iter().filter(|t| d.try_ac(t).is_some()).map(|t| t.to_string()).collect() };
+    let mut all: Vec<&crate::data::Aircraft> = d
+        .aircraft
+        .iter()
+        .filter(|a| in_service(&a.code, y) && y - a.year <= STORY_STARTER_AGE && a.seats <= STORY_STARTER_SEATS)
+        .collect();
+    all.sort_by_key(|a| a.seats);
+    let n = all.len().min(8);
+    let mut out: Vec<String> = Vec::new();
+    for i in 0..n {
+        let k = (i as f64 * (all.len() - 1) as f64 / (n.max(2) - 1) as f64).round() as usize;
+        if !out.contains(&all[k].code) {
+            out.push(all[k].code.clone());
+        }
+    }
+    out
 }
 
 /// Minutes ahead of UTC at an airport on game day t (summer time included), as the browser game reckons it.
@@ -549,7 +780,7 @@ pub fn fits_reason(kind: &str, code: &str) -> Option<String> {
         ));
     }
     let (m, paved) = runway_need(kind);
-    let have = if paved { a.runway_paved } else { a.runway };
+    let have = longest_runway(code, paved);
     if have < m {
         return Some(format!(
             "The {} needs {m:.0} m of {}runway, {code} has {have:.0} m.",
@@ -575,9 +806,46 @@ pub fn crew_weekly(c: &Crew) -> f64 {
     c.weekly_salary * c.sets.max(1) as f64
 }
 
-pub fn crews_for(kind: &str, legs: &[Leg]) -> u32 {
-    let duty: i64 = legs.iter().map(|l| leg_block(kind, &l.from, &l.to)).sum();
-    if duty > CREW_MAX_DUTY_MIN { CREWS_MAX } else { 1 }
+/// Crews a timetable needs: one, or CREWS_MAX when a day has more block time than one crew may fly. Over several
+/// days (an ultra long-haul timetable) the busiest of them counts: flights by the day they leave.
+pub fn crews_for(kind: &str, legs: &[Leg], days: u32) -> u32 {
+    let days = days.max(1) as usize;
+    let mut duty = vec![0i64; days];
+    for l in legs {
+        let k = if days > 1 { (l.dep.div_euclid(DAY) as usize) % days } else { 0 };
+        duty[k] += leg_block(kind, &l.from, &l.to);
+    }
+    if duty.into_iter().max().unwrap_or(0) > CREW_MAX_DUTY_MIN { CREWS_MAX } else { 1 }
+}
+
+/// The minutes a timetable takes to repeat: a day, or several (an ultra long-haul one).
+pub fn period_of(sch: &Schedule) -> i64 {
+    sch.days.max(1) as i64 * DAY
+}
+
+/// First moment at or after `after` that is `tod` minutes into a period (a day, or an ultra long-haul round).
+pub fn next_at_period(tod: i64, after: i64, period: i64) -> i64 {
+    after + (tod - after.rem_euclid(period)).rem_euclid(period)
+}
+
+/// When a timetable's leg leaves next, at or after `after`.
+pub fn leg_due(sch: &Schedule, leg: &Leg, after: i64) -> i64 {
+    let period = period_of(sch);
+    next_at_period((leg.dep + sch.offset).rem_euclid(period), after, period)
+}
+
+/// Can this type fly ultra long-haul timetables? Only planes with the range for flights longer than half a day
+/// (a round trip that can't fit into one day).
+pub fn ultra_capable(kind: &str) -> bool {
+    2 * (block_minutes(kind, data().ac(kind).range_km) + turnaround_min(kind)) > DAY
+}
+
+/// Days an ultra long-haul timetable takes before it starts again: its last flight's turnaround done by the time
+/// of the first departure.
+pub fn cycle_days(kind: &str, legs: &[Leg]) -> u32 {
+    let (Some(first), Some(last)) = (legs.first(), legs.last()) else { return 1 };
+    let ready = last.dep + leg_block(kind, &last.from, &last.to) + turnaround_min(kind);
+    (((ready - first.dep) as f64 / DAY as f64).ceil() as u32).max(1)
 }
 
 pub fn price_new(kind: &str) -> f64 {
@@ -613,6 +881,15 @@ pub fn fmt_money(n: f64) -> String {
     format!("{}{CURRENCY} {out}", if v < 0 { "-" } else { "" })
 }
 
+/// Type names as a list: "A, B and C".
+pub fn name_list(names: &[String]) -> String {
+    match names.len() {
+        0 => String::new(),
+        1 => names[0].clone(),
+        n => format!("{} and {}", names[..n - 1].join(", "), names[n - 1]),
+    }
+}
+
 pub fn fmt_clock(t: i64) -> String {
     let m = t.rem_euclid(DAY);
     format!("{:02}:{:02}", m / 60, m % 60)
@@ -620,6 +897,9 @@ pub fn fmt_clock(t: i64) -> String {
 
 pub fn fmt_time(t: i64) -> String {
     let day = t.div_euclid(DAY);
+    if let Some((y, m, d)) = date_of(t) {
+        return format!("{} {d} {} {y} {}", WEEKDAYS[day.rem_euclid(7) as usize], MONTHS[m as usize - 1], fmt_clock(t));
+    }
     format!("Day {} ({}) {}", day + 1, WEEKDAYS[day.rem_euclid(7) as usize], fmt_clock(t))
 }
 
@@ -666,6 +946,8 @@ pub struct Game {
 
 impl Game {
     pub fn from_state(state: State) -> Self {
+        set_story_start(state.story.as_ref().map(|s| s.start));
+        set_infra(&state.infra);
         let mut g = Game { state, rival_idx: HashMap::new(), seat_cache: RefCell::new(None) };
         g.index_rivals();
         g
@@ -736,8 +1018,12 @@ impl Game {
             rivals: Vec::new(),
             rep: Rep::default(),
             slot_buys: HashMap::new(),
+            infra: BTreeMap::new(),
+            fees: HashMap::new(),
+            projects: Vec::new(),
             offers: HashMap::new(),
             game_over: false,
+            story: opts.story.map(|y| StoryYears { start: y, year: y }),
         };
         let mut g = Game::from_state(state);
         g.setup_rivals();
@@ -755,11 +1041,477 @@ impl Game {
             ),
             LogKind::Info,
         );
+        if let Some(y) = opts.story {
+            let next = g
+                .next_arrival()
+                .map(|(ny, types)| {
+                    let names: Vec<String> = types.iter().map(|t| d.ac(t).name.clone()).collect();
+                    format!(" – next: the {} in {ny}", name_list(&names))
+                })
+                .unwrap_or_default();
+            g.log(
+                format!("Story mode: it is {y}. New aircraft reach the market in the year they first flew with airlines{next}."),
+                LogKind::Good,
+            );
+        }
         g
     }
 
     pub fn home(&self) -> &str {
         &self.state.home
+    }
+
+    // ---------- story mode ----------
+
+    /// The calendar year in a story game, else None.
+    pub fn year(&self) -> Option<i32> {
+        self.state.story.as_ref().and(date_of(self.state.time)).map(|d| d.0)
+    }
+
+    /// Why a type can't be ordered new now (story mode), or None.
+    pub fn not_on_sale(&self, kind: &str) -> Option<String> {
+        if on_sale(kind, self.year()) {
+            return None;
+        }
+        let ac = data().ac(kind);
+        Some(if Some(ac.year) > self.year() {
+            format!("The {} won't reach the airlines before {}.", ac.name, ac.year)
+        } else {
+            format!("The {} is no longer built – look for a pre-owned one.", ac.name)
+        })
+    }
+
+    /// The aircraft a rival of this kind flies over `dd` km (in story mode the one of the time).
+    fn rival_type(&self, kind: &str, dd: f64) -> String {
+        let era = self
+            .year()
+            .and_then(|y| data().rival_fleets.iter().filter(|e| e.from <= y).last())
+            .filter(|e| e.flag.is_some());
+        let pick = |era_t: Option<&Option<String>>, today: &str| era_t.and_then(|x| x.clone()).unwrap_or_else(|| today.to_string());
+        if kind == "flag" && dd > LONG_HAUL_KM {
+            return pick(era.map(|e| &e.long_haul), LONG_HAUL_TYPE);
+        }
+        if kind == "regional" && dd < SHORT_PROP_KM {
+            return pick(era.map(|e| &e.short_prop), SHORT_PROP_TYPE);
+        }
+        let today = rival_fleet(kind);
+        pick(
+            era.map(|e| match kind {
+                "flag" => &e.flag,
+                "low" => &e.low,
+                _ => &e.regional,
+            }),
+            today,
+        )
+    }
+
+    /// The next year that brings new types, and those types.
+    pub fn next_arrival(&self) -> Option<(i32, Vec<String>)> {
+        let y = self.year()?;
+        let d = data();
+        let year = d.aircraft.iter().filter(|a| a.year > y).map(|a| a.year).min()?;
+        Some((year, d.aircraft.iter().filter(|a| a.year == year).map(|a| a.code.clone()).collect()))
+    }
+
+    /// New Year in a story game: this year's new types make the newspaper, types no longer built leave the
+    /// new-aircraft market, rivals move to the aircraft of the time, and new airlines replace those that went bust.
+    fn new_year(&mut self, y: i32) {
+        let d = data();
+        let arrivals: Vec<&crate::data::Aircraft> = d.aircraft.iter().filter(|a| a.year == y).collect();
+        if !arrivals.is_empty() {
+            let lines: Vec<String> = arrivals
+                .iter()
+                .map(|a| {
+                    format!(
+                        "{} ({}, {} seats, {:.0} km). {} New {}, or leased for {} a week.",
+                        a.name,
+                        a.maker,
+                        a.seats,
+                        a.range_km,
+                        d.story_news.get(&a.code).cloned().unwrap_or_default(),
+                        fmt_money(price_new(&a.code)),
+                        fmt_money(a.lease_per_week)
+                    )
+                })
+                .collect();
+            let names: Vec<String> = arrivals.iter().map(|a| a.name.clone()).collect();
+            self.news(Story {
+                good: true,
+                headline: if arrivals.len() == 1 {
+                    format!("THE {} ENTERS SERVICE", names[0].to_uppercase())
+                } else {
+                    format!("{} NEW AIRLINERS FOR {y}", arrivals.len())
+                },
+                sub: if arrivals.len() == 1 {
+                    format!("{} delivers the first aircraft to the airlines", arrivals[0].maker)
+                } else {
+                    format!("The {} reach the airlines", name_list(&names))
+                },
+                body: format!("{}\n\nNow in the Aircraft Marketplace.", lines.join("\n\n")),
+                paper: String::new(),
+                t: 0,
+            });
+        }
+        for a in d.aircraft.iter().filter(|a| a.end_year == Some(y - 1)) {
+            self.log(format!("The last {} has left the factory – from now on it is only sold pre-owned.", a.name), LogKind::Info);
+        }
+        // rivals fly the types of the new year where they can
+        for ri in 0..self.state.rivals.len() {
+            for k in 0..self.state.rivals[ri].routes.len() {
+                let (a, b) = (self.state.rivals[ri].routes[k].a.clone(), self.state.rivals[ri].routes[k].b.clone());
+                let Some(plan) = self.rival_plan(ri, &a, &b) else { continue };
+                let rt = &mut self.state.rivals[ri].routes[k];
+                if plan.kind == rt.kind {
+                    continue;
+                }
+                rt.per_day =
+                    ((rt.per_day * rt.seats) as f64 / plan.seats as f64).round().clamp(1.0, RIVAL_MAX_PER_DAY as f64) as u32;
+                rt.kind = plan.kind;
+                rt.seats = plan.seats;
+            }
+        }
+        self.index_rivals();
+        // decades go by: airlines that went bust make room for new ones
+        let mut founded = Vec::new();
+        while self.state.rivals.len() < RIVALS_NEAR + RIVALS_FAR {
+            match self.found_rival() {
+                Some(ri) => founded.push(ri),
+                None => break,
+            }
+        }
+        if !founded.is_empty() {
+            let lines: Vec<String> = founded
+                .iter()
+                .map(|&ri| {
+                    let r = &self.state.rivals[ri];
+                    let cities: Vec<String> = r.hubs.iter().map(|h| d.airport(h).city.clone()).collect();
+                    format!("{}, a new {} airline at {}, starts {} routes.", r.name, r.kind, cities.join(" and "), r.routes.len())
+                })
+                .collect();
+            let headline = if founded.len() == 1 {
+                format!("NEW AIRLINE {} TAKES OFF", self.state.rivals[founded[0]].name.to_uppercase())
+            } else {
+                format!("{} NEW AIRLINES TAKE OFF", founded.len())
+            };
+            self.news(Story {
+                good: false,
+                headline,
+                sub: "Competition for the passengers of the airlines that went bust".into(),
+                body: lines.join("\n\n"),
+                paper: String::new(),
+                t: 0,
+            });
+        }
+        let next = self
+            .next_arrival()
+            .map(|(ny, types)| {
+                let names: Vec<String> = types.iter().map(|t| d.ac(t).name.clone()).collect();
+                format!(" Next new aircraft: the {} in {ny}.", name_list(&names))
+            })
+            .unwrap_or_default();
+        self.log(format!("Happy New Year {y}!{next}"), LogKind::Summary);
+    }
+
+    /// A new rival airline (story mode): one of the templates not flying yet, near home if possible, with its first
+    /// routes. Returns its index.
+    fn found_rival(&mut self) -> Option<usize> {
+        let d = data();
+        let home = d.airport(&self.state.home);
+        let mut free: Vec<(&crate::data::RivalTemplate, f64)> = d
+            .rival_templates
+            .iter()
+            .filter(|t| !self.state.rivals.iter().any(|r| r.name == t.name) && t.hubs.iter().all(|h| d.try_airport(h).is_some()))
+            .map(|t| {
+                let dd = t
+                    .hubs
+                    .iter()
+                    .map(|h| {
+                        let a = d.airport(h);
+                        distance_km(home.lat, home.lon, a.lat, a.lon)
+                    })
+                    .fold(f64::INFINITY, f64::min);
+                (t, dd)
+            })
+            .collect();
+        free.sort_by(|x, y| x.1.total_cmp(&y.1));
+        free.truncate(8);
+        if free.is_empty() {
+            return None;
+        }
+        let t = free[rand::random_range(0..free.len())].0;
+        let n = self.state.rivals.len();
+        self.state.rivals.push(Rival {
+            id: format!("r{}", self.state.time),
+            name: t.name.clone(),
+            kind: t.kind.clone(),
+            hubs: t.hubs.clone(),
+            color: d.rival_colors.get(n % d.rival_colors.len().max(1)).cloned().unwrap_or_else(|| "#f97316".into()),
+            routes: Vec::new(),
+            since: self.state.time,
+        });
+        let max = rival_routes(&t.kind);
+        let plans = self.rival_candidates(n, 40);
+        for p in plans.into_iter().take(max) {
+            self.state.rivals[n].routes.push(p);
+        }
+        if self.state.rivals[n].routes.is_empty() {
+            self.state.rivals.pop();
+            return None;
+        }
+        self.index_rivals();
+        let r = &self.state.rivals[n];
+        let msg = format!("{} starts flying from {} ({} routes).", r.name, r.hubs.join(", "), r.routes.len());
+        self.log(msg, LogKind::Bad);
+        Some(n)
+    }
+
+    // ---------- airports as investments: shares, dividends, construction ----------
+
+    pub fn stake(&self, code: &str) -> u32 {
+        self.state.infra.get(code).map_or(0, |i| i.stake)
+    }
+
+    fn infra_mut(&mut self, code: &str) -> &mut Infra {
+        self.state.infra.entry(code.into()).or_default()
+    }
+
+    /// Passengers a year at an airport: its catchment times the passengers per head of its size.
+    pub fn airport_pax_year(&self, code: &str) -> f64 {
+        (data().airport(code).catchment * PAX_PER_HEAD[airport_size(code)] * attraction(code)).round()
+    }
+
+    /// Weekly operating profit: base traffic plus what your airline paid there this week.
+    pub fn airport_profit(&self, code: &str) -> f64 {
+        (self.airport_pax_year(code) / 52.0 * PROFIT_PER_PAX + self.state.fees.get(code).copied().unwrap_or(0.0)).round()
+    }
+
+    pub fn airport_value(&self, code: &str) -> f64 {
+        let base = self.airport_pax_year(code) / 52.0 * PROFIT_PER_PAX;
+        let invested = self.state.infra.get(code).map_or(0.0, |i| i.invested);
+        ((base * 52.0 * PE_RATIO + invested * INVESTED_VALUE) / 1000.0).round() * 1000.0
+    }
+
+    pub fn share_price(&self, code: &str, pct: u32) -> f64 {
+        (self.airport_value(code) * pct as f64 / 100.0 * BUY_PREMIUM).round()
+    }
+
+    pub fn share_sale(&self, code: &str, pct: u32) -> f64 {
+        (self.airport_value(code) * pct as f64 / 100.0 * SELL_DISCOUNT).round()
+    }
+
+    /// The dividend your stake earned last week (from this week's profit, paid on Mondays).
+    pub fn dividend(&self, code: &str) -> f64 {
+        (self.airport_profit(code) * PAYOUT * self.stake(code) as f64 / 100.0).round()
+    }
+
+    pub fn buy_shares(&mut self, code: &str, pct: u32) -> Result<(), String> {
+        let a = data().airport(code);
+        if a.factory {
+            return Err("Factories are not for sale.".into());
+        }
+        let pct = pct.min(100 - self.stake(code));
+        if pct == 0 {
+            return Err(format!("You already own all of {}.", a.name));
+        }
+        let cost = self.share_price(code, pct);
+        if self.state.money < cost {
+            return Err(format!("Not enough money ({} needed).", fmt_money(cost)));
+        }
+        self.state.money -= cost;
+        let inf = self.infra_mut(code);
+        inf.stake += pct;
+        let st = inf.stake;
+        set_infra(&self.state.infra);
+        self.log(format!("Bought {pct}% of {} for {} – you now own {st}%.", a.name, fmt_money(cost)), LogKind::Cost);
+        Ok(())
+    }
+
+    pub fn sell_shares(&mut self, code: &str, pct: u32) -> Result<(), String> {
+        let a = data().airport(code);
+        let pct = pct.min(self.stake(code));
+        if pct == 0 {
+            return Err("You own no shares there.".into());
+        }
+        let value = self.share_sale(code, pct);
+        self.state.money += value;
+        let inf = self.infra_mut(code);
+        inf.stake -= pct;
+        let st = inf.stake;
+        set_infra(&self.state.infra);
+        self.log(format!("Sold {pct}% of {} for {} – you now own {st}%.", a.name, fmt_money(value)), LogKind::Good);
+        Ok(())
+    }
+
+    /// Mondays: shareholders get their part of last week's profit.
+    fn pay_dividends(&mut self) {
+        let mut total = 0.0;
+        let mut parts = Vec::new();
+        let codes: Vec<String> = self.state.infra.keys().cloned().collect();
+        for code in codes {
+            if self.stake(&code) == 0 {
+                continue;
+            }
+            let d = self.dividend(&code);
+            total += d;
+            parts.push(format!("{code} {}", fmt_money(d)));
+        }
+        self.state.fees.clear();
+        if total <= 0.0 {
+            return;
+        }
+        self.state.money += total;
+        self.state.today.revenue += total;
+        self.log(format!("Airport dividends: {} ({}).", fmt_money(total), parts.join(", ")), LogKind::Good);
+    }
+
+    /// Airports near your network, best dividend per franc first: (code, price of 5 %, its weekly dividend).
+    pub fn share_tips(&self) -> Vec<(String, f64, f64)> {
+        let d = data();
+        let mine: Vec<&crate::data::Airport> = self.state.slots.keys().map(|c| d.airport(c)).collect();
+        let mut out: Vec<(String, f64, f64)> = d
+            .airports
+            .iter()
+            .filter(|a| !a.factory && !a.minor && self.stake(&a.code) == 0)
+            .filter(|a| mine.iter().any(|m| distance_km(m.lat, m.lon, a.lat, a.lon) < 600.0))
+            .map(|a| {
+                let price = self.share_price(&a.code, SHARE_STEP);
+                let div = (self.airport_pax_year(&a.code) / 52.0 * PROFIT_PER_PAX * PAYOUT * SHARE_STEP as f64 / 100.0).round();
+                (a.code.clone(), price, div)
+            })
+            .filter(|x| x.1 > 0.0)
+            .collect();
+        out.sort_by(|x, y| (y.2 / y.1).total_cmp(&(x.2 / x.1)));
+        out.truncate(10);
+        out
+    }
+
+    /// What can be built at an airport now: extending the main runway (as in the browser game), a terminal
+    /// expansion (one size bigger) and a new runway. Your share of the cost; an error where it can't be ordered.
+    pub fn project_options(&self, code: &str) -> Vec<ProjectOption> {
+        let st = self.stake(code);
+        let share = st as f64 / 100.0;
+        let busy = |kind: &str| self.state.projects.iter().any(|p| p.code == code && p.kind == kind);
+        let board = if st < BOARD_STAKE { Some(format!("You need {BOARD_STAKE}% of the shares to order construction.")) } else { None };
+        let mut opts = Vec::new();
+        let longest = longest_runway(code, false);
+        if !airport_runways(code).is_empty() {
+            opts.push(ProjectOption {
+                kind: "extend".into(),
+                len: 0.0,
+                label: format!("Extend main runway +{EXTEND_BY:.0} m (to {:.0} m)", longest + EXTEND_BY),
+                full: EXTEND_COST,
+                cost: (EXTEND_COST * share).round(),
+                weeks: EXTEND_WEEKS,
+                err: if busy("extend") {
+                    Some("The main runway is being extended already.".into())
+                } else if longest + EXTEND_BY > MAX_RUNWAY_M {
+                    Some("The main runway is as long as it gets.".into())
+                } else {
+                    board.clone()
+                },
+            });
+        }
+        let size = airport_size(code);
+        if size < 5 {
+            let new = (size + 1).max(2);
+            opts.push(ProjectOption {
+                kind: "terminal".into(),
+                len: 0.0,
+                label: format!("Terminal expansion to size {new} ({})", category_name(new)),
+                full: TERMINAL_COST[new],
+                cost: (TERMINAL_COST[new] * share).round(),
+                weeks: TERMINAL_WEEKS[new],
+                err: if busy("terminal") {
+                    Some("The terminal is being expanded already.".into())
+                } else if longest_runway(code, true) < TERMINAL_RUNWAY[new] {
+                    Some(format!("Size {new} needs a paved runway of {:.0} m first.", TERMINAL_RUNWAY[new]))
+                } else {
+                    board.clone()
+                },
+            });
+        }
+        for len in RUNWAY_LENGTHS {
+            let full = RUNWAY_COST_BASE + RUNWAY_COST_PER_M * len;
+            opts.push(ProjectOption {
+                kind: "runway".into(),
+                len,
+                label: format!("New runway {len:.0} m"),
+                full,
+                cost: (full * share).round(),
+                weeks: (RUNWAY_WEEKS_BASE + RUNWAY_WEEKS_PER_KM * len / 1000.0).round() as i64,
+                err: if busy("runway") { Some("A runway is being built already.".into()) } else { board.clone() },
+            });
+        }
+        opts
+    }
+
+    pub fn start_project(&mut self, code: &str, kind: &str, len: f64) -> Result<(), String> {
+        let Some(o) = self.project_options(code).into_iter().find(|o| o.kind == kind && (kind != "runway" || o.len == len)) else {
+            return Err("That project is not available.".into());
+        };
+        if let Some(e) = o.err {
+            return Err(e);
+        }
+        if self.state.money < o.cost {
+            return Err(format!("Not enough money ({} needed).", fmt_money(o.cost)));
+        }
+        self.state.money -= o.cost;
+        let t = self.state.time;
+        self.state.projects.push(Project {
+            code: code.into(),
+            kind: o.kind.clone(),
+            len: o.len,
+            label: o.label.clone(),
+            cost: o.cost,
+            full: o.full,
+            start: t,
+            done: t + o.weeks * 7 * DAY,
+        });
+        let name = data().airport(code).name.clone();
+        self.log(
+            format!(
+                "Construction started at {name}: {} – your share {}, ready in {} weeks.",
+                o.label,
+                fmt_money(o.cost),
+                o.weeks
+            ),
+            LogKind::Cost,
+        );
+        Ok(())
+    }
+
+    /// Daily: finished projects change the airport.
+    fn finish_projects(&mut self) {
+        let t = self.state.time;
+        let done: Vec<Project> = self.state.projects.iter().filter(|p| t >= p.done).cloned().collect();
+        if done.is_empty() {
+            return;
+        }
+        self.state.projects.retain(|p| t < p.done);
+        for p in done {
+            let mut rws = airport_runways(&p.code);
+            match p.kind.as_str() {
+                "extend" => {
+                    if let Some(k) = (0..rws.len()).max_by(|&x, &y| runway_length(&rws[x]).total_cmp(&runway_length(&rws[y]))) {
+                        let r = rws[k];
+                        let h = bearing(r[0], r[1], r[2], r[3]);
+                        let e1 = offset_point(r[0], r[1], h + 180.0, EXTEND_BY / 2.0);
+                        let e2 = offset_point(r[2], r[3], h, EXTEND_BY / 2.0);
+                        rws[k] = [e1.0, e1.1, e2.0, e2.1, r[4], 1.0];
+                    }
+                    self.infra_mut(&p.code).runways = Some(rws);
+                }
+                "runway" => {
+                    rws.insert(0, new_runway(&p.code, &rws, p.len));
+                    self.infra_mut(&p.code).runways = Some(rws);
+                }
+                _ => self.infra_mut(&p.code).terminal += 1,
+            }
+            self.infra_mut(&p.code).invested += p.full;
+            set_infra(&self.state.infra);
+            let name = data().airport(&p.code).name.clone();
+            self.log(format!("{name}: {} completed.", p.label), LogKind::Good);
+        }
     }
 
     pub fn difficulty(&self) -> &'static Difficulty {
@@ -804,6 +1556,7 @@ impl Game {
             difficulty: pr.difficulty.clone(),
             airport: home.clone(),
             aircraft: planes.first().map(|p| p.0.clone()).unwrap_or_else(|| START_AIRCRAFT.into()),
+            story: None,
         });
         let mut errors = Vec::new();
         let mut need: BTreeMap<String, [u32; 6]> = BTreeMap::new();
@@ -837,7 +1590,7 @@ impl Game {
             let r = if legs.len() < 2 {
                 Err(format!("{} does not fit into one day.", route.join("→")))
             } else {
-                g.set_timetable(idx[k], legs).and_then(|_| g.set_schedule_active(idx[k], true))
+                g.set_timetable(idx[k], legs, 1).and_then(|_| g.set_schedule_active(idx[k], true))
             };
             if let Err(e) = r {
                 errors.push(format!("{} ({}): {e}", g.state.planes[idx[k]].id, d.ac(kind).name));
@@ -867,8 +1620,14 @@ impl Game {
         self.state.slots.get(code).map(|s| s.count.max(1)).unwrap_or(0)
     }
 
-    pub fn slot_fee(&self, _code: &str) -> f64 {
-        slot_weekly(_code)
+    /// Weekly slot fee; nothing at airports you control.
+    pub fn slot_fee(&self, code: &str) -> f64 {
+        if self.stake(code) >= MAJORITY_STAKE { 0.0 } else { slot_weekly(code) }
+    }
+
+    /// What leasing a free slot costs upfront: nothing at an airport you control.
+    pub fn slot_price(&self, code: &str) -> f64 {
+        if self.stake(code) >= MAJORITY_STAKE { 0.0 } else { slot_upfront(code) }
     }
 
     pub fn weekly_costs(&self) -> (f64, f64, f64, f64) {
@@ -882,7 +1641,7 @@ impl Game {
     }
 
     pub fn slot_capacity(&self, code: &str) -> u32 {
-        let stands: u32 = data().airport(code).stands.iter().sum();
+        let stands: u32 = stands_of(code).iter().sum();
         self.slot_count(code).max(2).max(stands)
     }
 
@@ -896,7 +1655,7 @@ impl Game {
             out.copy_from_slice(&sl.by_class);
             return out;
         }
-        let stands = data().airport(code).stands;
+        let stands = stands_of(code);
         let common = (0..6).max_by_key(|&c| (stands[c], c)).unwrap_or(2);
         let mut need: Vec<usize> = self
             .state
@@ -927,7 +1686,7 @@ impl Game {
     /// is left of each after yours).
     pub fn slot_table(&self, code: &str) -> SlotTable {
         let mine = self.my_slot_classes(code);
-        let stands = data().airport(code).stands;
+        let stands = stands_of(code);
         let mut cap = [0u32; 6];
         for c in 0..6 {
             cap[c] = stands[c].max(mine[c]);
@@ -1041,7 +1800,7 @@ impl Game {
         if self.free_slots(code, Some(cls)) == 0 {
             return Err(format!("No class {} slot is free at {code}.", CLASSES[cls]));
         }
-        let cost = slot_upfront(code);
+        let cost = self.slot_price(code);
         if self.state.money < cost {
             return Err(format!("Not enough money ({} needed).", fmt_money(cost)));
         }
@@ -1261,6 +2020,12 @@ impl Game {
         let inc = fade(&s.rep.incidents, REP_INCIDENT, REP_INCIDENT_DAYS);
         if inc > 0.0 {
             parts.push(("Incidents".into(), -inc));
+        }
+        if let Some(c) = code {
+            let st = self.stake(c);
+            if st > 0 {
+                parts.push((format!("Your {st}% of {c}"), st as f64 * REP_PER_STAKE));
+            }
         }
         if code == Some(self.home()) {
             parts.push(("Home base".into(), REP_HOME));
@@ -1514,13 +2279,8 @@ impl Game {
         let d = data();
         let r = &self.state.rivals[ri];
         let dd = d.dist(a, b);
-        let mut kind = rival_fleet(&r.kind);
-        if r.kind == "flag" && dd > LONG_HAUL_KM {
-            kind = LONG_HAUL_TYPE;
-        }
-        if r.kind == "regional" && dd < SHORT_PROP_KM {
-            kind = SHORT_PROP_TYPE;
-        }
+        let kind = self.rival_type(&r.kind, dd);
+        let kind = kind.as_str();
         let ac = d.try_ac(kind)?;
         if dd > ac.range_km || !fits_airport(kind, a) || !fits_airport(kind, b) {
             return None;
@@ -1905,8 +2665,18 @@ impl Game {
                 record(p, time, |w| w.fixed += fixed);
                 p.stats.fixed += fixed;
             }
+            self.pay_dividends();
             self.refresh_market();
             self.rivals_week();
+        }
+        self.finish_projects();
+        if let (Some(st), Some(y)) = (self.state.story.clone(), self.year()) {
+            if st.year != y {
+                if let Some(s) = self.state.story.as_mut() {
+                    s.year = y;
+                }
+                self.new_year(y);
+            }
         }
         self.roll_world_event();
         if self.state.money < self.bankruptcy_limit() {
@@ -1981,6 +2751,9 @@ impl Game {
         let name = Self::name_of(p);
         let kind_name = data().ac(&p.kind).name.clone();
         self.state.money += result;
+        if f.kind != FlightKind::Delivery {
+            *self.state.fees.entry(f.to.clone()).or_default() += landing_fee(&f.to) + f.pax as f64 * PAX_FEE;
+        }
         self.state.today.revenue += f.revenue;
         self.state.today.cost += f.cost;
         match f.kind {
@@ -2113,7 +2886,8 @@ impl Game {
                 self.state.rep.on_time += 1.0;
                 p.stats.on_time += 1;
             }
-            p.schedule.due = next_at(p.schedule.legs[ni].dep, p.schedule.due + 1);
+            let due = leg_due(&p.schedule, &p.schedule.legs[ni], p.schedule.due + 1);
+            p.schedule.due = due;
         } else if self.state.planes[i].pending_ferry.as_deref() == Some(to.as_str()) {
             self.state.planes[i].pending_ferry = None;
         }
@@ -2226,11 +3000,23 @@ impl Game {
         let d = data();
         let mut list = Vec::new();
         let homes: Vec<&crate::data::Airport> = d.airports.iter().filter(|a| !a.minor && !a.factory && a.size >= 2).collect();
+        let y = self.year();
         for _ in 0..USED_LISTINGS {
-            let types: Vec<&crate::data::Aircraft> =
-                d.aircraft.iter().filter(|a| a.category != "classic" || rand::random::<f64>() < 0.3).collect();
+            // (in story mode: types that have flown for at least a year and are still around, no older than the type)
+            let types: Vec<&crate::data::Aircraft> = d
+                .aircraft
+                .iter()
+                .filter(|a| match y {
+                    None => a.category != "classic" || rand::random::<f64>() < 0.3,
+                    Some(y) => a.year < y && in_service(&a.code, y),
+                })
+                .collect();
+            if types.is_empty() {
+                break;
+            }
             let ac = types[rand::random_range(0..types.len())];
-            let age = rand::random_range(USED_AGE.0..=USED_AGE.1);
+            let max_age = y.map_or(USED_AGE.1, |y| USED_AGE.1.min((y - ac.year) as i64));
+            let age = rand::random_range(USED_AGE.0.min(max_age)..=max_age);
             let fits: Vec<&&crate::data::Airport> = homes.iter().filter(|a| fits_airport(&ac.code, &a.code)).take(400).collect();
             let at = if fits.is_empty() { self.state.home.clone() } else { fits[rand::random_range(0..fits.len())].code.clone() };
             let n = self.state.market.next_id;
@@ -2307,6 +3093,9 @@ impl Game {
     }
 
     pub fn buy_new(&mut self, kind: &str, code: &str) -> Result<(), String> {
+        if let Some(e) = self.not_on_sale(kind) {
+            return Err(e);
+        }
         let cost = price_new(kind);
         self.check_delivery(kind, code, cost)?;
         self.state.money -= cost;
@@ -2324,6 +3113,9 @@ impl Game {
     }
 
     pub fn lease_new(&mut self, kind: &str, code: &str) -> Result<(), String> {
+        if let Some(e) = self.not_on_sale(kind) {
+            return Err(e);
+        }
         let cost = lease_deposit(kind);
         self.check_delivery(kind, code, cost)?;
         self.state.money -= cost;
@@ -2424,6 +3216,39 @@ impl Game {
 
     // ---------- timetables ----------
 
+    /// An ultra long-haul timetable: the loop of stops flown `rounds` times from a first departure, each flight after
+    /// the turnaround, the next morning where that would fall into the night curfew, or the next day where the crews
+    /// have flown their hours (a rested crew always flies one flight, however long). Times count from the round.
+    pub fn build_long_timetable(&self, kind: &str, stops: &[String], first_dep: i64, rounds: usize) -> Vec<Leg> {
+        let mut legs = Vec::new();
+        if stops.len() < 2 {
+            return legs;
+        }
+        let max_duty = CREW_MAX_DUTY_MIN * CREWS_MAX as i64;
+        let (mut t, mut day, mut duty) = (first_dep, -1i64, 0i64);
+        for _ in 0..rounds.max(1) {
+            for (i, from) in stops.iter().enumerate() {
+                let to = &stops[(i + 1) % stops.len()];
+                let block = leg_block(kind, from, to);
+                for _ in 0..3 {
+                    t = self.curfew_opens_at(from, t);
+                    if t.div_euclid(DAY) != day {
+                        day = t.div_euclid(DAY);
+                        duty = 0;
+                    }
+                    if duty == 0 || duty + block <= max_duty {
+                        break;
+                    }
+                    t = (day + 1) * DAY; // the crews rest until tomorrow
+                }
+                legs.push(Leg { from: from.clone(), to: to.clone(), dep: t });
+                duty += block;
+                t += block + turnaround_min(kind);
+            }
+        }
+        legs
+    }
+
     /// A day plan for a route: as many loops as fit into the day (or `rounds`), from `first_dep` (home-base clock).
     /// Each departure must fall within the night curfew window of its airport, local time.
     pub fn build_timetable(&self, kind: &str, stops: &[String], first_dep: i64, rounds: usize) -> Vec<Leg> {
@@ -2467,19 +3292,26 @@ impl Game {
         legs
     }
 
-    /// Problems with a timetable for a plane: errors block saving.
-    pub fn check_timetable(&self, i: usize, legs: &[Leg]) -> Vec<String> {
+    /// Problems with a timetable for a plane: errors block saving. days > 1: an ultra long-haul one, repeating every
+    /// `days` days (dep counted from the start of a round).
+    pub fn check_timetable(&self, i: usize, legs: &[Leg], days: u32) -> Vec<String> {
         let p = &self.state.planes[i];
         let ac = data().ac(&p.kind);
         let mut errors: Vec<String> = Vec::new();
         if legs.len() < 2 {
             return vec!["A timetable needs at least two flights.".into()];
         }
+        if days > 1 && !ultra_capable(&p.kind) {
+            errors.push(format!(
+                "The {} can't fly ultra long-haul timetables: a timetable over several days is for planes with the range for flights longer than half a day.",
+                ac.name
+            ));
+        }
         let mut duty = 0;
         for (k, leg) in legs.iter().enumerate() {
             let next = &legs[(k + 1) % legs.len()];
             duty += leg_block(&p.kind, &leg.from, &leg.to);
-            let name = format!("{} {}→{}", self.fmt_at(&leg.from, leg.dep), leg.from, leg.to);
+            let name = format!("{} {}→{}", self.fmt_leg_dep(&leg.from, leg.dep, days), leg.from, leg.to);
             if leg.to != next.from {
                 errors.push(format!("{name} ends at {}, but the next flight leaves from {}.", leg.to, next.from));
             }
@@ -2502,7 +3334,9 @@ impl Game {
                     fmt_clock(CURFEW_END)
                 ));
             }
-            if !self.my_slot_classes(&leg.from).iter().enumerate().any(|(c, &n)| n > 0 && c >= type_class(&p.kind)) && self.owns_slot(&leg.from) {
+            if self.owns_slot(&leg.from)
+                && !self.my_slot_classes(&leg.from).iter().enumerate().any(|(c, &n)| n > 0 && c >= type_class(&p.kind))
+            {
                 errors.push(format!(
                     "No slot at {} big enough for the {}: it needs class {} or bigger.",
                     leg.from,
@@ -2517,53 +3351,102 @@ impl Game {
                 errors.push(why);
             }
         }
-        // the legs must fit into one day, each with a turnaround
         let ta = turnaround_min(&p.kind);
-        let mut t = legs[0].dep;
-        for (k, leg) in legs.iter().enumerate() {
-            if k > 0 {
-                let mut dep = leg.dep;
-                while dep < t {
-                    dep += DAY;
+        if days > 1 {
+            // the legs, one after the other with their turnarounds, must fit into the days of the round
+            for (k, leg) in legs.iter().enumerate() {
+                let ready = leg.dep + leg_block(&p.kind, &leg.from, &leg.to) + ta;
+                let next_dep = if k + 1 < legs.len() { legs[k + 1].dep } else { legs[0].dep + days as i64 * DAY };
+                if next_dep < ready {
+                    errors.push(if k + 1 < legs.len() {
+                        format!(
+                            "After {} {}→{} the plane is ready at {} – too late for the next flight at {}.",
+                            self.fmt_leg_dep(&leg.from, leg.dep, days),
+                            leg.from,
+                            leg.to,
+                            self.fmt_leg_dep(&leg.to, ready, days),
+                            self.fmt_leg_dep(&leg.to, next_dep, days)
+                        )
+                    } else {
+                        format!("The last flight is back too late to start again after {days} days.")
+                    });
                 }
-                t = dep;
             }
-            let ready = t + leg_block(&p.kind, &leg.from, &leg.to) + ta;
-            let next_dep = if k + 1 < legs.len() {
-                let mut d = legs[k + 1].dep;
-                while d < t {
-                    d += DAY;
+            let mut duty_day = vec![0i64; days as usize];
+            let mut flights = vec![0u32; days as usize];
+            for l in legs {
+                let k = (l.dep.div_euclid(DAY) as usize) % days as usize;
+                duty_day[k] += leg_block(&p.kind, &l.from, &l.to);
+                flights[k] += 1;
+            }
+            for (k, m) in duty_day.iter().enumerate() {
+                if flights[k] > 1 && *m > CREW_MAX_DUTY_MIN * CREWS_MAX as i64 {
+                    errors.push(format!(
+                        "Day {}: {} in the air – {CREWS_MAX} crews may fly {}.",
+                        k + 1,
+                        fmt_duration(*m),
+                        fmt_duration(CREW_MAX_DUTY_MIN * CREWS_MAX as i64)
+                    ));
                 }
-                d
-            } else {
-                legs[0].dep + DAY
-            };
-            if next_dep < ready {
+            }
+        } else {
+            // the legs must fit into one day, each with a turnaround
+            let mut t = legs[0].dep;
+            for (k, leg) in legs.iter().enumerate() {
+                if k > 0 {
+                    let mut dep = leg.dep;
+                    while dep < t {
+                        dep += DAY;
+                    }
+                    t = dep;
+                }
+                let ready = t + leg_block(&p.kind, &leg.from, &leg.to) + ta;
+                let next_dep = if k + 1 < legs.len() {
+                    let mut d = legs[k + 1].dep;
+                    while d < t {
+                        d += DAY;
+                    }
+                    d
+                } else {
+                    legs[0].dep + DAY
+                };
+                if next_dep < ready {
+                    errors.push(format!(
+                        "After {} {}→{} the plane is ready at {} – too late for the next flight at {}.",
+                        self.fmt_at(&leg.from, leg.dep),
+                        leg.from,
+                        leg.to,
+                        self.fmt_at(&leg.to, ready),
+                        self.fmt_at(&leg.to, next_dep)
+                    ));
+                }
+            }
+            if duty > CREW_MAX_DUTY_MIN * CREWS_MAX as i64 {
                 errors.push(format!(
-                    "After {} {}→{} the plane is ready at {} – too late for the next flight at {}.",
-                    self.fmt_at(&leg.from, leg.dep),
-                    leg.from,
-                    leg.to,
-                    self.fmt_at(&leg.to, ready),
-                    self.fmt_at(&leg.to, next_dep)
+                    "{} in the air a day – {CREWS_MAX} crews may fly {}.",
+                    fmt_duration(duty),
+                    fmt_duration(CREW_MAX_DUTY_MIN * CREWS_MAX as i64)
                 ));
             }
-        }
-        if duty > CREW_MAX_DUTY_MIN * CREWS_MAX as i64 {
-            errors.push(format!(
-                "{} in the air a day – {CREWS_MAX} crews may fly {}.",
-                fmt_duration(duty),
-                fmt_duration(CREW_MAX_DUTY_MIN * CREWS_MAX as i64)
-            ));
         }
         let mut seen = std::collections::HashSet::new();
         errors.retain(|e| seen.insert(e.clone()));
         errors
     }
 
+    /// A departure as the local clock there, with the day of the round on an ultra long-haul timetable.
+    pub fn fmt_leg_dep(&self, code: &str, dep: i64, days: u32) -> String {
+        if days > 1 {
+            format!("day {} {}", dep.div_euclid(DAY) + 1, self.fmt_at(code, dep))
+        } else {
+            self.fmt_at(code, dep)
+        }
+    }
+
     /// Slot check for a timetable: airports where more of your planes stand at once than you hold slots
-    /// (a plane then waits at its gate until one is free). (code, have, need)
-    pub fn timetable_slots(&self, i: usize, legs: &[Leg]) -> Vec<(String, u32, u32)> {
+    /// (a plane then waits at its gate until one is free). (code, have, need). Ultra long-haul timetables are laid
+    /// over one day as if the plane stood there at those times every day.
+    pub fn timetable_slots(&self, i: usize, legs: &[Leg], days: u32) -> Vec<(String, u32, u32)> {
         let mut out = Vec::new();
         let mut codes: Vec<&String> = legs.iter().map(|l| &l.from).collect();
         codes.sort();
@@ -2575,7 +3458,7 @@ impl Game {
             // minute-by-minute occupancy over a day: this plane's draft plus every other plane
             let mut busy = vec![0u32; DAY as usize];
             for (k, q) in self.state.planes.iter().enumerate() {
-                let (kind, ls): (&str, &[Leg]) = if k == i { (&q.kind, legs) } else { (&q.kind, &q.schedule.legs) };
+                let (ls, dd): (&[Leg], u32) = if k == i { (legs, days) } else { (&q.schedule.legs, q.schedule.days) };
                 if k != i && (!q.schedule.active || ls.is_empty()) {
                     let at = q.flight.as_ref().map(|f| f.to.as_str()).unwrap_or(&q.location);
                     if at == code && !self.parks_at_base(q, code) {
@@ -2583,7 +3466,7 @@ impl Game {
                     }
                     continue;
                 }
-                for (from, to) in ground_times(kind, ls, code) {
+                for (from, to) in ground_times(&q.kind, ls, code, dd) {
                     for m in from..to {
                         busy[m as usize] += 1;
                     }
@@ -2598,25 +3481,41 @@ impl Game {
         out
     }
 
-    pub fn set_timetable(&mut self, i: usize, legs: Vec<Leg>) -> Result<(), String> {
-        let errors = self.check_timetable(i, &legs);
+    /// Puts a plane on a timetable (and keeps it running if it was). days > 1: an ultra long-haul one.
+    pub fn set_timetable(&mut self, i: usize, legs: Vec<Leg>, days: u32) -> Result<(), String> {
+        let errors = self.check_timetable(i, &legs, days);
         if let Some(e) = errors.into_iter().next() {
             return Err(e);
         }
-        let legs: Vec<Leg> = legs.into_iter().map(|l| Leg { dep: l.dep.rem_euclid(DAY), ..l }).collect();
+        let legs: Vec<Leg> = legs.into_iter().map(|l| Leg { dep: if days > 1 { l.dep } else { l.dep.rem_euclid(DAY) }, ..l }).collect();
         let p = &mut self.state.planes[i];
         let active = p.schedule.active;
-        p.schedule = Schedule { stops: legs.iter().map(|l| l.from.clone()).collect(), legs, index: 0, active, due: 0 };
+        p.schedule = Schedule {
+            stops: legs.iter().map(|l| l.from.clone()).collect(),
+            legs,
+            index: 0,
+            active,
+            due: 0,
+            days: if days > 1 { days } else { 0 },
+            offset: 0,
+        };
+        self.anchor_round(i);
         self.sync_timetable(i);
         let p = &self.state.planes[i];
-        let list: Vec<String> = p.schedule.legs.iter().map(|l| format!("{} {}→{}", self.fmt_at(&l.from, l.dep), l.from, l.to)).collect();
+        let list: Vec<String> =
+            p.schedule.legs.iter().map(|l| format!("{} {}→{}", self.fmt_leg_dep(&l.from, l.dep, days), l.from, l.to)).collect();
         let name = Self::name_of(p);
-        let n = crews_for(&p.kind, &p.schedule.legs);
-        self.log(format!("{name} timetable: {} (local times).", list.join(", ")), LogKind::Info);
+        let n = crews_for(&p.kind, &p.schedule.legs, days);
+        let ultra = if days > 1 { format!(" (ultra long-haul, every {days} days)") } else { String::new() };
+        self.log(format!("{name} timetable{ultra}: {} (local times).", list.join(", ")), LogKind::Info);
         self.set_crews(i, n);
         self.seat_cache.replace(None);
         Ok(())
     }
+
+
+
+
 
     pub fn clear_timetable(&mut self, i: usize) {
         let p = &mut self.state.planes[i];
@@ -2660,16 +3559,38 @@ impl Game {
             (Some(f), Status::Flying) => (f.to.clone(), t.max(f.arr + turnaround_min(&p.kind))),
             _ => (p.location.clone(), t),
         };
+        let sch = &p.schedule;
         let mut best = (0, i64::MAX);
-        for (k, l) in p.schedule.legs.iter().enumerate() {
-            let due = next_at(l.dep, from) + if l.from == at { 0 } else { DAY / 2 };
+        for (k, l) in sch.legs.iter().enumerate() {
+            let due = leg_due(sch, l, from) + if l.from == at { 0 } else { period_of(sch) / 2 };
             if due < best.1 {
                 best = (k, due);
             }
         }
+        let due = leg_due(sch, &sch.legs[best.0], from);
         p.schedule.index = best.0;
-        p.schedule.due = next_at(p.schedule.legs[best.0].dep, from);
+        p.schedule.due = due;
     }
+
+    /// An ultra long-haul timetable's rounds start on the plane's own day: so that its first flight from where it is
+    /// (or lands) leaves as soon as the plane is ready, instead of days later.
+    fn anchor_round(&mut self, i: usize) {
+        let t = self.state.time;
+        let p = &mut self.state.planes[i];
+        let sch = &p.schedule;
+        if sch.legs.is_empty() || sch.days < 2 {
+            return;
+        }
+        let (at, from) = match (&p.flight, p.status) {
+            (Some(f), Status::Flying) => (f.to.clone(), t.max(f.arr + turnaround_min(&p.kind))),
+            _ => (p.location.clone(), t),
+        };
+        let leg = sch.legs.iter().find(|l| l.from == at).unwrap_or(&sch.legs[0]);
+        let start = (from - leg.dep).div_euclid(DAY) * DAY + if (from - leg.dep).rem_euclid(DAY) > 0 { DAY } else { 0 };
+        let period = period_of(sch);
+        p.schedule.offset = start.rem_euclid(period);
+    }
+
 
     pub fn set_schedule_active(&mut self, i: usize, active: bool) -> Result<(), String> {
         let p = &mut self.state.planes[i];
@@ -2710,7 +3631,7 @@ impl Game {
             block += b;
             rows.push((l.clone(), b, n as u32, rev - cost));
         }
-        let sets = crews_for(&p.kind, legs) as f64;
+        let sets = crews_for(&p.kind, legs, 1) as f64;
         let lease = if p.ownership == Ownership::Owned { 0.0 } else { ac.lease_per_week };
         Estimate { rows, pax, profit, block, fixed_per_day: (lease + p.crew.weekly_salary * sets) / 7.0 }
     }
@@ -2795,9 +3716,32 @@ fn record(p: &mut Plane, t: i64, add: impl FnOnce(&mut Tally)) {
 }
 
 /// Where a plane with these legs stands at `code` during the day: [from, to) minutes, split at midnight.
-pub fn ground_times(kind: &str, legs: &[Leg], code: &str) -> Vec<(i64, i64)> {
+pub fn ground_times(kind: &str, legs: &[Leg], code: &str, days: u32) -> Vec<(i64, i64)> {
     let mut out = Vec::new();
     let n = legs.len();
+    if days > 1 {
+        // laid over one day as if the plane stood there at those times every day; a day or more takes it all day
+        for k in 0..n {
+            let leg = &legs[k];
+            if leg.to != code {
+                continue;
+            }
+            let arr = leg.dep + leg_block(kind, &leg.from, &leg.to);
+            let dep = if k + 1 < n { legs[k + 1].dep } else { legs[0].dep + days as i64 * DAY };
+            if dep - arr >= DAY {
+                out.push((0, DAY));
+                continue;
+            }
+            let a = arr.rem_euclid(DAY);
+            if a + dep - arr <= DAY {
+                out.push((a, a + dep - arr));
+            } else {
+                out.push((a, DAY));
+                out.push((0, a + dep - arr - DAY));
+            }
+        }
+        return out;
+    }
     for k in 0..n {
         let (leg, next) = (&legs[k], &legs[(k + 1) % n]);
         if leg.to != code {
@@ -2866,19 +3810,28 @@ mod tests {
         g.state.money += 1e6;
         // London City is too short for the A220
         assert!(fits_reason("A220-300", "LCY").is_some());
-        g.lease_slot("MAD", None).unwrap();
+        // (when the random rivals hold every slot there, hand one over)
+        if g.lease_slot("MAD", None).is_err() {
+            g.set_slot_classes("MAD", [0, 0, 1, 0, 0, 0]);
+        }
         // the A220 is class C: the slot leased for it
         assert_eq!(g.my_slot_classes("MAD")[2], 1);
         let stops = vec!["BRN".to_string(), "MAD".to_string()];
         let legs = g.build_timetable("A220-300", &stops, CURFEW_START + 60, 0);
         assert!(legs.len() >= 2, "{legs:?}");
-        g.set_timetable(0, legs).unwrap();
+        g.set_timetable(0, legs, 1).unwrap();
         g.set_schedule_active(0, true).unwrap();
         let est = g.estimate_timetable(0, &g.state.planes[0].schedule.legs.clone());
         assert!(est.pax > 0);
         g.advance(30 * DAY);
         assert!(!g.state.rivals.iter().all(|r| r.routes.is_empty()));
-        assert!(g.state.planes[0].stats.flights > 20, "flights {}", g.state.planes[0].stats.flights);
+        if g.state.planes.is_empty() {
+            assert!(!g.state.rep.crashes.is_empty()); // (an emergency ended in a crash: rare, but it happens)
+            return;
+        }
+        let p = &g.state.planes[0];
+        let why: Vec<&str> = g.state.log.iter().filter(|l| l.kind == LogKind::Bad).map(|l| l.msg.as_str()).take(8).collect();
+        assert!(p.stats.flights > 20, "flights {} ({:?})", p.stats.flights, why);
         assert!(g.state.history.len() >= 29);
         let saved = g.save_json();
         let g2 = Game::load_json(&saved).unwrap();
@@ -2912,6 +3865,63 @@ mod tests {
         // ZRH→LHR leaves at 07:00 Zurich time, 06:00 in London; the way back leaves London by its clock
         g.advance(3 * DAY);
         assert!(g.state.planes.iter().map(|p| p.stats.flights).sum::<u32>() > 100);
+    }
+
+    #[test]
+    fn story_mode() {
+        let year = 1960;
+        let starters = starter_types(Some(year));
+        assert!(!starters.is_empty());
+        let mut g = Game::new_game(&NewGame { story: Some(year), aircraft: starters[0].clone(), ..Default::default() });
+        assert_eq!(g.year(), Some(year));
+        assert!(fmt_time(0).ends_with("1960 06:00") || fmt_time(g.state.time).contains("1960"), "{}", fmt_time(g.state.time));
+        // no jets of the future
+        assert!(g.not_on_sale("A320neo").is_some());
+        assert!(g.state.market.listings.iter().all(|l| data().ac(&l.kind).year < year));
+        g.state.money += 1e9;
+        g.advance(370 * DAY);
+        assert_eq!(g.year(), Some(year + 1));
+        assert!(g.state.log.iter().any(|l| l.msg.starts_with("Happy New Year")));
+        set_story_start(None);
+    }
+
+    #[test]
+    fn shares_and_construction() {
+        let mut g = Game::new_game(&NewGame::default());
+        g.state.money = 1e9;
+        let size = airport_size("BRN");
+        g.buy_shares("BRN", 30).unwrap();
+        assert_eq!(g.stake("BRN"), 30);
+        assert!(g.dividend("BRN") > 0.0);
+        g.start_project("BRN", "terminal", 0.0).unwrap();
+        g.advance(10 * 7 * DAY);
+        assert_eq!(airport_size("BRN"), size + 1);
+        g.buy_shares("BRN", 30).unwrap();
+        assert_eq!(g.slot_fee("BRN"), 0.0);
+        let before = longest_runway("BRN", false);
+        g.start_project("BRN", "extend", 0.0).unwrap();
+        g.advance(7 * 7 * DAY);
+        assert!((longest_runway("BRN", false) - before - EXTEND_BY).abs() < 30.0);
+    }
+
+    #[test]
+    fn ultra_long_haul() {
+        let mut g = Game::new_game(&NewGame { airport: "LAX".into(), aircraft: "A350-900".into(), ..Default::default() });
+        g.state.money = 1e9;
+        assert!(ultra_capable("A350-900"));
+        assert!(!ultra_capable("A220-300"));
+        // (the rivals there are random: hand the slot over, class E for the A350)
+        g.set_slot_classes("SIN", [0, 0, 0, 0, 1, 0]);
+        let stops = vec!["LAX".to_string(), "SIN".to_string()];
+        // too long for one day
+        assert!(g.build_timetable("A350-900", &stops, CURFEW_START + 60, 0).len() < 2);
+        let legs = g.build_long_timetable("A350-900", &stops, CURFEW_START + 60, 1);
+        let days = cycle_days("A350-900", &legs);
+        assert!(days >= 2, "{days}");
+        g.set_timetable(0, legs, days).unwrap();
+        g.set_schedule_active(0, true).unwrap();
+        g.advance(12 * DAY);
+        assert!(g.state.planes[0].stats.flights >= 4, "flights {}", g.state.planes[0].stats.flights);
     }
 
     #[test]

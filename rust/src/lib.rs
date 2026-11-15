@@ -4,3 +4,5 @@ pub mod data;
 pub mod events;
 pub mod game;
 pub mod jsdata;
+pub mod weather;
+pub mod layouts;

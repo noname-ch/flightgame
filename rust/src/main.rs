@@ -4,6 +4,7 @@
 
 mod app;
 mod mapview;
+mod sound;
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {

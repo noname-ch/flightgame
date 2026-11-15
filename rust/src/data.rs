@@ -18,6 +18,7 @@ const FACTORIES_JS: &str = include_str!("../../js/data/factories.js");
 const RIVALS_JS: &str = include_str!("../../js/data/rivals.js");
 const TIMEZONES_JS: &str = include_str!("../../js/data/timezones.js");
 const PRESETS_JS: &str = include_str!("../../js/data/presets.js");
+const STORY_JS: &str = include_str!("../../js/data/story.js");
 /// The stands (by class A–F) of the airports whose real layout the browser game knows, as it counts them
 /// (taken from the online game; every other airport has the made-up apron of its size, `DEFAULT_STANDS`).
 const STANDS_JSON: &str = include_str!("../data/stands.json");
@@ -86,6 +87,17 @@ pub struct RivalTemplate {
     pub hubs: Vec<String>,
 }
 
+/// The aircraft rivals fly from a year on (story mode); all None: today's fleets.
+#[derive(Clone, Debug)]
+pub struct RivalEra {
+    pub from: i32,
+    pub flag: Option<String>,
+    pub low: Option<String>,
+    pub regional: Option<String>,
+    pub long_haul: Option<String>,
+    pub short_prop: Option<String>,
+}
+
 /// A ready-made airline for Quick start (js/data/presets.js).
 #[derive(Clone, Debug)]
 pub struct Preset {
@@ -117,6 +129,9 @@ pub struct Data {
     pub rival_colors: Vec<String>,
     pub factory_of: HashMap<String, String>,
     pub presets: Vec<Preset>,
+    /// story mode: a line for the newspaper per type, and the rivals' aircraft by era
+    pub story_news: HashMap<String, String>,
+    pub rival_fleets: Vec<RivalEra>,
     town_grid: HashMap<(i32, i32), Vec<usize>>,
 }
 
@@ -334,6 +349,29 @@ impl Data {
             }
         }
 
+        // ---------- story mode ----------
+        let story = jsdata::assigned(STORY_JS, "story")?;
+        let story_news: HashMap<String, String> =
+            story["news"].as_object().map(|m| m.iter().map(|(k, v)| (k.clone(), s(v))).collect()).unwrap_or_default();
+        let rival_fleets = story["rivalFleets"]
+            .as_array()
+            .map(|l| {
+                l.iter()
+                    .map(|e| {
+                        let o = |k: &str| e[k].as_str().map(String::from);
+                        RivalEra {
+                            from: f(&e["from"]) as i32,
+                            flag: o("flag"),
+                            low: o("low"),
+                            regional: o("regional"),
+                            long_haul: o("longHaul"),
+                            short_prop: o("shortProp"),
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
         // ---------- quick start ----------
         let mut presets = Vec::new();
         if let Value::Object(map) = jsdata::assigned(PRESETS_JS, "presets")? {
@@ -371,6 +409,8 @@ impl Data {
             rival_colors,
             factory_of,
             presets,
+            story_news,
+            rival_fleets,
             town_grid,
         };
         let catchments: Vec<f64> = d.airports.iter().map(|a| d.catchment_of(a.lat, a.lon)).collect();

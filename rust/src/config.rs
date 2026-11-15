@@ -207,3 +207,38 @@ pub const STARTER_AIRCRAFT: [&str; 6] = ["ATR72-600", "Q400", "E190", "A220-300"
 
 /// Game minutes per real second, as in the browser game's speed menu.
 pub const SPEEDS: [f64; 6] = [1.0, 10.0, 60.0, 300.0, 1200.0, 3600.0];
+
+// Story mode: the game starts on the first Monday of one of these years, and each aircraft type reaches the market
+// in its real first year of airline service. A type is built new from its year to its endYear and flies on, sold
+// pre-owned, for STORY_SERVICE_YEARS more. First aircraft: types flying in the start year at most STARTER_AGE years
+// old with at most STARTER_SEATS seats.
+pub const STORY_YEARS: [i32; 10] = [1955, 1960, 1965, 1970, 1975, 1980, 1985, 1990, 2000, 2010];
+pub const STORY_SERVICE_YEARS: i32 = 25;
+pub const STORY_STARTER_AGE: i32 = 25;
+pub const STORY_STARTER_SEATS: u32 = 200;
+
+// Airports as investments: shares, dividends and construction projects (FG.config.airports)
+pub const PAX_PER_HEAD: [f64; 6] = [0.0, 0.3, 1.0, 2.0, 3.0, 4.0]; // passengers a year per catchment inhabitant
+pub const PROFIT_PER_PAX: f64 = 4.0;
+pub const PE_RATIO: f64 = 2.0;
+pub const INVESTED_VALUE: f64 = 0.7;
+pub const PAYOUT: f64 = 0.8;
+pub const SHARE_STEP: u32 = 5;
+pub const BUY_PREMIUM: f64 = 1.05;
+pub const SELL_DISCOUNT: f64 = 0.95;
+pub const BOARD_STAKE: u32 = 25; // stake needed to order construction
+pub const MAJORITY_STAKE: u32 = 50; // no weekly slot fee and free slots from here
+pub const REP_PER_STAKE: f64 = 0.2;
+pub const RUNWAY_LENGTHS: [f64; 5] = [1200.0, 1800.0, 2500.0, 3200.0, 4000.0];
+pub const RUNWAY_COST_BASE: f64 = 2_000_000.0;
+pub const RUNWAY_COST_PER_M: f64 = 4000.0;
+pub const RUNWAY_WEEKS_BASE: f64 = 4.0;
+pub const RUNWAY_WEEKS_PER_KM: f64 = 2.0;
+pub const EXTEND_BY: f64 = 500.0;
+pub const EXTEND_COST: f64 = 3_000_000.0;
+pub const EXTEND_WEEKS: i64 = 6;
+pub const MAX_RUNWAY_M: f64 = 4500.0;
+pub const TERMINAL_COST: [f64; 6] = [0.0, 0.0, 10_000_000.0, 30_000_000.0, 80_000_000.0, 200_000_000.0];
+pub const TERMINAL_WEEKS: [i64; 6] = [0, 0, 8, 12, 20, 30];
+pub const TERMINAL_RUNWAY: [f64; 6] = [0.0, 0.0, 1200.0, 1800.0, 2500.0, 3000.0];
+pub const TERMINAL_DEMAND: f64 = 0.25;

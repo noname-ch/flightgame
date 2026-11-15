@@ -80,6 +80,9 @@ pub struct Layers {
     pub rival_routes: bool,
     /// darken the map a little (the satellite pictures), so the game stands out
     pub dim: bool,
+    /// night where the sun is down, and the clouds and rain
+    pub night: bool,
+    pub weather: bool,
 }
 
 /// Draws the game over the map and says what is under the pointer and what was clicked.
@@ -110,6 +113,13 @@ pub fn draw(
 
     if layers.dim {
         painter.rect_filled(rect, 0.0, Color32::from_black_alpha(90));
+    }
+    // the airports themselves when zoomed in: runways, and the real layout where the game has one
+    if zoom >= 10.5 {
+        ground(&painter, projector, rect, zoom);
+    }
+    if layers.night || layers.weather {
+        sky(&painter, projector, rect, game, t, layers);
     }
 
     // ---------- the rivals' routes ----------
@@ -281,4 +291,162 @@ fn great_circle(painter: &egui::Painter, pos: &dyn Fn(f64, f64) -> Pos2, a: (f64
     if line.len() > 1 {
         painter.add(Shape::line(line, stroke));
     }
+}
+
+/// Night and clouds over the map: a grid over the view, each corner coloured by how dark it is there and how
+/// cloudy, blended smoothly in between.
+fn sky(painter: &egui::Painter, projector: &Projector, rect: egui::Rect, game: &Game, t: f64, layers: &Layers) {
+    const NX: usize = 48;
+    const NY: usize = 32;
+    let sun = game.sun_point(t);
+    let storms: Vec<(f64, f64, f64)> = game
+        .active_effects()
+        .filter(|e| e.storm || e.label.starts_with("Storm "))
+        .filter_map(|e| e.at.near.map(|(a, b)| (a, b, if e.at.radius_km > 0.0 { e.at.radius_km } else { 400.0 })))
+        .collect();
+    let mut night = egui::Mesh::default();
+    let mut clouds = egui::Mesh::default();
+    for j in 0..=NY {
+        for i in 0..=NX {
+            let p = egui::pos2(rect.left() + rect.width() * i as f32 / NX as f32, rect.top() + rect.height() * j as f32 / NY as f32);
+            let geo = projector.unproject(p.to_vec2());
+            let (lat, lon) = (geo.y().clamp(-85.0, 85.0), (geo.x() + 540.0).rem_euclid(360.0) - 180.0);
+            let dark = 1.0 - flightgame::weather::daylight(lat, lon, sun);
+            night.colored_vertex(p, Color32::from_rgba_unmultiplied(4, 8, 28, (dark * 150.0) as u8));
+            let (cover, rain, storm) = if layers.weather { game.weather_lite(lat, lon, t, &storms) } else { (0.0, 0.0, false) };
+            let grey = if storm { 120 } else { (235.0 - 90.0 * rain) as u8 };
+            let alpha = (cover.powf(1.6) * 120.0 + if storm { 40.0 } else { 0.0 }) * (1.0 - 0.6 * dark);
+            clouds.colored_vertex(p, Color32::from_rgba_unmultiplied(grey, grey, grey.saturating_add(8), alpha.min(200.0) as u8));
+        }
+    }
+    for j in 0..NY as u32 {
+        for i in 0..NX as u32 {
+            let a = j * (NX as u32 + 1) + i;
+            let (b, c, d) = (a + 1, a + NX as u32 + 1, a + NX as u32 + 2);
+            for m in [&mut night, &mut clouds] {
+                m.add_triangle(a, b, c);
+                m.add_triangle(b, d, c);
+            }
+        }
+    }
+    if layers.weather {
+        painter.add(egui::Shape::mesh(clouds));
+    }
+    if layers.night {
+        painter.add(egui::Shape::mesh(night));
+    }
+}
+
+/// Airports drawn as they are: runways (with the ones you built), and aprons, terminals, hangars, taxiways and
+/// stands where the browser game ships a real layout.
+fn ground(painter: &egui::Painter, projector: &Projector, rect: egui::Rect, zoom: f64) {
+    let d = data();
+    let pos = |lat: f64, lon: f64| -> Pos2 { projector.project(lat_lon(lat, lon)).to_pos2() };
+    let near = rect.expand(rect.width().max(rect.height()) * 0.5);
+    for a in &d.airports {
+        let at = pos(a.lat, a.lon);
+        if a.factory || !near.contains(at) {
+            continue;
+        }
+        let ppm = projector.scale_pixel_per_meter(lat_lon(a.lat, a.lon));
+        if let Some(l) = flightgame::layouts::layout(&a.code) {
+            for r in &l.aprons {
+                fill_polygon(painter, &r.iter().map(|p| pos(p.0, p.1)).collect::<Vec<_>>(), Color32::from_rgb(92, 96, 104));
+            }
+            for r in &l.taxiways {
+                let pts: Vec<Pos2> = r.iter().map(|p| pos(p.0, p.1)).collect();
+                painter.add(Shape::line(pts.clone(), Stroke::new((23.0 * ppm).max(1.5), Color32::from_rgb(72, 76, 84))));
+                if zoom >= 14.0 {
+                    painter.add(Shape::line(pts, Stroke::new(1.0, Color32::from_rgb(230, 190, 60))));
+                }
+            }
+        }
+        for r in flightgame::game::airport_runways(&a.code) {
+            let (p1, p2) = (pos(r[0], r[1]), pos(r[2], r[3]));
+            let w = (r[4].max(30.0) as f32 * ppm).max(2.5);
+            let surface = if r[5] > 0.0 { Color32::from_rgb(52, 54, 58) } else { Color32::from_rgb(96, 120, 70) };
+            painter.line_segment([p1, p2], Stroke::new(w, surface));
+            if r[5] > 0.0 && w > 6.0 {
+                // centre line, dashed
+                let len = p1.distance(p2);
+                let dir = (p2 - p1) / len.max(1.0);
+                let dash = (30.0 * ppm).max(4.0);
+                let mut s = dash;
+                while s + dash < len - dash {
+                    painter.line_segment([p1 + dir * s, p1 + dir * (s + dash)], Stroke::new((0.9 * ppm).max(1.0), Color32::WHITE));
+                    s += dash * 2.0;
+                }
+            }
+        }
+        if let Some(l) = flightgame::layouts::layout(&a.code) {
+            for r in &l.hangars {
+                fill_polygon(painter, &r.iter().map(|p| pos(p.0, p.1)).collect::<Vec<_>>(), Color32::from_rgb(150, 140, 120));
+            }
+            for r in &l.terminals {
+                fill_polygon(painter, &r.iter().map(|p| pos(p.0, p.1)).collect::<Vec<_>>(), Color32::from_rgb(200, 205, 215));
+            }
+            if zoom >= 14.0 {
+                for (lat, lon, _, name) in &l.stands {
+                    let p = pos(*lat, *lon);
+                    painter.circle_filled(p, (3.0 * ppm).clamp(1.5, 5.0), Color32::from_rgb(255, 214, 10));
+                    if zoom >= 15.5 && !name.is_empty() {
+                        painter.text(p + Vec2::new(4.0, 0.0), Align2::LEFT_CENTER, name, FontId::proportional(10.0), Color32::from_rgb(255, 230, 120));
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Fills a simple polygon, convex or not, by ear clipping.
+fn fill_polygon(painter: &egui::Painter, pts: &[Pos2], color: Color32) {
+    let mut p: Vec<Pos2> = pts.to_vec();
+    if p.len() > 2 && p.first() == p.last() {
+        p.pop();
+    }
+    if p.len() < 3 {
+        return;
+    }
+    // counter-clockwise on the screen (y down: positive area is clockwise)
+    let area: f32 = (0..p.len()).map(|i| {
+        let (a, b) = (p[i], p[(i + 1) % p.len()]);
+        a.x * b.y - b.x * a.y
+    }).sum();
+    if area > 0.0 {
+        p.reverse();
+    }
+    let cross = |a: Pos2, b: Pos2, c: Pos2| (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+    let inside = |p0: Pos2, a: Pos2, b: Pos2, c: Pos2| cross(a, b, p0) <= 0.0 && cross(b, c, p0) <= 0.0 && cross(c, a, p0) <= 0.0;
+    let mut mesh = egui::Mesh::default();
+    for q in &p {
+        mesh.colored_vertex(*q, color);
+    }
+    let mut idx: Vec<u32> = (0..p.len() as u32).collect();
+    let mut guard = 0;
+    while idx.len() > 3 && guard < 10_000 {
+        guard += 1;
+        let n = idx.len();
+        let mut clipped = false;
+        for i in 0..n {
+            let (ia, ib, ic) = (idx[(i + n - 1) % n], idx[i], idx[(i + 1) % n]);
+            let (a, b, c) = (p[ia as usize], p[ib as usize], p[ic as usize]);
+            if cross(a, b, c) >= 0.0 {
+                continue; // reflex corner
+            }
+            if idx.iter().any(|&k| k != ia && k != ib && k != ic && inside(p[k as usize], a, b, c)) {
+                continue;
+            }
+            mesh.add_triangle(ia, ib, ic);
+            idx.remove(i);
+            clipped = true;
+            break;
+        }
+        if !clipped {
+            break; // (a self-crossing ring: leave the rest)
+        }
+    }
+    if idx.len() == 3 {
+        mesh.add_triangle(idx[0], idx[1], idx[2]);
+    }
+    painter.add(Shape::mesh(mesh));
 }

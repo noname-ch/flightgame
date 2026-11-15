@@ -32,6 +32,16 @@ cache folder.
   time, shifted flight by flight, checked (local curfew, range, runway, stand class, turnarounds, crew duty), with a
   forecast and slot warnings; every plane's day as bars.
 - **Quick start**: the browser game's ready-made airlines (`js/data/presets.js`).
+- **Story mode**: start in 1955 … 2010; each type reaches the market in its real first year of airline service (with
+  its newspaper story from `js/data/story.js`), is built until its last year and sold pre-owned for 25 years more;
+  rivals fly the aircraft of their time and new airlines replace those that went bust.
+- **Airports as investments**: shares (5 % at a time), weekly dividends from the airport's profit (its traffic and
+  the fees your airline pays there), its value; from 25 % construction, from 50 % free slots. Projects: extending the
+  main runway (as in the browser game), and, since the build mode isn't here, a terminal expansion (one size bigger:
+  more passengers and stands) and new runways, with the browser game's prices and building times.
+- **Ultra long-haul timetables** (🌏 in the timetable): for planes with the range for flights longer than half a
+  day, repeating every few days, each flight after the turnaround, the next morning where it would land in the
+  night curfew.
 - **Fleet and market**: leasing and buying new aircraft (delivery flights from the factory), pre-owned ones every
   Monday, selling and returning, ferry flights, renaming, each plane's stats with its last 12 weeks, tickets per route
   on its card.
@@ -45,13 +55,21 @@ cache folder.
   history), Rivals, Log.
 - **Map**: Esri's satellite pictures (as the browser game), or its dark or light grey canvas; airports by size,
   your slots, timetable route lines, your planes, the rivals' routes and planes. Click a plane or an airport for its
-  window.
+  window. Day and night move over the map with the sun, clouds, rain and storms drift east (the browser game's
+  weather model, storm events as real storms; the airport window shows the weather there). Zoomed in, airports show
+  their runways, and the 118 with a real layout in `js/data/layouts` their aprons, terminals, hangars, taxiways and
+  stands.
+- **Sound** (🔇 / M, off until turned on; volume in the menu): the browser game's recordings mixed by what the planes
+  near the map's centre do (taxiing, take-off, climb, cruise, approach, reverse thrust), the wash of planes a few
+  kilometres off, and a jet whistling up when it starts at its gate. Above 300× it fades out, paused it is quiet.
 
 ## What it leaves out (for now)
 
-The 3D view, sound, weather, day and night on the map, airport layouts (stands drawn, taxiways, the airport editor
-and building), airport shares and construction, story mode and ultra long-haul timetables. The stands of airports
-the browser game reads from OpenStreetMap while it runs are the made-up ones of their size here.
+The 3D view (with its cameras, aircraft models and plane window camera), the airport editor and the build mode
+(placing runways, aprons, stands and terminals by hand, new airports), the developer tools, the styles (Tycoon,
+Metropolis, Pixel, Departure board) and the bug reports. The stands of airports the browser game reads from
+OpenStreetMap while it runs are the made-up ones of their size here, and the sound is a mix of recordings, not the
+browser game's engine voices made up as they play.
 
 One difference: a plane more than half a day behind its timetable (after a strike, say) takes it up again from its
 next departure instead of flying the missed flights late for good.
@@ -59,10 +77,13 @@ next departure instead of flying the missed flights late for good.
 ## Code
 
 - `src/lib.rs`: the game without the window: `config.rs` (balance, from `js/config.js`), `data.rs`, `jsdata.rs`,
-  `game.rs` (state and simulation), `events.rs` (world events, incidents, crashes).
-- `src/main.rs`, `src/app.rs` (window, sections, plane and airport windows, newspaper), `src/mapview.rs` (map).
+  `game.rs` (state and simulation), `events.rs` (world events, emergencies, incidents, crashes), `weather.rs` (weather,
+  day and night), `layouts.rs` (the real airport layouts, embedded by `build.rs`).
+- `src/main.rs`, `src/app.rs` (window, sections, plane and airport windows, newspaper), `src/mapview.rs` (map),
+  `src/sound.rs` (sound).
 
-`cargo test --release` loads the data, checks local times, stands and a quick start, and flies a month of a timetable.
+`cargo test --release` loads the data and layouts, checks local times, stands, a quick start, story mode, shares and
+construction, an ultra long-haul timetable and the sound recordings, and flies a month of a timetable.
 `FLIGHTGAME_SELFTEST=<folder>` starts the
-app with the "European network" quick start, plays a few weeks by itself, saves four screenshots and a report there
+app with the "European network" quick start, plays a few weeks by itself, saves six screenshots and a report there
 and quits (it never touches the save).
