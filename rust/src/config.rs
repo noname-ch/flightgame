@@ -239,6 +239,15 @@ pub const EXTEND_BY: f64 = 500.0;
 pub const EXTEND_COST: f64 = 3_000_000.0;
 pub const EXTEND_WEEKS: i64 = 6;
 pub const MAX_RUNWAY_M: f64 = 4500.0;
+/// Building by hand (build mode), in CHF: per m² of apron, pad, building or taxiway (its length times its width), per
+/// stand; pulling something down costs `BUILD_DEMOLISH` of it. You pay your share. (as C.airports.build)
+pub const BUILD_APRON: f64 = 150.0;
+pub const BUILD_TERMINAL: f64 = 2500.0;
+pub const BUILD_HANGAR: f64 = 900.0;
+pub const BUILD_BUILDING: f64 = 1200.0;
+pub const BUILD_TAXIWAY: f64 = 200.0;
+pub const BUILD_STAND: f64 = 1_500_000.0;
+pub const BUILD_DEMOLISH: f64 = 0.1;
 pub const TERMINAL_COST: [f64; 6] = [0.0, 0.0, 10_000_000.0, 30_000_000.0, 80_000_000.0, 200_000_000.0];
 pub const TERMINAL_WEEKS: [i64; 6] = [0, 0, 8, 12, 20, 30];
 pub const TERMINAL_RUNWAY: [f64; 6] = [0.0, 0.0, 1200.0, 1800.0, 2500.0, 3000.0];

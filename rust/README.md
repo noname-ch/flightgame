@@ -80,12 +80,42 @@ cache folder.
   selected plane, finishing construction, new market offers, time. Unlike the browser game they have a password:
   the first time you set one, after that they ask for it once per start. Only a SHA-256 hash of it is kept, in
   `settings.json` beside the save (with the style and other settings); remove its `dev_hash` to set a new one.
+- **3D view** (V, or 🛩 3D in the plane window): the plane as its 3D model from `models/*.glb` (the browser game's
+  files), painted in the livery you pick (🎨: SWISS, Lufthansa, KLM, Delta, Ryanair, Eurowings, easyJet, from
+  `js/data/liveries.js`), with your other planes nearby, over Esri's satellite pictures (kept on disk once loaded),
+  lit by the game's sun. Cameras as the browser game's keys: V chase (drag to turn round the plane, wheel to come
+  closer; V again goes back to the map), B fly-by (a spot beside its path ahead), N on the wing (it banks with the
+  plane); ◀ ▶ the next plane. The moving parts work as in the browser game, phase by phase: propellers and fans turn
+  (still while the game is paused), flaps come out for take-off and further for landing, ailerons, elevators and
+  rudder move as the plane banks, pitches, rotates, flares and steers, the wings droop on the ground and bend up in
+  the air, the landing gear (built at real sizes from `FG.data.gear`: nose gear or tail wheel, main legs, bogies)
+  folds away after take-off and comes out on the way down. Airports with a layout of their own show their terminals
+  (with bands of windows, lit at night), hangars and other buildings. The game's weather is there too: clouds drifting
+  with it, greyer with rain, towering in storms, a greyer and darker sky under them, haze that thickens in rain and fog.
+- **Build mode** (🏗 Build mode in the airport panel, from 25% of an airport's shares): place aprons, stands (for a
+  class A–F: one more slot of that class there), hangars, buildings and taxiways on the map, paid at once (your share,
+  at the browser game's prices per m², per metre of taxiway and per stand); runways (both ends, width, paved or grass)
+  and terminals are construction, ready after some weeks. Select something you built to pull it down (a tenth of its
+  price). What you built is kept in the save and drawn on the map.
+- **Airport editor** (F3, behind the developer tools' password): the same tools for the airports themselves, free and
+  at once, plus pulling down anything and Undo. It writes fix ops in the browser game's format: yours are kept in
+  `fixes.json` beside the save and replace the repo's for that airport, and "Write js/data/fixes.js" puts them into
+  the repo's file (commit it to give everyone the fixes). The repo's fixes are applied here too, to the layouts and
+  runways.
+- **Airport checklist** (F8): every airport in checking order (start airports, the world's busiest, then by size) with
+  its mark from `js/data/checks.js`, filters, counts and a search; click one to see it close up and mark it (your
+  marks are kept in `checks.json` beside the save and can be written into `js/data/checks.js`).
+- **Bug reports** (F5): a title, what happened and the game's details (version, game date, selection, map position,
+  the last crash); then GitHub's new-issue page opens filled in (you send it there), or Copy, or Add to `BUGS.md`
+  when it runs from the repo. A crash is written down, and the next start offers to report it.
+- **Sound mixer** (F6): the level of each part (bass, roar, screech, far wash, start), which recording each takes and
+  the screech's pitch, kept in the settings.
 
 ## What it leaves out (for now)
 
-The 3D view (with its cameras and aircraft models; the plane window shows the type's picture instead of a camera),
-the airport editor and the build mode (placing runways, aprons, stands and terminals by hand, new airports), the
-airport checklist, the bug reports, the liveries to choose from and the sound mixer. The stands of airports the
+New airport sites (buying land and building an airport from nothing). In 3D the parts are simpler than the browser
+game's (no shock absorbers, gear doors, reversers or spoilers; buildings as plain blocks, not its facades and photo
+roof colours; no rain, snow or lightning), and the airports without a layout of their own have no buildings. The stands of airports the
 browser game reads from OpenStreetMap while it runs are the made-up ones of their size here, and the sound is a mix
 of recordings, not the browser game's engine voices made up as they play.
 
@@ -95,15 +125,18 @@ next departure instead of flying the missed flights late for good.
 ## Code
 
 - `src/lib.rs`: the game without the window: `config.rs` (balance, from `js/config.js`), `data.rs`, `jsdata.rs`,
-  `game.rs` (state and simulation), `events.rs` (world events, emergencies, incidents, crashes), `weather.rs` (weather,
-  day and night), `layouts.rs` (the real airport layouts, embedded by `build.rs`), `track.rs` (runways and
-  where a flight is), `dev.rs` (what the developer tools do).
-- `src/main.rs`, `src/app.rs` (window, sections, plane and airport windows, newspaper), `src/mapview.rs` (map),
-  `src/sound.rs` (sound), `src/pictures.rs` (the aircraft pictures, embedded by `build.rs`), `src/style.rs` (styles,
-  settings, the password hash).
+  `game.rs` (state and simulation, construction and build mode), `events.rs` (world events, emergencies, incidents,
+  crashes), `weather.rs` (weather, day and night), `layouts.rs` (the real airport layouts, embedded by `build.rs`),
+  `fixes.rs` (airport fixes: the repo's, the editor's and the player's, applied to layouts and runways), `track.rs`
+  (runways and where a flight is), `dev.rs` (what the developer tools do).
+- `src/main.rs`, `src/app.rs` (window, sections, plane and airport windows, newspaper, developer tools, bug reports),
+  `src/mapview.rs` (map), `src/view3d.rs` (the 3D view: wgpu inside egui, models, liveries, moving parts and gear, buildings, clouds, satellite ground,
+  cameras), `src/editor.rs` (build mode and the airport editor), `src/checklist.rs` (airport checklist),
+  `src/sound.rs` (sound and mixer), `src/pictures.rs` (the aircraft pictures, embedded by `build.rs`), `src/style.rs`
+  (styles, settings, the password hash).
 
 `cargo test --release` loads the data and layouts, checks local times, stands, a quick start, story mode, shares and
-construction, an ultra long-haul timetable and the sound recordings, and flies a month of a timetable.
-`FLIGHTGAME_SELFTEST=<folder>` starts the
-app with the "European network" quick start, plays a few weeks by itself, saves eleven screenshots and a report there
-and quits (it never touches the save).
+construction, build mode, the airport fixes, an ultra long-haul timetable, the liveries and a 3D model, its moving parts and
+landing gear, the buildings, the chase camera, the checklist and the sound recordings, and flies a month of a timetable. `FLIGHTGAME_SELFTEST=<folder>`
+starts the app with the "European network" quick start, plays a few weeks by itself, saves sixteen screenshots (the
+3D view's three cameras, a plane at the gate and build mode among them) and a report there and quits (it never touches the save).

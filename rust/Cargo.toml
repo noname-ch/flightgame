@@ -4,13 +4,18 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+bytemuck = { version = "1.25.2", features = ["derive"] }
 dirs = "7.0.0"
 eframe = "0.37.0"
+glam = { version = "0.34.3", features = ["bytemuck"] }
+gltf = { version = "1.4.1", default-features = false, features = ["utils", "import"] }
 image = { version = "0.25.10", default-features = false, features = ["png", "webp"] }
+open = "5.4.5"
 rand = "0.10.3"
 rfd = "0.18.0"
 rodio = { version = "0.23.0", default-features = false, features = ["playback", "wav"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.154", features = ["preserve_order"] }
 sha2 = "0.11.1"
+ureq = "3.5.2"
 walkers = "0.65.0"

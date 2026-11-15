@@ -117,11 +117,17 @@ pub struct Settings {
     pub map_style: u8,
     /// the developer tools' password, as a SHA-256 hash (None: not set yet, the first F2 sets it)
     pub dev_hash: Option<String>,
+    /// the sound mixer (F6)
+    #[serde(default)]
+    pub mix: crate::sound::Mix,
+    /// the livery the 3D models are painted in (js/data/liveries.js)
+    #[serde(default)]
+    pub livery: Option<String>,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { style: None, autosave: true, volume: 0.7, map_style: 0, dev_hash: None }
+        Settings { style: None, autosave: true, volume: 0.7, map_style: 0, dev_hash: None, mix: crate::sound::Mix::default(), livery: None }
     }
 }
 

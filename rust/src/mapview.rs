@@ -365,7 +365,7 @@ fn ground(painter: &egui::Painter, projector: &Projector, rect: egui::Rect, zoom
         }
         let ppm = projector.scale_pixel_per_meter(lat_lon(a.lat, a.lon));
         if let Some(l) = flightgame::layouts::layout(&a.code) {
-            for r in &l.aprons {
+            for r in l.aprons.iter().chain(&l.pads) {
                 fill_polygon(painter, &r.iter().map(|p| pos(p.0, p.1)).collect::<Vec<_>>(), Color32::from_rgb(92, 96, 104));
             }
             for r in &l.taxiways {
@@ -396,6 +396,9 @@ fn ground(painter: &egui::Painter, projector: &Projector, rect: egui::Rect, zoom
         if let Some(l) = flightgame::layouts::layout(&a.code) {
             for r in &l.hangars {
                 fill_polygon(painter, &r.iter().map(|p| pos(p.0, p.1)).collect::<Vec<_>>(), Color32::from_rgb(150, 140, 120));
+            }
+            for r in &l.others {
+                fill_polygon(painter, &r.iter().map(|p| pos(p.0, p.1)).collect::<Vec<_>>(), Color32::from_rgb(170, 160, 150));
             }
             for r in &l.terminals {
                 fill_polygon(painter, &r.iter().map(|p| pos(p.0, p.1)).collect::<Vec<_>>(), Color32::from_rgb(200, 205, 215));

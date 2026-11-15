@@ -9,9 +9,13 @@ include!(concat!(env!("OUT_DIR"), "/layouts.rs"));
 
 pub type Ring = Vec<(f64, f64)>;
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub struct Layout {
     pub aprons: Vec<Ring>,
+    /// helicopter pads and the like
+    pub pads: Vec<Ring>,
+    /// other buildings
+    pub others: Vec<Ring>,
     pub terminals: Vec<Ring>,
     pub hangars: Vec<Ring>,
     pub taxiways: Vec<Ring>,
@@ -50,6 +54,8 @@ fn parse(text: &str) -> Layout {
         .unwrap_or_default();
     Layout {
         aprons: rings(&v["aprons"]),
+        pads: rings(&v["pads"]),
+        others: rings(&v["others"]),
         terminals: rings(&v["terminals"]),
         hangars: rings(&v["hangars"]),
         taxiways: rings(&v["taxiways"]),
@@ -59,8 +65,13 @@ fn parse(text: &str) -> Layout {
 
 static PARSED: OnceLock<HashMap<&'static str, Layout>> = OnceLock::new();
 
-/// The layout of an airport, if the browser game ships one.
-pub fn layout(code: &str) -> Option<&'static Layout> {
+/// The layout of an airport with its fixes (the airport editor's and what the player built), if there is one.
+pub fn layout(code: &str) -> Option<std::rc::Rc<Layout>> {
+    crate::fixes::layout(code)
+}
+
+/// The layout the browser game ships for an airport, without fixes.
+pub fn raw(code: &str) -> Option<&'static Layout> {
     PARSED.get_or_init(|| LAYOUTS.iter().map(|(c, t)| (*c, parse(t))).collect()).get(code)
 }
 

@@ -82,6 +82,19 @@ pub struct App {
     /// the style tried on the first start's picker
     style_try: String,
     dev_open: bool,
+    mixer_open: bool,
+    check_open: bool,
+    checks: Option<crate::checklist::Checklist>,
+    check_filter: u8,
+    check_search: String,
+    check_pick: Option<String>,
+    check_note: String,
+    bug_open: bool,
+    bug_title: String,
+    bug_text: String,
+    bug_details: bool,
+    /// the game crashed last time (crash.txt is there): the report opens at the start
+    bug_crashed: bool,
     dev_unlocked: bool,
     dev_pw: String,
     dev_pw2: String,
@@ -95,6 +108,11 @@ pub struct App {
     market_open: bool,
     /// the plane the map keeps in its middle (🎥 Follow on the map)
     follow: Option<String>,
+    /// the airport editor (F3) or build mode, while open
+    editor: Option<crate::editor::Editor>,
+    /// the 3D view (V) and whether this computer can draw it
+    v3: crate::view3d::View3d,
+    v3_ok: bool,
     /// the plane whose stats window is open
     stats_open: Option<String>,
     market_used: bool,
@@ -120,6 +138,16 @@ fn money_color(v: f64) -> Color32 {
 
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        // your airport editor's fixes
+        crate::editor::load_local();
+        // the 3D view draws with wgpu inside egui
+        let v3_ok = match cc.wgpu_render_state.as_ref() {
+            Some(rs) => {
+                crate::view3d::init(rs);
+                true
+            }
+            None => false,
+        };
         let settings = crate::style::Settings::load();
         crate::style::apply(&cc.egui_ctx, settings.style.as_deref().unwrap_or("night"));
         let cache = dirs::cache_dir().map(|d| d.join("Flightgame").join("tiles"));
@@ -161,11 +189,24 @@ impl App {
             sound: {
                 let mut s = crate::sound::Sound::new();
                 s.volume = settings.volume;
+                s.mix = settings.mix.clone();
                 s
             },
             settings: settings.clone(),
             style_try: settings.style.clone().unwrap_or_else(|| "night".into()),
             dev_open: false,
+            mixer_open: false,
+            check_open: false,
+            checks: None,
+            check_filter: 0,
+            check_search: String::new(),
+            check_pick: None,
+            check_note: String::new(),
+            bug_open: crash_path().exists(),
+            bug_title: String::new(),
+            bug_text: String::new(),
+            bug_details: true,
+            bug_crashed: crash_path().exists(),
             dev_unlocked: false,
             dev_pw: String::new(),
             dev_pw2: String::new(),
@@ -178,6 +219,9 @@ impl App {
             market_open: false,
             follow: None,
             stats_open: None,
+            editor: None,
+            v3: crate::view3d::View3d::default(),
+            v3_ok,
             market_used: false,
             market_sort: 0,
             market_pick: None,
@@ -525,6 +569,18 @@ impl App {
                         }
                     });
                     ui.separator();
+                    if ui.button("✅ Airport checklist  F8").clicked() {
+                        self.check_open = true;
+                        ui.close();
+                    }
+                    if ui.button("🐞 Report a bug  F5").clicked() {
+                        self.bug_open = true;
+                        ui.close();
+                    }
+                    if ui.button("🎚 Sound mixer  F6").clicked() {
+                        self.mixer_open = true;
+                        ui.close();
+                    }
                     if ui.button("🛠 Developer tools  F2").clicked() {
                         self.dev_open = true;
                         ui.close();
@@ -680,6 +736,16 @@ impl App {
             let (lat, lon, _, _) = g.plane_position(i, self.t);
             self.map.center_at(lat_lon(lat, lon));
         }
+    }
+
+    /// Opens build mode (player) or the airport editor (F3) at an airport, close up on the map.
+    fn open_editor(&mut self, code: &str, player: bool) {
+        let Some(a) = data().try_airport(code) else { return };
+        self.editor = Some(crate::editor::Editor::new(code, player));
+        self.v3.on = false;
+        self.follow = None;
+        self.map.center_at(lat_lon(a.lat, a.lon));
+        let _ = self.map.set_zoom(15.0);
     }
 
     fn select_airport(&mut self, code: &str, center: bool) {
@@ -2015,6 +2081,9 @@ impl App {
                     if ui.button("Fleet").clicked() {
                         action = Some((3, String::new(), None));
                     }
+                    if ui.button("🛩 3D").on_hover_text("Follow it in the 3D view (V)").clicked() {
+                        action = Some((9, String::new(), None));
+                    }
                 });
                 ui.horizontal(|ui| {
                     ui.label("Name");
@@ -2033,6 +2102,10 @@ impl App {
             1 => self.open_draft(i),
             2 => self.follow = if self.follow.as_deref() == Some(p.id.as_str()) { None } else { Some(p.id.clone()) },
             3 => self.section = Some(Section::Fleet),
+            9 => {
+                self.v3.follow = Some(p.id.clone());
+                self.v3.on = true;
+            }
             4 => {
                 if let Some(g) = self.game.as_mut() {
                     g.rename_plane(i, &self.rename);
@@ -2436,6 +2509,9 @@ impl App {
                 if st < BOARD_STAKE {
                     ui.weak(format!("Own {BOARD_STAKE}% of the airport to build runways and terminals."));
                 } else {
+                    if ui.button("🏗 Build mode").on_hover_text("Place runways, aprons, stands, terminals, hangars and taxiways on the map").clicked() {
+                        action = Some((9, 0, String::new()));
+                    }
                     for o in g.project_options(&code) {
                         let r = ui.add_enabled(
                             o.err.is_none(),
@@ -2455,6 +2531,11 @@ impl App {
             self.selected = None;
         }
         let Some((kind, c, s)) = action else { return };
+        if kind == 9 {
+            self.open_editor(&code, true);
+            return;
+        }
+        let Some(g) = &mut self.game else { return };
         let r = match kind {
             0 => g.lease_slot(&code, Some(c)),
             1 => g.drop_slot(&code, Some(c)),
@@ -2625,6 +2706,30 @@ impl eframe::App for App {
         if ctx.input(|i| i.key_pressed(egui::Key::F2)) {
             self.dev_open = !self.dev_open;
         }
+        if ctx.input(|i| i.key_pressed(egui::Key::F3)) && self.game.is_some() {
+            // the airport editor: a developer tool, behind the same password
+            if self.editor.as_ref().is_some_and(|e| !e.player) {
+                self.editor = None;
+            } else if !self.dev_unlocked {
+                self.dev_open = true;
+                self.info(&ctx, "The airport editor is a developer tool: enter the password, then press F3 again.");
+            } else {
+                let code = match self.selected {
+                    Some(Pick::Airport(k)) => data().airports[k].code.clone(),
+                    _ => self.game.as_ref().map(|g| g.home().to_string()).unwrap_or_default(),
+                };
+                self.open_editor(&code, false);
+            }
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::F8)) {
+            self.check_open = !self.check_open;
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::F5)) {
+            self.bug_open = !self.bug_open;
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::F6)) {
+            self.mixer_open = !self.mixer_open;
+        }
         if self.game.is_none() {
             if self.settings.style.is_none() && self.selftest.is_none() {
                 self.style_picker(ui);
@@ -2636,6 +2741,19 @@ impl eframe::App for App {
         // keys
         if !ctx.egui_wants_keyboard_input() && self.selftest.is_none() {
             ctx.input(|i| {
+                // the 3D view: V chase (again: back to the map), B fly-by, N on the wing, as the browser game's keys
+                if self.v3_ok && i.key_pressed(egui::Key::V) {
+                    self.v3.on = !(self.v3.on && self.v3.cam == "chase");
+                    self.v3.cam = "chase";
+                }
+                if self.v3_ok && i.key_pressed(egui::Key::B) {
+                    self.v3.on = true;
+                    self.v3.cam = "flyby";
+                }
+                if self.v3_ok && i.key_pressed(egui::Key::N) {
+                    self.v3.on = true;
+                    self.v3.cam = "wing";
+                }
                 if i.key_pressed(egui::Key::M) {
                     self.sound.toggle();
                 }
@@ -2698,6 +2816,9 @@ impl eframe::App for App {
         self.market_window(&ctx);
         self.stats_window(&ctx);
         self.dev_window(&ctx);
+        self.mixer_window(&ctx);
+        self.bug_window(&ctx);
+        self.checklist_window(&ctx);
         // 🎥 Follow on the map: keep the plane in the middle
         if let (Some(id), Some(g)) = (self.follow.clone(), &self.game) {
             match g.plane_idx(&id) {
@@ -2714,8 +2835,64 @@ impl eframe::App for App {
         // ---------- the map ----------
         let mut picked = None;
         let mut listener = self.listener;
+        let (mut edit_took, mut edit_finish) = (false, false);
         egui::CentralPanel::no_frame().show(ui, |ui| {
             let Some(g) = &self.game else { return };
+            // ---------- the 3D view (V) ----------
+            if self.v3.on && self.v3_ok {
+                let rect = ui.max_rect();
+                let shown = self.v3.show(ui, rect, g, self.t, self.settings.livery.as_deref(), !self.paused);
+                let Some(i) = shown else {
+                    self.v3.on = false;
+                    return;
+                };
+                let p = &g.state.planes[i];
+                let pos = g.flight_pos(i, self.t);
+                let mut save_livery = false;
+                egui::Area::new(egui::Id::new("v3hud")).fixed_pos(rect.left_top() + Vec2::new(10.0, 10.0)).show(ui.ctx(), |ui| {
+                    egui::Frame::window(ui.style()).show(ui, |ui| {
+                        ui.strong(format!("{} · {}", p.name.as_deref().unwrap_or(&p.id), p.kind));
+                        ui.label(match &p.flight {
+                            Some(f) => format!("{} → {} · {}", f.from, f.to, pos.phase),
+                            None => format!("{} · {}", p.location, pos.phase),
+                        });
+                        ui.weak(format!("{:.0} ft · {:.0} kt · heading {:03.0}°", pos.alt_ft, pos.speed_kt, pos.heading.rem_euclid(360.0)));
+                        ui.horizontal(|ui| {
+                            for (cam, label, key) in [("chase", "Chase", "V"), ("flyby", "Fly-by", "B"), ("wing", "Wing", "N")] {
+                                if ui.selectable_label(self.v3.cam == cam, label).on_hover_text(format!("Camera ({key})")).clicked() {
+                                    self.v3.cam = cam;
+                                }
+                            }
+                        });
+                        ui.horizontal(|ui| {
+                            if ui.small_button("◀").on_hover_text("Previous plane").clicked() {
+                                let n = g.state.planes.len();
+                                self.v3.follow = Some(g.state.planes[(i + n - 1) % n].id.clone());
+                            }
+                            if ui.small_button("▶").on_hover_text("Next plane").clicked() {
+                                self.v3.follow = Some(g.state.planes[(i + 1) % g.state.planes.len()].id.clone());
+                            }
+                            let current = crate::view3d::livery(self.settings.livery.as_deref());
+                            egui::ComboBox::from_id_salt("livery").selected_text(format!("🎨 {}", current.name)).show_ui(ui, |ui| {
+                                for l in crate::view3d::liveries() {
+                                    if ui.selectable_label(l.id == current.id, &l.name).clicked() {
+                                        self.settings.livery = Some(l.id.clone());
+                                        save_livery = true;
+                                    }
+                                }
+                            });
+                        });
+                        ui.weak("Drag: turn round it · wheel: closer");
+                        if ui.button("🗺 Back to the map (V)").clicked() {
+                            self.v3.on = false;
+                        }
+                    });
+                });
+                if save_livery {
+                    self.settings.save();
+                }
+                return;
+            }
             let tiles: &mut dyn walkers::Tiles = match self.map_style {
                 1 => &mut self.tiles_dark,
                 2 => &mut self.tiles_light,
@@ -2735,13 +2912,19 @@ impl eframe::App for App {
             }
             let (t, selected, layers) = (self.t, self.selected, &self.layers);
             let mut map_rect = egui::Rect::NOTHING;
+            let editor = &mut self.editor;
             Map::new(Some(tiles), &mut self.map, lat_lon(home.lat, home.lon)).show(ui, |ui, response, projector, _memory| {
                 let (_, clicked) = mapview::draw(ui, response, projector, g, t, selected, layers, &icons);
+                if let Some(ed) = editor.as_mut() {
+                    let (took, fin) = ed.map(ui, response, projector);
+                    edit_took = took;
+                    edit_finish = fin;
+                }
                 let c = projector.unproject(response.rect.center().to_vec2());
                 let mpp = 1.0 / projector.scale_pixel_per_meter(c).max(1e-9) as f64;
                 listener = (c.y(), c.x(), mpp * 60.0);
                 map_rect = response.rect;
-                if response.clicked() {
+                if response.clicked() && !edit_took {
                     picked = Some(clicked);
                 }
             });
@@ -2814,6 +2997,17 @@ impl eframe::App for App {
             }
             Some(None) => {}
             None => {}
+        }
+        // ---------- the airport editor / build mode ----------
+        if let (Some(ed), Some(g)) = (self.editor.as_mut(), self.game.as_mut()) {
+            if edit_finish {
+                ed.finish(g);
+            }
+            let at = ctx.content_rect().right_top() + Vec2::new(-330.0, 110.0);
+            let close = !ed.panel(&ctx, g, at) || (ctx.input(|i| i.key_pressed(egui::Key::Escape)) && !ctx.egui_wants_keyboard_input());
+            if close {
+                self.editor = None;
+            }
         }
         // ---------- sound ----------
         self.listener = listener;
@@ -2996,6 +3190,127 @@ impl App {
             }
             21 => {
                 shot("11-style-board.png");
+                next(self, 1.0);
+            }
+            22 => {
+                // the 3D view by day (on to 11:00 UTC): the first plane in the air, from behind, then the fly-by and wing cameras
+                crate::style::apply(ctx, "night");
+                self.section = None;
+                self.selected = None;
+                self.speed = 1;
+                if let Some(g) = self.game.as_mut() {
+                    let to_noon = (11 * 60 - g.state.time.rem_euclid(1440)).rem_euclid(1440);
+                    g.advance(to_noon);
+                    self.t = g.state.time as f64;
+                    let flying = g.state.planes.iter().find(|p| p.status == flightgame::game::Status::Flying).map(|p| p.id.clone());
+                    self.v3.follow = flying;
+                }
+                self.v3.on = self.v3_ok;
+                self.v3.cam = "chase";
+                next(self, 8.0);
+            }
+            23 => {
+                shot("12-3d-chase.png");
+                let _ = std::fs::write(dir.join("3d.txt"), self.v3.debug.clone());
+                next(self, 1.0);
+            }
+            24 => {
+                self.v3.cam = "flyby";
+                self.settings.livery = Some("lufthansa".into());
+                next(self, 5.0);
+            }
+            25 => {
+                shot("13-3d-flyby.png");
+                next(self, 1.0);
+            }
+            26 => {
+                self.v3.cam = "wing";
+                self.settings.livery = Some("klm".into());
+                next(self, 5.0);
+            }
+            27 => {
+                shot("14-3d-wing.png");
+                next(self, 1.0);
+            }
+            28 => {
+                // a plane on the ground, from above behind: its gear, the airport's buildings
+                // (paused: it stays there)
+                self.settings.livery = None;
+                self.paused = true;
+                if let Some(g) = self.game.as_ref() {
+                    let t = self.t;
+                    let parked = (0..g.state.planes.len()).find(|&k| g.flight_pos(k, t).alt_ft < 1.0).unwrap_or(0);
+                    self.v3.follow = g.state.planes.get(parked).map(|p| p.id.clone());
+                }
+                self.v3.cam = "chase";
+                self.v3.pitch = 10.0;
+                self.v3.dist = 1.5;
+                self.v3.yaw = 35.0;
+                next(self, 10.0);
+            }
+            29 => {
+                shot("15-3d-ground.png");
+                let old = std::fs::read_to_string(dir.join("3d.txt")).unwrap_or_default();
+                let _ = std::fs::write(dir.join("3d.txt"), format!("{old}\nground: {}", self.v3.debug));
+                next(self, 1.0);
+            }
+            30 => {
+                self.v3.on = false;
+                self.paused = false;
+                self.v3.pitch = 12.0;
+                self.v3.dist = 2.6;
+                self.v3.yaw = 0.0;
+                next(self, 1.0);
+            }
+            31 => {
+                // build mode at the home airport: 25% of its shares, then an apron with a stand on it and a taxiway
+                let home = self.game.as_ref().map(|g| g.home().to_string()).unwrap_or_default();
+                let mut lines = Vec::new();
+                if let Some(g) = self.game.as_mut() {
+                    g.state.money += 5e9;
+                    lines.push(format!("buy shares: {:?}", g.buy_shares(&home, 30)));
+                }
+                self.open_editor(&home, true);
+                if let (Some(ed), Some(g)) = (self.editor.as_mut(), self.game.as_mut()) {
+                    let a = data().airport(&home);
+                    // a 150 m square apron 520 m west-north-west of the airport's point
+                    let (la, lo) = flightgame::game::offset_point(a.lat, a.lon, 300.0, 520.0);
+                    let d = 150.0 / 111_320.0;
+                    let k = d / la.to_radians().cos();
+                    let money = g.state.money;
+                    ed.tool = "apron";
+                    ed.pts = vec![(la, lo), (la, lo + k), (la + d, lo + k), (la + d, lo)];
+                    ed.finish(g);
+                    lines.push(format!("apron: {:?}", ed.msg));
+                    ed.tool = "stand";
+                    ed.hdg = 180.0;
+                    ed.pts = vec![(la + d / 2.0, lo + k / 2.0)];
+                    ed.finish(g);
+                    lines.push(format!("stand: {:?}", ed.msg));
+                    ed.tool = "taxiway";
+                    ed.pts = vec![(la, lo + k / 2.0), (a.lat, a.lon)];
+                    ed.finish(g);
+                    lines.push(format!("taxiway: {:?}", ed.msg));
+                    ed.tool = "runway";
+                    let e = flightgame::game::offset_point(a.lat, a.lon, 0.0, 3000.0);
+                    let w = flightgame::game::offset_point(e.0, e.1, 270.0, 1000.0);
+                    let east = flightgame::game::offset_point(e.0, e.1, 90.0, 1000.0);
+                    ed.pts = vec![w, east];
+                    ed.finish(g);
+                    lines.push(format!("runway: {:?}", ed.msg));
+                    lines.push(format!("paid {:.0} · stands now {:?} · projects {}", money - g.state.money, flightgame::game::stands_of(&home), g.state.projects.len()));
+                    ed.tool = "select";
+                }
+                let old = std::fs::read_to_string(dir.join("report.txt")).unwrap_or_default();
+                let _ = std::fs::write(dir.join("report.txt"), format!("{old}\nbuild mode at {home}:\n{}", lines.join("\n")));
+                next(self, 4.0);
+            }
+            32 => {
+                shot("16-build-mode.png");
+                next(self, 1.0);
+            }
+            33 => {
+                self.editor = None;
                 next(self, 1.0);
             }
             _ => {
@@ -3608,6 +3923,359 @@ impl App {
             Some(Ok(m)) => self.info(ctx, m),
             Some(Err(e)) => self.say(ctx, Err(e)),
             None => {}
+        }
+    }
+}
+
+impl App {
+    /// The sound mixer (F6), as the browser game's: how loud each part of the planes' sound is, which recorded take
+    /// the bass, roar and screech play, and the screech's pitch. Kept with the settings.
+    fn mixer_window(&mut self, ctx: &egui::Context) {
+        if !self.mixer_open {
+            return;
+        }
+        let mut open = true;
+        let mut changed = false;
+        egui::Window::new("🎚 Sound mixer")
+            .id(egui::Id::new("mixerwin"))
+            .open(&mut open)
+            .default_pos([500.0, 120.0])
+            .default_width(340.0)
+            .show(ctx, |ui| {
+                if !self.sound.on {
+                    ui.horizontal(|ui| {
+                        ui.weak("The sound is off.");
+                        if ui.button("🔊 Turn it on").clicked() {
+                            self.sound.toggle();
+                        }
+                    });
+                }
+                ui.horizontal(|ui| {
+                    ui.label("Volume");
+                    changed |= ui.add(egui::Slider::new(&mut self.sound.volume, 0.0..=1.0).show_value(false)).changed();
+                });
+                ui.separator();
+                let mix = &mut self.sound.mix;
+                egui::Grid::new("mix").num_columns(3).spacing([10.0, 6.0]).show(ui, |ui| {
+                    for (k, part) in crate::sound::PARTS.iter().enumerate() {
+                        ui.label(*part);
+                        changed |= ui
+                            .add(egui::Slider::new(&mut mix.level[k], 0.0..=2.0).custom_formatter(|v, _| format!("{:.0}%", v * 100.0)))
+                            .changed();
+                        let takes: Option<Vec<&str>> = match k {
+                            0 => Some(crate::sound::BASS.iter().map(|x| x.0).collect()),
+                            1 => Some(crate::sound::ROAR.iter().map(|x| x.0).collect()),
+                            2 => Some(crate::sound::SCREECH.iter().map(|x| x.0).collect()),
+                            _ => None,
+                        };
+                        if let Some(takes) = takes {
+                            egui::ComboBox::from_id_salt(("take", k)).selected_text(takes[mix.take[k].min(takes.len() - 1)]).show_ui(ui, |ui| {
+                                for (j, name) in takes.iter().enumerate() {
+                                    changed |= ui.selectable_value(&mut mix.take[k], j, *name).changed();
+                                }
+                            });
+                        } else {
+                            ui.label("");
+                        }
+                        ui.end_row();
+                    }
+                    ui.label("Screech pitch");
+                    changed |= ui
+                        .add(egui::Slider::new(&mut mix.pitch, 0.5..=1.5).custom_formatter(|v, _| format!("{:.0}%", v * 100.0)))
+                        .changed();
+                    ui.end_row();
+                });
+                if ui.button("Reset").clicked() {
+                    *mix = crate::sound::Mix::default();
+                    changed = true;
+                }
+                ui.weak("For all planes: the bass and roar near the engines, the screech of the fans, the wash of planes a few kilometres off, the starter whistling up.");
+            });
+        if !open {
+            self.mixer_open = false;
+        }
+        if changed {
+            self.settings.mix = self.sound.mix.clone();
+            self.settings.volume = self.sound.volume;
+            self.settings.save();
+        }
+    }
+}
+
+/// Percent-encodes text for a URL's query.
+fn url_encode(s: &str) -> String {
+    s.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => (b as char).to_string(),
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
+/// Where the app writes what went wrong when it crashed (the next start offers to report it).
+pub fn crash_path() -> PathBuf {
+    dirs::data_dir().unwrap_or_else(std::env::temp_dir).join("Flightgame").join("crash.txt")
+}
+
+impl App {
+    /// The game's details for a bug report, as the browser game's FG.bugs.details().
+    fn bug_details(&self, ctx: &egui::Context) -> String {
+        let mut lines = vec![
+            format!("Version: Rust app {} ({})", env!("CARGO_PKG_VERSION"), std::env::consts::OS),
+            format!(
+                "Screen: {:.0}×{:.0} @{}x, style {}",
+                ctx.content_rect().width(),
+                ctx.content_rect().height(),
+                ctx.pixels_per_point(),
+                self.settings.style.as_deref().unwrap_or("night")
+            ),
+        ];
+        if let Some(g) = &self.game {
+            let s = &g.state;
+            lines.push(format!(
+                "Game: {}, {} mode{}, {}, home {}, {}, money {:.0}, {} planes{}",
+                s.company,
+                s.mode,
+                if s.story.is_some() { ", story" } else { "" },
+                s.difficulty,
+                s.home,
+                fmt_time(s.time),
+                s.money,
+                s.planes.len(),
+                if s.dev_used { ", dev tools used" } else { "" }
+            ));
+            match self.selected {
+                Some(Pick::Plane(i)) if i < s.planes.len() => {
+                    let p = &s.planes[i];
+                    let at = match &p.flight {
+                        Some(f) => format!(" {}→{}", f.from, f.to),
+                        None => format!(" at {}", p.location),
+                    };
+                    lines.push(format!("Selected plane: #{} {}, {:?}{at}", p.id, p.kind, p.status));
+                }
+                Some(Pick::Airport(k)) => lines.push(format!("Selected airport: {}", data().airports[k].code)),
+                _ => {}
+            }
+        }
+        lines.push(format!("2D map: {:.5}, {:.5} zoom {:.1}", self.listener.0, self.listener.1, self.map.zoom()));
+        lines.push(match std::fs::read_to_string(crash_path()) {
+            Ok(c) => format!("Crash last time:\n{c}"),
+            Err(_) => "Crashes: none".into(),
+        });
+        lines.join("\n")
+    }
+
+    /// The bug report (F5), as the browser game's: a title, what happened, the game's details; then it opens
+    /// GitHub's new-issue page filled in (you send it there yourself), copies it, or adds it to BUGS.md in the repo.
+    fn bug_window(&mut self, ctx: &egui::Context) {
+        if !self.bug_open {
+            return;
+        }
+        let mut open = true;
+        let mut done: Option<String> = None;
+        let details = self.bug_details(ctx);
+        egui::Window::new("🐞 Report a bug")
+            .id(egui::Id::new("bugwin"))
+            .open(&mut open)
+            .default_pos([420.0, 140.0])
+            .default_width(420.0)
+            .show(ctx, |ui| {
+                if self.bug_crashed {
+                    ui.colored_label(
+                        Color32::from_rgb(255, 160, 120),
+                        "The game crashed last time. Tell us what you were doing – the details say where it broke.",
+                    );
+                }
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.bug_title)
+                        .hint_text("Short title, e.g. Plane stuck at the gate in Zurich")
+                        .desired_width(f32::INFINITY),
+                );
+                ui.add(
+                    egui::TextEdit::multiline(&mut self.bug_text)
+                        .hint_text("What happened? What did you expect? How can we make it happen again?")
+                        .desired_rows(6)
+                        .desired_width(f32::INFINITY),
+                );
+                ui.checkbox(&mut self.bug_details, "Add the game's details (version, game date, selection, map position, crashes)");
+                if self.bug_details {
+                    egui::CollapsingHeader::new("The details").show(ui, |ui| {
+                        ui.monospace(&details);
+                    });
+                }
+                let body = if self.bug_details { format!("{}\n\n```\n{details}\n```", self.bug_text) } else { self.bug_text.clone() };
+                let title = if self.bug_title.trim().is_empty() { "Bug report".to_string() } else { self.bug_title.trim().to_string() };
+                ui.horizontal_wrapped(|ui| {
+                    if ui.button("Open on GitHub").on_hover_text("Opens the new-issue page filled in; you send it there").clicked() {
+                        let url = format!(
+                            "https://github.com/noname-ch/flightgame/issues/new?title={}&body={}",
+                            url_encode(&title),
+                            url_encode(&body)
+                        );
+                        done = Some(match open::that(url) {
+                            Ok(()) => "GitHub's new-issue page is open in your browser: send it there.".into(),
+                            Err(e) => format!("Could not open the browser: {e}"),
+                        });
+                    }
+                    if ui.button("Copy").clicked() {
+                        ui.ctx().copy_text(format!("{title}\n\n{body}"));
+                        done = Some("Copied.".into());
+                    }
+                    let bugs = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("BUGS.md");
+                    let in_repo = bugs.parent().is_some_and(|p| p.join("index.html").exists());
+                    if in_repo && ui.button("Add to BUGS.md").on_hover_text(bugs.display().to_string()).clicked() {
+                        let entry = format!("\n## {title}\n\n{body}\n");
+                        let old = std::fs::read_to_string(&bugs).unwrap_or_else(|_| "# Bugs\n".into());
+                        done = Some(match std::fs::write(&bugs, old + &entry) {
+                            Ok(()) => "Added to BUGS.md.".into(),
+                            Err(e) => format!("Could not write BUGS.md: {e}"),
+                        });
+                    }
+                });
+            });
+        if let Some(m) = done {
+            self.info(ctx, m);
+            self.bug_open = false;
+            self.bug_title.clear();
+            self.bug_text.clear();
+            if self.bug_crashed {
+                let _ = std::fs::remove_file(crash_path());
+                self.bug_crashed = false;
+            }
+        }
+        if !open {
+            self.bug_open = false;
+        }
+    }
+}
+
+impl App {
+    /// The airport checklist (F8), as the browser game's: the airports in checking order with their marks, a filter,
+    /// the counts; click one to see it close up (its real layout on the map) and mark it.
+    fn checklist_window(&mut self, ctx: &egui::Context) {
+        if !self.check_open {
+            return;
+        }
+        let checks = self.checks.get_or_insert_with(crate::checklist::Checklist::load);
+        let d = data();
+        let mut open = true;
+        let mut go: Option<String> = None;
+        let mut set: Option<(String, String, String)> = None;
+        let mut write = false;
+        egui::Window::new("✅ Airport checklist")
+            .id(egui::Id::new("checkwin"))
+            .open(&mut open)
+            .default_pos([60.0, 110.0])
+            .default_size([460.0, 560.0])
+            .show(ctx, |ui| {
+                let icon = |m: Option<&crate::checklist::Mark>| match m.map(|m| m.s.as_str()) {
+                    Some("ok") => "🟢",
+                    Some("checked") => "🔵",
+                    Some("bad") => "🔴",
+                    _ => "⬜",
+                };
+                let (mut ok, mut checked, mut bad, mut open_n) = (0, 0, 0, 0);
+                for (c, _) in &checks.order {
+                    match checks.mark(c).map(|m| m.s.as_str()) {
+                        Some("ok") => ok += 1,
+                        Some("checked") => checked += 1,
+                        Some("bad") => bad += 1,
+                        _ => open_n += 1,
+                    }
+                }
+                let top = checks.order.iter().filter(|(_, w)| !matches!(w, crate::checklist::Why::Size)).count();
+                let top_ok = checks.order.iter().take(top).filter(|(c, _)| checks.mark(c).is_some_and(|m| m.s == "ok")).count();
+                ui.weak(format!(
+                    "Start + busiest {top}: {top_ok} good · all {}: 🟢 {ok} · 🔵 {checked} · 🔴 {bad} · ⬜ {open_n}",
+                    checks.order.len()
+                ));
+                ui.horizontal_wrapped(|ui| {
+                    for (k, label) in ["All", "⬜ To check", "🔵 To approve", "🔴 Needs work", "🟢 Good"].iter().enumerate() {
+                        if ui.selectable_label(self.check_filter == k as u8, *label).clicked() {
+                            self.check_filter = k as u8;
+                        }
+                    }
+                });
+                ui.add(egui::TextEdit::singleline(&mut self.check_search).hint_text("🔍 code or name"));
+                // the chosen airport: its mark and a note
+                if let Some(code) = self.check_pick.clone() {
+                    ui.separator();
+                    let a = d.airport(&code);
+                    ui.strong(format!("{} {} · {} {}", icon(checks.mark(&code)), code, a.name, a.city));
+                    if let Some(m) = checks.mark(&code) {
+                        ui.weak(format!("{} by {} on {}: {}", m.s, m.by, m.at, m.note));
+                    }
+                    ui.add(egui::TextEdit::multiline(&mut self.check_note).hint_text("What you checked or fixed").desired_rows(2).desired_width(f32::INFINITY));
+                    ui.horizontal(|ui| {
+                        for (s, label) in [("ok", "🟢 Good"), ("checked", "🔵 Checked"), ("bad", "🔴 Needs work"), ("", "Clear mine")] {
+                            if ui.button(label).clicked() {
+                                set = Some((code.clone(), s.to_string(), self.check_note.clone()));
+                            }
+                        }
+                    });
+                }
+                ui.separator();
+                let q = self.check_search.trim().to_lowercase();
+                let rows: Vec<&(String, crate::checklist::Why)> = checks
+                    .order
+                    .iter()
+                    .filter(|(c, _)| {
+                        let s = checks.mark(c).map(|m| m.s.as_str()).unwrap_or("");
+                        match self.check_filter {
+                            1 => s.is_empty(),
+                            2 => s == "checked",
+                            3 => s == "bad",
+                            4 => s == "ok",
+                            _ => true,
+                        }
+                    })
+                    .filter(|(c, _)| q.is_empty() || c.to_lowercase().contains(&q) || d.airport(c).name.to_lowercase().contains(&q))
+                    .collect();
+                egui::ScrollArea::vertical().max_height(320.0).show_rows(ui, 20.0, rows.len(), |ui, range| {
+                    for (code, why) in &rows[range] {
+                        let a = d.airport(code);
+                        let why = match why {
+                            crate::checklist::Why::Start => "start".to_string(),
+                            crate::checklist::Why::Busy(n) => format!("busiest #{n}"),
+                            crate::checklist::Why::Size => format!("size {}", a.size),
+                        };
+                        let sel = self.check_pick.as_deref() == Some(code.as_str());
+                        let text = format!("{} {}  {} · {}{}", icon(checks.mark(code)), code, a.name, why, if flightgame::layouts::has_layout(code) { " · layout" } else { "" });
+                        if ui.selectable_label(sel, text).clicked() {
+                            go = Some(code.clone());
+                        }
+                    }
+                });
+                if let Some(path) = crate::checklist::repo_file() {
+                    ui.separator();
+                    if ui.button("Write the marks into js/data/checks.js").on_hover_text(path.display().to_string()).clicked() {
+                        write = true;
+                    }
+                }
+            });
+        if !open {
+            self.check_open = false;
+        }
+        if let Some((code, s, note)) = set {
+            if let Some(c) = self.checks.as_mut() {
+                c.set(&code, &s, &note);
+            }
+        }
+        if write {
+            if let (Some(c), Some(path)) = (&self.checks, crate::checklist::repo_file()) {
+                let r = std::fs::write(&path, c.file_text()).map_err(|e| e.to_string());
+                match r {
+                    Ok(()) => self.info(ctx, "Written to js/data/checks.js: commit it to give everyone the checks."),
+                    Err(e) => self.say(ctx, Err(e)),
+                }
+            }
+        }
+        if let Some(code) = go {
+            self.check_note = self.checks.as_ref().and_then(|c| c.mine.get(&code)).map(|m| m.note.clone()).unwrap_or_default();
+            self.check_pick = Some(code.clone());
+            // close up, as the browser game's checklist does: the airport's layout on the map
+            self.select_airport(&code, true);
+            let _ = self.map.set_zoom(14.5);
         }
     }
 }

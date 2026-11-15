@@ -338,6 +338,9 @@ pub struct State {
     /// the player's shares and what they built, by airport
     #[serde(default)]
     pub infra: BTreeMap<String, Infra>,
+    /// what the player built in build mode: airport fix ops by airport (see fixes.rs)
+    #[serde(default)]
+    pub airport_ops: crate::fixes::Ops,
     /// landing and passenger fees paid at each airport this week (for the dividends)
     #[serde(default)]
     pub fees: HashMap<String, f64>,
@@ -438,6 +441,9 @@ pub struct Project {
     pub full: f64,
     pub start: i64,
     pub done: i64,
+    /// placed in build mode: the runway [lat, lon, lat, lon, width, paved] or the fix ops it adds when done
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub geo: Option<serde_json::Value>,
 }
 
 pub fn category_name(size: usize) -> &'static str {
@@ -506,7 +512,7 @@ fn infra_of(code: &str) -> Infra {
 
 /// An airport's runways: the player's where they built some, else the data's.
 pub fn airport_runways(code: &str) -> Vec<[f64; 6]> {
-    infra_of(code).runways.unwrap_or_else(|| data().airport(code).runways.clone())
+    infra_of(code).runways.unwrap_or_else(|| crate::fixes::runways(code, &data().airport(code).runways))
 }
 
 pub fn runway_length(r: &[f64; 6]) -> f64 {
@@ -531,7 +537,15 @@ pub fn airport_size(code: &str) -> usize {
 /// An airport's stands by class: its real ones, or the made-up apron of its size (which grows with terminals).
 pub fn stands_of(code: &str) -> [u32; 6] {
     let a = data().airport(code);
-    if a.real_stands { a.stands } else { crate::data::DEFAULT_STANDS[airport_size(code)] }
+    let mut n = if a.real_stands { a.stands } else { crate::data::DEFAULT_STANDS[airport_size(code)] };
+    // and the stands the player built there (build mode), by the class they were built for
+    for op in crate::fixes::player_ops(code) {
+        if op["op"] == "add" && op["kind"] == "stand" {
+            let c = op["cls"].as_u64().unwrap_or(2).min(5) as usize;
+            n[c] += 1;
+        }
+    }
+    n
 }
 
 pub fn airport_category(code: &str) -> &'static str {
@@ -968,6 +982,7 @@ pub struct Game {
 impl Game {
     pub fn from_state(state: State) -> Self {
         set_story_start(state.story.as_ref().map(|s| s.start));
+        crate::fixes::set_player(&state.airport_ops);
         set_infra(&state.infra);
         let mut g = Game { state, rival_idx: HashMap::new(), seat_cache: RefCell::new(None) };
         g.index_rivals();
@@ -1040,6 +1055,7 @@ impl Game {
             rep: Rep::default(),
             slot_buys: HashMap::new(),
             infra: BTreeMap::new(),
+            airport_ops: BTreeMap::new(),
             fees: HashMap::new(),
             projects: Vec::new(),
             offers: HashMap::new(),
@@ -1488,6 +1504,7 @@ impl Game {
             full: o.full,
             start: t,
             done: t + o.weeks * 7 * DAY,
+            geo: None,
         });
         let name = data().airport(code).name.clone();
         self.log(
@@ -1502,6 +1519,144 @@ impl Game {
         Ok(())
     }
 
+
+    // ---------- build mode: runways and buildings placed by the player ----------
+
+    /// Why you can't build at an airport (None: you can): 25% of its shares.
+    pub fn build_denied(&self, code: &str) -> Option<String> {
+        let a = data().try_airport(code)?;
+        if a.factory {
+            return Some("Not at a factory.".into());
+        }
+        if self.stake(code) >= BOARD_STAKE {
+            None
+        } else {
+            Some(format!("Own {BOARD_STAKE}% of {} to build there.", a.name))
+        }
+    }
+
+    /// What a runway r ([lat, lon, lat, lon, width m, paved 0/1]) costs and takes; as the browser game's
+    /// runwayProject: wider runways cost more, grass ones about a third.
+    pub fn runway_project(&self, code: &str, r: &[f64; 6]) -> ProjectOption {
+        let a = data().airport(code);
+        let len = runway_length(r).round();
+        let full = (((RUNWAY_COST_BASE + RUNWAY_COST_PER_M * len * (r[4].max(1.0) / 45.0).max(0.5)) * if r[5] > 0.0 { 1.0 } else { 0.35 }) / 1000.0).round() * 1000.0;
+        let weeks = ((RUNWAY_WEEKS_BASE + RUNWAY_WEEKS_PER_KM * len / 1000.0).round() as i64).max(2);
+        let mut err = self.build_denied(code);
+        if err.is_none() && len < 300.0 {
+            err = Some("A runway is at least 300 m long.".into());
+        }
+        if err.is_none() && len > MAX_RUNWAY_M {
+            err = Some(format!("A runway is at most {MAX_RUNWAY_M:.0} m long."));
+        }
+        if err.is_none() && [(r[0], r[1]), (r[2], r[3])].iter().any(|q| distance_km(a.lat, a.lon, q.0, q.1) > 8.0) {
+            err = Some(format!("That is too far from {} (8 km at most).", a.name));
+        }
+        ProjectOption {
+            kind: "runway".into(),
+            len,
+            label: String::new(),
+            full,
+            cost: (full * self.stake(code) as f64 / 100.0).round(),
+            weeks,
+            err,
+        }
+    }
+
+    pub fn order_runway(&mut self, code: &str, r: [f64; 6]) -> Result<(), String> {
+        let o = self.runway_project(code, &r);
+        if let Some(e) = o.err {
+            return Err(e);
+        }
+        if self.state.money < o.cost {
+            return Err(format!("Not enough money ({} needed).", fmt_money(o.cost)));
+        }
+        self.state.money -= o.cost;
+        let h = bearing(r[0], r[1], r[2], r[3]);
+        let name = |x: f64| format!("{:02}", match (x.rem_euclid(360.0) / 10.0).round() as i64 { 0 => 36, n => n });
+        let label = format!("Runway {}/{} · {:.0} m{}", name(h), name(h + 180.0), o.len, if r[5] > 0.0 { "" } else { " grass" });
+        let rr: Vec<f64> = r.iter().enumerate().map(|(i, v)| if i < 4 { (v * 1e5).round() / 1e5 } else { *v }).collect();
+        let t = self.state.time;
+        self.state.projects.push(Project {
+            code: code.into(),
+            kind: "runway".into(),
+            len: o.len,
+            label: label.clone(),
+            cost: o.cost,
+            full: o.full,
+            start: t,
+            done: t + o.weeks * 7 * DAY,
+            geo: Some(serde_json::json!(rr)),
+        });
+        let an = data().airport(code).name.clone();
+        self.log(format!("Construction started at {an}: {label} – your share {}, ready in {} weeks.", fmt_money(o.cost), o.weeks), LogKind::Cost);
+        Ok(())
+    }
+
+    /// Building that takes weeks (a terminal): the fix ops it adds when it is done.
+    pub fn order_build(&mut self, code: &str, ops: Vec<serde_json::Value>, label: &str, full: f64, weeks: i64) -> Result<(), String> {
+        if let Some(e) = self.build_denied(code) {
+            return Err(e);
+        }
+        let cost = (full * self.stake(code) as f64 / 100.0).round();
+        if self.state.money < cost {
+            return Err(format!("Not enough money ({} needed).", fmt_money(cost)));
+        }
+        self.state.money -= cost;
+        let t = self.state.time;
+        self.state.projects.push(Project {
+            code: code.into(),
+            kind: "build".into(),
+            len: 0.0,
+            label: label.into(),
+            cost,
+            full,
+            start: t,
+            done: t + weeks.max(1) * 7 * DAY,
+            geo: Some(serde_json::Value::Array(ops)),
+        });
+        let an = data().airport(code).name.clone();
+        self.log(format!("Construction started at {an}: {label} – your share {}, ready in {weeks} weeks.", fmt_money(cost)), LogKind::Cost);
+        Ok(())
+    }
+
+    /// Pays your share of building work worth `full` (negative: money back).
+    pub fn pay_for_building(&mut self, code: &str, full: f64, what: &str) -> Result<(), String> {
+        let cost = (full * self.stake(code) as f64 / 100.0).round();
+        if cost > 0.0 && self.state.money < cost {
+            return Err(format!("Not enough money ({} needed).", fmt_money(cost)));
+        }
+        self.state.money -= cost;
+        let inf = self.infra_mut(code);
+        inf.invested = (inf.invested + full).max(0.0);
+        set_infra(&self.state.infra);
+        let an = data().airport(code).name.clone();
+        if cost > 0.0 {
+            self.log(format!("{an}: {what} – your share {}.", fmt_money(cost)), LogKind::Cost);
+        } else if cost < 0.0 {
+            self.log(format!("{an}: {what} – {} back.", fmt_money(-cost)), LogKind::Good);
+        }
+        Ok(())
+    }
+
+    /// Adds fix ops to what the player built at an airport.
+    pub fn add_airport_ops(&mut self, code: &str, ops: Vec<serde_json::Value>) {
+        self.state.airport_ops.entry(code.to_string()).or_default().extend(ops);
+        crate::fixes::set_player(&self.state.airport_ops);
+    }
+
+    /// Takes away one of the player's ops (pulling down what they built).
+    pub fn remove_airport_op(&mut self, code: &str, i: usize) {
+        if let Some(l) = self.state.airport_ops.get_mut(code) {
+            if i < l.len() {
+                l.remove(i);
+            }
+            if l.is_empty() {
+                self.state.airport_ops.remove(code);
+            }
+        }
+        crate::fixes::set_player(&self.state.airport_ops);
+    }
     /// Daily: finished projects change the airport.
     fn finish_projects(&mut self) {
         let t = self.state.time;
@@ -1524,8 +1679,23 @@ impl Game {
                     self.infra_mut(&p.code).runways = Some(rws);
                 }
                 "runway" => {
-                    rws.insert(0, new_runway(&p.code, &rws, p.len));
+                    // placed in build mode where it has its geometry, else beside the main one
+                    let placed = p.geo.as_ref().and_then(|g| g.as_array()).filter(|a| a.len() == 6).map(|a| {
+                        let mut r = [0.0; 6];
+                        for (k, v) in a.iter().enumerate() {
+                            r[k] = v.as_f64().unwrap_or(0.0);
+                        }
+                        r
+                    });
+                    match placed {
+                        Some(r) => rws.push(r),
+                        None => rws.insert(0, new_runway(&p.code, &rws, p.len)),
+                    }
                     self.infra_mut(&p.code).runways = Some(rws);
+                }
+                "build" => {
+                    let ops = p.geo.as_ref().and_then(|g| g.as_array()).cloned().unwrap_or_default();
+                    self.add_airport_ops(&p.code, ops);
                 }
                 _ => self.infra_mut(&p.code).terminal += 1,
             }

@@ -6,5 +6,6 @@ pub mod game;
 pub mod jsdata;
 pub mod weather;
 pub mod layouts;
+pub mod fixes;
 pub mod track;
 pub mod dev;

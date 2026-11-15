@@ -73,7 +73,7 @@ pub struct Weather {
 
 impl Game {
     /// Storm events under way: (lat, lon, radius km).
-    fn storms_now(&self) -> Vec<(f64, f64, f64)> {
+    pub fn storms_now(&self) -> Vec<(f64, f64, f64)> {
         self.active_effects()
             .filter(|e| e.storm || e.label.starts_with("Storm "))
             .filter_map(|e| e.at.near.map(|(lat, lon)| (lat, lon, if e.at.radius_km > 0.0 { e.at.radius_km } else { 400.0 })))

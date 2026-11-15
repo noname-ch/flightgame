@@ -191,6 +191,16 @@ impl<'a> Parser<'a> {
 
     fn number(&mut self) -> Result<Value, String> {
         let start = self.i;
+        // hex (the liveries' colours: 0xe60005)
+        if self.s[self.i..].starts_with(b"0x") || self.s[self.i..].starts_with(b"0X") {
+            self.i += 2;
+            let h0 = self.i;
+            while self.i < self.s.len() && (self.s[self.i] as char).is_ascii_hexdigit() {
+                self.i += 1;
+            }
+            let txt = String::from_utf8_lossy(&self.s[h0..self.i]).into_owned();
+            return i64::from_str_radix(&txt, 16).map(|v| num(v as f64)).map_err(|_| self.err("bad hex number"));
+        }
         if self.peek() == b'-' {
             self.i += 1;
         }
@@ -383,5 +393,6 @@ mod tests {
         assert_eq!(v["c-d"][1], 2.0);
         assert_eq!(v["e"], 360.0);
         assert_eq!(v["h"], true);
+        assert_eq!(assigned("FG.data.b = { c: 0xe60005 };", "b").unwrap()["c"], 15073285.0);
     }
 }
