@@ -96,8 +96,8 @@ cache folder.
   renderer moves it (`view3d::posed`). Where Bevy can't start (or with `FLIGHTGAME_CLASSIC_3D=1`, or the button
   off) the classic renderer below draws.
 - **3D view** (V, or 🛩 3D in the plane window): the plane as its 3D model from `models/*.glb` (the browser game's
-  files), painted in the livery you pick (🎨: SWISS, Lufthansa, KLM, Delta, Ryanair, Eurowings, easyJet, from
-  `js/data/liveries.js`), with your other planes nearby, over Esri's satellite pictures (kept on disk once loaded),
+  files), each plane painted in its livery (the airline's, or one of its own: see Liveries below; colours, belly,
+  cheatline and fin, from `js/data/liveries.js`), with your other planes nearby, over Esri's satellite pictures (kept on disk once loaded),
   lit by the game's sun. Cameras as the browser game's keys: V chase (drag to turn round the plane, wheel to come
   closer; V again goes back to the map), B fly-by (a spot beside its path ahead), N on the wing (it banks with the
   plane); ◀ ▶ the next plane. The moving parts work as in the browser game, phase by phase: propellers and fans turn
@@ -127,6 +127,11 @@ pivoting doors, or buckets swinging shut behind the exhaust) until about 60 kt. 
 - **Bug reports** (F5): a title, what happened and the game's details (version, game date, selection, map position,
   the last crash); then GitHub's new-issue page opens filled in (you send it there), or Copy, or Add to `BUGS.md`
   when it runs from the repo. A crash is written down, and the next start offers to report it.
+- **Liveries** (F7, Menu, or 🎨 Livery in the plane window, `src/liveries.rs`, as the browser game's): the airline's
+  livery and one of its own for any plane (Fleet: one dropdown per plane, "all <type>"), 32 built-in ones as little
+  side views, a Designer (colours, title, belly, cheatline, fin mark), and Community: the list in
+  `community/liveries.json` (read from GitHub) to download from, and share codes (`FGLIV1:…`, the same as the browser
+  game's) to pass one on. Your own are kept in `settings.json` (`my_liveries`), a plane's choice in the save.
 - **Sound mixer** (F6): the level of each part (bass and rumble, roar, screech, far away, engine start, whine,
   propellers, pistons, air rushing past, APU), which recording the bass, roar and screech take, and the screech's
   pitch and speed apart (a grain player, as the browser game's), kept in the settings.

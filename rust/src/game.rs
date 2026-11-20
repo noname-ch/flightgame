@@ -175,6 +175,9 @@ pub struct Plane {
     /// the runway it takes at an airport (runway key; missing: auto, the shortest that fits into the wind)
     #[serde(default)]
     pub runways: BTreeMap<String, String>,
+    /// a livery of its own (an id, see the Liveries window); missing: the airline's
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub livery: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -3881,6 +3884,7 @@ fn new_plane(id: &str, kind: &str, code: &str, ownership: Ownership, age: f64, t
         crew: crew_for(kind),
         stats: Stats::default(),
         runways: BTreeMap::new(),
+        livery: None,
     }
 }
 

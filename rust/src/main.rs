@@ -8,6 +8,7 @@ mod checklist;
 mod editor;
 mod mapview;
 mod pictures;
+mod liveries;
 mod sound;
 mod style;
 mod synth;

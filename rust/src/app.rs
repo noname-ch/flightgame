@@ -83,6 +83,8 @@ pub struct App {
     style_try: String,
     dev_open: bool,
     mixer_open: bool,
+    /// the Liveries window (F7)
+    lw: crate::liveries::LiveryWin,
     check_open: bool,
     checks: Option<crate::checklist::Checklist>,
     check_filter: u8,
@@ -200,6 +202,7 @@ impl App {
             style_try: settings.style.clone().unwrap_or_else(|| "night".into()),
             dev_open: false,
             mixer_open: false,
+            lw: Default::default(),
             check_open: false,
             checks: None,
             check_filter: 0,
@@ -583,6 +586,10 @@ impl App {
                     }
                     if ui.button("🎚 Sound mixer  F6").clicked() {
                         self.mixer_open = true;
+                        ui.close();
+                    }
+                    if ui.button("🎨 Liveries  F7").clicked() {
+                        self.lw.open_for(None);
                         ui.close();
                     }
                     if ui.button("🛠 Developer tools  F2").clicked() {
@@ -2088,6 +2095,9 @@ impl App {
                     if ui.button("🛩 3D").on_hover_text("Follow it in the 3D view (V)").clicked() {
                         action = Some((9, String::new(), None));
                     }
+                    if ui.button("🎨 Livery").on_hover_text("Paint this plane in a livery of its own (F7)").clicked() {
+                        action = Some((10, String::new(), None));
+                    }
                 });
                 ui.horizontal(|ui| {
                     ui.label("Name");
@@ -2110,6 +2120,7 @@ impl App {
                 self.v3.follow = Some(p.id.clone());
                 self.v3.on = true;
             }
+            10 => self.lw.open_for(Some(p.id.clone())),
             4 => {
                 if let Some(g) = self.game.as_mut() {
                     g.rename_plane(i, &self.rename);
@@ -2734,6 +2745,9 @@ impl eframe::App for App {
         if ctx.input(|i| i.key_pressed(egui::Key::F6)) {
             self.mixer_open = !self.mixer_open;
         }
+        if ctx.input(|i| i.key_pressed(egui::Key::F7)) {
+            self.lw.open = !self.lw.open;
+        }
         if self.game.is_none() {
             if self.settings.style.is_none() && self.selftest.is_none() {
                 self.style_picker(ui);
@@ -2821,6 +2835,11 @@ impl eframe::App for App {
         self.stats_window(&ctx);
         self.dev_window(&ctx);
         self.mixer_window(&ctx);
+        if let Some(g) = self.game.as_mut() {
+            if self.lw.show(&ctx, g, &mut self.settings.livery, &mut self.settings.my_liveries) {
+                self.settings.save();
+            }
+        }
         self.bug_window(&ctx);
         self.checklist_window(&ctx);
         // 🎥 Follow on the map: keep the plane in the middle
@@ -2846,7 +2865,8 @@ impl eframe::App for App {
             // ---------- the 3D view (V) ----------
             if self.v3.on && self.v3_ok {
                 let rect = ui.max_rect();
-                let shown = self.v3.show(ui, rect, g, self.t, self.settings.livery.as_deref(), !self.paused);
+                let mine = crate::liveries::mine(&self.settings.my_liveries);
+                let shown = self.v3.show(ui, rect, g, self.t, self.settings.livery.as_deref(), &mine, !self.paused);
                 let Some(i) = shown else {
                     self.v3.on = false;
                     return;
@@ -2878,9 +2898,9 @@ impl eframe::App for App {
                             if ui.small_button("▶").on_hover_text("Next plane").clicked() {
                                 self.v3.follow = Some(g.state.planes[(i + 1) % g.state.planes.len()].id.clone());
                             }
-                            let current = crate::view3d::livery(self.settings.livery.as_deref());
+                            let current = crate::view3d::livery_in(self.settings.livery.as_deref(), &mine);
                             egui::ComboBox::from_id_salt("livery").selected_text(format!("🎨 {}", current.name)).show_ui(ui, |ui| {
-                                for l in crate::view3d::liveries() {
+                                for l in mine.iter().chain(crate::view3d::liveries().iter()) {
                                     if ui.selectable_label(l.id == current.id, &l.name).clicked() {
                                         self.settings.livery = Some(l.id.clone());
                                         save_livery = true;
@@ -3365,6 +3385,57 @@ impl App {
                 self.v3.pitch = 12.0;
                 self.v3.dist = 2.6;
                 self.v3.yaw = 0.0;
+                next(self, 1.0);
+            }
+            36 => {
+                // a plane in a livery of its own (with a cheatline), the others in the airline's
+                if let Some(g) = self.game.as_mut() {
+                    if let Some(p) = g.state.planes.first_mut() {
+                        p.livery = Some("classic-blue".into());
+                        self.v3.follow = Some(p.id.clone());
+                    }
+                }
+                self.v3.on = true;
+                self.v3.cam = "chase";
+                // (from the side behind, as the landing: the fin, belly and cheatline in view)
+                self.v3.yaw = 130.0;
+                self.v3.pitch = 8.0;
+                self.v3.dist = 1.4;
+                self.paused = true;
+                next(self, 6.0);
+            }
+            37 => {
+                shot("17-3d-own-livery.png");
+                next(self, 1.0);
+            }
+            38 => {
+                self.v3.on = false;
+                let id = self.game.as_ref().and_then(|g| g.state.planes.first()).map(|p| p.id.clone());
+                self.lw.open_for(id);
+                next(self, 2.0);
+            }
+            39 => {
+                shot("18-liveries.png");
+                next(self, 1.0);
+            }
+            40 => {
+                self.lw.show_tab("design");
+                next(self, 2.0);
+            }
+            41 => {
+                shot("19-livery-designer.png");
+                next(self, 1.0);
+            }
+            42 => {
+                self.lw.show_tab("fleet");
+                next(self, 2.0);
+            }
+            43 => {
+                shot("20-livery-fleet.png");
+                next(self, 1.0);
+            }
+            44 => {
+                self.lw.open = false;
                 next(self, 1.0);
             }
             _ => {

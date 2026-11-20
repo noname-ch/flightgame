@@ -123,11 +123,14 @@ pub struct Settings {
     /// the livery the 3D models are painted in (js/data/liveries.js)
     #[serde(default)]
     pub livery: Option<String>,
+    /// the player's own liveries, made in the Liveries window or downloaded (as js/data/liveries.js writes them)
+    #[serde(default)]
+    pub my_liveries: Vec<serde_json::Value>,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { style: None, autosave: true, volume: 0.7, map_style: 0, dev_hash: None, mix: crate::sound::Mix::default(), livery: None }
+        Settings { style: None, autosave: true, volume: 0.7, map_style: 0, dev_hash: None, mix: crate::sound::Mix::default(), livery: None, my_liveries: Vec::new() }
     }
 }
 

@@ -32,7 +32,34 @@ pub struct Livery {
     pub tail: bool,
     /// belly colour and from how far down (0 top … 1 bottom of the fuselage)
     pub belly: Option<([f32; 3], f32)>,
+    /// a cheatline along the fuselage: colour, where its middle is (0 top … 1 bottom) and its width (fuselage heights)
+    pub stripe: Option<([f32; 3], f32, f32)>,
     pub title: [f32; 3],
+    /// the livery as js/data/liveries.js writes it (the Liveries window edits, shares and draws it from this)
+    pub src: Value,
+}
+
+impl Livery {
+    /// A livery written as in js/data/liveries.js (also the liveries made in the Liveries window or downloaded).
+    pub fn from_value(l: &Value) -> Livery {
+        let body = rgb(&l["body"]).unwrap_or([0.88, 0.89, 0.9]);
+        let wing = rgb(&l["wing"]).unwrap_or(body);
+        Livery {
+            id: l["id"].as_str().unwrap_or("").into(),
+            name: l["name"].as_str().unwrap_or("").into(),
+            body,
+            wing,
+            engine: rgb(&l["engine"]).unwrap_or(wing),
+            fin: rgb(&l["fin"]).unwrap_or(body),
+            tail: l["tail"].as_bool().unwrap_or(false),
+            belly: rgb(&l["belly"]["color"]).map(|c| (c, l["belly"]["from"].as_f64().unwrap_or(0.7) as f32)),
+            stripe: rgb(&l["stripe"]["color"]).map(|c| {
+                (c, l["stripe"]["at"].as_f64().unwrap_or(0.62) as f32, l["stripe"]["width"].as_f64().unwrap_or(0.08) as f32)
+            }),
+            title: rgb(&l["titleColor"]).unwrap_or([0.8, 0.0, 0.0]),
+            src: l.clone(),
+        }
+    }
 }
 
 fn rgb(v: &Value) -> Option<[f32; 3]> {
@@ -47,23 +74,20 @@ pub fn liveries() -> &'static Vec<Livery> {
         let mut out = Vec::new();
         if let Ok(Value::Array(list)) = flightgame::jsdata::assigned(LIVERIES_JS, "liveries") {
             for l in &list {
-                let body = rgb(&l["body"]).unwrap_or([0.88, 0.89, 0.9]);
-                let wing = rgb(&l["wing"]).unwrap_or([0.8, 0.82, 0.85]);
-                out.push(Livery {
-                    id: l["id"].as_str().unwrap_or("").into(),
-                    name: l["name"].as_str().unwrap_or("").into(),
-                    body,
-                    wing,
-                    engine: rgb(&l["engine"]).unwrap_or(wing),
-                    fin: rgb(&l["fin"]).unwrap_or(body),
-                    tail: l["tail"].as_bool().unwrap_or(false),
-                    belly: rgb(&l["belly"]["color"]).map(|c| (c, l["belly"]["from"].as_f64().unwrap_or(0.7) as f32)),
-                    title: rgb(&l["titleColor"]).unwrap_or([0.8, 0.0, 0.0]),
-                });
+                out.push(Livery::from_value(l));
             }
         }
         out
     })
+}
+
+/// A livery by id: one of the player's (made or downloaded, `mine`) or a built-in one; the first built-in one if
+/// there is none of that id.
+pub fn livery_in(id: Option<&str>, mine: &[Livery]) -> Livery {
+    match id.and_then(|id| mine.iter().find(|l| l.id == id)) {
+        Some(l) => l.clone(),
+        None => livery(id),
+    }
 }
 
 pub fn livery(id: Option<&str>) -> Livery {
@@ -77,7 +101,9 @@ pub fn livery(id: Option<&str>) -> Livery {
         fin: [0.79, 0.0, 0.0],
         tail: false,
         belly: None,
+        stripe: None,
         title: [0.79, 0.0, 0.0],
+        src: Value::Null,
     })
 }
 
@@ -337,6 +363,12 @@ pub(crate) fn posed(m: &Mesh, p: &Plane) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<[
             if let Some((belly, from)) = lv.belly {
                 if from > 0.0 && v.info[1] < 1.0 - 2.0 * from {
                     c = belly;
+                }
+            }
+            // the cheatline (as `fs_main`; per vertex here, so as wide as the model's rows of vertices allow)
+            if let Some((line, at, width)) = lv.stripe {
+                if (v.info[1] - (1.0 - 2.0 * at)).abs() < width.max(0.06) {
+                    c = line;
                 }
             }
             if lv.tail && v.info[2] < -0.36 {
@@ -1049,6 +1081,8 @@ struct Uniforms {
     fin: [f32; 4],
     /// belly colour, its "from" in w
     belly: [f32; 4],
+    /// cheatline colour, its middle (0 top … 1 bottom) in w; its width in flags.z (0: none)
+    stripe: [f32; 4],
     /// sun direction, light in w
     sun: [f32; 4],
     /// x: the tail colour goes on round the rear (1), y: draw the ground (1) or a model (0)
@@ -1099,6 +1133,7 @@ struct U {
     engine: vec4<f32>,
     fin: vec4<f32>,
     belly: vec4<f32>,
+    stripe: vec4<f32>,
     sun: vec4<f32>,
     flags: vec4<f32>,
     ground: vec4<f32>,
@@ -1283,6 +1318,9 @@ fn fs_main(i: VOut) -> @location(0) vec4<f32> {
         // the fuselage: the belly below its line, the tail colour round the rear where the livery has it
         if (u.belly.w > 0.0 && i.info.y < 1.0 - 2.0 * u.belly.w) {
             c = u.belly.rgb;
+        }
+        if (u.flags.z > 0.0 && abs(i.info.y - (1.0 - 2.0 * u.stripe.w)) < u.flags.z) {
+            c = u.stripe.rgb;
         }
         if (u.flags.x > 0.5 && i.info.z < -0.36) {
             c = u.fin.rgb;
@@ -1606,7 +1644,11 @@ impl CallbackTrait for Frame {
                     None => [0.0; 4],
                 },
                 sun: [self.sun.x, self.sun.y, self.sun.z, self.light],
-                flags: [if lv.tail { 1.0 } else { 0.0 }, if ground { 1.0 } else { 0.0 }, 0.0, 0.0],
+                stripe: match lv.stripe {
+                    Some((col, at, _)) => [lin(col[0]), lin(col[1]), lin(col[2]), at],
+                    None => [0.0; 4],
+                },
+                flags: [if lv.tail { 1.0 } else { 0.0 }, if ground { 1.0 } else { 0.0 }, lv.stripe.map_or(0.0, |s| s.2), 0.0],
                 ground: self.ground_rect,
                 anim0,
                 anim1,
@@ -1902,7 +1944,9 @@ impl View3d {
     /// The 3D view in `rect`: drag to turn the camera round the plane, wheel to come closer. `running`: the
     /// game is not paused (propellers stand still while it is). Returns the plane's index it follows (for the
     /// panel over it).
-    pub fn show(&mut self, ui: &mut egui::Ui, rect: egui::Rect, g: &flightgame::game::Game, t: f64, livery_id: Option<&str>, running: bool) -> Option<usize> {
+    /// `livery_id`: the airline's livery; `mine`: the player's own liveries (a plane with a livery of its own,
+    /// `livery`, is painted in that one).
+    pub fn show(&mut self, ui: &mut egui::Ui, rect: egui::Rect, g: &flightgame::game::Game, t: f64, livery_id: Option<&str>, mine: &[Livery], running: bool) -> Option<usize> {
         let d = data();
         // the plane: the one asked for, else the first one flying, else the first
         let i = self
@@ -1927,7 +1971,6 @@ impl View3d {
         // the reference point: the plane's spot on the ground
         let (lat0, lon0) = (pos.lat, pos.lon);
         // the planes: the followed one and every other of yours within 60 km, posed and with their parts set
-        let lv = livery(livery_id);
         let mut planes = Vec::new();
         let mut me = Vec3::new(0.0, 0.0, (pos.alt_ft * 0.3048) as f32);
         let mut my_rot = Mat4::from_rotation_z(-(pos.heading as f32).to_radians());
@@ -2008,7 +2051,7 @@ impl View3d {
                 pitch: pose.pitch,
                 bank: pose.bank,
                 len: qlen,
-                livery: lv.clone(),
+                livery: livery_in(q.livery.as_deref().or(livery_id), mine),
                 anim0: [pose.spin, parts.flap * deg, ail * deg, elev * deg],
                 anim1: [rud * deg, flex, parts.gear, 1.0 / (1.0 + parts.rate * 0.25)],
                 anim2: [if rkind > 0.0 { pose.rev } else { 0.0 }, ron, pose.om / qlen, pose.on / qlen],
