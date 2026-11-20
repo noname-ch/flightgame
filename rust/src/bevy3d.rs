@@ -11,7 +11,7 @@ use bevy::asset::RenderAssetUsages;
 use bevy::camera::{Exposure, RenderTarget};
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::light::atmosphere::ScatteringMedium;
-use bevy::light::{Atmosphere, AtmosphereEnvironmentMapLight, CascadeShadowConfigBuilder, light_consts::lux};
+use bevy::light::{Atmosphere, CascadeShadowConfigBuilder, light_consts::lux};
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::pbr::{AtmosphereSettings, DistanceFog, FogFalloff};
 use bevy::post_process::bloom::Bloom;
@@ -132,7 +132,6 @@ fn start(rs: &egui_wgpu::RenderState) -> Option<State> {
             Exposure { ev100: 13.0 },
             Tonemapping::AcesFitted,
             Bloom::NATURAL,
-            AtmosphereEnvironmentMapLight::default(),
             b::Msaa::Sample4,
             DistanceFog { color: b::Color::srgba(0.6, 0.7, 0.8, 1.0), falloff: FogFalloff::Exponential { density: 1e-5 }, ..Default::default() },
             b::Transform::default(),
@@ -141,7 +140,7 @@ fn start(rs: &egui_wgpu::RenderState) -> Option<State> {
     let mut mats = w.resource_mut::<b::Assets<b::StandardMaterial>>();
     // the aircraft: their livery in the vertices' colours, glossy paint
     let plane_mat = mats.add(b::StandardMaterial { base_color: b::Color::WHITE, perceptual_roughness: 0.32, metallic: 0.05, reflectance: 0.5, double_sided: true, cull_mode: None, ..Default::default() });
-    let build_mat = mats.add(b::StandardMaterial { base_color: b::Color::WHITE, perceptual_roughness: 0.8, ..Default::default() });
+    let build_mat = mats.add(b::StandardMaterial { base_color: b::Color::WHITE, perceptual_roughness: 0.9, reflectance: 0.2, ..Default::default() });
     drop(mats);
     // the walls' textures, repeating: a storey (4.2 m) with its band of windows between mullions (2.6 m), and the
     // ribs of a hangar's or a shed's cladding (1.4 m); the windows glow at night (their emissive mask)
@@ -170,8 +169,8 @@ fn start(rs: &egui_wgpu::RenderState) -> Option<State> {
     let glow = tex(w, 64, &|u, v| if glass(u, v) { [255, 214, 140, 255] } else { [0, 0, 0, 255] });
     let ribs = tex(w, 32, &|u, _| if u < 0.14 { [190, 190, 190, 255] } else { [255, 255, 255, 255] });
     let mut mats = w.resource_mut::<b::Assets<b::StandardMaterial>>();
-    let windows_mat = mats.add(b::StandardMaterial { base_color: b::Color::WHITE, base_color_texture: Some(win), emissive_texture: Some(glow), emissive: b::LinearRgba::BLACK, perceptual_roughness: 0.5, reflectance: 0.4, ..Default::default() });
-    let ribs_mat = mats.add(b::StandardMaterial { base_color: b::Color::WHITE, base_color_texture: Some(ribs), perceptual_roughness: 0.7, ..Default::default() });
+    let windows_mat = mats.add(b::StandardMaterial { base_color: b::Color::WHITE, base_color_texture: Some(win), emissive_texture: Some(glow), emissive: b::LinearRgba::BLACK, perceptual_roughness: 0.75, reflectance: 0.25, ..Default::default() });
+    let ribs_mat = mats.add(b::StandardMaterial { base_color: b::Color::WHITE, base_color_texture: Some(ribs), perceptual_roughness: 0.85, reflectance: 0.2, ..Default::default() });
     let ground_mat = mats.add(b::StandardMaterial { base_color: b::Color::srgb(0.3, 0.33, 0.26), perceptual_roughness: 1.0, reflectance: 0.1, ..Default::default() });
     let land_mat = mats.add(b::StandardMaterial { base_color: b::Color::srgb(0.30, 0.33, 0.26), perceptual_roughness: 1.0, reflectance: 0.1, ..Default::default() });
     let mut meshes = w.resource_mut::<b::Assets<b::Mesh>>();
@@ -289,8 +288,14 @@ fn render(st: &mut State, frame: &Frame, w: u32, h: u32) -> Option<egui::Texture
         b::DirectionalLight { illuminance: lux::RAW_SUNLIGHT * day * (0.25 + 0.75 * frame.light.clamp(0.0, 1.0)), shadow_maps_enabled: true, ..Default::default() },
         b::Transform::from_translation(sun).looking_at(b::Vec3::ZERO, if sun.y.abs() > 0.99 { b::Vec3::Z } else { b::Vec3::Y }),
     ));
-    // the light from the sky into the shade (the atmosphere's own is faint next to the sun)
-    world.resource_mut::<b::GlobalAmbientLight>().brightness = 2500.0 * day * (0.5 + 0.5 * frame.light.clamp(0.0, 1.0)) + 150.0;
+    // the light from the sky into the shade, in the haze's colour: a little blue on a clear day, grey under
+    // cloud (the atmosphere's own reflections stay clear-sky blue whatever the weather)
+    {
+        let mx = fog[0].max(fog[1]).max(fog[2]).max(0.05);
+        let mut amb = world.resource_mut::<b::GlobalAmbientLight>();
+        amb.color = b::Color::srgb(0.5 + 0.5 * fog[0] / mx, 0.5 + 0.5 * fog[1] / mx, 0.5 + 0.5 * fog[2] / mx);
+        amb.brightness = 20000.0 * day * (0.45 + 0.55 * frame.light.clamp(0.0, 1.0)) + 250.0;
+    }
     // the exposure follows the light, as a camera's would: full day ev 13, dusk and night brighter
     let ev = 9.6 + 3.4 * (up.max(0.0) / 0.45).min(1.0) * (0.6 + 0.4 * frame.light.clamp(0.0, 1.0));
     world.entity_mut(st.camera).insert(Exposure { ev100: ev });
@@ -357,7 +362,9 @@ fn render(st: &mut State, frame: &Frame, w: u32, h: u32) -> Option<egui::Texture
                     }
                     let ps: Vec<[f32; 3]> = m.vertices.iter().map(|v| v.pos).collect();
                     let ns: Vec<[f32; 3]> = m.vertices.iter().map(|v| v.normal).collect();
-                    let cs: Vec<[f32; 4]> = m.vertices.iter().map(|v| [v.color[0].powf(2.2), v.color[1].powf(2.2), v.color[2].powf(2.2), 1.0]).collect();
+                    // (the layouts' wall colours are light greys: real concrete, glass and cladding reflect about
+                    // half of that, else they glare white in the sun)
+                    let cs: Vec<[f32; 4]> = m.vertices.iter().map(|v| [v.color[0].powf(2.2) * 0.5, v.color[1].powf(2.2) * 0.5, v.color[2].powf(2.2) * 0.5, 1.0]).collect();
                     let (su, sv) = if s == 1 { (2.6, 4.2) } else { (1.4, 4.2) };
                     let uv: Vec<[f32; 2]> = m.vertices.iter().map(|v| [v.info[2] / su, -v.info[1] / sv]).collect();
                     let mut mesh = mesh_of(ps, ns, cs, &idx);
@@ -380,7 +387,7 @@ fn render(st: &mut State, frame: &Frame, w: u32, h: u32) -> Option<egui::Texture
     });
     // the windows lit after dusk
     if let Some(mut m) = world.resource_mut::<b::Assets<b::StandardMaterial>>().get_mut(&st.windows_mat) {
-        m.emissive = b::LinearRgba::rgb(1.0, 1.0, 1.0) * (1.0 - day) * 2500.0;
+        m.emissive = b::LinearRgba::rgb(1.0, 1.0, 1.0) * (1.0 - day) * 220.0;
     }
     // the ground picture: its rect, and a new picture when one has come
     let gr = frame.ground_rect;
