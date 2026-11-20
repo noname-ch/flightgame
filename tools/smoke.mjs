@@ -1041,7 +1041,7 @@ try {
     if (!side1 || side2 !== -side1) errors.push(`3D wing camera (N, N again for the other wing) went wrong: ${side1} then ${side2}`);
     if (!back.on || !back.follow || back.cam !== 'chase' || back.pitch > 80.01) errors.push(`V did not bring back the chase camera: ${JSON.stringify(back)}`);
 
-    step('fly it yourself (P): an A350 lined up at Zurich, TOGA spools the engines, the keys are the plane\'s, Esc opens its menu, Q leaves');
+    step('fly it yourself (P): an A350 lined up at Zurich, TOGA spools the engines, the keys are the plane\'s, a checkpoint goes back, Esc opens its menu, Q leaves');
     await key('p');
     const dlg = await evaluate(() => {
       const el = document.getElementById('pilot-start');
@@ -1062,6 +1062,13 @@ try {
       const fl = await evaluate(() => ({ n1: FG.pilot.state.n1[0], lever: FG.pilot.state.lever, follow: FG.view3d.follow, drawn: !!FG.view3d.pilotE, speed: FG.ui.speed, hud: !document.getElementById('pilot-hud').hidden }));
       if (!(fl.n1 > 30) || fl.lever !== 1 || !fl.follow || !fl.drawn || !fl.hud) errors.push(`fly it yourself: ${JSON.stringify(fl)}`);
       if (fl.speed !== speed0) errors.push('fly it yourself: → changed the game speed while flying');
+      // checkpoint: Z keeps the flight, Backspace puts it back there (paused), even after a crash
+      await key('z');
+      await evaluate(() => { const s = FG.pilot.state; s.lever = 0; s.crashed = 'test'; s.lat += 0.01; });
+      await key('Backspace');
+      const ck = await evaluate(() => { const s = FG.pilot.state; return { lever: s.lever, crashed: s.crashed, paused: s.paused, moved: !!s.ck && s.lat === s.ck.state.lat }; });
+      if (ck.lever !== 1 || ck.crashed || !ck.paused || !ck.moved) errors.push(`fly it yourself: Backspace did not go back to the checkpoint: ${JSON.stringify(ck)}`);
+      await key('p');
       // Esc: the flight's own menu (the flight waits), Esc again resumes, Q from the menu leaves
       await key('Escape');
       const pm = await evaluate(() => ({ active: FG.pilot.active, menu: !!document.getElementById('pilot-menu'), paused: FG.pilot.state.menu, game: !document.getElementById('menu').hidden }));

@@ -360,6 +360,9 @@ you fly, the keyboard is the plane's (the game's keys come back when you leave):
   X speed brakes, Shift+X arms the ground spoilers, Space or B wheel brakes, K parking brake.
 - C cycles the cameras (chase, cockpit with a head-up display, wing, fly-by), V chase, N wing. P pauses, H lists the
   keys, Esc opens a menu (the flight waits): resume, start this flight again, or leave the cockpit.
+- Checkpoints: Z (or ⚑ Checkpoint) keeps the flight as it is now; Backspace (or ⟲ Retry, or from the menu or after
+  a crash) puts it back there, paused until P, as often as it takes: practise a landing until it works. The
+  checkpoint stays when the flight starts again and goes with a new flight.
 The physics: lift and drag from the flap setting, gear and spoilers; the thrust falls off with height and speed; the
 angle of attack is protected (the wing never stalls; near it A.FLOOR gives TOGA by itself), pitch stays within
 30° up / 15° down. The instruments show a PFD (speed tape with the max speed and the alpha-protection band, altitude,

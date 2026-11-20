@@ -166,6 +166,7 @@
     const v = FG.view3d;
     if (!v) { toast('The 3D view is not available here.'); return; }
     const type = TYPES[opts.type] ? opts.type : 'A350-900';
+    if (opts !== s.startOpts) s.ck = null; // (a checkpoint belongs to its flight: kept when it starts again)
     Object.assign(s, {
       active: true, loading: true, startOpts: opts, type, spec: TYPES[type], startAt: performance.now(),
       lat: 0, lon: 0, h: 0, groundH: 0, V: 0, gamma: 0, psi: 0, theta: 0, phi: 0, alpha: 0,
@@ -243,6 +244,27 @@
     if (FG.view3d) FG.view3d.pilotCam(null);
   }
   function restart() { showMenu(false); if (s.startOpts) start(s.startOpts); }
+
+  // ---------- checkpoints ----------
+  // Z keeps the flight as it is now; Backspace puts it back there (paused, P to go on), as often as it takes.
+  const CK = ['lat', 'lon', 'h', 'groundH', 'V', 'gamma', 'psi', 'theta', 'phi', 'alpha', 'onGround', 'landed', 'n1', 'lever',
+    'rev', 'revOk', 'gearDown', 'gear', 'conf', 'flapPos', 'sb', 'gs', 'armed', 'brake', 'parking', 'afloor', 'tail', 'mass',
+    'gref', 'athr', 'spdSel', 'athrN1', 'iasPrev', 'iasAcc', 'lvrClb', 'sway', 'vPrev', 'ghReal', 'calls', 'prevAgl'];
+  function saveCheckpoint() {
+    if (s.loading || s.crashed) { say('No checkpoint while crashed', 'amber', 2000); return; }
+    const st = {};
+    for (const k of CK) st[k] = s[k];
+    s.ck = { state: structuredClone(st), at: performance.now(), where: s.onGround ? 'on the ground' : `${Math.round(s.h / FT / 10) * 10} ft, ${Math.round(ias())} kt` };
+    say(`⚑ Checkpoint saved (${s.ck.where}) · Backspace: back here`, 'info', 3000);
+  }
+  function toCheckpoint() {
+    showMenu(false);
+    if (!s.ck) { restart(); say('No checkpoint yet (Z saves one): started again', 'amber', 3000); return; }
+    Object.assign(s, structuredClone(s.ck.state));
+    Object.assign(s, { crashed: null, touch: null, stick: 0, roll: 0, rud: 0, paused: true, help: false });
+    s.keys.clear(); s.msgs = []; lastV = null; s.trend = null;
+    say(`⚑ Back at the checkpoint (${s.ck.where}) · P to go`, 'info', 4000);
+  }
   const toast = (t) => (FG.ui && FG.ui.toast ? FG.ui.toast(t) : alert(t));
 
   // ---------- keys ----------
@@ -266,11 +288,15 @@
       if (k === 'Escape') showMenu(false);
       else if (k === 'Enter' || k === 'r') restart();
       else if (k === 'q' || k === 'l') stop();
+      else if (k === 'z') { saveCheckpoint(); showMenu(false); }
+      else if (k === 'Backspace') toCheckpoint();
       return;
     }
     switch (k) {
       case 'Escape': showMenu(true); break;
       case 'Enter': if (s.crashed) restart(); break;
+      case 'z': saveCheckpoint(); break;
+      case 'Backspace': toCheckpoint(); break;
       case 'p': s.paused = !s.paused; say(s.paused ? 'Paused (P)' : 'Resumed', 'info', 1500); break;
       case 'h': s.help = !s.help; break;
       case 'g':
@@ -601,7 +627,7 @@
       hud = document.createElement('div');
       hud.id = 'pilot-hud';
       hud.innerHTML = `<canvas></canvas>
-        <div class="pl-bar"><button data-pl="cam" title="Camera (C)">🎥 Camera</button><button data-pl="help" title="Keys (H)">⌨ Keys</button><button data-pl="exit" title="Menu (Esc)">☰ Menu</button></div>`;
+        <div class="pl-bar"><button data-pl="ck-save" title="Save a checkpoint here (Z)">⚑ Checkpoint</button><button data-pl="ck-back" title="Back to the checkpoint (Backspace)">⟲ Retry</button><button data-pl="cam" title="Camera (C)">🎥 Camera</button><button data-pl="help" title="Keys (H)">⌨ Keys</button><button data-pl="exit" title="Menu (Esc)">☰ Menu</button></div>`;
       document.body.appendChild(hud);
       cv = hud.querySelector('canvas');
       ctx = cv.getContext('2d');
@@ -610,6 +636,8 @@
         if (!b) return;
         if (b.dataset.pl === 'exit') showMenu(!s.menu);
         if (b.dataset.pl === 'help') s.help = !s.help;
+        if (b.dataset.pl === 'ck-save') saveCheckpoint();
+        if (b.dataset.pl === 'ck-back') toCheckpoint();
         if (b.dataset.pl === 'cam') FG.view3d.pilotCam(s.cam = CAMS[(CAMS.indexOf(s.cam) + 1) % CAMS.length]);
         b.blur();
       });
@@ -632,7 +660,8 @@
     ['X  /  Shift+X', 'speed brakes · arm ground spoilers'],
     ['Space  B', 'wheel brakes (hold)    K: parking brake'],
     ['C  V  N', 'camera: next · chase · wing'],
-    ['P   Esc', 'pause · menu (resume, start again, leave)'],
+    ['Z   Backspace', 'save a checkpoint · back to it (try again until it works)'],
+    ['P   Esc', 'pause · menu (resume, checkpoint, start again, leave)'],
   ];
 
   function draw(warn) {
@@ -662,10 +691,11 @@
       const t = s.touch;
       const col = t.rating === 'butter' || t.rating === 'smooth' ? '#30d158' : t.rating === 'firm' ? '#ffd60a' : '#ff453a';
       banner(W / 2, H * 0.32, `Touchdown ${t.fpm} ft/min · ${t.kt} kt · ${t.rating}${t.on ? '' : ' · not on a runway!'}`, col, 22);
+      if (s.ck) banner(W / 2, H * 0.32 + 30, 'Backspace: try it again from the checkpoint', '#e8f0ff', 14);
     }
     if (s.crashed) {
       banner(W / 2, H * 0.4, `💥 CRASH — ${s.crashed}`, '#ff3b30', 28);
-      banner(W / 2, H * 0.4 + 44, 'Enter: try again · Esc: leave', '#fff', 16);
+      banner(W / 2, H * 0.4 + 44, s.ck ? 'Backspace: back to the checkpoint · Enter: start again · Esc: menu' : 'Enter: try again · Esc: menu', '#fff', 16);
     }
     if (s.paused) banner(W / 2, H * 0.45, 'PAUSED (P)', '#fff', 26);
     if (s.help) helpBox(W, H);
@@ -967,6 +997,8 @@
       <h2>Flight paused</h2>
       <div class="pm-buttons">
         <button class="primary" data-pm="resume">▶ Resume <kbd>Esc</kbd></button>
+        <button data-pm="ck-back"${s.ck ? '' : ' disabled'}>⟲ Back to the checkpoint${s.ck ? ` (${s.ck.where})` : ''} <kbd>Backspace</kbd></button>
+        <button data-pm="ck-save"${s.crashed ? ' disabled' : ''}>⚑ Save a checkpoint here <kbd>Z</kbd></button>
         <button data-pm="restart">↺ Start this flight again <kbd>R</kbd></button>
         <button data-pm="leave">✕ Leave the cockpit <kbd>Q</kbd></button>
       </div></div>`;
@@ -976,6 +1008,8 @@
       if (e.target === el || (b && b.dataset.pm === 'resume')) showMenu(false);
       else if (b && b.dataset.pm === 'restart') restart();
       else if (b && b.dataset.pm === 'leave') stop();
+      else if (b && b.dataset.pm === 'ck-back') toCheckpoint();
+      else if (b && b.dataset.pm === 'ck-save') { saveCheckpoint(); showMenu(false); }
     });
   }
   function openDialog() {

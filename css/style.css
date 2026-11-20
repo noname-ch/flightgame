@@ -1464,8 +1464,9 @@ body.piloting .view3d-controls { display: none; }
 .ps-card .row { justify-content: flex-end; margin-top: 10px; }
 #pilot-menu .ps-card { width: min(340px, 100%); }
 .pm-buttons { display: grid; gap: 8px; margin-top: 12px; }
-.pm-buttons button { display: flex; justify-content: space-between; align-items: center; padding: 9px 12px; text-align: left; }
-.pm-buttons kbd { font-size: 11px; opacity: 0.6; }
+.pm-buttons button { display: flex; justify-content: space-between; align-items: center; gap: 14px; padding: 9px 12px; text-align: left; }
+.pm-buttons button:disabled { opacity: 0.45; cursor: default; }
+.pm-buttons kbd { flex-shrink: 0; font-size: 11px; opacity: 0.6; }
 
 /* ---------- plane names (Fleet card ✏️) ---------- */
 .plane-card .rename-btn { padding: 0 4px; font-size: 11px; opacity: 0.6; vertical-align: middle; }
