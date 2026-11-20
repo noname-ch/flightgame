@@ -13,6 +13,7 @@ const PREF_KEY = 'flightgame.view3d';
 const EARTH_R = 6371008.8;
 const EARTH_CIRC = 40075016.686;
 const PLANE_PX = 30;            // on-screen length of an aircraft when zoomed out
+const SHARE_DEPTH_ZOOM = 13.5;  // from here in planes are drawn at about their real size and share MapLibre's depth
 const COLORS = { own: '#007aff', other: '#8e8e93', home: '#34c759', selected: '#ff9500', route: '#007aff', ferry: '#af52de' };
 
 const v = {
@@ -1098,7 +1099,7 @@ function transformStyle(_prev, style) {
     { id: 'fg-terminals', type: 'fill-extrusion', source: 'fg-gates', minzoom: GATE_MINZOOM, filter: kind('building'),
       paint: {
         'fill-extrusion-color': terminalColors(0),
-        'fill-extrusion-base': ['get', 'base'], 'fill-extrusion-height': ['get', 'h'], 'fill-extrusion-opacity': 0.95,
+        'fill-extrusion-base': ['get', 'base'], 'fill-extrusion-height': ['get', 'h'], 'fill-extrusion-opacity': 1,
       } },
     { id: 'fg-bridges', type: 'fill-extrusion', source: 'fg-gates', minzoom: 13, filter: kind('bridge'),
       paint: { 'fill-extrusion-color': '#b8c2cf', 'fill-extrusion-base': 3, 'fill-extrusion-height': 6.5 } },
@@ -2256,9 +2257,11 @@ const planeLayer = {
     updateClouds(this, map, globe, mpp, centerW, now);
 
     this.renderer.resetState();
-    // Own depth buffer for the planes: sharing MapLibre's lets the (exaggerated) terrain and the
-    // coarse depth precision cut holes into the models. Planes are then drawn over the terrain.
-    this.renderer.clearDepth();
+    // Zoomed out, the planes get their own depth buffer: sharing MapLibre's lets the (exaggerated) terrain and the
+    // coarse depth precision cut holes into the models, so they are drawn over everything. Close in, where they are
+    // drawn at their real size, they share it: buildings and hills in front of a plane hide it (they used to show
+    // through every terminal).
+    if (zoom < SHARE_DEPTH_ZOOM) this.renderer.clearDepth();
     // The flat map's projection is mirrored: tell the double-sided materials (see js/models3d.js).
     facing.value = this.camera.projectionMatrix.determinant() < 0 ? 1 : -1;
     this.renderer.render(this.scene, this.camera);
@@ -2995,7 +2998,7 @@ function chaseLayer(cam) {
         if (!alive.has(id)) { this.world.remove(cam.planes[id].obj); delete cam.planes[id]; }
       }
       this.renderer.resetState();
-      this.renderer.clearDepth();
+      if (map.getZoom() < SHARE_DEPTH_ZOOM) this.renderer.clearDepth(); // (as in planeLayer)
       facing.value = this.camera.projectionMatrix.determinant() < 0 ? 1 : -1;
       this.renderer.render(this.scene, this.camera);
       facing.value = 1;
