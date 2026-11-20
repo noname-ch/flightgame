@@ -54,6 +54,24 @@
   const detentName = (l) => (l < 0 ? (l < -0.9 ? 'MAX REV' : 'REV') : (DETENTS.find((d) => Math.abs(l - d.at) < 0.005) || { name: 'MAN THR' }).name);
   const agl = () => (s.h - s.groundH) / FT;
   const vsFpm = () => (s.V * Math.sin(s.gamma)) / FT * 60;
+  // the lowest selectable speed for a flap setting at this weight (1.23 × the 1 g stall speed), kt
+  const vls = (conf) => (1.23 * Math.sqrt((2 * s.mass * G0) / (1.225 * s.spec.S * CONF[conf].clmax))) / KT;
+  // The speed the autothrust flies (kt, indicated): picked with [ ] (cyan), or managed (magenta): 250 kt below
+  // 10,000 ft, then 300 kt up to M 0.85; with flaps out a speed between the flaps' lowest and highest, on the
+  // approach (FULL, or 3 with the gear down) VLS + 5.
+  function spdTarget() {
+    const top = Math.min(VMO - 10, s.conf ? CONF[s.conf].vfe - 5 : 999, s.gear > 0.05 ? VLE - 5 : 999);
+    if (s.spdSel != null) return { kt: Math.min(s.spdSel, top + 5), sel: true };
+    let kt;
+    if (!s.conf) {
+      const at = atmo(s.h);
+      kt = s.h / FT < 10000 ? 250 : Math.min(300, (0.85 * at.a * Math.sqrt(at.rho / 1.225)) / KT);
+    } else if (s.conf >= 5 || (s.conf === 4 && s.gearDown)) kt = vls(s.conf) + 5;
+    else kt = vls(s.conf) + 25;
+    return { kt: Math.round(Math.min(kt, top)), sel: false };
+  }
+  // the autothrust works with the levers in CL (or between idle and CL: then that is the most it gives), in the air
+  const athrOn = () => s.athr && !s.onGround && !s.afloor && s.lever > 0.01 && s.lever < 0.87;
   function say(text, level = 'info', ms = 3500) {
     s.msgs = s.msgs.filter((m) => m.text !== text);
     s.msgs.push({ text, level, until: performance.now() + ms });
@@ -155,7 +173,7 @@
       conf: 2, flapPos: 2, sb: 0, gs: 0, armed: true, brake: 0, parking: false, afloor: false,
       stick: 0, roll: 0, rud: 0, crashed: null, touch: null, tail: false, paused: false, calls: {}, near: null,
       hideId: opts.plane ? opts.plane.id : null, mass: TYPES[type].toMass, prevAgl: null, ghReal: null, ghAt: 0,
-      gref: null, sway: { p: 0, pv: 0, r: 0, rv: 0 }, vPrev: null,
+      gref: null, athr: true, spdSel: null, athrN1: null, iasPrev: null, iasAcc: 0, menu: false, lvrClb: false, sway: { p: 0, pv: 0, r: 0, rv: 0 }, vPrev: null,
     });
     s.msgs = [];
     const e = opts.end;
@@ -170,16 +188,16 @@
       s.conf = ph === 'approach' ? (a < 2000 ? 4 : 2) : ph === 'climb' && a < 3000 ? 2 : 0;
       s.flapPos = s.conf;
       s.gearDown = ph === 'approach' && a < 2500; s.gear = s.gearDown ? 1 : 0;
-      s.lever = ph === 'climb' ? 0.86 : ph === 'cruise' ? 0.62 : 0.35;
+      s.lever = 0.86; // (CL: the autothrust holds the speed)
       s.gamma = ph === 'climb' ? 4 * DEG : ph === 'cruise' ? 0 : -3 * DEG;
-      s.n1 = [21 + 79 * s.lever, 21 + 79 * s.lever];
+      s.n1 = ph === 'climb' ? [86, 86] : ph === 'cruise' ? [70, 70] : [45, 45];
       s.groundH = (st.fieldFt || 0) * FT;
       pts = [[s.lat, s.lon]];
     } else if (opts.mode === 'final') {
       s.mode = 'final';
       const [lat, lon] = offset(e.lat, e.lon, e.course + 180, 18520); // 10 NM out on the centre line
       Object.assign(s, { lat, lon, psi: e.course, V: 165 * KT, onGround: false, conf: 3, flapPos: 3, gearDown: false, gear: 0,
-        lever: 0.5, gamma: -3 * DEG, mass: s.spec.landMass });
+        lever: 0.86, gamma: -3 * DEG, mass: s.spec.landMass });
       s.n1 = [60, 60];
       pts = [[e.lat, e.lon], [lat, lon]];
     } else {
@@ -217,13 +235,14 @@
   }
   function stop() {
     if (!s.active) return;
+    showMenu(false);
     s.active = false;
     bindKeys(false);
     showHud(false);
     if (window.speechSynthesis) try { speechSynthesis.cancel(); } catch (e) { /* */ }
     if (FG.view3d) FG.view3d.pilotCam(null);
   }
-  function restart() { if (s.startOpts) start(s.startOpts); }
+  function restart() { showMenu(false); if (s.startOpts) start(s.startOpts); }
   const toast = (t) => (FG.ui && FG.ui.toast ? FG.ui.toast(t) : alert(t));
 
   // ---------- keys ----------
@@ -241,8 +260,16 @@
     if (!down) { s.keys.delete(k); s.keys.delete(e.code); return; }
     s.keys.add(k); s.keys.add(e.code);
     if (e.repeat) return;
+    // the Esc menu: resume, start again or leave (nothing else while it is open)
+    if (s.menu) {
+      s.keys.clear();
+      if (k === 'Escape') showMenu(false);
+      else if (k === 'Enter' || k === 'r') restart();
+      else if (k === 'q' || k === 'l') stop();
+      return;
+    }
     switch (k) {
-      case 'Escape': stop(); break;
+      case 'Escape': showMenu(true); break;
       case 'Enter': if (s.crashed) restart(); break;
       case 'p': s.paused = !s.paused; say(s.paused ? 'Paused (P)' : 'Resumed', 'info', 1500); break;
       case 'h': s.help = !s.help; break;
@@ -267,6 +294,16 @@
       case 'v': FG.view3d.pilotCam(s.cam = 'chase'); break;
       case 'n': FG.view3d.pilotCam(s.cam === 'wing' ? 'wing2' : 'wing'); s.cam = 'wing'; break;
       case 'k': s.parking = !s.parking; break;
+      case 't':
+        s.athr = !s.athr; s.athrN1 = null;
+        say(s.athr ? 'A/THR on: levers in CL, it holds the speed' : 'A/THR off: the levers set the thrust', s.athr ? 'info' : 'amber', 2500);
+        break;
+      case '[': case ']': {
+        const now = Math.round(spdTarget().kt);
+        s.spdSel = clamp(Math.round((now + (k === ']' ? 5 : -5)) / 5) * 5, 120, VMO - 10);
+        break;
+      }
+      case '\\': s.spdSel = null; say('Managed speed', 'info', 1500); break;
       default:
     }
   }
@@ -310,6 +347,17 @@
     // engines: spool up slowly from idle, faster once turning; reverse once the sleeves are open
     s.rev += clamp((s.lever < 0 && s.onGround ? 1 : 0) - s.rev, -dt / 2.5, dt / 2);
     let target = s.lever < 0 ? (s.rev > 0.95 ? IDLE_N1 + (75 - IDLE_N1) * -s.lever : IDLE_N1) : IDLE_N1 + (100 - IDLE_N1) * s.lever;
+    // autothrust: N1 asked for from the speed error and how fast the speed changes
+    const spdNow = V * Math.sqrt(at.rho / 1.225) / KT;
+    if (s.iasPrev != null && dt > 0) s.iasAcc += ((spdNow - s.iasPrev) / dt - s.iasAcc) * (1 - Math.exp(-dt / 0.6));
+    s.iasPrev = spdNow;
+    if (athrOn()) {
+      const most = IDLE_N1 + (100 - IDLE_N1) * s.lever;
+      if (s.athrN1 == null) s.athrN1 = clamp((s.n1[0] + s.n1[1]) / 2, IDLE_N1, most);
+      const want = clamp((spdTarget().kt - spdNow) * 0.25, -1.5, 1.5); // kt/s
+      s.athrN1 = clamp(s.athrN1 + clamp((want - s.iasAcc) * 5, -6, 6) * dt, IDLE_N1, most);
+      target = s.athrN1;
+    } else s.athrN1 = null;
     if (s.afloor) target = 100;
     for (let i = 0; i < 2; i++) {
       const n = s.n1[i];
@@ -466,7 +514,12 @@
       }
       if (s.V > 40 * KT && !onRunway()) w.push(['OFF THE RUNWAY', 'red']);
     } else {
-      if (spd > VMO + 4 || M > MMO + 0.006) w.push(['OVERSPEED', 'red']);
+      if (spd > VMO + 4 || M > MMO + 0.006) w.push([s.lever > 0.87 ? 'OVERSPEED: thrust back to CL (2)' : 'OVERSPEED', 'red']);
+      // after take-off: the levers come back to CL, where the autothrust takes over
+      if (s.lever > 0.87 && !s.afloor && s.athr && a > 1200 && !s.landed) {
+        w.push(['LVR CLB: thrust levers to CL (2)', 'amber']);
+        if (!s.lvrClb) { s.lvrClb = true; speak('thrust levers climb'); }
+      } else if (s.lever <= 0.87) s.lvrClb = false;
       if (spd > CONF[s.conf].vfe + 4 && s.conf > 0) w.push([`FLAP SPEED (VFE ${CONF[s.conf].vfe} kt)`, 'red']);
       if (s.gear > 0.05 && spd > VLE + 4) w.push(['GEAR SPEED (VLE 250 kt)', 'red']);
       if (s.alpha > s.aProt - 0.5) w.push(['ALPHA PROT', 'amber']);
@@ -518,7 +571,7 @@
       if (Math.abs(gh - s.groundH) > 60 && !s.onGround) s.groundH = gh;
       else s.groundH += (gh - s.groundH) * (1 - Math.exp(-dtAll / 0.25));
     }
-    if (!s.paused && !s.crashed) {
+    if (!s.paused && !s.menu && !s.crashed) {
       inputs(dtAll);
       let left = Math.min(dtAll, 0.25);
       while (left > 1e-6) { const dt = Math.min(0.02, left); physics(dt); left -= dt; if (s.crashed) break; }
@@ -548,14 +601,14 @@
       hud = document.createElement('div');
       hud.id = 'pilot-hud';
       hud.innerHTML = `<canvas></canvas>
-        <div class="pl-bar"><button data-pl="cam" title="Camera (C)">🎥 Camera</button><button data-pl="help" title="Keys (H)">⌨ Keys</button><button data-pl="exit" title="Leave the cockpit (Esc)">✕ Exit</button></div>`;
+        <div class="pl-bar"><button data-pl="cam" title="Camera (C)">🎥 Camera</button><button data-pl="help" title="Keys (H)">⌨ Keys</button><button data-pl="exit" title="Menu (Esc)">☰ Menu</button></div>`;
       document.body.appendChild(hud);
       cv = hud.querySelector('canvas');
       ctx = cv.getContext('2d');
       hud.addEventListener('click', (e) => {
         const b = e.target.closest('[data-pl]');
         if (!b) return;
-        if (b.dataset.pl === 'exit') stop();
+        if (b.dataset.pl === 'exit') showMenu(!s.menu);
         if (b.dataset.pl === 'help') s.help = !s.help;
         if (b.dataset.pl === 'cam') FG.view3d.pilotCam(s.cam = CAMS[(CAMS.indexOf(s.cam) + 1) % CAMS.length]);
         b.blur();
@@ -571,13 +624,15 @@
     ['Q E', 'rudder / nose wheel'],
     ['PgUp PgDn  + −', 'thrust levers (on the ground, − past idle = reverse)'],
     ['1 2 3 4', 'IDLE · CL · FLX/MCT · TOGA'],
+    ['2 = CL', 'autothrust: holds the speed (magenta, or [ ] to pick one, \\ managed)'],
+    ['T', 'autothrust off / on (off: the levers set the thrust)'],
     ['R', 'full reverse / stow (on the ground)'],
     ['G', 'landing gear'],
     ['F  /  Shift+F', 'flaps one notch down / up'],
     ['X  /  Shift+X', 'speed brakes · arm ground spoilers'],
     ['Space  B', 'wheel brakes (hold)    K: parking brake'],
     ['C  V  N', 'camera: next · chase · wing'],
-    ['P   Esc', 'pause · leave the cockpit'],
+    ['P   Esc', 'pause · menu (resume, start again, leave)'],
   ];
 
   function draw(warn) {
@@ -647,7 +702,10 @@
     c.font = '600 13px system-ui, sans-serif'; c.textAlign = 'center';
     c.fillStyle = s.afloor ? '#ffb000' : '#30d158';
     const dn = detentName(s.lever);
-    c.fillText(s.afloor ? 'A.FLOOR' : s.lever < 0 ? 'REV' : dn === 'MAN THR' ? dn : `MAN ${dn}`, 100, 16);
+    if (athrOn()) c.fillText(s.spdSel != null ? 'SPEED SEL' : 'SPEED', 100, 16);
+    else c.fillText(s.afloor ? 'A.FLOOR' : s.lever < 0 ? 'REV' : dn === 'MAN THR' ? dn : `MAN ${dn}`, 100, 16);
+    if (!s.onGround && s.lever > 0.87 && s.athr && !s.afloor && Math.floor(performance.now() / 500) % 2) { c.fillStyle = '#ffb000'; c.font = '600 11px system-ui, sans-serif'; c.fillText('LVR CLB', 100, 30); c.font = '600 13px system-ui, sans-serif'; }
+    c.fillStyle = s.athr ? '#e8eef8' : '#ffb000'; c.font = '600 10px system-ui, sans-serif'; c.fillText(s.athr ? (athrOn() ? 'A/THR' : 'A/THR ARM') : 'A/THR OFF', 300, 30); c.font = '600 13px system-ui, sans-serif';
     c.fillStyle = '#e8eef8'; c.fillText(`CONF ${CONF[s.conf].name}`, 200, 16);
     c.fillStyle = '#30d158'; c.fillText('NORMAL LAW', 300, 16);
     // attitude
@@ -721,6 +779,10 @@
       const ty = 128 - s.trend * 10 * 3;
       c.strokeStyle = '#ffd60a'; c.lineWidth = 2; c.beginPath(); c.moveTo(74, 128); c.lineTo(74, clamp(ty, 40, 216)); c.stroke();
     }
+    // the speed the autothrust flies: magenta managed, cyan picked ([ ])
+    { const tg = spdTarget(); const y = clamp(128 - (tg.kt - spd) * 3, 40, 216);
+      c.fillStyle = tg.sel ? '#5ac8fa' : '#ff6ef2'; c.beginPath(); c.moveTo(64, y); c.lineTo(76, y - 6); c.lineTo(76, y + 6); c.fill();
+      if (Math.abs(tg.kt - spd) > 26) { c.font = '600 11px system-ui'; c.textAlign = 'center'; c.fillText(String(tg.kt), 41, tg.kt > spd ? 33 : 223); } }
     box(10, 128, 62, String(Math.round(spd)), '#ffd60a');
     c.font = '11px system-ui'; c.fillStyle = '#9ab'; c.textAlign = 'center';
     const M = s.V / atmo(s.h).a;
@@ -827,7 +889,7 @@
     c.fillText(s.parking ? 'PARK BRK ON' : `BRAKES ${Math.round(s.brake * 100)}%`, 140, 212);
     c.font = '11px system-ui'; c.fillStyle = '#9ab';
     c.fillText(`GW ${Math.round(s.mass / 1000)} t   GS ${Math.round(s.V * Math.cos(s.gamma) / KT)} kt   G ${(s.load || 1).toFixed(2)}`, 14, 236);
-    c.fillText(`${s.type}   C camera · H keys · Esc exit`, 14, 256);
+    c.fillText(`${s.type}   C camera · H keys · Esc menu`, 14, 256);
   }
 
   // Cockpit view: a head-up display in green, lined up with the camera (which looks LOOK_DOWN° under the nose).
@@ -891,6 +953,30 @@
     const longest = Math.max(...ends.map((e) => e.len));
     const score = (e) => e.len / longest * 2 + (wind && wind.kt > 3 ? Math.cos((wind.from - e.course) * DEG) : 0);
     return ends.slice().sort((x, y) => score(y) - score(x))[0];
+  }
+  // The Esc menu: the flight waits behind it.
+  function showMenu(on) {
+    s.menu = on;
+    s.keys.clear();
+    let el = document.getElementById('pilot-menu');
+    if (!on) { if (el) el.remove(); return; }
+    if (el) return;
+    el = document.createElement('div');
+    el.id = 'pilot-menu';
+    el.innerHTML = `<div class="ps-card" role="dialog" aria-modal="true">
+      <h2>Flight paused</h2>
+      <div class="pm-buttons">
+        <button class="primary" data-pm="resume">▶ Resume <kbd>Esc</kbd></button>
+        <button data-pm="restart">↺ Start this flight again <kbd>R</kbd></button>
+        <button data-pm="leave">✕ Leave the cockpit <kbd>Q</kbd></button>
+      </div></div>`;
+    document.body.appendChild(el);
+    el.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-pm]');
+      if (e.target === el || (b && b.dataset.pm === 'resume')) showMenu(false);
+      else if (b && b.dataset.pm === 'restart') restart();
+      else if (b && b.dataset.pm === 'leave') stop();
+    });
   }
   function openDialog() {
     if (s.active) return;

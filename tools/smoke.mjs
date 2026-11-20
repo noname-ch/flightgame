@@ -1041,7 +1041,7 @@ try {
     if (!side1 || side2 !== -side1) errors.push(`3D wing camera (N, N again for the other wing) went wrong: ${side1} then ${side2}`);
     if (!back.on || !back.follow || back.cam !== 'chase' || back.pitch > 80.01) errors.push(`V did not bring back the chase camera: ${JSON.stringify(back)}`);
 
-    step('fly it yourself (P): an A350 lined up at Zurich, TOGA spools the engines, the keys are the plane\'s, Esc leaves');
+    step('fly it yourself (P): an A350 lined up at Zurich, TOGA spools the engines, the keys are the plane\'s, Esc opens its menu, Q leaves');
     await key('p');
     const dlg = await evaluate(() => {
       const el = document.getElementById('pilot-start');
@@ -1062,9 +1062,15 @@ try {
       const fl = await evaluate(() => ({ n1: FG.pilot.state.n1[0], lever: FG.pilot.state.lever, follow: FG.view3d.follow, drawn: !!FG.view3d.pilotE, speed: FG.ui.speed, hud: !document.getElementById('pilot-hud').hidden }));
       if (!(fl.n1 > 30) || fl.lever !== 1 || !fl.follow || !fl.drawn || !fl.hud) errors.push(`fly it yourself: ${JSON.stringify(fl)}`);
       if (fl.speed !== speed0) errors.push('fly it yourself: → changed the game speed while flying');
+      // Esc: the flight's own menu (the flight waits), Esc again resumes, Q from the menu leaves
       await key('Escape');
-      const off = await evaluate(() => ({ active: FG.pilot.active, drawn: !!FG.view3d.pilotE, menu: !document.getElementById('menu').hidden }));
-      if (off.active || off.menu) errors.push(`fly it yourself: Esc did not just leave the plane: ${JSON.stringify(off)}`);
+      const pm = await evaluate(() => ({ active: FG.pilot.active, menu: !!document.getElementById('pilot-menu'), paused: FG.pilot.state.menu, game: !document.getElementById('menu').hidden }));
+      if (!pm.active || !pm.menu || !pm.paused || pm.game) errors.push(`fly it yourself: Esc did not open the flight's menu: ${JSON.stringify(pm)}`);
+      await key('Escape');
+      if (await evaluate(() => !!document.getElementById('pilot-menu') || !FG.pilot.active)) errors.push('fly it yourself: Esc did not resume the flight');
+      await key('Escape'); await key('q');
+      const off = await evaluate(() => ({ active: FG.pilot.active, drawn: !!FG.view3d.pilotE, menu: !document.getElementById('menu').hidden, pm: !!document.getElementById('pilot-menu') }));
+      if (off.active || off.menu || off.pm) errors.push(`fly it yourself: Esc, Q did not just leave the plane: ${JSON.stringify(off)}`);
       await evaluate(() => FG.ui.follow && FG.ui.follow(G.state.planes[0].id));
     }
 

@@ -1448,7 +1448,7 @@ body { height: 100dvh; } /* the visible height, also while the phone's address b
 #pilot-hud .pl-bar button { padding: 6px 10px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.25); background: rgba(8, 10, 14, 0.75); color: #e8eef8; font-size: 13px; cursor: pointer; }
 #pilot-hud .pl-bar button:hover { background: rgba(40, 46, 60, 0.9); }
 body.piloting .view3d-controls { display: none; }
-#pilot-start {
+#pilot-start, #pilot-menu {
   position: fixed; inset: 0; z-index: 3700; display: flex; align-items: center; justify-content: center;
   background: rgba(0, 0, 0, 0.55); padding: 16px;
 }
@@ -1462,6 +1462,10 @@ body.piloting .view3d-controls { display: none; }
 .ps-err { min-height: 1.2em; margin: 4px 0; color: var(--neg); font-size: 12px; }
 .ps-keys { margin: 10px 0 0; font-size: 11px; color: var(--muted); }
 .ps-card .row { justify-content: flex-end; margin-top: 10px; }
+#pilot-menu .ps-card { width: min(340px, 100%); }
+.pm-buttons { display: grid; gap: 8px; margin-top: 12px; }
+.pm-buttons button { display: flex; justify-content: space-between; align-items: center; padding: 9px 12px; text-align: left; }
+.pm-buttons kbd { font-size: 11px; opacity: 0.6; }
 
 /* ---------- plane names (Fleet card ✏️) ---------- */
 .plane-card .rename-btn { padding: 0 4px; font-size: 11px; opacity: 0.6; vertical-align: middle; }

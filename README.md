@@ -352,10 +352,14 @@ you fly, the keyboard is the plane's (the game's keys come back when you leave):
   flight path. ← → (A D): roll; let go and the bank stays (up to 33°). On the ground they steer, Q E = rudder.
 - PgUp / PgDn or + / −: thrust levers; 1 2 3 4 = the IDLE, CL, FLX/MCT and TOGA detents. The engines spool up
   slowly from idle (about 8 s to take-off thrust). On the ground − past idle (or R) is reverse thrust.
+- Autothrust (A/THR): in the air with the levers in CL (2) it holds a speed, the magenta mark on the speed tape:
+  250 kt below 10,000 ft, then 300 kt / M 0.85, with flaps out a flap speed, on the approach VLS + 5. [ ] pick a
+  speed yourself (cyan), \ goes back to the managed one, T switches the autothrust off (the levers set the thrust).
+  Take off at TOGA, then at about 1,500 ft "LVR CLB" asks for the levers back to CL; left at TOGA it overspeeds.
 - G gear (about 10 s to move), F / Shift+F flaps one notch down / up (0, 1, 1+F, 2, 3, FULL; about 7 s a notch),
   X speed brakes, Shift+X arms the ground spoilers, Space or B wheel brakes, K parking brake.
 - C cycles the cameras (chase, cockpit with a head-up display, wing, fly-by), V chase, N wing. P pauses, H lists the
-  keys, Esc leaves.
+  keys, Esc opens a menu (the flight waits): resume, start this flight again, or leave the cockpit.
 The physics: lift and drag from the flap setting, gear and spoilers; the thrust falls off with height and speed; the
 angle of attack is protected (the wing never stalls; near it A.FLOOR gives TOGA by itself), pitch stays within
 30° up / 15° down. The instruments show a PFD (speed tape with the max speed and the alpha-protection band, altitude,
