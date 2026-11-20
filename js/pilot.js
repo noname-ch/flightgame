@@ -155,6 +155,7 @@
       conf: 2, flapPos: 2, sb: 0, gs: 0, armed: true, brake: 0, parking: false, afloor: false,
       stick: 0, roll: 0, rud: 0, crashed: null, touch: null, tail: false, paused: false, calls: {}, near: null,
       hideId: opts.plane ? opts.plane.id : null, mass: TYPES[type].toMass, prevAgl: null, ghReal: null, ghAt: 0,
+      gref: null,
     });
     s.msgs = [];
     const e = opts.end;
@@ -189,6 +190,7 @@
     }
     s.alpha = s.onGround ? 0 : 3;
     s.theta = s.alpha + s.gamma / DEG;
+    s.gref = s.onGround ? null : s.gamma; // (in the air: fly on along the path it has)
     // heights where it starts (the 3D map's own tiles may not be there yet)
     heightsAt(pts).then((h) => {
       if (!s.active || s.startOpts !== opts) return;
@@ -338,19 +340,29 @@
     if (!s.onGround) {
       const Vs = Math.max(30, V);
       const cg = Math.cos(s.gamma), cphi = Math.cos(s.phi * DEG);
-      // normal law: the stick asks for a pitch rate (3°/s at full), neutral holds the flight path; pitch 30° up, 15° down at most
-      let qCmd = s.stick * 3 * DEG;
-      if (s.theta > 25 && qCmd > 0) qCmd *= clamp((30 - s.theta) / 5, 0, 1);
-      if (s.theta < -10 && qCmd < 0) qCmd *= clamp((s.theta + 15) / 5, 0, 1);
+      // normal law. The stick moves the flight path the aircraft is asked to fly (gref), up to 3°/s at full; the
+      // angle of attack asked for is the one for 1 g along the path plus what it takes to bend the path onto gref
+      // at the wing's own pace. So the nose turns smoothly at the stick's rate and the path follows a moment later,
+      // without the nose jumping as the stick is pressed or let go (it used to snap up or down a few degrees and
+      // come back). Let go, gref stays: the path is held. Pitch 30° up, 15° down at most.
+      const cphiL = Math.max(0.5, cphi);
+      const Ty = T * Math.sin(s.alpha * DEG);
+      const alphaFor = (nz) => ((nz * W - Ty) / Math.max(1, q * sp.S) + 0.45 * spoil - clBase) / CL_A;
+      const aHold = alphaFor(cg / cphiL);
+      if (s.gref == null) s.gref = s.gamma + (s.alpha - aHold) * cphiL * DEG;
+      let rate = s.stick * 3; // °/s
+      if (s.theta > 25 && rate > 0) rate *= clamp((30 - s.theta) / 5, 0, 1);
+      if (s.theta < -10 && rate < 0) rate *= clamp((s.theta + 15) / 5, 0, 1);
       // high speed protection: the nose comes up by itself above VMO / MMO
       const over = Math.max(ias() - VMO - 6, (M - MMO - 0.01) * 600);
-      if (over > 0 && s.stick <= 0) qCmd += Math.min(2, over * 0.15) * DEG;
+      if (over > 0 && s.stick <= 0) rate += Math.min(2, over * 0.15);
+      s.gref += rate * DEG * dt;
       const flaps = s.flapPos > 0.5;
-      const nz = clamp((cg + (Vs * qCmd) / G0) / Math.max(0.35, cphi), flaps ? 0 : -1, flaps ? 2 : 2.5);
-      const clReq = (nz * W) / Math.max(1, q * sp.S) + 0.45 * spoil;
-      const aCmd = clamp((clReq - clBase) / CL_A, -6, s.aProt);
-      s.alpha += (aCmd - s.alpha) * (1 - Math.exp(-dt / 0.45));
-      const Ty = T * Math.sin(s.alpha * DEG);
+      const aMin = Math.max(-6, alphaFor(flaps ? 0 : -1)), aMax = Math.min(s.aProt, alphaFor(flaps ? 2 : 2.5));
+      // (the path asked for can't run away from the one flown while the angle of attack is at a limit)
+      s.gref = clamp(s.gref, s.gamma + (aMin - aHold) * cphiL * DEG, s.gamma + (aMax - aHold) * cphiL * DEG);
+      const aCmd = clamp(aHold + (s.gref - s.gamma) / DEG / cphiL, aMin, aMax);
+      s.alpha += (aCmd - s.alpha) * (1 - Math.exp(-dt / 0.3));
       s.V += ((T * Math.cos(s.alpha * DEG) - D) / m - G0 * Math.sin(s.gamma)) * dt;
       s.gamma += (((L + Ty) * cphi) / (m * Vs) - (G0 * cg) / Vs) * dt;
       s.gamma = clamp(s.gamma, -80 * DEG, 80 * DEG);
@@ -360,11 +372,13 @@
       else if (Math.abs(s.phi) > 33) s.phi -= Math.sign(s.phi) * Math.min(5 * dt, Math.abs(s.phi) - 33);
       s.phi += s.rud * 2 * dt;
       s.phi = clamp(s.phi, -67, 67);
-      s.theta = s.alpha + s.gamma / DEG;
+      // the nose is alpha above the path in the aircraft's own up direction: banked, part of it is sideways
+      s.theta = s.gamma / DEG + s.alpha * Math.cos(s.phi * DEG);
       // alpha floor: TOGA by itself near the stall (away from the ground)
       if (!s.afloor && s.alpha > s.aProt - 0.3 && agl() > 100) { s.afloor = true; say('A.FLOOR — TOGA', 'amber', 4000); }
     } else {
       s.gamma = 0;
+      s.gref = null;
       s.phi *= Math.exp(-dt / 0.3);
       // rotation: the elevator lifts the nose once there is speed; let go, the nose wheel comes back down
       const auth = clamp(q / (0.5 * 1.225 * 72 * 72), 0, 1);
@@ -504,7 +518,7 @@
       : a < 900 && vs < -1 ? 'approach' : vs > 2 ? 'climb' : vs < -2 ? 'descent' : 'cruise';
     const kmh = s.V * 3.6;
     return {
-      lat: s.lat, lon: s.lon, altM: a, altMSL: s.h, heading: s.psi, bank: s.phi, pitch: s.theta, flying: true,
+      lat: s.lat, lon: s.lon, altM: a, altMSL: s.h, heading: wrap360(s.psi + (s.onGround ? 0 : s.alpha * Math.sin(s.phi * DEG))), bank: s.phi, pitch: s.theta, flying: true,
       st: { phase, speedKmh: kmh, altFt: s.h / FT, fieldFt: s.groundH / FT, ground: s.onGround, windKt: 0, windFrom: 0, gusty: false, airFrac: 0 },
       pilot: { gear: s.gear, flap: confAt(s.flapPos).flap, ail: s.roll, elev: s.onGround ? s.stick : s.stick * 0.7, rud: s.onGround ? s.rud : s.rud, rev: s.rev, n1: (s.n1[0] + s.n1[1]) / 2, gamma: s.gamma / DEG, vs },
     };
@@ -651,7 +665,7 @@
     c.strokeStyle = '#000'; c.fillStyle = '#ffd60a'; c.lineWidth = 1;
     c.fillRect(ax - 52, ay - 2, 30, 5); c.fillRect(ax + 22, ay - 2, 30, 5); c.fillRect(ax - 3, ay - 3, 6, 6);
     // flight path vector (bird)
-    const fy = ay + (s.theta - s.gamma / DEG) * ppd;
+    const fy = ay + s.alpha * ppd; // (straight below the aircraft symbol: no sideslip)
     if (!s.onGround) { c.strokeStyle = '#30d158'; c.lineWidth = 2; c.beginPath(); c.arc(ax, fy, 5, 0, 7); c.moveTo(ax - 13, fy); c.lineTo(ax - 5, fy); c.moveTo(ax + 5, fy); c.lineTo(ax + 13, fy); c.moveTo(ax, fy - 5); c.lineTo(ax, fy - 10); c.stroke(); }
     // ILS
     const l = ils();
@@ -825,7 +839,7 @@
     // boresight and flight path marker
     c.beginPath(); c.moveTo(bx - 18, by); c.lineTo(bx - 6, by); c.lineTo(bx, by + 6); c.lineTo(bx + 6, by); c.lineTo(bx + 18, by); c.stroke();
     if (!s.onGround) {
-      const fy = by + (s.theta - s.gamma / DEG) * ppd;
+      const fy = by + s.alpha * ppd;
       c.beginPath(); c.arc(bx, fy, 7, 0, 7); c.moveTo(bx - 22, fy); c.lineTo(bx - 7, fy); c.moveTo(bx + 7, fy); c.lineTo(bx + 22, fy); c.moveTo(bx, fy - 7); c.lineTo(bx, fy - 15); c.stroke();
     }
     // speed and altitude
