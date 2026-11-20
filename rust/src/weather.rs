@@ -158,6 +158,22 @@ impl Game {
         Weather { cover, rain, storm, snow, fog, temp_c, wind_from, wind_kt, gust_kt, name, icon }
     }
 
+    /// The wind at a height (ft) as (from, kt), as the browser game's windAt: the surface wind near the ground,
+    /// turning to the winds aloft and stronger with height; the mid-latitudes' jet stream only blows up high (from
+    /// FL150, all of it by FL330).
+    pub fn wind_at(&self, lat: f64, lon: f64, t: f64, alt_ft: f64) -> (f64, f64) {
+        let w = self.weather_at(lat, lon, t as i64);
+        let x = lon - WX_DRIFT * t;
+        let z = t / WX_MORPH;
+        let aloft = (if (-25.0..=25.0).contains(&lat) { 90.0 } else { 270.0 }) + (wx_noise(x / 12.0, lat / 10.0, z, 5) - 0.5) * 100.0;
+        let k = smooth(2000.0, 12000.0, alt_ft);
+        let k_jet = smooth(15000.0, 33000.0, alt_ft);
+        let jet = 60.0 * (-((lat.abs() - 40.0) / 12.0).powi(2)).exp() * (0.6 + 0.8 * wx_noise(x / 8.0, lat / 8.0, z, 6));
+        let wf = w.wind_from as f64;
+        let from = (wf + k * ((aloft - wf + 540.0).rem_euclid(360.0) - 180.0) + 360.0).rem_euclid(360.0);
+        (from, w.wind_kt as f64 * (1.0 + 0.6 * k) + k_jet * jet)
+    }
+
     /// The weather at an airport now (in its local time of day).
     pub fn airport_weather(&self, code: &str) -> Weather {
         let a = crate::data::data().airport(code);

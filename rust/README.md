@@ -77,9 +77,16 @@ cache folder.
   window (what it does, stands, local times, weather, speed, height, the runway it takes at each airport: Auto or
   one you pick), the stats window (this year, last year, all time, weeks, last flights), the timetable editor, the
   airport panel (runways, landing fee, size, slots with the holders' bar, "Send … here", tickets, shares).
-- **Flights as the browser game draws them**: pushed back from a real stand (where the layout is known), taxiing to
-  the runway the wind gives (the shortest that fits within 45° of it) or the pilot picks, take-off run, climb, cruise
-  at the type's height, descent, final, landing, taxi to the stand. 🎥 Follow on the map keeps a plane in the middle.
+- **Flights as the browser game flies them** (its buildTrack): boarding at the gate for what the block time leaves,
+  pushed back from a real stand (where the layout is known; else a row of stands beside the main runway), taxiing
+  along the real taxiways (shortest way, an entry from the side near the threshold, backtracking with a turn on the
+  runway where there is none; a parallel taxiway at airports without a layout) to the runway the wind gives (the
+  shortest that fits within 45° of it) or the pilot picks, take-off run, climb-out, a turn at the type's bank angle
+  onto the great circle, cruise at a flight level (odd thousands eastbound, even westbound, lower on short hops; 250 kt
+  below FL100), a turn onto a 15 km final, a 3° glide path, braking to the first good exit, taxiing in. Every part
+  takes as long as it really takes; the nose crabs into a crosswind. The route lines on the map are these tracks
+  (today's runways), the selected plane's flight is coloured by height, and the plane window says "FL360 · 830 km/h ·
+  Cruising", "Taxiing to runway 28". 🎥 Follow on the map keeps a plane in the middle.
 - **Map**: + − ⌂ (my network), towns and place names, the legend, the scale, the weather chip.
 - **Saving and speed**: autosave every 30 s (can be turned off), Save to file / Load from file, speeds up to 36k×,
   ← → change the speed, Esc closes the windows.

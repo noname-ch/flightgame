@@ -309,6 +309,7 @@ fn rundown(pr: &Profile, u: f64) -> Eng {
 /// The browser game's phase for the Rust track's.
 fn phase_of(phase: &str) -> &'static str {
     match phase {
+        "Boarding" => "boarding",
         "Pushback" => "pushback",
         "Taxiing to the runway" => "taxi-out",
         "Take-off run" => "takeoff",
@@ -332,10 +333,13 @@ fn plane_at(game: &Game, i: usize, t: f64, pr: &Profile) -> (f64, f64, f64, f64,
     let ph = phase_of(pos.phase);
     let mut e = Eng { phase: ph, ..Default::default() };
     match (&p.flight, p.status) {
-        (Some(f), Status::Flying) => {
-            let m = t - f.dep as f64;
+        (Some(_), Status::Flying) => {
+            // (engines start with the pushback: before it the plane is boarding, on its APU)
+            let m = pos.since_push;
             let u = m / START_MIN;
-            if u < 1.0 {
+            if m < 0.0 {
+                e.apu = if pr.apu { 1.0 } else { 0.0 };
+            } else if u < 1.0 {
                 e = startup(pr, u.max(0.0));
                 e.start = Some(u.max(0.0));
                 e.apu = if pr.apu { 1.0 } else { 0.0 };

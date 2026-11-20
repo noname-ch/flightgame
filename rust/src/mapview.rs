@@ -60,6 +60,8 @@ impl TileSource for EsriLight {
 
 pub const PLAYER: Color32 = Color32::from_rgb(255, 69, 58);
 pub const ROUTE: Color32 = Color32::from_rgb(10, 132, 255);
+/// the darker casing round a route line
+pub const ROUTE_DARK: Color32 = Color32::from_rgb(0, 72, 160);
 pub const OWN: Color32 = Color32::from_rgb(52, 199, 89);
 
 pub fn hex(c: &str) -> Color32 {
@@ -143,24 +145,43 @@ pub fn draw(
     }
 
     // ---------- route lines of the timetables ----------
+    // Each leg as today's real track (as the browser game's): the runways it takes, taxiing, climb-out and turns,
+    // cruise, the turn onto the final. Thin near the runways.
     if layers.routes {
         let mut seen = std::collections::HashSet::new();
-        for p in &game.state.planes {
+        let w = if zoom >= 13.0 { 0.5 } else { 1.0 };
+        for (i, p) in game.state.planes.iter().enumerate() {
+            let sel = selected == Some(Pick::Plane(i));
             for l in &p.schedule.legs {
-                let key = flightgame::game::route_key(&l.from, &l.to);
-                if !seen.insert(key) {
+                if l.from == l.to || !seen.insert(format!("{}|{}|{}|{sel}", p.kind, l.from, l.to)) {
                     continue;
                 }
-                let (a, b) = (d.airport(&l.from), d.airport(&l.to));
-                let color = if p.schedule.active { ROUTE } else { ROUTE.gamma_multiply(0.4) };
-                great_circle(&painter, &pos, (a.lat, a.lon), (b.lat, b.lon), Stroke::new(4.0, color));
+                let tr = game.leg_track(i, &l.from, &l.to);
+                let (casing, color) = if p.schedule.active { (ROUTE_DARK, ROUTE) } else { (Color32::from_gray(70), Color32::from_gray(150)) };
+                let width = if sel { 5.0 } else { 3.0 } * w;
+                polyline(&painter, &pos, &tr.pts, Stroke::new(width + 2.0, casing));
+                polyline(&painter, &pos, &tr.pts, Stroke::new(width, color));
             }
         }
-        // the selected plane's flight
+        // the selected plane's flight, coloured by height
         if let Some(Pick::Plane(i)) = selected {
-            if let Some(f) = game.state.planes.get(i).and_then(|p| p.flight.as_ref()) {
-                let (a, b) = (d.airport(&f.from), d.airport(&f.to));
-                great_circle(&painter, &pos, (a.lat, a.lon), (b.lat, b.lon), Stroke::new(2.0, PLAYER.gamma_multiply(0.8)));
+            if let Some(tr) = game.flight_track(i) {
+                let band = |ft: f64| (ft / 2000.0).round();
+                let mut run: Vec<(f64, f64)> = Vec::new();
+                let mut run_band: Option<f64> = None;
+                let stroke = |b: f64| Stroke::new(if zoom >= 13.0 { 2.5 } else { 3.5 }, alt_color(b * 2000.0));
+                for (k, pt) in tr.pts.iter().enumerate() {
+                    let b = band(tr.alt_at(tr.cum[k]));
+                    run.push(*pt);
+                    if let Some(rb) = run_band.filter(|rb| *rb != b) {
+                        polyline(&painter, &pos, &run, stroke(rb));
+                        run = vec![*pt];
+                    }
+                    run_band = Some(b);
+                }
+                if let Some(rb) = run_band {
+                    polyline(&painter, &pos, &run, stroke(rb));
+                }
             }
         }
     }
@@ -288,6 +309,39 @@ fn plane_shape(painter: &egui::Painter, at: Pos2, heading: f64, size: f32, color
     painter.add(Shape::convex_polygon(vec![pts[0], pts[1], pts[2]], color, Stroke::NONE));
     painter.add(Shape::convex_polygon(vec![pts[0], pts[2], pts[3]], color, Stroke::NONE));
     painter.add(Shape::closed_line(pts, Stroke::new(1.0, Color32::from_black_alpha(180))));
+}
+
+/// A line through points, broken where it crosses the antimeridian.
+fn polyline(painter: &egui::Painter, pos: &dyn Fn(f64, f64) -> Pos2, pts: &[(f64, f64)], stroke: Stroke) {
+    let mut line: Vec<Pos2> = Vec::new();
+    let mut last_lon = pts.first().map(|p| p.1).unwrap_or(0.0);
+    for &(lat, lon) in pts {
+        if (lon - last_lon).abs() > 180.0 && line.len() > 1 {
+            painter.add(Shape::line(std::mem::take(&mut line), stroke));
+        } else if (lon - last_lon).abs() > 180.0 {
+            line.clear();
+        }
+        last_lon = lon;
+        line.push(pos(lat, lon));
+    }
+    if line.len() > 1 {
+        painter.add(Shape::line(line, stroke));
+    }
+}
+
+/// Height colours for a track (the browser game's altColor): orange near the ground, green mid-level, teal and
+/// violet at cruise.
+fn alt_color(ft: f64) -> Color32 {
+    const STOPS: [(f64, [f64; 3]); 6] = [(0.0, [255.0, 149.0, 0.0]), (10000.0, [255.0, 204.0, 0.0]), (22000.0, [52.0, 199.0, 89.0]),
+        (34000.0, [48.0, 176.0, 199.0]), (42000.0, [88.0, 86.0, 214.0]), (60000.0, [175.0, 82.0, 222.0])];
+    let mut i = 1;
+    while i < STOPS.len() - 1 && ft > STOPS[i].0 {
+        i += 1;
+    }
+    let ((a0, c0), (a1, c1)) = (STOPS[i - 1], STOPS[i]);
+    let f = ((ft - a0) / (a1 - a0)).clamp(0.0, 1.0);
+    let c = |k: usize| (c0[k] + (c1[k] - c0[k]) * f).round() as u8;
+    Color32::from_rgb(c(0), c(1), c(2))
 }
 
 /// A great circle as a line, broken where it crosses the antimeridian.

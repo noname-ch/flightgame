@@ -1973,7 +1973,7 @@ impl App {
             .show(ctx, |ui| {
                 let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 150.0), egui::Sense::hover());
                 hangar_scene(ui.painter(), rect, pic.as_ref(), "");
-                ui.label(RichText::new(pos.phase).strong());
+                ui.label(RichText::new(g.flight_text(i, self.t)).strong());
                 // from → to
                 let t = g.state.time;
                 ui.horizontal(|ui| match &p.flight {
@@ -3236,8 +3236,17 @@ impl App {
                     let to_noon = (11 * 60 - g.state.time.rem_euclid(1440)).rem_euclid(1440);
                     g.advance(to_noon);
                     self.t = g.state.time as f64;
-                    let flying = g.state.planes.iter().find(|p| p.status == flightgame::game::Status::Flying).map(|p| p.id.clone());
-                    self.v3.follow = flying;
+                    // (on until a plane is climbing out: a flying plane may still be boarding at its gate)
+                    let climbing = |g: &Game| (0..g.state.planes.len()).find(|&k| { let q = g.flight_pos(k, g.state.time as f64); q.phase == "Climbing" && q.alt_ft < 6000.0 });
+                    for _ in 0..240 {
+                        if climbing(g).is_some() {
+                            break;
+                        }
+                        g.advance(1);
+                    }
+                    self.t = g.state.time as f64;
+                    let flying = climbing(g).or_else(|| g.state.planes.iter().position(|p| p.status == flightgame::game::Status::Flying));
+                    self.v3.follow = flying.map(|k| g.state.planes[k].id.clone());
                 }
                 self.v3.on = self.v3_ok;
                 self.v3.cam = "chase";
