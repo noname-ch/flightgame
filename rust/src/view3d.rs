@@ -1115,6 +1115,11 @@ pub struct Frame {
     pub origin: (f64, f64),
     /// the height above the sea the scene's z 0 stands for (the real ground, src/terrain.rs)
     pub ref_m: f32,
+    /// the classic renderer's ground tiles: newly built ones to upload, those to draw (lowered by so many metres), and
+    /// where it reports those it dropped
+    pub new_tiles: Arc<Mutex<Vec<crate::terrain::TileData>>>,
+    pub tiles: Vec<(crate::terrain::Key, f32)>,
+    pub tiles_gone: Arc<Mutex<Vec<crate::terrain::Key>>>,
 }
 
 #[repr(C)]
@@ -1145,7 +1150,7 @@ struct Uniforms {
 }
 
 const UNIFORM_STRIDE: u64 = 512;
-const MAX_DRAWS: u64 = 96;
+const MAX_DRAWS: u64 = 512;
 const MAX_PUFFS: usize = 900;
 
 type GpuMesh = Option<(wgpu::Buffer, wgpu::Buffer, u32)>;
@@ -1169,6 +1174,12 @@ struct Gpu {
     /// what this frame draws: (mesh key, uniform slot)
     draws: Vec<(String, u32)>,
     ground_slot: Option<u32>,
+    /// the real ground's tiles (src/terrain.rs): vertices, indices, their count, picture, frame last drawn; the tiles
+    /// drawn this frame with their uniform slots; a sampler with mip levels
+    tiles: HashMap<crate::terrain::Key, (wgpu::Buffer, wgpu::Buffer, u32, wgpu::BindGroup, u64)>,
+    tile_draws: Vec<(crate::terrain::Key, u32)>,
+    tile_sampler: wgpu::Sampler,
+    tick: u64,
 }
 
 const SHADER: &str = r#"
@@ -1313,6 +1324,12 @@ fn hazy(c: vec3<f32>, world: vec3<f32>) -> vec3<f32> {
 @fragment
 fn fs_main(i: VOut) -> @location(0) vec4<f32> {
     let light = u.sun.w;
+    if (u.flags.w > 0.5) {
+        // a tile of the real ground (src/terrain.rs): its own picture over all of it, the land's slopes shaded
+        let c = textureSample(tex, samp, clamp(i.uv, vec2<f32>(0.0), vec2<f32>(1.0))).rgb;
+        let shade = 0.72 + 0.28 * max(dot(normalize(i.normal), normalize(u.sun.xyz)), 0.0);
+        return vec4<f32>(hazy(c * shade * (0.12 + 0.88 * light), i.world), 1.0);
+    }
     if (u.flags.y > 0.5) {
         // the ground: the satellite picture inside its rect, a plain colour around it
         // (beyond it the haze: its edge never shows)
@@ -1603,6 +1620,16 @@ pub fn init(rs: &egui_wgpu::RenderState) {
         sampler,
         draws: Vec::new(),
         ground_slot: None,
+        tiles: HashMap::new(),
+        tile_draws: Vec::new(),
+        tile_sampler: device.create_sampler(&wgpu::SamplerDescriptor {
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
+            anisotropy_clamp: 16,
+            ..Default::default()
+        }),
+        tick: 0,
     });
 }
 
@@ -1709,8 +1736,82 @@ impl CallbackTrait for Frame {
         let mut slot = 0u32;
         let ground = base(Mat4::IDENTITY, true, None, [0.0; 4], [0.0; 4], [0.0; 4], [0.0; 4]);
         queue.write_buffer(&gpu.uniforms, 0, bytemuck::bytes_of(&ground));
-        gpu.ground_slot = Some(slot);
+        gpu.ground_slot = if self.tiles.is_empty() { Some(slot) } else { None };
         slot += 1;
+        // the real ground: new tiles to the GPU (their mesh in this renderer's axes: x east, y north, z up)
+        gpu.tick += 1;
+        let new_tiles = self.new_tiles.lock().map(|mut n| std::mem::take(&mut *n)).unwrap_or_default();
+        for t in new_tiles {
+            let verts: Vec<Vertex> = t.pos.iter().zip(&t.normals).map(|(p, n)| vx([p[0], -p[2], p[1]], [n[0], -n[2], n[1]], [0.0; 3])).collect();
+            let vb = buffer(device, bytemuck::cast_slice(&verts), wgpu::BufferUsages::VERTEX);
+            let ib = buffer(device, bytemuck::cast_slice(&t.indices), wgpu::BufferUsages::INDEX);
+            let tex = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("view3d tile"),
+                size: wgpu::Extent3d { width: 256, height: 256, depth_or_array_layers: 1 },
+                mip_level_count: t.mips,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: if gpu.srgb { wgpu::TextureFormat::Rgba8UnormSrgb } else { wgpu::TextureFormat::Rgba8Unorm },
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+            let (mut off, mut size) = (0usize, 256u32);
+            for level in 0..t.mips {
+                let n = (size * size * 4) as usize;
+                queue.write_texture(
+                    wgpu::TexelCopyTextureInfo { texture: &tex, mip_level: level, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+                    &t.rgba[off..off + n],
+                    wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(4 * size), rows_per_image: Some(size) },
+                    wgpu::Extent3d { width: size, height: size, depth_or_array_layers: 1 },
+                );
+                off += n;
+                size = (size / 2).max(1);
+            }
+            let view = tex.create_view(&Default::default());
+            let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("view3d tile"),
+                layout: &gpu.ground_layout,
+                entries: &[
+                    wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
+                    wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&gpu.tile_sampler) },
+                ],
+            });
+            gpu.tiles.insert(t.key, (vb, ib, t.indices.len() as u32, bind, gpu.tick));
+        }
+        // ... placed by the reference point and height; each maps its own picture by its rect
+        gpu.tile_draws.clear();
+        let (lat0, lon0) = self.origin;
+        let cosl = lat0.to_radians().cos();
+        for &(k, lower) in &self.tiles {
+            if slot as u64 >= MAX_DRAWS - 96 {
+                break;
+            }
+            let Some(t) = gpu.tiles.get_mut(&k) else { continue };
+            t.4 = gpu.tick;
+            let (n_lat, w_lon) = crate::terrain::corner(k.0, k.1 as f64, k.2 as f64);
+            let (s_lat, e_lon) = crate::terrain::corner(k.0, k.1 as f64 + 1.0, k.2 as f64 + 1.0);
+            let (x, y) = local(lat0, lon0, n_lat, w_lon);
+            let (x1, y0) = local(lat0, lon0, s_lat, e_lon);
+            let model = Mat4::from_translation(Vec3::new(x as f32, y as f32, -self.ref_m - lower)) * Mat4::from_scale(Vec3::new(cosl as f32, 1.0, 1.0));
+            let mut u = base(model, true, None, [0.0; 4], [0.0; 4], [0.0; 4], [0.0; 4]);
+            u.ground = [x as f32, y0 as f32, x1 as f32, y as f32];
+            u.flags[3] = 1.0;
+            queue.write_buffer(&gpu.uniforms, slot as u64 * UNIFORM_STRIDE, bytemuck::bytes_of(&u));
+            gpu.tile_draws.push((k, slot));
+            slot += 1;
+        }
+        // (at most 900 tiles kept: the longest unused go, and the terrain fetches them again when wanted)
+        if gpu.tiles.len() > 900 {
+            let mut old: Vec<(u64, crate::terrain::Key)> = gpu.tiles.iter().filter(|(_, t)| t.4 != gpu.tick).map(|(k, t)| (t.4, *k)).collect();
+            old.sort();
+            let mut gone = self.tiles_gone.lock().ok();
+            for (_, k) in old.into_iter().take(120) {
+                gpu.tiles.remove(&k);
+                if let Some(g) = gone.as_mut() {
+                    g.push(k);
+                }
+            }
+        }
         for (key, at, mesh) in &self.buildings {
             if slot as u64 >= MAX_DRAWS {
                 break;
@@ -1757,6 +1858,14 @@ impl CallbackTrait for Frame {
             pass.set_bind_group(0, &gpu.bind, &[(s as u64 * UNIFORM_STRIDE) as u32]);
             pass.set_vertex_buffer(0, gpu.ground_vb.slice(..));
             pass.draw(0..6, 0..1);
+        }
+        for (k, slot) in &gpu.tile_draws {
+            let Some((vb, ib, n, bind, _)) = gpu.tiles.get(k) else { continue };
+            pass.set_bind_group(1, bind, &[]);
+            pass.set_bind_group(0, &gpu.bind, &[(*slot as u64 * UNIFORM_STRIDE) as u32]);
+            pass.set_vertex_buffer(0, vb.slice(..));
+            pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(0..*n, 0, 0..1);
         }
         for (key, slot) in &gpu.draws {
             let Some(Some((vb, ib, n))) = gpu.meshes.get(key) else { continue };
@@ -1864,6 +1973,9 @@ pub struct View3d {
     meshes: HashMap<String, Option<Arc<Mesh>>>,
     buildings: HashMap<String, Option<Arc<Mesh>>>,
     poses: HashMap<String, Pose>,
+    /// the real ground for the classic renderer (src/terrain.rs; Bevy has its own), and the tiles its GPU side dropped
+    terrain: crate::terrain::Terrain,
+    tiles_gone: Arc<Mutex<Vec<crate::terrain::Key>>>,
 }
 
 impl View3d {
@@ -1899,6 +2011,8 @@ impl Default for View3d {
             meshes: HashMap::new(),
             buildings: HashMap::new(),
             poses: HashMap::new(),
+            terrain: Default::default(),
+            tiles_gone: Arc::new(Mutex::new(Vec::new())),
         }
     }
 }
@@ -2020,9 +2134,10 @@ impl View3d {
         // With the real ground (Bevy, src/terrain.rs) the scene's 0 is the height of the ground under the followed
         // plane's flight: its airport's, or between its two airports' by the way flown (the game's heights are above
         // the airports). Every other plane and airport is lifted by its own airport's height above that.
-        let terrain = crate::bevy3d::enabled();
+        let bevy = crate::bevy3d::enabled();
+        let heights = self.terrain.elev();
+        let elev = |code: &str| if bevy { crate::bevy3d::airport_elev(code) } else { heights.airport_elev(code) };
         let field_of = |q: &flightgame::game::Plane, lat: f64, lon: f64| -> f32 {
-            let elev = |code: &str| if terrain { crate::bevy3d::airport_elev(code) } else { None };
             match &q.flight {
                 Some(f) if q.status == flightgame::game::Status::Flying => {
                     let (a, b) = (d.airport(&f.from), d.airport(&f.to));
@@ -2227,7 +2342,7 @@ impl View3d {
             let mesh = self.buildings.entry(key.clone()).or_insert_with(|| building_mesh(&a.code).map(Arc::new)).clone();
             if let Some(m) = mesh {
                 let (x, y) = local(lat0, lon0, a.lat, a.lon);
-                let lift = if terrain { crate::bevy3d::airport_elev(&a.code).map_or(0.0, |e| e - ref_m) } else { 0.0 };
+                let lift = elev(&a.code).map_or(0.0, |e| e - ref_m);
                 buildings.push((key, Vec3::new(x as f32, y as f32, lift), m));
             }
         }
@@ -2258,7 +2373,24 @@ impl View3d {
             ground: self.ground.clone(),
             origin: (lat0, lon0),
             ref_m,
+            new_tiles: Arc::new(Mutex::new(Vec::new())),
+            tiles: Vec::new(),
+            tiles_gone: self.tiles_gone.clone(),
         };
+        let mut frame = frame;
+        if !bevy {
+            // the real ground for the classic renderer: the tiles to draw, and those newly built for its GPU side
+            if let Ok(mut gone) = self.tiles_gone.lock() {
+                for k in gone.drain(..) {
+                    self.terrain.forget(k);
+                }
+            }
+            if let Ok(mut n) = frame.new_tiles.lock() {
+                *n = self.terrain.take_done();
+            }
+            let cosl = lat0.to_radians().cos();
+            frame.tiles = self.terrain.select(lat0 + eye.y as f64 / 111_320.0, lon0 + eye.x as f64 / (111_320.0 * cosl), (eye.z as f64).max(2.0));
+        }
         // the Bevy renderer (lit by the sun with shadows under a real sky), where it runs
         if crate::bevy3d::enabled() && crate::bevy3d::draw(ui, rect, &frame) {
             ui.ctx().request_repaint();

@@ -214,12 +214,27 @@ impl Terrain {
 
     /// An airport's height (m above the sea), once known; asks for it otherwise.
     pub fn airport_elev(&self, code: &str) -> Option<f32> {
-        let mut s = self.shared.0.lock().ok()?;
+        self.elev().airport_elev(code)
+    }
+
+    /// A handle that answers airports' heights (it can be kept apart from the terrain).
+    pub fn elev(&self) -> Elev {
+        Elev(self.shared.clone())
+    }
+}
+
+/// Airports' heights, as the terrain knows them (see `Terrain::elev`).
+#[derive(Clone)]
+pub struct Elev(Arc<(Mutex<Shared>, Condvar)>);
+
+impl Elev {
+    pub fn airport_elev(&self, code: &str) -> Option<f32> {
+        let mut s = self.0.0.lock().ok()?;
         if let Some(e) = s.elev.get(code) {
             return Some(*e);
         }
         if s.asked.insert(code.to_string()) {
-            let (sh, code) = (self.shared.clone(), code.to_string());
+            let (sh, code) = (self.0.clone(), code.to_string());
             std::thread::spawn(move || {
                 let a = flightgame::data::data().airport(&code);
                 let _ = airport_height(&sh, &code, a.lat, a.lon);
