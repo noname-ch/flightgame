@@ -155,7 +155,7 @@
       conf: 2, flapPos: 2, sb: 0, gs: 0, armed: true, brake: 0, parking: false, afloor: false,
       stick: 0, roll: 0, rud: 0, crashed: null, touch: null, tail: false, paused: false, calls: {}, near: null,
       hideId: opts.plane ? opts.plane.id : null, mass: TYPES[type].toMass, prevAgl: null, ghReal: null, ghAt: 0,
-      gref: null,
+      gref: null, sway: { p: 0, pv: 0, r: 0, rv: 0 }, vPrev: null,
     });
     s.msgs = [];
     const e = opts.end;
@@ -404,12 +404,29 @@
       }
     }
     s.psi = wrap360(s.psi + psiRate * dt);
+    sway(dt, psiRate);
     s.h += s.V * Math.sin(s.gamma) * dt;
     const run = s.V * Math.cos(s.gamma) * dt;
     s.lat += (run * Math.cos(s.psi * DEG)) / R_E / DEG;
     s.lon += (run * Math.sin(s.psi * DEG)) / (R_E * Math.cos(s.lat * DEG)) / DEG;
     if (!s.onGround && s.h <= s.groundH) touchdown();
     if (s.onGround) s.h = s.groundH;
+  }
+
+  // On its legs the aircraft sways on the shock absorbers (drawn only: the physics keep the wheels on the runway):
+  // braking (or reversing) it tips forward and the nose leg is pushed in (view3d oleo()), accelerating it sits back, turning it leans to the
+  // outside; damped springs, so it rocks back once it stops or the brakes come off. Degrees.
+  function sway(dt, psiRate) {
+    const w = s.sway;
+    const acc = s.vPrev == null || dt <= 0 ? 0 : (s.V - s.vPrev) / dt;
+    s.vPrev = s.V;
+    w.acc = (w.acc || 0) + (acc - (w.acc || 0)) * (1 - Math.exp(-dt / 0.15));
+    const lat = s.V * psiRate * DEG; // m/s² towards the inside of the turn
+    const pT = s.onGround ? clamp(w.acc * 0.2, -0.8, 0.5) : 0; // (nose up while it speeds up)
+    const rT = s.onGround ? clamp(-lat * 0.3, -1, 1) : 0;
+    const k = (2 * Math.PI * 0.7) ** 2, c = 2 * 0.3 * 2 * Math.PI * 0.7;
+    w.pv += (k * (pT - w.p) - c * w.pv) * dt; w.p += w.pv * dt;
+    w.rv += (k * (rT - w.r) - c * w.rv) * dt; w.r += w.rv * dt;
   }
 
   function touchdown() {
@@ -518,7 +535,7 @@
       : a < 900 && vs < -1 ? 'approach' : vs > 2 ? 'climb' : vs < -2 ? 'descent' : 'cruise';
     const kmh = s.V * 3.6;
     return {
-      lat: s.lat, lon: s.lon, altM: a, altMSL: s.h, heading: wrap360(s.psi + (s.onGround ? 0 : s.alpha * Math.sin(s.phi * DEG))), bank: s.phi, pitch: s.theta, flying: true,
+      lat: s.lat, lon: s.lon, altM: a, altMSL: s.h, heading: wrap360(s.psi + (s.onGround ? 0 : s.alpha * Math.sin(s.phi * DEG))), bank: s.phi + s.sway.r, pitch: s.theta + s.sway.p, flying: true,
       st: { phase, speedKmh: kmh, altFt: s.h / FT, fieldFt: s.groundH / FT, ground: s.onGround, windKt: 0, windFrom: 0, gusty: false, airFrac: 0 },
       pilot: { gear: s.gear, flap: confAt(s.flapPos).flap, ail: s.roll, elev: s.onGround ? s.stick : s.stick * 0.7, rud: s.onGround ? s.rud : s.rud, rev: s.rev, n1: (s.n1[0] + s.n1[1]) / 2, gamma: s.gamma / DEG, vs },
     };

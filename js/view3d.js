@@ -1375,11 +1375,14 @@ function oleo(e, ud, pose, exag, dt) {
   spring(s.m, T, OLEO.hz, OLEO.damp, dt, -0.5 * o.main);
   const body = h - T + s.m.y;   // how high the plane is drawn above standing
   const wheels = Math.max(0, body - o.main);   // (the bogie pivots' height above the runway, legs out)
-  // the nose wheel: where the pitch puts it (the plane pitches about the main wheels), at most its leg's length up
-  const Tn = Math.max(0, Math.min(o.nose, body + o.arm * Math.sin(e.att.pitch * DEG)));
+  // the nose wheel: where the pitch puts it (the plane pitches about the main wheels), at most its leg's length up;
+  // nose down on the runway (braking hard: the hand-flown A350's pose tips forward) its leg is pushed in, most of
+  // its stroke at most (further down the nose is held up: the wheel stays on the runway)
+  const Tw = Math.min(o.nose, body + o.arm * Math.sin(e.att.pitch * DEG));
+  const Tn = Math.max(-0.7 * o.nose, Tw);
   if (!s.n) s.n = { y: Tn, v: 0 };
   if (s.n.y > 0.05 && Tn <= 0 && dt > 0 && pose.flying) s.n.v -= OLEO.noseKick;
-  spring(s.n, Tn, OLEO.noseHz, OLEO.noseDamp, dt, -0.5 * o.nose);
+  spring(s.n, Tn, OLEO.noseHz, OLEO.noseDamp, dt, -0.75 * o.nose);
   setOleo(ud.gear, s.m.y, s.n.y, ud.wide);
   // touchdown: the main wheels on the runway after being well clear of it, at landing speed
   let touch = false;
@@ -1389,7 +1392,7 @@ function oleo(e, ud, pose, exag, dt) {
     touch = !!(pose.st && pose.st.speedKmh > 120 && (pose.st.phase === 'landing' || pose.st.phase === 'approach'));
     if (touch) s.m.v -= OLEO.kick;
   }
-  return { lift: s.m.y - T, dPitch: o.arm > 0 ? (s.n.y - Tn) / o.arm : 0, wheels, touch };
+  return { lift: s.m.y - T, dPitch: o.arm > 0 ? (s.n.y - Tw) / o.arm : 0, wheels, touch };
 }
 
 // Tyre smoke: at touchdown the main wheels, standing still, are spun up by the runway and leave a puff of burnt rubber

@@ -475,7 +475,7 @@ export function setOleo(gear, main, nose, wide) {
   gear.userData.oleo = key;
   for (const [o, link] of sliders.get(gear)) {
     const u = o.userData;
-    const s = Math.max(-0.5 * u.ext, Math.min(u.ext, (u.main ? main : nose) / wide));
+    const s = Math.max((u.main ? -0.5 : -0.75) * u.ext, Math.min(u.ext, (u.main ? main : nose) / wide));
     o.position.set(u.dir[0] * s, 0, u.dir[1] * s);
     poseLink(link, s);
   }
