@@ -136,8 +136,11 @@ pub struct Vertex {
     /// wall the height (m) and the distance along it (m)
     info: [f32; 3],
     /// what moves: kind (1 aileron, 2 flap, 3 elevator: hinge y, z; 4 rudder: hinge y; 5 propeller: hub x, z;
-    /// 6 a fan's face: hub x, z, radius; 7 landing gear: the height it folds up to); for a wall: 0, its style
-    /// (0 plain, 1 windows, 2 ribbed), its top (m)
+    /// 6 a fan's face: hub x, z, radius; 7 landing gear: the height it folds up to, then 1 on a main leg's or
+    /// 2 on the nose leg's shock absorber (it slides); 8 a jet engine's rear: how far it slides back with a
+    /// translating sleeve reverser (0 for the parts that don't), the bucket's hinge y, the engine's axis z;
+    /// 10 a spoiler panel: its hinge (front edge) y, z); for a wall: 0, its style (0 plain, 1 windows, 2 ribbed),
+    /// its top (m)
     anim: [f32; 4],
     /// own colour and alpha (parts 5 and 6); on the aircraft x is how far the wing bends there (per unit of flex)
     color: [f32; 4],
@@ -241,6 +244,7 @@ fn load_mesh(file: &str) -> Option<Mesh> {
     let zlow = pos.iter().fold(f32::MAX, |a, p| a.min(p[2]));
     let shape = mark_moving(&mut vertices, file, rx, zmax, hz);
     let ground = add_gear(&mut vertices, &mut indices, file, &shape, rx, zmin, zlow);
+    add_spoilers(&mut vertices, &mut indices, &shape);
     Some(Mesh { vertices, indices, ground })
 }
 
@@ -249,6 +253,10 @@ fn load_mesh(file: &str) -> Option<Mesh> {
 struct Shape {
     root: Option<(f32, f32, f32)>,
     engines: Vec<(f32, f32, f32, f32)>,
+    /// the spoiler panels' strips on the wing ahead of the flaps: x from, x to (one side), hinge of the flap y, the
+    /// chord, the wing's top there; and where the wing starts bending and its tip (for their bend)
+    spoilers: Vec<(f32, f32, f32, f32, f32)>,
+    bend: (f32, f32),
 }
 
 /// The median of each value and its neighbours (two either side): a nacelle or a fairing in a strip or two
@@ -304,6 +312,7 @@ fn mark_moving(v: &mut [Vertex], file: &str, rx: f32, zmax: f32, hz: f32) -> Sha
         per[s][(v[i].pos[1] < split) as usize].push(i);
     }
     let mut root = None;
+    let mut spoilers = Vec::new();
     for w in 0..2 {
         let le = median5(&per.iter().map(|p| p[w].iter().map(|&i| v[i].pos[1]).reduce(f32::max)).collect::<Vec<_>>());
         let te = median5(&per.iter().map(|p| p[w].iter().map(|&i| v[i].pos[1]).reduce(f32::min)).collect::<Vec<_>>());
@@ -326,6 +335,13 @@ fn mark_moving(v: &mut [Vertex], file: &str, rx: f32, zmax: f32, hz: f32) -> Sha
             let hzz = zs[zs.len() / 2];
             let half = 0.06 * c + 0.003;
             let kind = if w == 1 { 3.0 } else if s >= STRIPS * 2 / 3 { 1.0 } else { 2.0 };
+            if kind == 2.0 && s > 0 {
+                // the spoilers: ahead of the flap, on the wing's top
+                let top = per[s][w].iter().filter(|&&i| v[i].pos[1] > hy && v[i].pos[1] < hy + 0.3 * c).map(|&i| v[i].pos[2]).reduce(f32::max);
+                if let Some(top) = top {
+                    spoilers.push((x0 + s as f32 * xw, x0 + (s + 1) as f32 * xw, hy, c, top));
+                }
+            }
             for &i in &per[s][w] {
                 if v[i].pos[1] < hy && (v[i].pos[2] - hzz).abs() < half {
                     v[i].anim = [kind, hy, hzz, 0.0];
@@ -388,6 +404,18 @@ fn mark_moving(v: &mut [Vertex], file: &str, rx: f32, zmax: f32, hz: f32) -> Sha
             if model_data().props.contains_key(file) {
                 continue;
             }
+            // the thrust reverser's parts (the shader moves them for the type's kind): the outer skin of the rear of
+            // the cowl slides back as a translating sleeve, the rear fifth swings shut behind it as buckets
+            let el = (yb - ya).max(1e-4);
+            for &i in r {
+                let p = v[i].pos;
+                let tt = (yb - p[1]) / el;
+                if tt > 0.55 && v[i].anim[0] == 0.0 {
+                    let rr = ((p[0] - hx).powi(2) + (p[2] - hzc).powi(2)).sqrt();
+                    let slide = if rr > 0.75 * rad { 0.16 * el } else { 0.0 };
+                    v[i].anim = [8.0, slide, yb - 0.8 * el, hzc];
+                }
+            }
             // a jet's fan: the faces in the front of the nacelle that look forwards, inside its lip
             for &i in r {
                 let p = v[i].pos;
@@ -428,11 +456,53 @@ fn mark_moving(v: &mut [Vertex], file: &str, rx: f32, zmax: f32, hz: f32) -> Sha
             }
         }
     }
-    Shape { root, engines }
+    Shape { root, engines, spoilers, bend: (x0, xmax) }
+}
+
+/// The spoiler panels on top of the wings (thin plates hinged at their front edge, in the wing's colour, bending
+/// with it), ahead of the flaps: a panel a strip, a little apart.
+fn add_spoilers(v: &mut Vec<Vertex>, ix: &mut Vec<u32>, shape: &Shape) {
+    let (x0, xmax) = shape.bend;
+    for &(xa, xb, hy, c, top) in &shape.spoilers {
+        let (y0, y1) = (hy + 0.01 * c, hy + 0.19 * c);
+        let th = 0.0015;
+        let gap = 0.06 * (xb - xa);
+        for side in [-1.0f32, 1.0] {
+            let (a, b) = (side * (xa + gap), side * (xb - gap));
+            let xm = (xa + xb) / 2.0;
+            let f = ((xm - x0) / (xmax - x0)).clamp(0.0, 1.0);
+            let bend = f * f * xmax;
+            let c3 = Vec3::new((a + b) / 2.0, (y0 + y1) / 2.0, top + th);
+            let h = Vec3::new((b - a).abs() / 2.0, (y1 - y0) / 2.0, th);
+            for axis in 0..3 {
+                for s in [-1.0f32, 1.0] {
+                    let mut n = Vec3::ZERO;
+                    n[axis] = s;
+                    let (aa, bb) = ((axis + 1) % 3, (axis + 2) % 3);
+                    let base = v.len() as u32;
+                    for (ua, ub) in [(-1.0f32, -1.0f32), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
+                        let mut p = c3;
+                        p[axis] += s * h[axis];
+                        p[aa] += ua * h[aa];
+                        p[bb] += ub * h[bb];
+                        v.push(Vertex { pos: p.to_array(), normal: n.to_array(), info: [2.0, 0.0, p.y], anim: [10.0, y1, top, 0.0], color: [bend, 0.0, 0.0, 0.0] });
+                    }
+                    ix.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
+                }
+            }
+        }
+    }
 }
 
 /// A box of the landing gear: centre, half sizes, colour; it folds up to `fold`.
 fn push_box(v: &mut Vec<Vertex>, ix: &mut Vec<u32>, c: Vec3, h: Vec3, col: [f32; 3], fold: f32) {
+    push_box_as(v, ix, c, h, col, fold, 0.0, None);
+}
+
+/// A box of the gear that slides with a shock absorber (`slide`: 1 main, 2 nose), or painted as the livery's
+/// fuselage underside (`belly`: a gear door).
+#[allow(clippy::too_many_arguments)]
+fn push_box_as(v: &mut Vec<Vertex>, ix: &mut Vec<u32>, c: Vec3, h: Vec3, col: [f32; 3], fold: f32, slide: f32, belly: Option<f32>) {
     for axis in 0..3 {
         for s in [-1.0f32, 1.0] {
             let mut n = Vec3::ZERO;
@@ -444,7 +514,8 @@ fn push_box(v: &mut Vec<Vertex>, ix: &mut Vec<u32>, c: Vec3, h: Vec3, col: [f32;
                 p[axis] += s * h[axis];
                 p[a] += ua * h[a];
                 p[b] += ub * h[b];
-                v.push(Vertex { pos: p.to_array(), normal: n.to_array(), info: [5.0, 0.0, 0.0], anim: [7.0, fold, 0.0, 0.0], color: [col[0], col[1], col[2], 1.0] });
+                let info = match belly { Some(y) => [0.0, -1.0, y], None => [5.0, 0.0, 0.0] };
+                v.push(Vertex { pos: p.to_array(), normal: n.to_array(), info, anim: [7.0, fold, slide, 0.0], color: [col[0], col[1], col[2], 1.0] });
             }
             ix.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
         }
@@ -452,11 +523,11 @@ fn push_box(v: &mut Vec<Vertex>, ix: &mut Vec<u32>, c: Vec3, h: Vec3, col: [f32;
 }
 
 /// A tyre (a cylinder across, along x) with a lighter wheel in its sides.
-fn push_wheel(v: &mut Vec<Vertex>, ix: &mut Vec<u32>, c: Vec3, r: f32, w: f32, fold: f32) {
+fn push_wheel(v: &mut Vec<Vertex>, ix: &mut Vec<u32>, c: Vec3, r: f32, w: f32, fold: f32, slide: f32) {
     const N: usize = 14;
     let tyre = [0.06, 0.06, 0.065];
     let rim = [0.62, 0.63, 0.65];
-    let mk = |p: Vec3, n: Vec3, col: [f32; 3]| Vertex { pos: p.to_array(), normal: n.to_array(), info: [5.0, 0.0, 0.0], anim: [7.0, fold, 0.0, 0.0], color: [col[0], col[1], col[2], 1.0] };
+    let mk = |p: Vec3, n: Vec3, col: [f32; 3]| Vertex { pos: p.to_array(), normal: n.to_array(), info: [5.0, 0.0, 0.0], anim: [7.0, fold, slide, 0.0], color: [col[0], col[1], col[2], 1.0] };
     let base = v.len() as u32;
     for k in 0..=N {
         let a = k as f32 / N as f32 * std::f32::consts::TAU;
@@ -512,7 +583,7 @@ fn add_gear(v: &mut Vec<Vertex>, ix: &mut Vec<u32>, file: &str, shape: &Shape, r
         (it.next().unwrap_or(1), it.next().unwrap_or(2))
     };
     // one leg: from `top` down to its wheels on the ground
-    let mut legs: Vec<(f32, f32, f32, f32, (usize, usize))> = Vec::new(); // x, y, top, tyre, rows × across
+    let mut legs: Vec<(f32, f32, f32, f32, (usize, usize), f32)> = Vec::new(); // x, y, top, tyre, rows × across, 1 main 2 nose 0 tail
     let main = spec["main"].as_str().unwrap_or("wing");
     let main_y = match (num("mainAt"), shape.root) {
         (Some(at), _) => 0.5 - at,
@@ -534,7 +605,7 @@ fn add_gear(v: &mut Vec<Vertex>, ix: &mut Vec<u32>, file: &str, shape: &Shape, r
         _ => (num("track").unwrap_or(0.9) * 2.0 * rx, shape.root.map(|r| r.2).unwrap_or(zb)),
     };
     for s in [-1.0f32, 1.0] {
-        legs.push((s * mx, main_y, mtop, tyre, mw));
+        legs.push((s * mx, main_y, mtop, tyre, mw, 1.0));
     }
     if spec["body"].is_object() {
         let b = &spec["body"];
@@ -542,34 +613,55 @@ fn add_gear(v: &mut Vec<Vertex>, ix: &mut Vec<u32>, file: &str, shape: &Shape, r
         let by = main_y - b["aft"].as_f64().unwrap_or(0.03) as f32;
         let bw = wheels(b["wheels"].as_str().unwrap_or("2x2"));
         if bt < 1e-4 {
-            legs.push((0.0, by, under(by), tyre, bw));
+            legs.push((0.0, by, under(by), tyre, bw, 1.0));
         } else {
             for s in [-1.0f32, 1.0] {
-                legs.push((s * bt, by, under(by), tyre, bw));
+                legs.push((s * bt, by, under(by), tyre, bw, 1.0));
             }
         }
     }
     if spec["tail"].as_bool().unwrap_or(false) {
-        legs.push((0.0, -0.41, under(-0.41), tyre * 0.4, (1, 1)));
+        legs.push((0.0, -0.41, under(-0.41), tyre * 0.4, (1, 1), 0.0));
     } else {
         let ny = 0.5 - num("nose").unwrap_or(0.11);
-        legs.push((0.0, ny, under(ny), num("noseTyre").map(|t| t * u).unwrap_or(tyre * 0.68), (1, 2)));
+        legs.push((0.0, ny, under(ny), num("noseTyre").map(|t| t * u).unwrap_or(tyre * 0.68), (1, 2), 2.0));
     }
-    for (x, y, top, d, (rows, across)) in legs {
+    let chrome = [0.86, 0.87, 0.9];
+    for (x, y, top, d, (rows, across), slide) in legs {
         let r = d / 2.0;
         let w = 0.36 * d;
         let axle = ground + r;
         let top = top.max(axle + 0.2 * d);
         let leg = 0.06 * d.max(0.6 * u);
-        push_box(v, ix, Vec3::new(x, y, (top + axle) / 2.0), Vec3::new(leg, leg, (top - axle) / 2.0), grey, top);
+        if slide > 0.0 {
+            // the shock absorber: the cylinder above, the shiny piston below sliding out of it (reaching well up
+            // inside it, so no gap opens with the leg out), the axle and the wheels on the piston
+            let mid = axle + 0.45 * (top - axle);
+            push_box(v, ix, Vec3::new(x, y, (top + mid) / 2.0), Vec3::new(leg, leg, (top - mid) / 2.0), grey, top);
+            let ptop = (mid + 0.8 * u).min(top);
+            push_box_as(v, ix, Vec3::new(x, y, (ptop + axle) / 2.0), Vec3::new(leg * 0.7, leg * 0.7, (ptop - axle) / 2.0), chrome, top, slide, None);
+        } else {
+            push_box(v, ix, Vec3::new(x, y, (top + axle) / 2.0), Vec3::new(leg, leg, (top - axle) / 2.0), grey, top);
+        }
         if rows > 1 {
-            push_box(v, ix, Vec3::new(x, y, axle), Vec3::new(leg * 0.8, rows as f32 * d * 0.55, leg * 0.8), grey, top);
+            push_box_as(v, ix, Vec3::new(x, y, axle), Vec3::new(leg * 0.8, rows as f32 * d * 0.55, leg * 0.8), grey, top, slide, None);
         }
         for k in 0..rows {
             let wy = y + (k as f32 - (rows as f32 - 1.0) / 2.0) * d * 1.08;
             for j in 0..across {
                 let wx = if across == 1 { x } else { x + (j as f32 - (across as f32 - 1.0) / 2.0) * (w * 1.15 + 2.0 * leg) };
-                push_wheel(v, ix, Vec3::new(wx, wy, axle), r, w, top);
+                push_wheel(v, ix, Vec3::new(wx, wy, axle), r, w, top, slide);
+            }
+        }
+        // the gear doors, in the fuselage underside's colour (they go with the gear): a main leg's on its outer
+        // side, the nose bay's two hanging open beside it
+        let dz = 0.55 * (top - axle);
+        if slide == 1.0 && x.abs() > 1e-4 {
+            let s = x.signum();
+            push_box_as(v, ix, Vec3::new(x + s * leg * 2.2, y, top - dz / 2.0), Vec3::new(0.12 * leg, 0.45 * d, dz / 2.0), grey, top, 0.0, Some(y));
+        } else if slide == 2.0 {
+            for s in [-1.0f32, 1.0] {
+                push_box_as(v, ix, Vec3::new(x + s * (leg * 2.5 + 0.2 * d), y, top - dz * 0.4), Vec3::new(0.1 * leg, 0.7 * d, dz * 0.4), grey, top, 0.0, Some(y));
             }
         }
     }
@@ -800,6 +892,11 @@ pub struct Plane {
     pub anim0: [f32; 4],
     /// rudder (radians), wing bend (half spans), gear down (0 … 1), how sharp the fans' blades look
     pub anim1: [f32; 4],
+    /// thrust reversers out (0 … 1), on which engines (0 all, above 0 those nearer than it, below 0 those further
+    /// out than -it), the main and nose legs' shock absorbers out from standing (model units)
+    pub anim2: [f32; 4],
+    /// spoilers up (radians), the reversers' kind (0 none, 1 translating sleeve, 2 pivoting doors, 3 buckets)
+    pub anim3: [f32; 4],
 }
 
 /// One cloud puff: where (metres), its size (m), its colour and how thick it is.
@@ -851,6 +948,8 @@ struct Uniforms {
     anim1: [f32; 4],
     eye: [f32; 4],
     fog: [f32; 4],
+    anim2: [f32; 4],
+    anim3: [f32; 4],
 }
 
 const UNIFORM_STRIDE: u64 = 512;
@@ -896,6 +995,8 @@ struct U {
     anim1: vec4<f32>,
     eye: vec4<f32>,
     fog: vec4<f32>,
+    anim2: vec4<f32>,
+    anim3: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> u: U;
 @group(1) @binding(0) var tex: texture_2d<f32>;
@@ -910,6 +1011,7 @@ struct VOut {
     @location(4) anim: vec4<f32>,
     @location(5) color: vec4<f32>,
     @location(6) mpos: vec3<f32>,
+    @location(7) rev: f32,
 };
 
 fn rot2(v: vec2<f32>, a: f32) -> vec2<f32> {
@@ -923,6 +1025,7 @@ fn vs_main(@location(0) pos: vec3<f32>, @location(1) normal: vec3<f32>, @locatio
            @location(3) anim: vec4<f32>, @location(4) color: vec4<f32>) -> VOut {
     var p = pos;
     var n = normal;
+    var rv = 0.0;
     let k = anim.x;
     if (k > 0.5 && k < 3.5) {
         // ailerons (opposite either side), flaps, elevators: round their hinge, the trailing edge down for +
@@ -947,6 +1050,10 @@ fn vs_main(@location(0) pos: vec3<f32>, @location(1) normal: vec3<f32>, @locatio
         let nn = rot2(n.xz, u.anim0.x * sign(anim.y));
         n = vec3<f32>(nn.x, n.y, nn.y);
     } else if (k > 6.5 && k < 7.5) {
+        // the shock absorbers: the pistons, axles and wheels slide out of the legs
+        if (anim.z > 0.5) {
+            p.z = p.z - select(u.anim2.w, u.anim2.z, anim.z < 1.5);
+        }
         // the landing gear folds up into the aircraft
         let g = u.anim1.z;
         if (g < 0.02) {
@@ -954,6 +1061,37 @@ fn vs_main(@location(0) pos: vec3<f32>, @location(1) normal: vec3<f32>, @locatio
         } else {
             p.z = anim.y + (p.z - anim.y) * g;
         }
+    } else if (k > 7.5 && k < 8.5) {
+        // thrust reversers, on the engines that have them
+        let on = u.anim2.y == 0.0 || (u.anim2.y > 0.0 && abs(p.x) < u.anim2.y) || (u.anim2.y < 0.0 && abs(p.x) > -u.anim2.y);
+        let rk = u.anim3.y;
+        if (u.anim2.x > 0.001 && on) {
+            if (rk > 0.5 && rk < 2.5) {
+                // a translating sleeve slides back (pivoting doors: their rear opens about as far), the cascade
+                // vanes in the gap
+                if (anim.y > 0.0) {
+                    p.y = p.y - anim.y * u.anim2.x * select(1.0, 0.7, rk > 1.5);
+                    rv = 1.0;
+                }
+            } else if (rk > 2.5 && p.y < anim.z) {
+                // target buckets: the rear of the exhaust in two halves swings back and shut behind it
+                let a = select(-1.0, 1.0, p.z >= anim.w) * 1.0 * u.anim2.x;
+                let d = rot2(vec2<f32>(p.y - anim.z, p.z - anim.w), a);
+                p.y = anim.z + d.x;
+                p.z = anim.w + d.y;
+                let nn = rot2(n.yz, a);
+                n = vec3<f32>(n.x, nn.x, nn.y);
+                rv = 1.0;
+            }
+        }
+    } else if (k > 9.5 && k < 10.5) {
+        // spoilers: up about their front edge
+        let a = -u.anim3.x;
+        let d = rot2(vec2<f32>(p.y - anim.y, p.z - anim.z), a);
+        p.y = anim.y + d.x;
+        p.z = anim.z + d.y;
+        let nn = rot2(n.yz, a);
+        n = vec3<f32>(n.x, nn.x, nn.y);
     }
     if (info.x < 4.5) {
         // the wings bend
@@ -967,6 +1105,7 @@ fn vs_main(@location(0) pos: vec3<f32>, @location(1) normal: vec3<f32>, @locatio
     o.anim = anim;
     o.color = color;
     o.mpos = p;
+    o.rev = rv;
     o.world = w.xyz;
     o.uv = vec2<f32>((w.x - u.ground.x) / (u.ground.z - u.ground.x), 1.0 - (w.y - u.ground.y) / (u.ground.w - u.ground.y));
     return o;
@@ -1052,6 +1191,10 @@ fn fs_main(i: VOut) -> @location(0) vec4<f32> {
                 c = vec3<f32>(0.9, 0.9, 0.9);
             }
         }
+    }
+    if (i.rev > 0.02 && i.rev < 0.98) {
+        // a thrust reverser's opening (between its moved part and the fixed cowl): dark, ribbed by the cascade vanes
+        c = select(vec3<f32>(0.09, 0.095, 0.1), mix(vec3<f32>(0.07, 0.075, 0.08), vec3<f32>(0.2, 0.21, 0.22), step(0.6, fract(i.rev * 7.0))), u.anim3.y < 1.5);
     }
     let n = normalize(i.normal);
     let diffuse = abs(dot(n, normalize(u.sun.xyz)));
@@ -1337,7 +1480,7 @@ impl CallbackTrait for Frame {
         let srgb = gpu.srgb;
         let lin = |x: f32| if srgb { x.powf(2.2) } else { x };
         let fog = [lin(self.fog[0]), lin(self.fog[1]), lin(self.fog[2]), self.fog[3]];
-        let base = |model: Mat4, ground: bool, l: Option<&Livery>, anim0: [f32; 4], anim1: [f32; 4]| {
+        let base = |model: Mat4, ground: bool, l: Option<&Livery>, anim0: [f32; 4], anim1: [f32; 4], anim2: [f32; 4], anim3: [f32; 4]| {
             let c = |v: [f32; 3]| [lin(v[0]), lin(v[1]), lin(v[2]), 1.0];
             let lv = l.cloned().unwrap_or_else(|| livery(None));
             Uniforms {
@@ -1358,11 +1501,13 @@ impl CallbackTrait for Frame {
                 anim1,
                 eye: [self.eye.x, self.eye.y, self.eye.z, 0.0],
                 fog,
+                anim2,
+                anim3,
             }
         };
         gpu.draws.clear();
         let mut slot = 0u32;
-        let ground = base(Mat4::IDENTITY, true, None, [0.0; 4], [0.0; 4]);
+        let ground = base(Mat4::IDENTITY, true, None, [0.0; 4], [0.0; 4], [0.0; 4], [0.0; 4]);
         queue.write_buffer(&gpu.uniforms, 0, bytemuck::bytes_of(&ground));
         gpu.ground_slot = Some(slot);
         slot += 1;
@@ -1374,7 +1519,7 @@ impl CallbackTrait for Frame {
                 let m = upload(device, mesh);
                 gpu.meshes.insert(key.clone(), m);
             }
-            let u = base(Mat4::from_translation(*at), false, None, [0.0; 4], [0.0; 4]);
+            let u = base(Mat4::from_translation(*at), false, None, [0.0; 4], [0.0; 4], [0.0; 4], [0.0; 4]);
             queue.write_buffer(&gpu.uniforms, slot as u64 * UNIFORM_STRIDE, bytemuck::bytes_of(&u));
             gpu.draws.push((key.clone(), slot));
             slot += 1;
@@ -1390,7 +1535,7 @@ impl CallbackTrait for Frame {
             // model space (x right wing, y nose, z up, 1 long) → the world: its size, attitude and place
             let rot = Mat4::from_rotation_z(-p.heading.to_radians()) * Mat4::from_rotation_x(p.pitch.to_radians()) * Mat4::from_rotation_y(p.bank.to_radians());
             let model = Mat4::from_translation(p.at) * rot * Mat4::from_scale(Vec3::splat(p.len));
-            let u = base(model, false, Some(&p.livery), p.anim0, p.anim1);
+            let u = base(model, false, Some(&p.livery), p.anim0, p.anim1, p.anim2, p.anim3);
             queue.write_buffer(&gpu.uniforms, slot as u64 * UNIFORM_STRIDE, bytemuck::bytes_of(&u));
             gpu.draws.push((p.file.clone(), slot));
             slot += 1;
@@ -1439,6 +1584,66 @@ struct Pose {
     bank: f32,
     pitch: f32,
     spin: f32,
+    /// the main and nose shock absorbers: out from standing (m) and how fast; the main wheels were well up
+    om: f32,
+    omv: f32,
+    on: f32,
+    onv: f32,
+    up: bool,
+    nose_up: bool,
+    /// thrust reversers and spoilers out (0 … 1)
+    rev: f32,
+    spo: f32,
+}
+
+/// A damped spring (in real seconds, so it works the same at any game speed): position, speed, target, its
+/// frequency (Hz) and damping, bottoming out at `min`.
+fn spring(y: &mut f32, v: &mut f32, target: f32, hz: f32, damp: f32, dt: f32, min: f32) {
+    let w = 2.0 * std::f32::consts::PI * hz;
+    let n = (dt / 0.008).ceil().max(1.0) as usize;
+    let h = dt / n as f32;
+    for _ in 0..n {
+        *v += (w * w * (target - *y) - 2.0 * damp * w * *v) * h;
+        *y += *v * h;
+        if *y < min {
+            *y = min;
+            *v = v.max(0.0);
+        }
+    }
+}
+
+/// A type's thrust reversers from js/data/reversers.js: (kind: 0 none or propellers, 1 translating sleeve,
+/// 2 pivoting doors, 3 buckets; on which engines: 0 all, 0.27 the inner ones, -0.27 the outer ones).
+fn reverser(kind: &str) -> (f32, f32) {
+    static TABLE: std::sync::OnceLock<HashMap<String, (f32, f32)>> = std::sync::OnceLock::new();
+    let table = TABLE.get_or_init(|| {
+        let src = include_str!("../../js/data/reversers.js");
+        let mut out = HashMap::new();
+        for call in src.split("set('").skip(1) {
+            let body = &call[..call.find(");").unwrap_or(call.len())];
+            // (the first piece is the kind, then the types' strings joined with +, maybe the engines it is on)
+            let kind = body.split('\'').next().unwrap_or("");
+            let parts: Vec<&str> = body.split('\'').skip(1).enumerate().filter(|(k, _)| k % 2 == 1).map(|(_, s)| s).collect();
+            let (types, on): (Vec<&str>, f32) = match parts.last() {
+                Some(&"inner") => (parts[..parts.len() - 1].to_vec(), 0.27),
+                Some(&"outer") => (parts[..parts.len() - 1].to_vec(), -0.27),
+                Some(&"sides") | Some(&"center") => (parts[..parts.len() - 1].to_vec(), 0.0),
+                _ => (parts, 0.0),
+            };
+            let k = match kind { "cascade" => 1.0, "doors" => 2.0, "buckets" => 3.0, _ => 0.0 };
+            for ty in types.iter().flat_map(|s| s.split_whitespace()) {
+                out.insert(ty.to_string(), (k, on));
+            }
+        }
+        out
+    });
+    match table.get(kind) {
+        Some(r) => *r,
+        None => {
+            let eng = data().ac(kind).eng.as_str();
+            (if eng == "prop2" || eng == "radial2" || eng == "prop3" { 0.0 } else { 1.0 }, 0.0)
+        }
+    }
 }
 
 /// The 3D view's state: which plane it follows and how the camera looks at it.
@@ -1649,8 +1854,36 @@ impl View3d {
             let soft = 0.6 + 0.4 * (qlen / 60.0).min(1.0);
             let gload = (1.0 / pose.bank.abs().min(60.0).to_radians().cos() + 0.03 * (pose.pitch - 2.5)).clamp(0.5, 1.8);
             let flex = soft * (-0.012 * (1.0 - parts.lift) + 0.045 * gload * parts.lift);
+            // the shock absorbers: in the air the legs hang out (stroke); coming down the wheels meet the runway, the
+            // plane settles onto its legs, pushing them in a little further and bouncing back; the nose leg the same
+            // as the nose wheel comes down
+            let dts = if running { dt } else { 0.0 };
+            let stroke = (0.009 * qlen).clamp(0.25, 0.6);
+            let h = if qp.airborne { (qp.alt_ft * 0.3048) as f32 } else { 0.0 };
+            let reach = h.min(stroke);
+            let kmh = (qp.speed_kt * 1.852) as f32;
+            if pose.up && h < 0.01 && kmh > 120.0 {
+                pose.omv -= 1.3; // (the weight coming onto the legs)
+            }
+            pose.up = h > 0.5 || (pose.up && h > 0.01);
+            spring(&mut pose.om, &mut pose.omv, reach, 1.6, 0.3, dts, -0.5 * stroke);
+            let nose_off = h > 0.01 || pose.pitch > 1.0;
+            if pose.nose_up && !nose_off && kmh > 60.0 {
+                pose.onv -= 0.7;
+            }
+            pose.nose_up = nose_off;
+            // (braking on the landing run, the nose leg is pushed in a little)
+            let brake = if qp.phase == "Landing" && !nose_off { -0.35 } else { 0.0 };
+            spring(&mut pose.on, &mut pose.onv, if nose_off { 0.75 * stroke } else { brake * 0.75 * stroke }, 2.2, 0.4, dts, -0.5 * stroke);
+            let body = h - reach + pose.om;
+            // thrust reversers after touchdown until about 60 kt; the ground spoilers until slow
+            let rev_to = if qp.phase == "Landing" && kmh > 110.0 { 1.0 } else { 0.0 };
+            pose.rev += (rev_to - pose.rev) * (1.0 - (-dts / if rev_to > pose.rev { 0.4 } else { 1.0 }).exp());
+            let spo_to = if qp.phase == "Landing" && kmh > 50.0 { 1.0 } else { 0.0 };
+            pose.spo += (spo_to - pose.spo) * (1.0 - (-dts / 0.5).exp());
+            let (rkind, ron) = reverser(&q.kind);
             let (x, y) = local(lat0, lon0, qp.lat, qp.lon);
-            let at = Vec3::new(x as f32, y as f32, (qp.alt_ft * 0.3048) as f32 - mesh.ground * qlen);
+            let at = Vec3::new(x as f32, y as f32, body - mesh.ground * qlen);
             let rot = Mat4::from_rotation_z(-(qp.heading as f32).to_radians()) * Mat4::from_rotation_x(pose.pitch.to_radians()) * Mat4::from_rotation_y(pose.bank.to_radians());
             if k == i {
                 me = at;
@@ -1667,6 +1900,8 @@ impl View3d {
                 livery: lv.clone(),
                 anim0: [pose.spin, parts.flap * deg, ail * deg, elev * deg],
                 anim1: [rud * deg, flex, parts.gear, 1.0 / (1.0 + parts.rate * 0.25)],
+                anim2: [if rkind > 0.0 { pose.rev } else { 0.0 }, ron, pose.om / qlen, pose.on / qlen],
+                anim3: [pose.spo * 50.0 * deg, rkind, 0.0, 0.0],
             });
         }
         self.poses.retain(|id, _| seen.contains(id));
@@ -1875,6 +2110,13 @@ mod tests {
 
     /// What moves was found on a jet and a turboprop, and the gear puts the wheels under the aircraft.
     #[test]
+    fn shader_compiles() {
+        // (WGSL errors would only show when the 3D view opens: parse and validate it here)
+        let m = naga::front::wgsl::parse_str(super::SHADER).unwrap_or_else(|e| panic!("{}", e.emit_to_string(super::SHADER)));
+        naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all()).validate(&m).expect("valid");
+    }
+
+    #[test]
     fn moving_parts_and_gear() {
         let count = |m: &super::Mesh, k: f32| m.vertices.iter().filter(|v| v.anim[0] == k).count();
         let a320 = super::load_mesh("a320").expect("a320");
@@ -1886,6 +2128,18 @@ mod tests {
         // the wheels reach the ground
         let low = a320.vertices.iter().filter(|v| v.anim[0] == 7.0).map(|v| v.pos[2]).fold(f32::MAX, f32::min);
         assert!((low - a320.ground).abs() < 0.005, "wheels at {low}, ground {}", a320.ground);
+        // the reversers' parts on the engines, the spoiler panels, the shock absorbers (main and nose) and doors
+        assert!(a320.vertices.iter().any(|v| v.anim[0] == 8.0 && v.anim[1] > 0.0), "A320 reverser sleeves");
+        assert!(count(&a320, 10.0) > 40, "A320 spoilers");
+        for s in [1.0, 2.0] {
+            assert!(a320.vertices.iter().any(|v| v.anim[0] == 7.0 && v.anim[2] == s), "A320 shock absorber {s}");
+        }
+        assert!(a320.vertices.iter().any(|v| v.anim[0] == 7.0 && v.info[0] == 0.0), "A320 gear doors");
+        assert_eq!(super::reverser("A320"), (2.0, 0.0));
+        assert_eq!(super::reverser("A350-900"), (1.0, 0.0));
+        assert_eq!(super::reverser("B727-200"), (3.0, 0.0));
+        assert_eq!(super::reverser("A380-800"), (1.0, 0.27));
+        assert_eq!(super::reverser("DC-3").0, 0.0);
         let atr = super::load_mesh("atr42").expect("atr42");
         assert!(count(&atr, 5.0) > 0, "ATR propellers");
         assert!(count(&atr, 7.0) > 0, "ATR gear");

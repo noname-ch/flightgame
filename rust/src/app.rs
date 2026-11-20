@@ -3315,6 +3315,46 @@ impl App {
             }
             33 => {
                 self.editor = None;
+                // a plane just down on the runway, from the side behind: reversers, spoilers, the legs settling
+                let mut found = None;
+                if let Some(g) = self.game.as_mut() {
+                    'find: for _ in 0..1440 {
+                        g.advance(1);
+                        for sub in 0..20 {
+                            let t = g.state.time as f64 + sub as f64 * 0.05;
+                            for k in 0..g.state.planes.len() {
+                                if g.flight_pos(k, t).phase == "Landing" && g.flight_pos(k, t - 0.05).phase != "Landing" {
+                                    found = Some((k, t, g.state.planes[k].id.clone()));
+                                    break 'find;
+                                }
+                            }
+                        }
+                    }
+                }
+                if let Some((_, t, id)) = found {
+                    self.t = t;
+                    self.v3.follow = Some(id);
+                    self.v3.on = self.v3_ok;
+                    self.v3.cam = "chase";
+                    self.v3.pitch = 6.0;
+                    self.v3.dist = 1.3;
+                    self.v3.yaw = 130.0;
+                    self.speed = 0;
+                    self.paused = false;
+                }
+                next(self, 0.2);
+            }
+            34 => {
+                shot("17-3d-landing.png");
+                self.paused = true;
+                next(self, 1.0);
+            }
+            35 => {
+                self.v3.on = false;
+                self.paused = false;
+                self.v3.pitch = 12.0;
+                self.v3.dist = 2.6;
+                self.v3.yaw = 0.0;
                 next(self, 1.0);
             }
             _ => {

@@ -96,7 +96,11 @@ cache folder.
   (still while the game is paused), flaps come out for take-off and further for landing, ailerons, elevators and
   rudder move as the plane banks, pitches, rotates, flares and steers, the wings droop on the ground and bend up in
   the air, the landing gear (built at real sizes from `FG.data.gear`: nose gear or tail wheel, main legs, bogies)
-  folds away after take-off and comes out on the way down. Airports with a layout of their own show their terminals
+  folds away after take-off and comes out on the way down, with its doors (in the fuselage underside's colour)
+and shock absorbers: the legs hang out in the air, the plane settles onto them at touchdown and bounces a little,
+the nose leg is pushed in on the landing run. After touchdown the spoilers stand up on the wings and the thrust
+reversers open as each type has them (js/data/reversers.js: translating sleeves with their cascade vanes,
+pivoting doors, or buckets swinging shut behind the exhaust) until about 60 kt. Airports with a layout of their own show their terminals
   (with bands of windows, lit at night), hangars and other buildings. The game's weather is there too: clouds drifting
   with it, greyer with rain, towering in storms, a greyer and darker sky under them, haze that thickens in rain and fog.
 - **Build mode** (🏗 Build mode in the airport panel, from 25% of an airport's shares): place aprons, stands (for a
@@ -122,8 +126,8 @@ cache folder.
 ## What it leaves out (for now)
 
 New airport sites (buying land and building an airport from nothing). In 3D the parts are simpler than the browser
-game's (no shock absorbers, gear doors, reversers or spoilers; buildings as plain blocks, not its facades and photo
-roof colours; no rain, snow or lightning), and the airports without a layout of their own have no buildings. The stands of airports the
+game's (buildings as plain blocks, not its facades and photo roof colours; the reversers only on engines under the
+wing, not on the tail; no rain, snow or lightning), and the airports without a layout of their own have no buildings. The stands of airports the
 browser game reads from OpenStreetMap while it runs are the made-up ones of their size here. The sound has the browser game's Standard style only (not Deep, Open or Soft) and
 one choice of takes for all planes.
 

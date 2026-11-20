@@ -795,40 +795,43 @@ mod tests {
         let (mut g, _) = Game::from_preset(pr);
         g.advance(DAY / 2);
         let t0 = g.state.time as f64;
-        let mut found: HashMap<&str, (f64, usize)> = HashMap::new();
-        let mut t = t0;
-        let mut was: HashMap<usize, &str> = HashMap::new();
-        while t < t0 + DAY as f64 && found.len() < 4 {
-            for i in 0..g.state.planes.len() {
-                let pos = g.flight_pos(i, t);
-                let ph = phase_of(pos.phase);
-                let p = &g.state.planes[i];
-                let at_gate = p.status == Status::Turnaround && t - (p.ready_at - turnaround_min(&p.kind)) as f64 > 1.0;
-                let key = if at_gate { "gate" } else { ph };
-                // (as the phase begins: a take-off just started, not a plane about to lift off)
-                if ["takeoff", "approach", "cruise", "gate"].contains(&key) && !found.contains_key(key) && was.get(&i).is_some_and(|w| *w != key) {
-                    found.insert(key, (t, i));
-                }
-                was.insert(i, key);
-            }
-            t += 0.05;
-        }
         let dir = std::env::var("FLIGHTGAME_WAV").ok();
-        let mut levels = HashMap::new();
-        for (what, (t, i)) in &found {
-            let pos = g.flight_pos(*i, *t);
-            // beside it: 150 m off to its right, 20 m up
-            let (lat, lon) = (pos.lat + (pos.heading + 90.0).to_radians().cos() * 150.0 / 110_574.0, pos.lon + (pos.heading + 90.0).to_radians().sin() * 150.0 / (111_320.0 * pos.lat.to_radians().cos()));
-            let ear = Ear { lat, lon, h: pos.alt_ft * 0.3048 + 20.0, bearing: pos.heading, follow: None, cam: "" };
-            let secs = if *what == "takeoff" { 0.6 } else { 2.0 };
-            eprintln!("{what}:");
-            let x = render(&g, *t, &ear, secs);
-            assert!(x.iter().all(|(l, r)| l.is_finite() && r.is_finite()), "{what}: not finite");
-            let peak = x.iter().fold(0.0f32, |m, (l, r)| m.max(l.abs()).max(r.abs()));
-            assert!(peak <= 1.0, "{what}: clipping {peak}");
-            levels.insert(*what, rms(&x[x.len() / 3..]));
-            if let Some(d) = &dir {
-                write_wav(&format!("{d}/{what}.wav"), &x);
+        let mut levels: HashMap<&str, f32> = HashMap::new();
+        let mut was: HashMap<String, &str> = HashMap::new();
+        // the game minute by minute (planes leave their gates), each phase heard as it begins
+        for _ in 0..2 * DAY {
+            if levels.len() == 4 {
+                break;
+            }
+            g.advance(1);
+            for sub in 0..20 {
+                let t = g.state.time as f64 + sub as f64 * 0.05;
+                for i in 0..g.state.planes.len() {
+                    let pos = g.flight_pos(i, t);
+                    let p = &g.state.planes[i];
+                    let at_gate = p.status == Status::Turnaround && t - (p.ready_at - turnaround_min(&p.kind)) as f64 > 1.0;
+                    let ph = phase_of(pos.phase);
+                    let key = if at_gate { "gate" } else if ph == "gate" { "arrived" } else { ph };
+                    let begins = was.get(&p.id).is_some_and(|w| *w != key);
+                    was.insert(p.id.clone(), key);
+                    if !["takeoff", "approach", "cruise", "gate"].contains(&key) || levels.contains_key(key) || !begins {
+                        continue;
+                    }
+                    // beside it: 150 m off to its right, 20 m up
+                    let r = (pos.heading + 90.0).to_radians();
+                    let (lat, lon) = (pos.lat + r.cos() * 150.0 / 110_574.0, pos.lon + r.sin() * 150.0 / (111_320.0 * pos.lat.to_radians().cos()));
+                    let ear = Ear { lat, lon, h: pos.alt_ft * 0.3048 + 20.0, bearing: pos.heading, follow: None, cam: "" };
+                    let secs = if key == "takeoff" { 0.6 } else { 2.0 };
+                    eprintln!("{key}:");
+                    let x = render(&g, t, &ear, secs);
+                    assert!(x.iter().all(|(l, r)| l.is_finite() && r.is_finite()), "{key}: not finite");
+                    let peak = x.iter().fold(0.0f32, |m, (l, r)| m.max(l.abs()).max(r.abs()));
+                    assert!(peak <= 1.0, "{key}: clipping {peak}");
+                    levels.insert(key, rms(&x[x.len() / 3..]));
+                    if let Some(d) = &dir {
+                        write_wav(&format!("{d}/{key}.wav"), &x);
+                    }
+                }
             }
         }
         eprintln!("levels {levels:?}");

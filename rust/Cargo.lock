@@ -1493,6 +1493,7 @@ dependencies = [
  "glam",
  "gltf",
  "image",
+ "naga",
  "open",
  "rand 0.10.3",
  "rfd",
