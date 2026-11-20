@@ -186,7 +186,8 @@ function planePose(p, t, st0) {
 // length (FG.data.looks). Types without a model keep the placeholder. js/models3d.js loads and paints them.
 
 // The aircraft to draw for a type: the placeholder at first, replaced by the glTF model once it has loaded.
-function planeModel(type) {
+// `livery`: the one to paint it in (FG.livery(p) for a plane; the airline's if none is given).
+function planeModel(type, livery = FG.livery()) {
   const g = placeholderModel(type);
   const file = D.models[type];
   const look = D.looks && D.looks[type];
@@ -195,7 +196,7 @@ function planeModel(type) {
   const fit = look.len / g.userData.len;
   for (const part of g.children) { part.position.multiplyScalar(fit); part.scale.multiplyScalar(fit); }
   g.userData.len = look.len;
-  loadModel(type).then((scene) => {
+  loadModel(type, livery).then((scene) => {
     const model = scene.clone();
     const size = modelSize(type);
     model.scale.set(size.wide, size.len, size.wide);
@@ -2206,13 +2207,15 @@ const planeLayer = {
     let moving = 0; // fastest plane in view, in pixels per second
     let animating = false; // a plane in view, big enough to see, turns its propellers or flutters its wings
     const alive = new Set();
-    const livery = FG.livery().id;
+    const livery = FG.liveries.key(FG.livery());
     for (const p of G.state.planes) {
       alive.add(p.id);
       let e = v.planes[p.id];
-      if (!e || e.type !== p.type || e.livery !== livery) { // (a new plane, or the airline changed its livery)
+      const liv = FG.livery(p); // (its own livery, else the airline's: js/data/liveries.js)
+      const livKey = FG.liveries.key(liv);
+      if (!e || e.type !== p.type || e.livery !== livKey) { // (a new plane, or it or the airline changed livery)
         if (e) this.world.remove(e.obj);
-        e = v.planes[p.id] = { obj: planeModel(p.type), type: p.type, livery, world: new THREE.Vector3() };
+        e = v.planes[p.id] = { obj: planeModel(p.type, liv), type: p.type, livery: livKey, world: new THREE.Vector3() };
         this.world.add(e.obj);
       }
       if (pilotOn() && p.id === FG.pilot.hideId) { e.obj.visible = false; continue; } // (the player flies it now)
@@ -2286,9 +2289,11 @@ const planeLayer = {
       return;
     }
     const P = FG.pilot;
-    if (!e || e.type !== P.type || e.livery !== livery) {
+    const own = P.hideId != null && G.plane ? G.plane(P.hideId) : null; // (the airline's plane taken over, in its livery)
+    const liv = FG.livery(own);
+    if (!e || e.type !== P.type || e.livery !== FG.liveries.key(liv)) {
       if (e) this.world.remove(e.obj);
-      e = v.pilotE = { obj: planeModel(P.type), type: P.type, livery, world: new THREE.Vector3(), pilot: true };
+      e = v.pilotE = { obj: planeModel(P.type, liv), type: P.type, livery: FG.liveries.key(liv), world: new THREE.Vector3(), pilot: true };
       this.world.add(e.obj);
     }
     const pose = P.pose();
@@ -2980,16 +2985,17 @@ function chaseLayer(cam) {
       const dLat = CHASE_KM / 111;
       const dLon = dLat / Math.max(0.05, Math.cos(center.lat * DEG));
       const alive = new Set();
-      const livery = FG.livery().id;
       for (const p of G.state.planes) {
         const st = p.status === 'flying' && G.flightState ? G.flightState(p, t) : null;
         const pose = planePose(p, t, st);
         if (Math.abs(pose.lat - center.lat) > dLat || Math.abs(wrap180(pose.lon - center.lng)) > dLon) continue;
         alive.add(p.id);
         let e = cam.planes[p.id];
+        const liv = FG.livery(p);
+        const livery = FG.liveries.key(liv);
         if (!e || e.type !== p.type || e.livery !== livery) {
           if (e) this.world.remove(e.obj);
-          e = cam.planes[p.id] = { obj: planeModel(p.type), type: p.type, livery };
+          e = cam.planes[p.id] = { obj: planeModel(p.type, liv), type: p.type, livery };
           this.world.add(e.obj);
         }
         e.obj.visible = true;

@@ -157,7 +157,7 @@ function textMask(text, style = '700') {
 }
 
 // Simple logos for the fin, drawn in one colour.
-const LOGOS = {
+export const LOGOS = {
   // a crown over the letters
   klm: () => mask('logo|klm', 300, 256, (ctx) => {
     ctx.font = '700 118px Arial, Helvetica, sans-serif';
@@ -185,6 +185,68 @@ const LOGOS = {
     ctx.beginPath(); ctx.moveTo(172, 62); ctx.quadraticCurveTo(150, 180, 56, 236); ctx.stroke();         // body
     ctx.lineWidth = 6;
     for (const [x, y0, y1] of [[78, 44, 216], [100, 48, 198], [122, 66, 176], [144, 76, 146]]) { ctx.beginPath(); ctx.moveTo(x, y0); ctx.lineTo(x, y1); ctx.stroke(); }
+  }),
+  // a five-pointed star
+  star: () => mask('logo|star', 256, 256, (ctx) => {
+    ctx.beginPath();
+    for (let i = 0; i < 10; i++) {
+      const r = i % 2 ? 50 : 122;
+      const a = -Math.PI / 2 + i * Math.PI / 5;
+      ctx.lineTo(128 + r * Math.cos(a), 134 + r * Math.sin(a));
+    }
+    ctx.closePath(); ctx.fill();
+  }),
+  // a maple leaf
+  maple: () => mask('logo|maple', 256, 256, (ctx) => {
+    const pts = [[128, 12], [148, 52], [168, 42], [160, 98], [196, 62], [204, 82], [240, 76], [222, 112], [236, 120],
+      [176, 166], [186, 186], [136, 178], [136, 244], [120, 244], [120, 178], [70, 186], [80, 166], [20, 120], [34, 112],
+      [16, 76], [52, 82], [60, 62], [96, 98], [88, 42], [108, 52]];
+    ctx.beginPath(); pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.closePath(); ctx.fill();
+  }),
+  // a sun: a disc in a ring of rays
+  sun: () => mask('logo|sun', 256, 256, (ctx) => {
+    ctx.beginPath(); ctx.arc(128, 128, 58, 0, 2 * Math.PI); ctx.fill();
+    ctx.lineWidth = 16;
+    for (let i = 0; i < 12; i++) {
+      const a = i * Math.PI / 6;
+      ctx.beginPath(); ctx.moveTo(128 + 80 * Math.cos(a), 128 + 80 * Math.sin(a)); ctx.lineTo(128 + 118 * Math.cos(a), 128 + 118 * Math.sin(a)); ctx.stroke();
+    }
+  }),
+  // a bird in flight, two swept wings
+  bird: () => mask('logo|bird', 256, 256, (ctx) => {
+    ctx.beginPath();
+    ctx.moveTo(14, 96); ctx.quadraticCurveTo(80, 70, 128, 150); ctx.quadraticCurveTo(176, 70, 242, 96);
+    ctx.quadraticCurveTo(180, 100, 128, 200); ctx.quadraticCurveTo(76, 100, 14, 96);
+    ctx.closePath(); ctx.fill();
+  }),
+  // three waves
+  wave: () => mask('logo|wave', 256, 256, (ctx) => {
+    ctx.lineWidth = 22;
+    for (const y of [70, 128, 186]) {
+      ctx.beginPath(); ctx.moveTo(20, y);
+      ctx.bezierCurveTo(70, y - 40, 90, y + 40, 128, y); ctx.bezierCurveTo(166, y - 40, 186, y + 40, 236, y); ctx.stroke();
+    }
+  }),
+  // a globe: a ring with a meridian and parallels
+  globe: () => mask('logo|globe', 256, 256, (ctx) => {
+    ctx.lineWidth = 14;
+    ctx.beginPath(); ctx.arc(128, 128, 112, 0, 2 * Math.PI); ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(128, 128, 48, 112, 0, 0, 2 * Math.PI); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(16, 128); ctx.lineTo(240, 128); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(36, 74); ctx.lineTo(220, 74); ctx.moveTo(36, 182); ctx.lineTo(220, 182); ctx.stroke();
+  }),
+  // a paper plane
+  plane: () => mask('logo|plane', 256, 256, (ctx) => {
+    ctx.beginPath(); ctx.moveTo(240, 30); ctx.lineTo(16, 120); ctx.lineTo(96, 150); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(240, 30); ctx.lineTo(110, 160); ctx.lineTo(150, 236); ctx.closePath(); ctx.fill();
+  }),
+  // a tulip
+  tulip: () => mask('logo|tulip', 220, 256, (ctx) => {
+    ctx.beginPath();
+    ctx.moveTo(40, 40); ctx.lineTo(75, 80); ctx.lineTo(110, 24); ctx.lineTo(145, 80); ctx.lineTo(180, 40);
+    ctx.quadraticCurveTo(190, 150, 110, 160); ctx.quadraticCurveTo(30, 150, 40, 40); ctx.closePath(); ctx.fill();
+    ctx.lineWidth = 14; ctx.beginPath(); ctx.moveTo(110, 160); ctx.lineTo(110, 244); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(110, 220); ctx.quadraticCurveTo(70, 220, 50, 180); ctx.quadraticCurveTo(90, 190, 110, 215); ctx.fill();
   }),
 };
 
@@ -1351,6 +1413,8 @@ uniform vec2 livBellyNose; // ahead of this y the belly's edge rises by this muc
 uniform float livBellyAft; // the belly colour is only behind this y
 uniform vec3 livLine;
 uniform float livLineW;   // half width of the stripe along the belly's edge
+uniform vec3 livStripe;    // the cheatline along the fuselage: its middle z, half width, and 1 where there is one
+uniform vec3 livStripeColor;
 uniform vec3 livColor;    // of the title
 uniform sampler2D livTitle;
 uniform vec4 livTitleBox; // nose-side y, length, bottom z, height
@@ -1397,6 +1461,7 @@ const FRAG_BODY = `
   vec3 paint = mix(livWing, livBody, fuselage);
   float bellyZ = livBellyZ + max(0.0, vLivPos.y - livBellyNose.x) * livBellyNose.y;
   if (fuselage > 0.5 && vLivPos.y < livBellyAft && vLivPos.z < bellyZ + livLineW) paint = vLivPos.z > bellyZ - livLineW && livLineW > 0.0 ? livLine : livBelly;
+  if (fuselage > 0.5 && livStripe.z > 0.5 && abs(vLivPos.z - livStripe.x) < livStripe.y) paint = livStripeColor;
   paint = mix(paint, livWinglet, step(livWingletX, abs(vLivPos.x)) * upright);
   if (vLivFlap.x > 0.5) {
     // a flap (js/livery.js cutFlaps): in the wing's livery, with a darker seal along its leading edge, darker ends
@@ -1489,7 +1554,7 @@ export const OWN_UNIFORMS = ['livFlex', 'livSpin', 'livAil', 'livFlap', 'livElev
 export function paintLivery(scene, file, extra, stretch = 1, livery = FG.livery()) {
   const title = textMask(livery.title, livery.titleStyle);
   const mark = livery.mark || {};
-  const finText = mark.kind === 'text' ? textMask(mark.text, mark.style) : mark.kind === 'logo' ? LOGOS[mark.logo]() : title;
+  const finText = mark.kind === 'text' ? textMask(mark.text, mark.style) : mark.kind === 'logo' ? (LOGOS[mark.logo] || LOGOS.star)() : title;
   const m = measure(scene, file, stretch,
     { aspect: title.aspect, at: livery.titleAt, height: livery.titleHeight, length: livery.titleLength },
     { aspect: finText.aspect, angle: mark.angle, size: mark.size });
@@ -1521,6 +1586,8 @@ export function paintLivery(scene, file, extra, stretch = 1, livery = FG.livery(
     livBellyAft: { value: belly && belly.aft != null ? belly.aft : 99 },
     livLine: { value: color(belly && belly.line != null ? belly.line : 0) },
     livLineW: { value: belly && belly.line != null ? (belly.lineWidth || 0.04) * m.width / 2 : 0 },
+    livStripe: { value: livery.stripe ? new THREE.Vector3(m.top - (livery.stripe.at ?? 0.62) * m.width, (livery.stripe.width || 0.08) * m.width / 2, 1) : new THREE.Vector3() },
+    livStripeColor: { value: color(livery.stripe ? livery.stripe.color : 0) },
     livColor: { value: color(livery.titleColor) },
     livTitle: { value: title.texture },
     livTitleBox: { value: m.titleBox },

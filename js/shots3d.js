@@ -1,7 +1,8 @@
 // Pictures of the aircraft for the hangar tiles in a livery other than the first one: the first livery has
 // its pictures in models/hangar/ (made by tools/hangar_shots.html), the others are rendered here in the same
-// view when they are first needed. FG.planeShots.get(type) returns the picture's URL, or null for the first
+// view when they are first needed. FG.planeShots.get(type, livery) returns the picture's URL, or null for the first
 // livery, for a type without a model, and while the picture is being made (the tiles then show the file).
+// FG.planeShots.preview(type, livery) is the same, but gives the file for the first livery (the Liveries window).
 import * as THREE from 'three';
 import { loadModel, modelSize } from './models3d.js';
 
@@ -73,15 +74,18 @@ function next() {
 }
 
 FG.planeShots = {
-  get(type) {
-    const livery = FG.livery();
+  get(type, livery = FG.livery()) {
     if (livery === FG.data.liveries[0] || !FG.data.models[type] || !FG.data.looks[type]) return null;
-    const key = `${type}|${livery.id}`;
+    const key = `${type}|${FG.liveries.key(livery)}`;
     if (shots[key] === undefined) {
       shots[key] = null;
       queue.push({ key, type, livery });
       next();
     }
     return shots[key];
+  },
+  preview(type, livery) {
+    if (livery === FG.data.liveries[0] || !FG.data.models[type] || !FG.data.looks[type]) return `models/hangar/${FG.data.typeSlug(type)}.webp`;
+    return this.get(type, livery);
   },
 };

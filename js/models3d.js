@@ -49,7 +49,7 @@ function raw(file) {
 export function loadModel(type, livery = FG.livery()) {
   const size = modelSize(type);
   const { file, stretch } = size;
-  const key = `${file}|${stretch}|${livery.id}|${gearKey(type, file)}`;
+  const key = `${file}|${stretch}|${FG.liveries ? FG.liveries.key(livery) : livery.id}|${gearKey(type, file)}`;
   if (!loads[key]) {
     loads[key] = raw(file).then((scene) => {
       const copy = scene.clone();
@@ -59,4 +59,16 @@ export function loadModel(type, livery = FG.livery()) {
     loads[key].catch((e) => console.warn(`3D model ${file} not loaded`, e));
   }
   return loads[key];
+}
+
+// A type painted in a livery afresh, not kept: the livery designer (js/liverywin.js) paints its draft again on
+// every change, and the cache would keep each one.
+export function paintFresh(type, livery) {
+  const size = modelSize(type);
+  if (!size) return Promise.reject(new Error(`no model for ${type}`));
+  return raw(size.file).then((scene) => {
+    const copy = scene.clone();
+    copy.traverse((o) => { if (o.isMesh) o.material = o.material.clone(); });
+    return addGear(paintLivery(copy, size.file, patchFacing, size.stretch, livery), scene, size.file, size, patchFacing, type);
+  });
 }

@@ -455,7 +455,7 @@ script errors) go with it unless you untick them. Signed in to GitHub (airport e
 the repo; from `./play.sh` it is written into `BUGS.md`; otherwise GitHub's new-issue page opens filled in (you
 need a GitHub account), or Copy puts it on the clipboard.
 
-Controls: Space = pause, 1/2/3 = speed, V = 2D/3D (and the chase camera), B = fly-by camera, N = wing camera, P = fly an A350 yourself. M = sound on/off, F6 = sound mixer (or 🎚 in the ⋯ menu, or Settings → Sound): which recorded bass, roar and screech the jets play (several of each; on Auto each type gets its own, old jets a turbojet screech), how loud each part is (bass, roar, screech, whine, air, engine start, far away, APU) and the screech's pitch and speed, for all planes, jets, turboprops, pistons or one aircraft type, with ▶ to hear that type. The game keeps running in a background tab. It autosaves to the browser (localStorage; the airport layouts read off the map are kept apart, in IndexedDB).
+Controls: Space = pause, 1/2/3 = speed, V = 2D/3D (and the chase camera), B = fly-by camera, N = wing camera, P = fly an A350 yourself. M = sound on/off, F7 = liveries, F6 = sound mixer (or 🎚 in the ⋯ menu, or Settings → Sound): which recorded bass, roar and screech the jets play (several of each; on Auto each type gets its own, old jets a turbojet screech), how loud each part is (bass, roar, screech, whine, air, engine start, far away, APU) and the screech's pitch and speed, for all planes, jets, turboprops, pistons or one aircraft type, with ▶ to hear that type. The game keeps running in a background tab. It autosaves to the browser (localStorage; the airport layouts read off the map are kept apart, in IndexedDB).
 
 ## Extending
 
@@ -500,8 +500,13 @@ All content is plain data:
 
 `js/game.js` is the simulation (no DOM), `js/ui.js` the map and sidebar, `js/view3d.js` the 3D view,
 `js/hangar3d.js` the turnable 3D aircraft in the marketplace. `js/models3d.js` loads the 3D models and
-`js/livery.js` paints them in the airline's livery, chosen in the settings (⚙ → Livery, kept in the saved game):
-SWISS, Lufthansa, KLM, Delta, Ryanair, Eurowings and easyJet (`js/data/liveries.js`), simplified after photographs of the real
+`js/livery.js` paints them in their livery. The Liveries window (F7, ⋯ menu, ⚙ Settings → Livery, or 🎨 Livery in a
+plane's window, `js/liverywin.js`) picks the airline's livery and, for any plane, one of its own (`p.livery`); its
+Designer makes new ones (colours, title, belly, cheatline, a mark, logo or text on the fin, with a live 3D preview),
+kept in this browser and in the saved game that flies them; its Community tab lists `community/liveries.json`
+(read from GitHub; contributors signed in to GitHub can 🌍 Publish theirs to it) and reads share codes (`FGLIV1:…`)
+and files. The built-in ones (`js/data/liveries.js`: SWISS, Lufthansa, KLM, Delta, Ryanair, Eurowings, easyJet, Air
+France, Emirates, Qatar, Turkish and a dozen more, classic cheatline liveries and plain ones) are simplified after the real
 ones: the fuselage in one or two colours, coloured engines (found as the round pieces beside the fuselage; a jet engine keeps a bare-metal inlet lip, a
 grey exhaust and its own fan, and propellers are black with yellow tips, `FG.data.props`), a
 coloured fin with a mark or a simple logo (crown, crane, harp), the title on the

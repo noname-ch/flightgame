@@ -50,12 +50,12 @@ function render(key, type, model) {
 
 FG.planeIcons = {
   // { url, len } for the type (len = aircraft length as a share of the picture), or null.
-  get(type) {
+  get(type, livery = FG.livery()) {
     if (!FG.data.models || !FG.data.models[type] || !FG.data.looks[type]) return null;
-    const key = `${type}|${FG.livery().id}`;
+    const key = `${type}|${FG.liveries.key(livery)}`;
     if (icons[key] === undefined) {
       icons[key] = null;
-      loadModel(type).then((model) => render(key, type, model), () => {});
+      loadModel(type, livery).then((model) => render(key, type, model), () => {});
     }
     return icons[key];
   },

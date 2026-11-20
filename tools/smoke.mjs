@@ -935,6 +935,41 @@ try {
     if (mu.unsaved.length) errors.push(`airport editor: unsaved fixes left (${mu.unsaved.join(', ')})`);
   }
 
+  step('liveries (F7): the airline flies KLM, one plane Qatar, a design saved, its share code read back');
+  const hasLw = await waitFor(() => window.FG && FG.liveryWin, 90000);
+  if (!hasLw) warnings.push('Liveries window did not load in 90 s (CDN?): liveries not tested');
+  else {
+    await key('F7');
+    const lw = await evaluate(async () => {
+      const win = document.getElementById('win-liveries');
+      if (!win || win.hidden) return { err: 'F7 opened no window' };
+      const cards = win.querySelectorAll('.lw-card').length;
+      if (cards < 30) return { err: `only ${cards} liveries to choose from` };
+      win.querySelector('[data-lw=default][data-v=klm]').click();
+      if (G.state.livery !== 'klm') return { err: 'Airline did not set the airline livery' };
+      const p = G.state.planes[0];
+      FG.liveryWin.open('choose', p.id);
+      win.querySelector('[data-lw=plane][data-v=qatar]').click();
+      if (p.livery !== 'qatar' || FG.livery(p).id !== 'qatar' || FG.livery(G.state.planes[1]).id !== 'klm') return { err: `plane livery: ${p.livery}` };
+      win.querySelector('[data-lw=tab][data-v=design]').click();
+      const title = win.querySelector('[data-lw-d=title]');
+      title.value = 'SMOKE AIR';
+      title.dispatchEvent(new Event('input', { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 600));
+      win.querySelector('[data-lw=save]').click();
+      const mine = FG.liveries.library.find((l) => l.title === 'SMOKE AIR');
+      if (!mine) return { err: 'the design was not saved' };
+      const back = FG.liveryWin.fromCode(FG.liveryWin.shareCode(mine))[0];
+      if (!back || back.title !== 'SMOKE AIR' || back.body !== mine.body) return { err: 'the share code did not read back' };
+      FG.liveryWin.open('fleet');
+      const rows = win.querySelectorAll('.lw-row').length;
+      win.querySelector('.fg-win-close').click();
+      return { cards, rows, mine: mine.name };
+    });
+    if (lw.err) errors.push(`liveries: ${lw.err}`);
+    else step(`liveries: ${lw.cards} to choose from, ${lw.rows} planes in Fleet, saved "${lw.mine}"`);
+  }
+
   step('3D view (V), following a plane');
   await evaluate(() => { document.querySelector('#speed-pop [data-speed="60"]').click(); });
   const has3d = await waitFor(() => window.FG && FG.view3d, 90000);

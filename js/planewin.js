@@ -32,6 +32,7 @@
         <div class="row pw-buttons"><button data-pw="stats" title="Profit this year and last year, load factor, punctuality…">📊 Stats</button>
           <button data-pw="timetable" title="Plan its day">🗓 Timetable</button>
           <button data-pw="follow" title="Keep the map on it">🎥 Follow on the map</button>
+          <button data-pw="livery" title="Paint this plane in a livery of its own">🎨 Livery</button>
           <button data-pw="fleet" title="Its card in Fleet">Fleet</button></div>`;
       pw.win.body.onclick = onClick;
       pw.win.body.onchange = onChange;
@@ -70,6 +71,7 @@
     if (b.dataset.pw === 'timetable') { FG.planner.openPlane(pw.id); showTimetable(); }
     if (b.dataset.pw === 'follow') FG.ui.follow(pw.id);
     if (b.dataset.pw === 'fleet') FG.ui.showFleet(pw.id);
+    if (b.dataset.pw === 'livery' && FG.liveryWin) FG.liveryWin.open('choose', pw.id);
   }
   // Where it is in its day: the flight it is on, or where it stands and when it leaves next.
   function update() {
@@ -201,7 +203,7 @@
   // and how punctual it flies, and its last flights. One window: it shows the plane chosen last.
   const money = (v) => G.fmtMoney(v);
   const num = (v) => Math.round(v).toLocaleString('de-CH');
-  const shot = (type) => (FG.planeShots && FG.planeShots.get(type)) || `models/hangar/${D.typeSlug(type)}.webp`;
+  const shot = (p) => (FG.planeShots && FG.planeShots.get(p.type, FG.livery(p))) || `models/hangar/${D.typeSlug(p.type)}.webp`;
   const dayText = (t) => {
     const d = G.dateOf(t);
     return d ? `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}` : `day ${Math.floor(t / DAY) + 1}`;
@@ -257,7 +259,7 @@
     pw.st.title(`📊 ${esc(G.planeName(p))} <span class="muted">${p.name ? `${esc(p.id)} · ` : ''}${esc(ac.name)}</span>`);
 
     const ageText = age < 1 ? 'new' : `${age.toFixed(1)} years old`;
-    let h = `<div class="ps-top"><img src="${shot(p.type)}" alt="" onerror="this.style.visibility='hidden'">
+    let h = `<div class="ps-top"><img src="${shot(p)}" alt=""" onerror="this.style.visibility='hidden'">
       <div><b>${ac.name.startsWith(ac.maker) ? '' : `${esc(ac.maker)} `}${esc(ac.name)}</b>
         <div class="muted">${year != null ? `Built ${Math.round(year - age)} · ` : ''}${ageText}</div>
         <div class="muted">${p.ownership === 'owned' ? `Owned · worth ${money(Math.round(G.saleValue(p) / 1000) * 1000)}` : `Leased · ${money(ac.leasePerWeek)} a week`}</div>

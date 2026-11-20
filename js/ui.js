@@ -1059,7 +1059,7 @@
       if (!el) continue;
       const glyph = el.firstElementChild; // a marker put back on the map gets a new element
       // The type's 3D model seen from above (js/icons3d.js) replaces the flat shape once it is rendered.
-      const icon = FG.planeIcons && FG.planeIcons.get(p.type);
+      const icon = FG.planeIcons && FG.planeIcons.get(p.type, FG.livery(p));
       if (icon && glyph.dataset.icon !== icon.url) {
         glyph.dataset.icon = icon.url;
         glyph.innerHTML = `<img src="${icon.url}" alt="" draggable="false">`;
@@ -1944,8 +1944,8 @@
   function renderStrip() {
     const planes = G.state.planes;
     // (the picture in the airline's livery: the file in the first one, else rendered by js/shots3d.js)
-    const shot = (type) => (FG.planeShots && FG.planeShots.get(type)) || `models/hangar/${D.typeSlug(type)}.webp`;
-    const sig = planes.map((p) => `${p.id}:${p.type}:${p.name || ''}:${shot(p.type)}`).join('|') + `|${ui.selectedPlane}|${ui.follow}`;
+    const shot = (p) => (FG.planeShots && FG.planeShots.get(p.type, FG.livery(p))) || `models/hangar/${D.typeSlug(p.type)}.webp`;
+    const sig = planes.map((p) => `${p.id}:${p.type}:${p.name || ''}:${shot(p)}`).join('|') + `|${ui.selectedPlane}|${ui.follow}`;
     if (sig === ui.stripSig) {
       // Same cards: only the status dots change (planes take off and land all the time).
       const dots = $('strip-list').querySelectorAll('.pcard[data-plane] .st');
@@ -1957,7 +1957,7 @@
     }
     ui.stripSig = sig;
     $('strip-list').innerHTML = planes.map((p) => `<div class="pcard${p.id === ui.selectedPlane ? ' sel' : ''}${p.id === ui.follow ? ' follow' : ''}" data-plane="${p.id}">
-        <img src="${shot(p.type)}" alt="" draggable="false" onerror="this.style.visibility='hidden'">
+        <img src="${shot(p)}" alt="" draggable="false" onerror="this.style.visibility='hidden'">
         <i class="st ${STATUS_DOT[p.status] || 'idle'}${p.repair ? ' repair' : ''}"></i>
         <div class="pc-type" title="${G.planeLabel(p)} · ${p.type}">${p.name || p.type}</div></div>`).join('') +
       `<button class="pcard add" data-action-strip="market" title="Marketplace">＋<div class="pc-type">Buy</div></button>`;
@@ -2149,8 +2149,7 @@
       <h4>On the map</h4>${Object.keys(ui.overlays).map((n) =>
         `<label class="check"><input type="checkbox" data-set="overlay" data-v="${n}" ${ui.map.hasLayer(ui.overlays[n]) ? 'checked' : ''}> ${n}</label>`).join('')}
       <label class="check"><input type="checkbox" data-set="legend" ${set.legend ? 'checked' : ''}> Legend</label>
-      <h4>Livery</h4><div class="chips">${FG.data.liveries.map((l) =>
-        `<button class="${l.id === FG.livery().id ? 'on' : ''}" data-set="livery" data-v="${l.id}">${l.name}</button>`).join('')}</div>
+      <h4>Livery</h4><div class="row"><span>${FG.livery().name}</span><button data-set="liveries" title="Choose the airline's livery, one for each plane, design your own or get one from the community">🎨 Liveries… <span class="muted">F7</span></button></div>
       <h4>Game</h4>
       <label class="check"><input type="checkbox" data-set="autosave" ${set.autosave ? 'checked' : ''}> Save automatically every 30 s</label>
       ${FG.sound ? `<h4>Sound</h4><label class="check"><input type="checkbox" data-set="sound" ${FG.sound.on ? 'checked' : ''}> Aircraft sounds <span class="muted">M</span></label>
@@ -2164,7 +2163,7 @@
         <span class="muted" data-preview-status>${FG.sound.previewPhase}</span></div>
       ${FG.soundMix ? '<div class="row"><button data-set="soundMix" title="How loud each part is (bass, roar, screech, air, …), for all planes, a kind or one type">🎚 Sound mixer <span class="muted">F6</span></button></div>' : ''}` : ''}
       <h4>3D view</h4><p class="muted">Made for strong devices: a gaming PC, or a recent laptop or Mac.</p><div class="row"><button data-set="3d">${FG.view3d && FG.view3d.on ? 'Back to 2D' : 'Open 3D view'} <span class="muted">V</span></button></div>
-      <h4 class="keys-help">Keys</h4><div class="muted keys-help">Space pause · ← → speed · V 3D · M sound · F2 developer tools · F3 airport editor · F6 sound mixer · F8 airport checklist · Esc menu</div></div>`;
+      <h4 class="keys-help">Keys</h4><div class="muted keys-help">Space pause · ← → speed · V 3D · M sound · F2 developer tools · F3 airport editor · F6 sound mixer · F7 liveries · F8 airport checklist · Esc menu</div></div>`;
     if (FG.win) FG.win.movable(el.querySelector('.set-card'), '.side-head', 'settings'); // (dragged by its title)
   }
   function onSettings(e) {
@@ -2183,7 +2182,7 @@
     if (k === 'previewKind') FG.sound.set({ preview: t.dataset.v });
     if (k === 'preview') FG.sound.preview(); // (a second click stops it)
     if (k === 'soundMix') FG.soundMix.open();
-    if (k === 'livery') { G.state.livery = t.dataset.v; G.dirty = true; } // every aircraft of the airline is repainted
+    if (k === 'liveries') { if (FG.liveryWin) FG.liveryWin.open('choose'); $('settings').hidden = true; return; } // (js/liverywin.js)
     if (k === '3d') { $('view3d-toggle').click(); }
     saveSettings();
     renderSettings();

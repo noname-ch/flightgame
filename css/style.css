@@ -1602,3 +1602,47 @@ body.piloting .view3d-controls { display: none; }
 #devtools .dev-compass .on { background: #0369a1; color: #fff; }
 #devtools .dev-wind input[type=number], #devtools .dev-wnum { width: 56px; }
 #devtools .dev-wind-row { align-items: center; gap: 6px; }
+
+/* The Liveries window (js/liverywin.js, F7) */
+.liv-win .fg-win-body { display: flex; flex-direction: column; gap: 6px; }
+.lw-tabs { margin-bottom: 2px; }
+.lw-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.lw-bar .muted { flex: 1; min-width: 160px; }
+.lw-type select { margin-left: 4px; }
+.lw-hint { margin: 0; font-size: 12px; }
+.lw-note { margin: 0; padding: 6px 8px; border-radius: 6px; background: var(--panel-2); border: 1px solid var(--border); word-break: break-all; }
+.lw-group { margin: 8px 0 2px; }
+.lw-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 6px; }
+.lw-card { background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 4px 6px 6px; display: flex; flex-direction: column; gap: 3px; }
+.lw-card.def { border-color: var(--pos); }
+.lw-card.mine { border-color: var(--warn); }
+.lw-card img { width: 100%; aspect-ratio: 2.2; object-fit: contain; display: block; }
+.lw-card img.wait, .lw-row img.wait { background: linear-gradient(90deg, transparent, rgba(255,255,255,0.06), transparent); }
+.lw-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lw-btns { display: flex; flex-wrap: wrap; gap: 3px; }
+.lw-btns button { padding: 2px 7px; font-size: 12px; }
+.lw-btns button.on { background: var(--pos); border-color: var(--pos); color: #0b0f15; }
+.lw-fleet { display: flex; flex-direction: column; gap: 4px; }
+.lw-row { display: grid; grid-template-columns: 96px 1fr 170px auto auto; gap: 6px; align-items: center; }
+.lw-row img, .lw-noimg { width: 96px; height: 44px; object-fit: contain; }
+.lw-who { display: flex; flex-direction: column; min-width: 0; }
+.lw-who b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lw-stage { position: relative; background: linear-gradient(#7d98b4, #b9c9d8); border-radius: 8px; overflow: hidden; }
+.lw-canvas { display: block; width: 100%; cursor: grab; touch-action: none; }
+.lw-stage-note { position: absolute; left: 8px; bottom: 6px; color: #0b0f15; }
+.lw-form { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 6px; }
+.lw-form fieldset { border: 1px solid var(--border); border-radius: 8px; padding: 4px 8px 6px; margin: 0; display: flex; flex-direction: column; gap: 3px; }
+.lw-form legend { color: var(--muted); font-size: 12px; padding: 0 4px; }
+.lw-f { display: grid; grid-template-columns: 110px 1fr; align-items: center; gap: 6px; }
+.lw-f input[type=text], .lw-f select { width: 100%; }
+.lw-f input[type=color] { width: 48px; height: 24px; padding: 0; border: 1px solid var(--input-border); background: none; }
+.lw-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.lw-code { width: 100%; box-sizing: border-box; background: var(--panel-2); color: var(--text); border: 1px solid var(--input-border); border-radius: 6px; font: 12px monospace; }
+.lw-share .row { display: flex; gap: 6px; align-items: center; margin: 2px 0; }
+.lw-share .row b { flex: 1; }
+.lw-file .btn-like { display: inline-block; padding: 4px 10px; border: 1px solid var(--input-border); border-radius: 6px; cursor: pointer; background: var(--panel-2); }
+@media (max-width: 640px) {
+  .lw-row { grid-template-columns: 72px 1fr; }
+  .lw-row img, .lw-noimg { width: 72px; }
+  .lw-row select { grid-column: 1 / -1; }
+}

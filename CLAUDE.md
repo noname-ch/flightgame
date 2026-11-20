@@ -186,6 +186,14 @@ Play online: https://noname-ch.github.io/flightgame/ (GitHub Pages, deployed fro
   (view3d.js `ownMaterials`), set in `placeModel` from `wingFlex`, `propRate` and `surfaceAngles` (the elevators are
   pulled for the rotation, the climb-out, the flare and the nose wheel coming down, besides following the pitch rate). The fuselage width
   (`measure`) falls back to `FG.data.modelSize` where nacelles reach forward (DC-3, Ju 52, Twin Otter).
+- Liveries: `FG.liveries` (js/data/liveries.js): `all()`, `find(id)`, `of(p)` / `FG.livery(p)` (a plane's own
+  `p.livery`, else the airline's `state.livery`), `key(l)` (id@rev: what painted models, pictures and icons are cached
+  under; a design saved again gets a new `rev`), `library` (own designs and downloads, localStorage
+  `flightgame.liveries`), `use(l)` (copies a non-built-in one into `state.liveries`, so the save carries it). Draw a plane
+  with `FG.livery(p)`, never the airline's livery alone: view3d `planeModel(type, livery)`, `FG.planeShots.get(type,
+  livery)`, `FG.planeIcons.get(type, livery)`. js/liverywin.js is the window (F7); `models3d.js paintFresh` paints
+  the designer's draft without caching. The Rust app reads `FG.data.liveries` from this file when it builds
+  (rust/src/view3d.rs): keep it a plain literal.
 - Landing gear (js/gear3d.js, view3d.js `gearFor`/`oleo`): `setGear` folds it, `setBogies` tilts the bogies, `setOleo`
   slides each leg's piston and wheels (the 'slider' group; the torque link 'link' is posed from its pins, `poseLink`).
   `scene.userData.oleo` (metres: strokes, bogie, nose arm, main wheel spots) drives view3d's `oleo()`: damped springs

@@ -92,7 +92,7 @@ function sync() {
   if (!stage || !FG.hangar.model(type) || document.getElementById('market').hidden) { v.stage = null; return; }
   if (!v.renderer) setup();
   const canvas = v.renderer.domElement;
-  const livery = FG.livery().id;
+  const livery = FG.liveries.key(FG.livery());
   if (v.stage === stage && v.type === type && v.livery === livery && canvas.parentElement === stage) return;
   if (v.type !== type) { v.spin = true; v.yaw = START.yaw; v.tilt = START.tilt; }
   if (v.type !== type || v.livery !== livery) v.table.clear();

@@ -1,0 +1,14 @@
+{
+ "about": "Liveries shared by players. The Liveries window (F7) → Community lists them. Add yours: 🌍 Publish there (contributors signed in to GitHub), or paste its share code into a GitHub issue.",
+ "liveries": [
+  {"id": "alpine", "name": "Alpine", "author": "Flightgame", "title": "ALPINE", "titleColor": 1251409, "titleAt": "above", "body": 16053495,
+   "belly": {"color": 1251409, "from": 0.72, "line": 4502230, "lineWidth": 0.06}, "engine": 1251409, "fin": 1251409, "tail": true,
+   "mark": {"kind": "logo", "logo": "star", "color": 16777215}, "winglet": 4502230},
+  {"id": "tropic", "name": "Tropic", "author": "Flightgame", "title": "tropic", "titleColor": 16777215, "titleAt": "low", "titleStyle": "700 italic",
+   "body": 16053495, "belly": {"color": 1349768, "from": 0.6, "nose": 0.3, "line": 16765440, "lineWidth": 0.08}, "engine": 1349768,
+   "fin": 1349768, "tail": true, "mark": {"kind": "logo", "logo": "sun", "color": 16765440}, "winglet": 16765440},
+  {"id": "retro-orange", "name": "Retro orange", "author": "Flightgame", "title": "SKYLINE", "titleColor": 3355443, "titleAt": "above",
+   "body": 16053495, "stripe": {"color": 15037443, "at": 0.62, "width": 0.14}, "belly": {"color": 12895432, "from": 0.8},
+   "fin": 15037443, "mark": {"kind": "ring", "color": 16777215}}
+ ]
+}

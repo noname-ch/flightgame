@@ -79,9 +79,6 @@ realistic flight tracks in 2D and 3D, AI rival airlines, random events and a dev
 
 ## The world and the views
 
-- [ ] **Your own livery** (M). `LIVERY` in `js/livery.js` is fixed (after SWISS). Pick colours and the title
-  at New game; the hangar pictures and map icons would then have to be rendered in the browser instead of
-  being the prepared `.webp` files.
 - [ ] **Real weather** (M). Made-up weather is drawn now (clouds, rain, snow, fog, wind, crosswind crab:
   `G.weatherAt`, js/weather.js). Still to do: real wind, rain and fog from a free weather service; low visibility
   and storms close runways, strong crosswinds rule out short ones.
@@ -114,6 +111,8 @@ realistic flight tracks in 2D and 3D, AI rival airlines, random events and a dev
 
 Recent milestones, newest first (see `git log` for the rest):
 
+- Liveries (F7, js/liverywin.js): the airline's livery and one for each plane, 32 built in (cheatlines, new fin logos),
+  a designer with a live 3D preview, share codes and files, and a community list (community/liveries.json).
 - Fly it yourself (P, ✈ Fly): an A350-900/-1000 flown by hand in 3D (js/pilot.js): Airbus normal law, engines that
   spool, flaps, gear, spoilers, brakes, reversers; PFD, engine and config displays, ILS, GPWS warnings and callouts;
   touchdowns rated; chase, cockpit (HUD), wing and fly-by cameras; start on a runway, on final or take over your A350.
