@@ -1041,6 +1041,33 @@ try {
     if (!side1 || side2 !== -side1) errors.push(`3D wing camera (N, N again for the other wing) went wrong: ${side1} then ${side2}`);
     if (!back.on || !back.follow || back.cam !== 'chase' || back.pitch > 80.01) errors.push(`V did not bring back the chase camera: ${JSON.stringify(back)}`);
 
+    step('fly it yourself (P): an A350 lined up at Zurich, TOGA spools the engines, the keys are the plane\'s, Esc leaves');
+    await key('p');
+    const dlg = await evaluate(() => {
+      const el = document.getElementById('pilot-start');
+      if (!el) return { err: 'P did not open the dialog' };
+      el.querySelector('#ps-ap').value = 'ZRH';
+      el.querySelector('#ps-ap').dispatchEvent(new Event('input'));
+      const n = el.querySelectorAll('#ps-rw option').length;
+      el.querySelector('[data-ps=go]').click();
+      return { n };
+    });
+    if (dlg.err || !dlg.n) errors.push(`fly it yourself: ${dlg.err || 'no runways listed for ZRH'}`);
+    else {
+      await waitFor(() => FG.pilot.active && !FG.pilot.state.loading, 20000, 'the hand-flown A350 to be ready');
+      const speed0 = await evaluate(() => FG.ui.speed);
+      await key('4');
+      await key('ArrowRight'); // (the plane's now: not the game's speed key)
+      await waitFor(() => FG.pilot.state.n1[0] > 30, 30000);
+      const fl = await evaluate(() => ({ n1: FG.pilot.state.n1[0], lever: FG.pilot.state.lever, follow: FG.view3d.follow, drawn: !!FG.view3d.pilotE, speed: FG.ui.speed, hud: !document.getElementById('pilot-hud').hidden }));
+      if (!(fl.n1 > 30) || fl.lever !== 1 || !fl.follow || !fl.drawn || !fl.hud) errors.push(`fly it yourself: ${JSON.stringify(fl)}`);
+      if (fl.speed !== speed0) errors.push('fly it yourself: → changed the game speed while flying');
+      await key('Escape');
+      const off = await evaluate(() => ({ active: FG.pilot.active, drawn: !!FG.view3d.pilotE, menu: !document.getElementById('menu').hidden }));
+      if (off.active || off.menu) errors.push(`fly it yourself: Esc did not just leave the plane: ${JSON.stringify(off)}`);
+      await evaluate(() => FG.ui.follow && FG.ui.follow(G.state.planes[0].id));
+    }
+
     step('3D wing bending and propellers: every drawn aircraft has its own livFlex, up in the air and drooping on the ground; propellers and control surfaces found');
     const flex = await evaluate(() => {
       const out = { air: [], ground: [], shared: 0 };

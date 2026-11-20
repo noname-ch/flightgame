@@ -86,7 +86,8 @@ realistic flight tracks in 2D and 3D, AI rival airlines, random events and a dev
   `G.weatherAt`, js/weather.js). Still to do: real wind, rain and fog from a free weather service; low visibility
   and storms close runways, strong crosswinds rule out short ones.
 - [ ] **Cockpit and tower cameras in 3D** (S/M). Next to the 🎥 follow camera: a view from the cockpit and
-  one from the control tower of the airport.
+  one from the control tower of the airport. The hand-flown A350 (P) has a cockpit camera with a HUD already
+  (view3d.js `cockpitTick`); still to do: the same for any followed plane, and the tower.
 - [ ] **More sound** (S). The engines are in (js/sound.js). Still to do: a quiet airport ambience (vehicles,
   announcements), a radio call on take-off, rain and thunder from the weather.
 
@@ -113,6 +114,9 @@ realistic flight tracks in 2D and 3D, AI rival airlines, random events and a dev
 
 Recent milestones, newest first (see `git log` for the rest):
 
+- Fly it yourself (P, ✈ Fly): an A350-900/-1000 flown by hand in 3D (js/pilot.js): Airbus normal law, engines that
+  spool, flaps, gear, spoilers, brakes, reversers; PFD, engine and config displays, ILS, GPWS warnings and callouts;
+  touchdowns rated; chase, cockpit (HUD), wing and fly-by cameras; start on a runway, on final or take over your A350.
 - Thrust reversers on every type, each its own kind: in 3D the sleeves of big fans slide back over the cascade vanes,
   the A320ceo's four doors swing out, the old jets' buckets close behind the exhaust (on the A380 and A340-600 only the
   inner engines, on the Il-62, VC10 and Comet the outer ones); the reverse roar as loud as the engines that have them,

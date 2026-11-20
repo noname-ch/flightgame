@@ -79,6 +79,7 @@ function gearFor(e, pose) {
   const gear = e.obj.userData.gear;
   const st = pose.st;
   if (!gear) return;
+  if (pose.pilot) { setGear(gear, pose.pilot.gear); return; } // (flown by hand: js/pilot.js)
   const agl = st ? (st.altFt || 0) - (st.fieldFt || 0) : 0;
   let f = 1;
   if (pose.flying && (!st || AIRBORNE[st.phase])) {
@@ -360,12 +361,13 @@ function reverserUniforms(type, scene) {
   return { kind: REV_KINDS[r.kind] || 0, x, prop: r.kind === 'prop' };
 }
 // Reversers out (0..1) for a pose: from touchdown down to about 60 kt.
-const revTarget = (pose) => (pose.st && pose.st.phase === 'landing' && pose.st.ground && pose.st.speedKmh > 110 ? 1 : 0);
+const revTarget = (pose) => (pose.pilot ? pose.pilot.rev : pose.st && pose.st.phase === 'landing' && pose.st.ground && pose.st.speedKmh > 110 ? 1 : 0);
 
 // How fast the propellers and fans turn (rad/s, js/livery.js livHub): off at the gate, slow while taxiing, fastest
 // for take-off and climb.
 const PROP_RATE = { pushback: 5, 'taxi-out': 7, takeoff: 15, climb: 14, cruise: 12, descent: 9, approach: 10, landing: 9, 'taxi-in': 7 };
 function propRate(pose) {
+  if (pose.pilot) return 2 + 13 * Math.max(0, pose.pilot.n1 - 20) / 80;
   if (!pose.st || !(FG.ui && FG.ui.speed > 0)) return 0; // (paused: still)
   return PROP_RATE[pose.st.phase] || 0;
 }
@@ -379,6 +381,8 @@ function propRate(pose) {
 const MAX_AIL = 18 * DEG, MAX_ELEV = 20 * DEG, MAX_RUD = 20 * DEG;
 function surfaceAngles(pose, toGo) {
   const st = pose.st;
+  const pl = pose.pilot;
+  if (pl) return { flap: pl.flap * DEG, ail: pl.ail * MAX_AIL, elev: -pl.elev * MAX_ELEV, rud: pl.rud * MAX_RUD };
   let flap = 0, pull = 0;
   if (st) {
     const agl = (st.altFt || 0) - (st.fieldFt || 0);
@@ -1261,12 +1265,12 @@ function restoreGl(renderer, map) {
 function placeModel(e, pose, altM, exag, globe, now, lineUp) {
   const len = e.obj.userData.len;
   // (real seconds since the last frame; none while the game is paused, so a bounce or smoke waits)
-  const dtR = e.lastFrame == null || (FG.ui && !FG.ui.speed) ? 0 : Math.min(0.25, Math.max(0, (now - e.lastFrame) / 1000));
+  const dtR = e.lastFrame == null || (FG.ui && !FG.ui.speed && !e.pilot) ? 0 : Math.min(0.25, Math.max(0, (now - e.lastFrame) / 1000));
   const unit = frameAt(pose.lat, pose.lon, altM, globe);
   const light = v.sp && nightOn() ? G.daylight(pose.lat, pose.lon, 0, v.sp) : 1; // (where the plane is)
   // Ease heading, bank and pitch towards the target, so the plane turns, rolls and pitches
   // smoothly instead of snapping (frame-rate independent).
-  const k = e.att ? 1 - Math.exp(-Math.min(0.25, (now - e.lastFrame) / 1000) / 0.35) : 1;
+  const k = e.att && !e.pilot ? 1 - Math.exp(-Math.min(0.25, (now - e.lastFrame) / 1000) / 0.35) : 1;
   if (!e.att) e.att = { heading: pose.heading, bank: 0, pitch: 0 };
   // (how far the attitude still has to go: what the control surfaces are doing, see surfaceAngles())
   const toGo = { bank: (pose.bank || 0) - e.att.bank, pitch: (pose.pitch || 0) - e.att.pitch, heading: wrap180(pose.heading - e.att.heading) };
@@ -1451,7 +1455,7 @@ function tyreSmoke(e, ud, pose, exag, unit, heading) {
   const g = e.smoke.geometry;
   const tyre = o.main / 0.42;   // (about the main tyres' size: their legs pull out 0.42 of it)
   // the wheels move on along the smoke's frame while it is let out (at the speed drawn, real seconds)
-  const runM = Math.min(60, ((pose.st.speedKmh / 3.6) * (FG.ui ? FG.ui.speed || 1 : 1)) / exag);
+  const runM = Math.min(60, ((pose.st.speedKmh / 3.6) * (pose.pilot ? 1 : FG.ui ? FG.ui.speed || 1 : 1)) / exag);
   let i = 0;
   for (const [x, y] of o.mains) {
     for (let k = 0; k < SMOKE.puffs; k++, i++) {
@@ -2207,6 +2211,7 @@ const planeLayer = {
         e = v.planes[p.id] = { obj: planeModel(p.type), type: p.type, livery, world: new THREE.Vector3() };
         this.world.add(e.obj);
       }
+      if (pilotOn() && p.id === FG.pilot.hideId) { e.obj.visible = false; continue; } // (the player flies it now)
       const flying = p.status === 'flying';
       const n = flying ? 0 : (parked[p.location] = (parked[p.location] || 0) + 1) - 1;
       const st = flying && G.flightState ? G.flightState(p, t) : null;
@@ -2245,6 +2250,7 @@ const planeLayer = {
     for (const id of Object.keys(v.planes)) {
       if (!alive.has(id)) { this.world.remove(v.planes[id].obj); delete v.planes[id]; }
     }
+    this.drawPilot(globe, now, livery);
     if (this.track && (cine || !(sel && v.planes[sel] && G.plane(sel) && G.plane(sel).status === 'flying'))) this.track.visible = false;
     if (updateBlasts(this, map, globe, mpp, centerW, now)) animating = true;
     updateClouds(this, map, globe, mpp, centerW, now);
@@ -2263,10 +2269,43 @@ const planeLayer = {
     // Next frame: right away while a plane in view visibly moves or the camera follows one; planes that
     // crawl across the screen less often; when nothing in view moves (paused), once a second for the
     // planes that come into view.
-    if (v.follow || moving > 30 || (animating && FG.ui && FG.ui.speed > 0)) map.triggerRepaint();
+    if (v.follow || pilotOn() || moving > 30 || (animating && FG.ui && FG.ui.speed > 0)) map.triggerRepaint();
     else repaintIn(moving > 0 ? Math.min(250, 1000 / moving) : 1000);
   },
+  // The plane the player flies by hand (js/pilot.js): real size, posed from its own physics, hidden from the cockpit.
+  drawPilot(globe, now, livery) {
+    let e = v.pilotE;
+    if (!pilotOn()) {
+      if (e) { this.world.remove(e.obj); v.pilotE = null; }
+      return;
+    }
+    const P = FG.pilot;
+    if (!e || e.type !== P.type || e.livery !== livery) {
+      if (e) this.world.remove(e.obj);
+      e = v.pilotE = { obj: planeModel(P.type), type: P.type, livery, world: new THREE.Vector3(), pilot: true };
+      this.world.add(e.obj);
+    }
+    const pose = P.pose();
+    const altM = pilotAlt(pose, e);
+    gearFor(e, pose);
+    placeModel(e, pose, altM, 1, globe, now);
+    e.world.copy(tmp.pos);
+    e.lngLat = [pose.lon, pose.lat];
+    e.heading = e.att.heading;
+    e.altM = altM;
+    e.exag = 1;
+    e.pose = pose;
+    const { pos } = tmp;
+    e.obj.visible = !(v.follow && v.cam === 'cockpit') && (!v.clip || pos.x * v.clip[0] + pos.y * v.clip[1] + pos.z * v.clip[2] + v.clip[3] > -0.002);
+  },
 };
+const pilotOn = () => !!(FG.pilot && FG.pilot.active);
+// Height the hand-flown plane's middle is drawn at: its wheels at its height above sea level (the physics take the
+// ground from the drawn terrain), the middle `lift` above them.
+function pilotAlt(pose, e) {
+  const lift = e.obj.userData.lift ?? 0.12 * e.obj.userData.len;
+  return pose.altMSL * TERRAIN_EXAG + lift;
+}
 
 // Draw again in `ms`, or sooner when a plane or airport is selected or the camera starts following one.
 function repaintIn(ms) {
@@ -2438,7 +2477,7 @@ function fitNetwork() {
 
 function setFollow(on, cam) {
   const wasCine = v.follow && v.cam !== 'chase';
-  v.follow = on && !!(FG.ui && FG.ui.selectedPlane);
+  v.follow = on && (pilotOn() || !!(FG.ui && FG.ui.selectedPlane));
   v.cam = v.follow ? cam || 'chase' : 'chase';
   v.followStart = v.follow;
   v.flyby = null;
@@ -2484,6 +2523,7 @@ function camera(mode) {
 // shown one frame interval after this one's timestamp: taking the clock whenever this code ran instead
 // made the steps uneven (one short, the next long), which shows as stutter.
 function followTick() {
+  if (pilotOn()) { pilotTick(); return; }
   if (!v.follow) return;
   const p = G.plane(FG.ui.selectedPlane);
   const e = v.planes[FG.ui.selectedPlane];
@@ -2521,7 +2561,7 @@ function chaseTick(map, p, e, pose) {
     opts.zoom = Math.max(map.getZoom(), 6.5);
   }
   // (at the height it is drawn at in that frame, not the last one: else a climbing plane bobs up and down)
-  if (map.setCenterClampedToGround) opts.elevation = drawn ? drawnAlt(map, p, pose, e.obj.userData.len, e.exag, e.obj.userData.lift) : pose.altM * TERRAIN_EXAG;
+  if (map.setCenterClampedToGround) opts.elevation = !p ? pilotAlt(pose, e) : drawn ? drawnAlt(map, p, pose, e.obj.userData.len, e.exag, e.obj.userData.lift) : pose.altM * TERRAIN_EXAG;
   map.jumpTo(opts);
 }
 
@@ -2542,18 +2582,19 @@ const offsetLL = (lat, lon, east, north) => [lat + north / 111320, lon + east / 
 // as it passes. Once the plane is well past, it moves on ahead again. Planes are drawn at their real size.
 function flybyTick(map, p, e, pose) {
   const len = e.obj.userData.len;
-  const alt = drawnAlt(map, p, pose, len, 1, e.obj.userData.lift);
+  const alt = altOf(map, p, pose, e);
+  const id = p ? p.id : 'pilot';
   let c = v.flyby;
-  const d = c && c.id === p.id ? G.distanceKm(pose, c) : Infinity;
+  const d = c && c.id === id ? G.distanceKm(pose, c) : Infinity;
   if (c && d < c.min) c.min = d;
-  if (!c || c.id !== p.id || d > 3 || d > c.min + 0.6) {
-    const ahead = poseAhead(p, v.nextT, 1);
+  if (!c || c.id !== id || d > 3 || d > c.min + 0.6) {
+    const ahead = p ? poseAhead(p, v.nextT, 1) : pilotAhead(pose, 1);
     const q = ahead || pose;
     const side = ahead ? 50 + len : 2 * len + 30; // metres to the right of its way (or of a parked plane)
     const [lat, lon] = offsetLL(q.lat, q.lon, Math.cos(q.heading * DEG) * side, -Math.sin(q.heading * DEG) * side);
     const ground = map.queryTerrainElevation([lon, lat]) || 0;
-    const qAlt = drawnAlt(map, p, q, len, 1, e.obj.userData.lift);
-    c = v.flyby = { id: p.id, lat, lon, alt: Math.max(ground + 4, q.altM > 30 ? qAlt - 12 : ground + 4), min: Infinity };
+    const qAlt = altOf(map, p, q, e);
+    c = v.flyby = { id, lat, lon, alt: Math.max(ground + 4, q.altM > 30 ? qAlt - 12 : ground + 4), min: Infinity };
     c.min = G.distanceKm(pose, c);
   }
   // (the same point: nothing to look along)
@@ -2566,7 +2607,7 @@ function flybyTick(map, p, e, pose) {
 // plane; it turns, pitches and rolls with it (as drawn: the eased attitude of the last frame).
 function wingTick(map, p, e, pose) {
   const len = e.obj.userData.len;
-  const look = D.looks && D.looks[p.type];
+  const look = D.looks && D.looks[e.type];
   const span = (look && look.span) || len;
   const att = e.att || pose;
   const h = att.heading * DEG, th = (att.pitch || 0) * DEG, ph = (att.bank || 0) * DEG;
@@ -2581,12 +2622,86 @@ function wingTick(map, p, e, pose) {
   const s = v.wingSide;
   const cam = at(s * WING_CAM.out * span, -WING_CAM.back * len, WING_CAM.up * span + 1);
   const aim = at(s * WING_CAM.aimOut * span, WING_CAM.aimAhead * len, -WING_CAM.aimDown * len);
-  const alt = drawnAlt(map, p, pose, len, 1, e.obj.userData.lift);
+  const alt = altOf(map, p, pose, e);
   const [cLat, cLon] = offsetLL(pose.lat, pose.lon, cam[0], cam[1]);
   const [aLat, aLon] = offsetLL(pose.lat, pose.lon, aim[0], aim[1]);
   const o = map.calculateCameraOptionsFromTo(new maplibregl.LngLat(cLon, cLat), alt + cam[2], new maplibregl.LngLat(aLon, aLat), alt + aim[2]);
   map.jumpTo({ ...o, roll: att.bank || 0 });
 }
+// Height a followed plane is drawn at, at real size (`p` null: the plane flown by hand).
+const altOf = (map, p, pose, e) => (p ? drawnAlt(map, p, pose, e.obj.userData.len, 1, e.obj.userData.lift) : pilotAlt(pose, e));
+// The hand-flown plane `km` on along its heading and flight path (for the fly-by camera).
+function pilotAhead(pose, km) {
+  const [lat, lon] = offsetLL(pose.lat, pose.lon, Math.sin(pose.heading * DEG) * km * 1000, Math.cos(pose.heading * DEG) * km * 1000);
+  const up = Math.tan(((pose.pilot && pose.pilot.gamma) || 0) * DEG) * km * 1000;
+  return { ...pose, lat, lon, altMSL: pose.altMSL + up, altM: Math.max(0, pose.altM + up) };
+}
+
+// ---------- flying by hand (js/pilot.js) ----------
+// Every frame: the physics step on by the frame's time, then the camera goes where the plane now is (it is drawn
+// there in the next frame). Cameras: chase, cockpit, wing and fly-by.
+function pilotTick() {
+  const at = frameNow();
+  const dt = v.pilotAt != null ? Math.min(0.25, Math.max(0, (at - v.pilotAt) / 1000)) : 0;
+  v.pilotAt = at;
+  FG.pilot.step(dt);
+  const e = v.pilotE;
+  if (!v.follow || !e || !pilotOn()) return;
+  const map = v.map;
+  const pose = FG.pilot.pose();
+  if (v.cam === 'cockpit') cockpitTick(map, e, pose);
+  else if (v.cam === 'wing') wingTick(map, null, e, pose);
+  else if (v.cam === 'flyby') flybyTick(map, null, e, pose);
+  else chaseTick(map, null, e, pose);
+}
+// Cockpit camera: the captain's eyes (about 4.6 m behind the nose, 7.6 m above the wheels on an A350), looking
+// FG.pilot.LOOK_DOWN° under the nose; it pitches and rolls with the plane. The plane itself is not drawn.
+const EYE = { back: 4.6, up: 7.6 };
+function cockpitTick(map, e, pose) {
+  const len = e.obj.userData.len;
+  const ud = e.obj.userData;
+  const h = pose.heading * DEG, th = (pose.pitch || 0) * DEG, ph = (pose.bank || 0) * DEG;
+  const fwd = [Math.sin(h), Math.cos(h), 0], right = [Math.cos(h), -Math.sin(h), 0], up = [0, 0, 1];
+  const comb = (a, ka, b, kb) => [a[0] * ka + b[0] * kb, a[1] * ka + b[1] * kb, a[2] * ka + b[2] * kb];
+  const nose = comb(fwd, Math.cos(th), up, Math.sin(th));
+  const lift = comb(up, Math.cos(th), fwd, -Math.sin(th));
+  const top = comb(lift, Math.cos(ph), right, Math.sin(ph));
+  // pitched about the main wheels (as placeModel does): from where they touch the ground
+  const mainY = ud.mainY != null ? ud.mainY : -0.05 * len;
+  const ahead = 0.5 * len - EYE.back - mainY;
+  const eye = [0, 1, 2].map((i) => fwd[i] * mainY + nose[i] * ahead + top[i] * EYE.up);
+  const ld = (FG.pilot.LOOK_DOWN || 4) * DEG;
+  const dir = comb(nose, Math.cos(ld), top, -Math.sin(ld));
+  const aim = [0, 1, 2].map((i) => eye[i] + dir[i] * 2000);
+  const base = pose.altMSL * TERRAIN_EXAG;
+  const [cLat, cLon] = offsetLL(pose.lat, pose.lon, eye[0], eye[1]);
+  const [aLat, aLon] = offsetLL(pose.lat, pose.lon, aim[0], aim[1]);
+  const o = map.calculateCameraOptionsFromTo(new maplibregl.LngLat(cLon, cLat), base + eye[2], new maplibregl.LngLat(aLon, aLat), base + aim[2]);
+  map.jumpTo({ ...o, roll: pose.bank || 0 });
+}
+// FG.view3d.pilotCam(mode): follow the hand-flown plane with that camera ('chase', 'cockpit', 'wing', 'wing2' = the
+// other wing, 'flyby'); null when the player leaves it.
+function pilotCam(mode) {
+  const map = v.map;
+  const wideFov = (on) => {
+    if (!map || !map.setVerticalFieldOfView || !map.getVerticalFieldOfView) return;
+    if (on) { if (v.fov0 == null) v.fov0 = map.getVerticalFieldOfView(); map.setVerticalFieldOfView(55); }
+    else if (v.fov0 != null) { map.setVerticalFieldOfView(v.fov0); v.fov0 = null; }
+  };
+  if (!mode) {
+    wideFov(false);
+    v.pilotAt = null;
+    setFollow(false);
+    if (map) map.triggerRepaint();
+    return;
+  }
+  if (!v.on) setOn(true);
+  if (mode === 'wing2') { v.wingSide = -v.wingSide; mode = 'wing'; }
+  if (v.follow && v.cam === mode) { if (mode === 'flyby') v.flyby = null; } else setFollow(true, mode);
+  wideFov(mode === 'cockpit');
+  if (v.map) v.map.triggerRepaint();
+}
+
 // Wing camera spot (fractions of the span or length): out along the wing, behind the plane's centre, above the wing;
 // it looks at a point ahead of the nose and below it.
 const WING_CAM = { out: 0.3, back: 0.32, up: 0.08, aimOut: 0.12, aimAhead: 2.2, aimDown: 0.12 };
@@ -2714,7 +2829,9 @@ function controls() {
     <button class="follow" title="Follow the selected plane; drag to look round it (V)">🎥<span> Follow</span></button>
     <button class="flyby" title="Fly-by: the camera waits ahead and watches the plane pass (B)">🎬<span> Fly-by</span></button>
     <button class="wing" title="Wing camera, on the plane's wing; again for the other wing (N)">🪽<span> Wing</span></button>
-    <button class="sat" title="Satellite imagery">🛰<span> Satellite</span></button>`;
+    <button class="sat" title="Satellite imagery">🛰<span> Satellite</span></button>
+    <button class="fly" title="Fly an A350 yourself (P)">✈<span> Fly</span></button>`;
+  box.querySelector('.fly').onclick = () => FG.pilot && FG.pilot.open();
   box.querySelector('.home').onclick = () => { setFollow(false); fitNetwork(); };
   box.querySelector('.follow').onclick = () => {
     if (!FG.ui.selectedPlane) { FG.ui.selectPlane(G.state.planes[0] && G.state.planes[0].id); }
@@ -2974,6 +3091,7 @@ function setOn(on, atLoad) {
     if (!v.map) createMap(atLoad);
     else { from2d(); v.map.resize(); v.map.triggerRepaint(); }
   } else {
+    if (pilotOn()) FG.pilot.stop();
     to2d();
     setFollow(false);
   }
@@ -3059,4 +3177,6 @@ v.setOn = (on) => setOn(on);
 v.setSatellite = (on) => setSatellite(on); // Settings → Map style
 v.from2d = () => from2d(); // the 2D map moved while 3D is open (a new game, a loaded save)
 v.lights = airportLights;
+v.pilotCam = (mode) => pilotCam(mode); // js/pilot.js
+v.fov = () => (v.map && v.map.getVerticalFieldOfView ? v.map.getVerticalFieldOfView() : 36.87);
 FG.view3d = v; // for debugging

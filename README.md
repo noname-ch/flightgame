@@ -344,6 +344,26 @@ Cameras, as in DCS (on phones the buttons show only their icons):
 - 🪽 Wing (N, DCS's F4): a camera on the wing, out towards the tip, looking ahead; it pitches and rolls with the
   plane. N again: the other wing.
 
+**Fly it yourself** (P, or ✈ Fly among the 3D buttons): an A350-900 or -1000 you fly by hand, lined up on any
+runway, 10 NM out on final at 3,000 ft, or taking over one of your own A350s in the air (it carries on with its
+timetable when you leave). It flies in real time whatever the game speed and earns nothing: it's for flying. While
+you fly, the keyboard is the plane's (the game's keys come back when you leave):
+- ↑ ↓ (W S): stick, nose down / up. As in an Airbus (normal law) it asks for a pitch rate; let go and it holds the
+  flight path. ← → (A D): roll; let go and the bank stays (up to 33°). On the ground they steer, Q E = rudder.
+- PgUp / PgDn or + / −: thrust levers; 1 2 3 4 = the IDLE, CL, FLX/MCT and TOGA detents. The engines spool up
+  slowly from idle (about 8 s to take-off thrust). On the ground − past idle (or R) is reverse thrust.
+- G gear (about 10 s to move), F / Shift+F flaps one notch down / up (0, 1, 1+F, 2, 3, FULL; about 7 s a notch),
+  X speed brakes, Shift+X arms the ground spoilers, Space or B wheel brakes, K parking brake.
+- C cycles the cameras (chase, cockpit with a head-up display, wing, fly-by), V chase, N wing. P pauses, H lists the
+  keys, Esc leaves.
+The physics: lift and drag from the flap setting, gear and spoilers; the thrust falls off with height and speed; the
+angle of attack is protected (the wing never stalls; near it A.FLOOR gives TOGA by itself), pitch stays within
+30° up / 15° down. The instruments show a PFD (speed tape with the max speed and the alpha-protection band, altitude,
+vertical speed, heading, radio height, ILS diamonds for the runway ahead) and the engines, flaps, gear, spoilers and
+brakes. Warnings: CONFIG at take-off, OVERSPEED, FLAP/GEAR SPEED, SINK RATE, PULL UP, TOO LOW GEAR/FLAPS, TAIL
+STRIKE, OFF THE RUNWAY; with sound on, the radio height callouts and RETARD. Touchdowns are rated by their sink
+rate; over 1,100 ft/min, gear up, a wing down or nose first is a crash (Enter tries again).
+
 V goes back to the chase camera from the fly-by or wing camera; otherwise it switches between 2D and 3D. B and N
 open the 3D view if needed and take the selected plane (or the first one in the air). The camera buttons and
 🛰 Satellite sit at the bottom of the 3D view. 🛰 Satellite toggles the satellite imagery (on by default);
@@ -428,7 +448,7 @@ script errors) go with it unless you untick them. Signed in to GitHub (airport e
 the repo; from `./play.sh` it is written into `BUGS.md`; otherwise GitHub's new-issue page opens filled in (you
 need a GitHub account), or Copy puts it on the clipboard.
 
-Controls: Space = pause, 1/2/3 = speed, V = 2D/3D (and the chase camera), B = fly-by camera, N = wing camera. M = sound on/off, F6 = sound mixer (or 🎚 in the ⋯ menu, or Settings → Sound): which recorded bass, roar and screech the jets play (several of each; on Auto each type gets its own, old jets a turbojet screech), how loud each part is (bass, roar, screech, whine, air, engine start, far away, APU) and the screech's pitch and speed, for all planes, jets, turboprops, pistons or one aircraft type, with ▶ to hear that type. The game keeps running in a background tab. It autosaves to the browser (localStorage; the airport layouts read off the map are kept apart, in IndexedDB).
+Controls: Space = pause, 1/2/3 = speed, V = 2D/3D (and the chase camera), B = fly-by camera, N = wing camera, P = fly an A350 yourself. M = sound on/off, F6 = sound mixer (or 🎚 in the ⋯ menu, or Settings → Sound): which recorded bass, roar and screech the jets play (several of each; on Auto each type gets its own, old jets a turbojet screech), how loud each part is (bass, roar, screech, whine, air, engine start, far away, APU) and the screech's pitch and speed, for all planes, jets, turboprops, pistons or one aircraft type, with ▶ to hear that type. The game keeps running in a background tab. It autosaves to the browser (localStorage; the airport layouts read off the map are kept apart, in IndexedDB).
 
 ## Extending
 
