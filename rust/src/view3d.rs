@@ -1068,6 +1068,10 @@ pub struct Frame {
     /// the ground picture's corners (metres from the reference point): x0, y0 (south-west), x1, y1 (north-east)
     pub ground_rect: [f32; 4],
     pub ground: Arc<Mutex<Ground>>,
+    /// the reference point (lat, lon): the scene's x 0, y 0
+    pub origin: (f64, f64),
+    /// the height above the sea the scene's z 0 stands for (the real ground, src/terrain.rs)
+    pub ref_m: f32,
 }
 
 #[repr(C)]
@@ -1970,6 +1974,23 @@ impl View3d {
         let dt = ui.input(|i| i.stable_dt).clamp(0.0, 0.1);
         // the reference point: the plane's spot on the ground
         let (lat0, lon0) = (pos.lat, pos.lon);
+        // With the real ground (Bevy, src/terrain.rs) the scene's 0 is the height of the ground under the followed
+        // plane's flight: its airport's, or between its two airports' by the way flown (the game's heights are above
+        // the airports). Every other plane and airport is lifted by its own airport's height above that.
+        let terrain = crate::bevy3d::enabled();
+        let field_of = |q: &flightgame::game::Plane, lat: f64, lon: f64| -> f32 {
+            let elev = |code: &str| if terrain { crate::bevy3d::airport_elev(code) } else { None };
+            match &q.flight {
+                Some(f) if q.status == flightgame::game::Status::Flying => {
+                    let (a, b) = (d.airport(&f.from), d.airport(&f.to));
+                    let (ea, eb) = (elev(&f.from).unwrap_or(0.0), elev(&f.to).unwrap_or(0.0));
+                    let (da, db) = (distance_km(a.lat, a.lon, lat, lon), distance_km(lat, lon, b.lat, b.lon));
+                    ea + (eb - ea) * (da / (da + db).max(1e-6)) as f32
+                }
+                _ => elev(&q.location).unwrap_or(0.0),
+            }
+        };
+        let ref_m = field_of(p, pos.lat, pos.lon);
         // the planes: the followed one and every other of yours within 60 km, posed and with their parts set
         let mut planes = Vec::new();
         let mut me = Vec3::new(0.0, 0.0, (pos.alt_ft * 0.3048) as f32);
@@ -2037,7 +2058,8 @@ impl View3d {
             pose.spo += (spo_to - pose.spo) * (1.0 - (-dts / 0.5).exp());
             let (rkind, ron) = reverser(&q.kind);
             let (x, y) = local(lat0, lon0, qp.lat, qp.lon);
-            let at = Vec3::new(x as f32, y as f32, body - mesh.ground * qlen);
+            let lift = if k == i { 0.0 } else { field_of(q, qp.lat, qp.lon) - ref_m };
+            let at = Vec3::new(x as f32, y as f32, body - mesh.ground * qlen + lift);
             let rot = Mat4::from_rotation_z(-(qp.heading as f32).to_radians()) * Mat4::from_rotation_x(pose.pitch.to_radians()) * Mat4::from_rotation_y(pose.bank.to_radians());
             if k == i {
                 me = at;
@@ -2162,7 +2184,8 @@ impl View3d {
             let mesh = self.buildings.entry(key.clone()).or_insert_with(|| building_mesh(&a.code).map(Arc::new)).clone();
             if let Some(m) = mesh {
                 let (x, y) = local(lat0, lon0, a.lat, a.lon);
-                buildings.push((key, Vec3::new(x as f32, y as f32, 0.0), m));
+                let lift = if terrain { crate::bevy3d::airport_elev(&a.code).map_or(0.0, |e| e - ref_m) } else { 0.0 };
+                buildings.push((key, Vec3::new(x as f32, y as f32, lift), m));
             }
         }
         let puffs = Arc::new(clouds(g, t, lat0, lon0, eye));
@@ -2190,6 +2213,8 @@ impl View3d {
             puffs,
             ground_rect: [x0 as f32, y0 as f32, x1 as f32, y1 as f32],
             ground: self.ground.clone(),
+            origin: (lat0, lon0),
+            ref_m,
         };
         // the Bevy renderer (lit by the sun with shadows under a real sky), where it runs
         if crate::bevy3d::enabled() && crate::bevy3d::draw(ui, rect, &frame) {

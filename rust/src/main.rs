@@ -12,6 +12,7 @@ mod liveries;
 mod sound;
 mod style;
 mod synth;
+mod terrain;
 mod view3d;
 
 fn main() -> eframe::Result {

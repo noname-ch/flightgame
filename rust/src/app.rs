@@ -3447,6 +3447,45 @@ impl App {
                 self.lw.open = false;
                 next(self, 1.0);
             }
+            45 => {
+                // the real ground (src/terrain.rs): on the ground at Zurich, given time to load its finest tiles
+                if let Some(g) = self.game.as_ref() {
+                    let t = self.t;
+                    let k = (0..g.state.planes.len()).find(|&k| g.state.planes[k].location == "ZRH" && g.flight_pos(k, t).alt_ft < 1.0).unwrap_or(0);
+                    self.v3.follow = g.state.planes.get(k).map(|p| p.id.clone());
+                }
+                self.v3.on = self.v3_ok;
+                self.v3.cam = "chase";
+                self.v3.yaw = 200.0;
+                self.v3.pitch = 28.0;
+                self.v3.dist = 4.0;
+                self.paused = true;
+                next(self, 35.0);
+            }
+            46 => {
+                shot("21-3d-terrain-ground.png");
+                next(self, 1.0);
+            }
+            47 => {
+                // high over the land: a plane in the air, from above behind
+                if let Some(g) = self.game.as_ref() {
+                    let t = self.t;
+                    let k = (0..g.state.planes.len()).max_by(|&a, &b| g.flight_pos(a, t).alt_ft.total_cmp(&g.flight_pos(b, t).alt_ft)).unwrap_or(0);
+                    self.v3.follow = g.state.planes.get(k).map(|p| p.id.clone());
+                }
+                self.v3.pitch = 22.0;
+                self.v3.dist = 8.0;
+                self.paused = false;
+                next(self, 35.0);
+            }
+            48 => {
+                shot("22-3d-terrain-air.png");
+                next(self, 1.0);
+            }
+            49 => {
+                self.v3.on = false;
+                next(self, 1.0);
+            }
             _ => {
                 if let Some(g) = &self.game {
                     let p = &g.state.planes[0];

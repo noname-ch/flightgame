@@ -134,6 +134,11 @@ pivoting doors, or buckets swinging shut behind the exhaust) until about 60 kt. 
 - **Bug reports** (F5): a title, what happened and the game's details (version, game date, selection, map position,
   the last crash); then GitHub's new-issue page opens filled in (you send it there), or Copy, or Add to `BUGS.md`
   when it runs from the repo. A crash is written down, and the next start offers to report it.
+- **The real ground** (`src/terrain.rs`, in the Bevy 3D view): Esri's satellite pictures on the land's shape (AWS
+  Terrain Tiles heights), in map tiles finer the nearer they are (zoom 18 under the plane, a third of a metre a pixel,
+  out to about 300 km), each drawn as soon as it has loaded, with the airports levelled at their height; planes and
+  airports stand on their airport's height. Tiles are kept on disk (`sat3d`, `dem` in the cache folder).
+  `FLIGHTGAME_TERRAIN_LOG=1` prints what is drawn and loading.
 - **Liveries** (F7, Menu, or 🎨 Livery in the plane window, `src/liveries.rs`, as the browser game's): the airline's
   livery and one of its own for any plane (Fleet: one dropdown per plane, "all <type>"), 32 built-in ones as little
   side views, a Designer (colours, title, belly, cheatline, fin mark), and Community: the list in

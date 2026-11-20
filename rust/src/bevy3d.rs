@@ -52,6 +52,17 @@ struct State {
     puff_mesh: b::Handle<b::Mesh>,
     puff_tex: b::Handle<b::Image>,
     puffs: Vec<(b::Entity, b::Handle<b::StandardMaterial>)>,
+    /// the plain land under everything (where no ground tile is loaded yet)
+    land: b::Entity,
+    /// the real ground (src/terrain.rs) and its tiles made so far: entity, mesh, picture, material, frame last drawn
+    terrain: crate::terrain::Terrain,
+    tiles: HashMap<crate::terrain::Key, (b::Entity, b::Handle<b::Mesh>, b::Handle<b::Image>, b::Handle<b::StandardMaterial>, u64)>,
+    tick: u64,
+}
+
+/// An airport's height above the sea (m) as the real ground has it (None until it is known, or without Bevy).
+pub fn airport_elev(code: &str) -> Option<f32> {
+    STATE.with(|s| s.borrow().as_ref().and_then(|st| st.terrain.airport_elev(code)))
 }
 
 /// Bevy draws the 3D view (it started, and isn't switched off).
@@ -208,7 +219,7 @@ fn start(rs: &egui_wgpu::RenderState) -> Option<State> {
     }
     let soft = w.resource_mut::<b::Assets<b::Image>>().add(b::Image::new(Extent3d { width: n as u32, height: n as u32, depth_or_array_layers: 1 }, TextureDimension::D2, px, TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::RENDER_WORLD));
     let ground = w.spawn((b::Mesh3d(quad), b::MeshMaterial3d(ground_mat.clone()), b::Transform::from_xyz(1e7, 0.0, 0.0))).id();
-    w.spawn((b::Mesh3d(land), b::MeshMaterial3d(land_mat), b::Transform::from_xyz(0.0, -0.4, 0.0)));
+    let land = w.spawn((b::Mesh3d(land), b::MeshMaterial3d(land_mat), b::Transform::from_xyz(0.0, -0.4, 0.0))).id();
     Some(State {
         apps,
         rs: rs.clone(),
@@ -226,6 +237,10 @@ fn start(rs: &egui_wgpu::RenderState) -> Option<State> {
         puff_mesh,
         puff_tex: soft,
         puffs: Vec::new(),
+        land,
+        terrain: Default::default(),
+        tiles: HashMap::new(),
+        tick: 0,
     })
 }
 
@@ -400,6 +415,75 @@ fn render(st: &mut State, frame: &Frame, w: u32, h: u32) -> Option<egui::Texture
             m.base_color = b::Color::WHITE;
             m.base_color_texture = Some(ih);
         }
+    }
+    // the real ground (src/terrain.rs): satellite tiles on the land's shape, finer the nearer they are
+    let (lat0, lon0) = frame.origin;
+    let cosl = lat0.to_radians().cos();
+    let eye_lat = lat0 + frame.eye.y as f64 / 111_320.0;
+    let eye_lon = lon0 + frame.eye.x as f64 / (111_320.0 * cosl);
+    for td in st.terrain.take_done() {
+        let mut m = b::Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+        m.insert_attribute(b::Mesh::ATTRIBUTE_POSITION, td.pos);
+        m.insert_attribute(b::Mesh::ATTRIBUTE_NORMAL, td.normals);
+        m.insert_attribute(b::Mesh::ATTRIBUTE_UV_0, td.uvs);
+        m.insert_indices(Indices::U32(td.indices));
+        let mh = world.resource_mut::<b::Assets<b::Mesh>>().add(m);
+        let mut img = b::Image::new(Extent3d { width: 256, height: 256, depth_or_array_layers: 1 }, TextureDimension::D2, td.rgba[..256 * 256 * 4].to_vec(), TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::RENDER_WORLD);
+        img.data = Some(td.rgba);
+        img.texture_descriptor.mip_level_count = td.mips;
+        img.sampler = bevy::image::ImageSampler::Descriptor(bevy::image::ImageSamplerDescriptor {
+            address_mode_u: bevy::image::ImageAddressMode::ClampToEdge,
+            address_mode_v: bevy::image::ImageAddressMode::ClampToEdge,
+            mag_filter: bevy::image::ImageFilterMode::Linear,
+            min_filter: bevy::image::ImageFilterMode::Linear,
+            mipmap_filter: bevy::image::ImageFilterMode::Linear,
+            anisotropy_clamp: 16,
+            ..Default::default()
+        });
+        let ih = world.resource_mut::<b::Assets<b::Image>>().add(img);
+        let mat = world.resource_mut::<b::Assets<b::StandardMaterial>>().add(b::StandardMaterial {
+            base_color: b::Color::WHITE,
+            base_color_texture: Some(ih.clone()),
+            perceptual_roughness: 1.0,
+            reflectance: 0.06,
+            double_sided: true,
+            cull_mode: None,
+            ..Default::default()
+        });
+        let e = world.spawn((b::Mesh3d(mh.clone()), b::MeshMaterial3d(mat.clone()), b::Transform::default(), b::Visibility::Hidden, bevy::light::NotShadowCaster)).id();
+        st.tiles.insert(td.key, (e, mh, ih, mat, st.tick));
+    }
+    st.tick += 1;
+    let draw: HashMap<crate::terrain::Key, f32> = st.terrain.select(eye_lat, eye_lon, (frame.eye.z as f64).max(2.0)).into_iter().collect();
+    for (k, t) in st.tiles.iter_mut() {
+        if let Some(lower) = draw.get(k) {
+            let (alat, alon) = crate::terrain::anchor(*k);
+            let (x, y) = ((alon - lon0) * 111_320.0 * cosl, (alat - lat0) * 111_320.0);
+            let tf = b::Transform::from_xyz(x as f32, -frame.ref_m - lower, -y as f32).with_scale(b::Vec3::new(cosl as f32, 1.0, 1.0));
+            world.entity_mut(t.0).insert((tf, b::Visibility::Visible));
+            t.4 = st.tick;
+        } else if t.4 + 1 == st.tick {
+            world.entity_mut(t.0).insert(b::Visibility::Hidden);
+        }
+    }
+    // (at most 900 tiles kept: the longest unused go)
+    if st.tiles.len() > 900 {
+        let mut old: Vec<(u64, crate::terrain::Key)> = st.tiles.iter().filter(|(k, _)| !draw.contains_key(k)).map(|(k, t)| (t.4, *k)).collect();
+        old.sort();
+        for (_, k) in old.into_iter().take(120) {
+            if let Some((e, mh, ih, mat, _)) = st.tiles.remove(&k) {
+                world.despawn(e);
+                world.resource_mut::<b::Assets<b::Mesh>>().remove(&mh);
+                world.resource_mut::<b::Assets<b::Image>>().remove(&ih);
+                world.resource_mut::<b::Assets<b::StandardMaterial>>().remove(&mat);
+                st.terrain.forget(k);
+            }
+        }
+    }
+    if !draw.is_empty() {
+        // the old single ground picture is not needed any more; the plain land stays below, for the gaps
+        world.entity_mut(st.ground).insert(b::Transform::from_xyz(1e7, 0.0, 0.0));
+        world.entity_mut(st.land).insert(b::Transform::from_xyz(0.0, -frame.ref_m - 60.0, 0.0));
     }
     // the clouds: soft white puffs (the nearest 260)
     let mut puffs: Vec<&crate::view3d::Puff> = frame.puffs.iter().collect();
