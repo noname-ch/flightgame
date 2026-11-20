@@ -2813,10 +2813,12 @@ dependencies = [
 name = "flightgame"
 version = "0.1.0"
 dependencies = [
+ "ab_glyph",
  "bevy",
  "bytemuck",
  "dirs",
  "eframe",
+ "epaint_default_fonts",
  "glam 0.34.3",
  "gltf",
  "image",

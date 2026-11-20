@@ -58,6 +58,11 @@ struct State {
     terrain: crate::terrain::Terrain,
     tiles: HashMap<crate::terrain::Key, (b::Entity, b::Handle<b::Mesh>, b::Handle<b::Image>, b::Handle<b::StandardMaterial>, u64)>,
     tick: u64,
+    /// the liveries' pictures as materials (by model, livery and its contents), each model's livery frame, and the
+    /// key each plane entity is drawn with
+    liv_mats: HashMap<String, b::Handle<b::StandardMaterial>>,
+    liv_frames: HashMap<String, crate::liveries::LivFrame>,
+    plane_keys: Vec<String>,
 }
 
 /// An airport's height above the sea (m) as the real ground has it (None until it is known, or without Bevy).
@@ -241,6 +246,9 @@ fn start(rs: &egui_wgpu::RenderState) -> Option<State> {
         terrain: Default::default(),
         tiles: HashMap::new(),
         tick: 0,
+        liv_mats: HashMap::new(),
+        liv_frames: HashMap::new(),
+        plane_keys: Vec::new(),
     })
 }
 
@@ -320,9 +328,36 @@ fn render(st: &mut State, frame: &Frame, w: u32, h: u32) -> Option<egui::Texture
         directional_light_color: b::Color::srgba(1.0, 0.95, 0.85, 0.4),
         directional_light_exponent: 30.0,
     });
-    // the planes, posed as the classic renderer would move their parts
+    // the planes, posed as the classic renderer would move their parts, each in its livery's picture (painted once
+    // for each livery and model: liveries.rs `paint`)
     for (k, p) in frame.planes.iter().enumerate() {
-        let (ps, ns, cs) = crate::view3d::posed(&p.mesh, p);
+        let lf = *st.liv_frames.entry(p.file.clone()).or_insert_with(|| crate::view3d::liv_frame(&p.mesh));
+        let (ps, ns, cs, uvs) = crate::view3d::posed(&p.mesh, p, &lf);
+        let liv_key = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            p.livery.src.to_string().hash(&mut h);
+            format!("{}|{}|{:x}", p.file, p.livery.id, h.finish())
+        };
+        if !st.liv_mats.contains_key(&liv_key) {
+            let (data, mips) = crate::liveries::with_mips(crate::liveries::paint(&p.livery.src, &lf), crate::liveries::TEX_W, crate::liveries::TEX_H);
+            let (w, h) = (crate::liveries::TEX_W as u32, crate::liveries::TEX_H as u32);
+            let mut img = b::Image::new(Extent3d { width: w, height: h, depth_or_array_layers: 1 }, TextureDimension::D2, data[..(w * h * 4) as usize].to_vec(), TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::RENDER_WORLD);
+            img.data = Some(data);
+            img.texture_descriptor.mip_level_count = mips;
+            img.sampler = bevy::image::ImageSampler::Descriptor(bevy::image::ImageSamplerDescriptor {
+                mag_filter: bevy::image::ImageFilterMode::Linear,
+                min_filter: bevy::image::ImageFilterMode::Linear,
+                mipmap_filter: bevy::image::ImageFilterMode::Linear,
+                anisotropy_clamp: 16,
+                ..Default::default()
+            });
+            let ih = world.resource_mut::<b::Assets<b::Image>>().add(img);
+            let base = world.resource::<b::Assets<b::StandardMaterial>>().get(&st.plane_mat).cloned().unwrap_or_default();
+            let mh = world.resource_mut::<b::Assets<b::StandardMaterial>>().add(b::StandardMaterial { base_color_texture: Some(ih), ..base });
+            st.liv_mats.insert(liv_key.clone(), mh);
+        }
+        let liv_mat = st.liv_mats[&liv_key].clone();
         let model = glam::Mat4::from_translation(p.at)
             * glam::Mat4::from_rotation_z(-p.heading.to_radians())
             * glam::Mat4::from_rotation_x(p.pitch.to_radians())
@@ -335,11 +370,17 @@ fn render(st: &mut State, frame: &Frame, w: u32, h: u32) -> Option<egui::Texture
                 m.insert_attribute(b::Mesh::ATTRIBUTE_POSITION, ps);
                 m.insert_attribute(b::Mesh::ATTRIBUTE_NORMAL, ns);
                 m.insert_attribute(b::Mesh::ATTRIBUTE_COLOR, cs);
+                m.insert_attribute(b::Mesh::ATTRIBUTE_UV_0, uvs);
             }
             world.entity_mut(*e).insert((tf, b::Visibility::Visible));
+            if st.plane_keys.get(k) != Some(&liv_key) {
+                world.entity_mut(*e).insert(b::MeshMaterial3d(liv_mat));
+            }
         } else {
-            let mh = world.resource_mut::<b::Assets<b::Mesh>>().add(mesh_of(ps, ns, cs, &p.mesh.indices));
-            let e = world.spawn((b::Mesh3d(mh.clone()), b::MeshMaterial3d(st.plane_mat.clone()), tf)).id();
+            let mut mesh = mesh_of(ps, ns, cs, &p.mesh.indices);
+            mesh.insert_attribute(b::Mesh::ATTRIBUTE_UV_0, uvs);
+            let mh = world.resource_mut::<b::Assets<b::Mesh>>().add(mesh);
+            let e = world.spawn((b::Mesh3d(mh.clone()), b::MeshMaterial3d(liv_mat), tf)).id();
             if k < st.planes.len() {
                 world.despawn(st.planes[k].0);
                 st.planes[k] = (e, mh, p.file.clone());
@@ -347,6 +388,10 @@ fn render(st: &mut State, frame: &Frame, w: u32, h: u32) -> Option<egui::Texture
                 st.planes.push((e, mh, p.file.clone()));
             }
         }
+        if st.plane_keys.len() <= k {
+            st.plane_keys.resize(k + 1, String::new());
+        }
+        st.plane_keys[k] = liv_key;
     }
     for (e, _, _) in st.planes.iter().skip(frame.planes.len()) {
         world.entity_mut(*e).insert(b::Visibility::Hidden);

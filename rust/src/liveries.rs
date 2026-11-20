@@ -1001,3 +1001,355 @@ mod tests {
         assert!(got.len() >= 3);
     }
 }
+
+// ---------- the livery as a picture, for the Bevy renderer ----------
+//
+// The fuselage and the fin of every model are painted from one picture per livery and model (`paint`), sampled per
+// pixel, so the belly's edge, the cheatline and the tail colour stay sharp on coarse models, and the title and the
+// mark on the fin can be drawn. view3d.rs `posed` gives the vertices their place in it:
+//   rows 0 … FUS_V        the fuselage: down from its top (h 1) to its bottom (h -1); the left half the left side
+//                         (nose at the left edge), the right half the right side (nose at the right edge), so that
+//                         a title reads from the nose on the left and towards the nose on the right, as the browser's
+//   rows FIN_V0 … FIN_V1  the fin, its top first, both sides the same way
+//   rows WHITE_V … 1      white, for every other part (their colours are the vertices')
+
+pub const TEX_W: usize = 2048;
+pub const TEX_H: usize = 1024;
+pub const FUS_V: f32 = 0.48;
+pub const FIN_V0: f32 = 0.5;
+pub const FIN_V1: f32 = 0.94;
+pub const WHITE_V: f32 = 0.96;
+
+/// Where a model's livery goes: its fuselage's height (the model is 1 long) and its fin's box: y from (rear), y to
+/// (front), z from (foot), z to (top).
+#[derive(Clone, Copy, Debug)]
+pub struct LivFrame {
+    pub ratio: f32,
+    pub fin: [f32; 4],
+}
+
+/// Where a title stands: its middle below the top of the fuselage and its greatest height, in fuselage widths
+/// (as js/livery.js TITLE_AT).
+fn title_at(at: Option<&str>) -> (f32, f32) {
+    match at {
+        Some("above") => (0.25, 0.22),
+        Some("low") => (0.76, 0.3),
+        _ => (0.42, 0.46),
+    }
+}
+
+/// A text as a coverage mask cropped to its ink: (width, height, 0..1 per pixel). Ubuntu (egui's own font), made
+/// bolder for a bold style.
+fn text_mask(text: &str, style: &str) -> Option<(usize, usize, Vec<f32>)> {
+    use ab_glyph::{Font, FontRef, PxScale, ScaleFont, point};
+    let font = FontRef::try_from_slice(epaint_default_fonts::UBUNTU_LIGHT).ok()?;
+    let scale = PxScale::from(110.0);
+    let sf = font.as_scaled(scale);
+    let pad = 12usize;
+    let mut x = 0.0f32;
+    let mut glyphs = Vec::new();
+    let mut prev = None;
+    for ch in text.chars() {
+        let id = sf.glyph_id(ch);
+        if let Some(p) = prev {
+            x += sf.kern(p, id);
+        }
+        glyphs.push(id.with_scale_and_position(scale, point(x, sf.ascent())));
+        x += sf.h_advance(id);
+        prev = Some(id);
+    }
+    let (w, h) = (x.ceil() as usize + 2 * pad, (sf.ascent() - sf.descent()).ceil() as usize + 2 * pad);
+    let mut buf = vec![0f32; w * h];
+    for g in glyphs {
+        if let Some(og) = font.outline_glyph(g) {
+            let b = og.px_bounds();
+            og.draw(|gx, gy, c| {
+                let (px, py) = (b.min.x as i64 + gx as i64 + pad as i64, b.min.y as i64 + gy as i64 + pad as i64);
+                if px >= 0 && py >= 0 && (px as usize) < w && (py as usize) < h {
+                    let o = py as usize * w + px as usize;
+                    buf[o] = buf[o].max(c);
+                }
+            });
+        }
+    }
+    // bold: spread the ink (the font is a light one)
+    let r = if style.contains("900") { 6 } else if style.contains("700") || style.is_empty() { 4 } else { 2 };
+    let mut fat = buf.clone();
+    for y in 0..h {
+        for x in 0..w {
+            let mut m = 0f32;
+            for dy in -(r as i64)..=r as i64 {
+                for dx in -(r as i64)..=r as i64 {
+                    if dx * dx + dy * dy > (r * r) as i64 {
+                        continue;
+                    }
+                    let (sx, sy) = (x as i64 + dx, y as i64 + dy);
+                    if sx >= 0 && sy >= 0 && (sx as usize) < w && (sy as usize) < h {
+                        m = m.max(buf[sy as usize * w + sx as usize]);
+                    }
+                }
+            }
+            fat[y * w + x] = m;
+        }
+    }
+    // (cropped to the ink, so the letters fill the box they are given)
+    let (mut x0, mut x1, mut y0, mut y1) = (w, 0, h, 0);
+    for y in 0..h {
+        for x in 0..w {
+            if fat[y * w + x] > 0.05 {
+                x0 = x0.min(x);
+                x1 = x1.max(x);
+                y0 = y0.min(y);
+                y1 = y1.max(y);
+            }
+        }
+    }
+    if x1 <= x0 || y1 <= y0 {
+        return None;
+    }
+    let (cw, ch) = (x1 - x0 + 1, y1 - y0 + 1);
+    let mut out = vec![0f32; cw * ch];
+    for y in 0..ch {
+        out[y * cw..(y + 1) * cw].copy_from_slice(&fat[(y + y0) * w + x0..(y + y0) * w + x0 + cw]);
+    }
+    Some((cw, ch, out))
+}
+
+fn rgb_of(n: u32) -> [f32; 3] {
+    [((n >> 16) & 255) as f32, ((n >> 8) & 255) as f32, (n & 255) as f32]
+}
+
+/// Lays a mask into the picture's box x0..x1, y0..y1 (pixels) in a colour (bilinear).
+fn blit(px: &mut [u8], mask: &(usize, usize, Vec<f32>), x0: f32, y0: f32, x1: f32, y1: f32, col: [f32; 3]) {
+    let (mw, mh, m) = mask;
+    let (bw, bh) = (x1 - x0, y1 - y0);
+    if bw < 1.0 || bh < 1.0 {
+        return;
+    }
+    for y in (y0.floor().max(0.0) as usize)..(y1.ceil().min(TEX_H as f32) as usize) {
+        for x in (x0.floor().max(0.0) as usize)..(x1.ceil().min(TEX_W as f32) as usize) {
+            let (u, v) = ((x as f32 + 0.5 - x0) / bw * *mw as f32 - 0.5, (y as f32 + 0.5 - y0) / bh * *mh as f32 - 0.5);
+            if u < -0.5 || v < -0.5 || u > *mw as f32 - 0.5 || v > *mh as f32 - 0.5 {
+                continue;
+            }
+            let (ix, iy) = (u.floor().clamp(0.0, (*mw - 1) as f32) as usize, v.floor().clamp(0.0, (*mh - 1) as f32) as usize);
+            let (jx, jy) = ((ix + 1).min(mw - 1), (iy + 1).min(mh - 1));
+            let (tx, ty) = ((u - ix as f32).clamp(0.0, 1.0), (v - iy as f32).clamp(0.0, 1.0));
+            let a = (m[iy * mw + ix] * (1.0 - tx) + m[iy * mw + jx] * tx) * (1.0 - ty) + (m[jy * mw + ix] * (1.0 - tx) + m[jy * mw + jx] * tx) * ty;
+            if a <= 0.0 {
+                continue;
+            }
+            let o = (y * TEX_W + x) * 4;
+            for c in 0..3 {
+                px[o + c] = (px[o + c] as f32 * (1.0 - a) + col[c] * a).round() as u8;
+            }
+        }
+    }
+}
+
+/// How much of the fin's mark covers point p (in the mark's own units, nose towards +x, up +y: as the browser's
+/// shader), and whether it takes the second colour.
+fn mark_at(kind: &str, logo: &str, p: (f32, f32)) -> (f32, bool) {
+    let (x, y) = p;
+    let r = (x * x + y * y).sqrt();
+    let step = |e: f32, v: f32| if v >= e { 1.0 } else { 0.0 };
+    match kind {
+        "cross" => (step(x.abs().max(y.abs()), 1.0) * step(x.abs().min(y.abs()), 0.3), false),
+        "disc" => (step(r, 1.1), false),
+        "ring" => (step(r, 1.15) * step(0.8, r), false),
+        "chevron" => (step((y + 0.9 * x).abs(), 0.5), false),
+        "triangle" => {
+            let inside = y >= -0.95 && x.abs() <= (0.95 - y) * 0.62;
+            let hole = y >= -0.5 && y <= 0.1 && x.abs() <= (0.1 - y) * 0.62;
+            (if inside && !hole { 1.0 } else { 0.0 }, y < -0.5)
+        }
+        "split" => (step(0.1, y + 0.9 * x), false),
+        "logo" => {
+            let a = y.atan2(x);
+            let cov = match logo {
+                // a five-pointed star
+                "star" => {
+                    let k = (a + std::f32::consts::FRAC_PI_2).rem_euclid(std::f32::consts::TAU / 5.0) - std::f32::consts::PI / 5.0;
+                    let edge = 0.42 / (0.42 * k.abs().cos() + 0.62 * k.abs().sin()).max(0.2);
+                    step(r, edge.min(1.05))
+                }
+                // a disc with rays
+                "sun" => (step(r, 0.5) + step(0.65, r) * step(r, 1.0) * step(0.0, (a * 6.0).cos())).min(1.0),
+                // a ring with a meridian and the equator
+                "globe" => (step(0.85, r) * step(r, 1.0) + step(r, 1.0) * (step(x.abs(), 0.07) + step(y.abs(), 0.07))).min(1.0),
+                // a bird or a plane: two swept wings
+                "bird" | "crane" | "plane" => step(r, 1.0) * step((y - 0.55 * x.abs() + 0.2).abs(), 0.18),
+                "wave" => step(r, 1.0) * step(((y * 3.0).fract() - 0.5 + 0.15 * (x * 6.0).sin()).abs(), 0.18),
+                _ => (step(0.8, r) * step(r, 1.0) + step(r, 0.45)).min(1.0),
+            };
+            (cov, false)
+        }
+        _ => (0.0, false),
+    }
+}
+
+/// The picture of a livery (as js/data/liveries.js writes it) for a model: RGBA, TEX_W × TEX_H, sRGB.
+pub fn paint(l: &Value, f: &LivFrame) -> Vec<u8> {
+    let body = col(l, "body", 0xf4f5f7);
+    let fin = col(l, "fin", body);
+    let mut px = vec![255u8; TEX_W * TEX_H * 4];
+    let half = TEX_W / 2;
+    let fus_rows = (FUS_V * TEX_H as f32) as usize;
+    let ratio = f.ratio.max(0.02);
+    // the fuselage
+    let belly = num(&l["belly"]["color"]).map(|c| {
+        let from = l["belly"]["from"].as_f64().unwrap_or(0.75) as f32;
+        let nose = l["belly"]["nose"].as_f64().unwrap_or(0.0) as f32;
+        let aft = l["belly"]["aft"].as_f64().map_or(99.0, |a| a as f32);
+        let line = num(&l["belly"]["line"]);
+        let lw = l["belly"]["lineWidth"].as_f64().unwrap_or(0.04) as f32;
+        (c, from, nose, aft, line, lw)
+    });
+    let stripe = num(&l["stripe"]["color"]).map(|c| (c, l["stripe"]["at"].as_f64().unwrap_or(0.62) as f32, l["stripe"]["width"].as_f64().unwrap_or(0.08) as f32));
+    let tail = l["tail"].as_bool().unwrap_or(false);
+    let nose_from = 0.5 - 1.9 * ratio;
+    for y in 0..fus_rows {
+        let h = 1.0 - 2.0 * (y as f32 + 0.5) / fus_rows as f32;
+        for x in 0..TEX_W {
+            let u = ((x % half) as f32 + 0.5) / half as f32;
+            let along = if x < half { 0.5 - u } else { u - 0.5 };
+            let mut c = body;
+            if let Some((bc, from, nose, aft, line, lw)) = belly {
+                let mut edge = 1.0 - 2.0 * from;
+                if nose > 0.0 && along > nose_from {
+                    edge += (along - nose_from) / (1.9 * ratio) * nose * 2.0;
+                }
+                if along < aft {
+                    match line {
+                        Some(lc) if (h - edge).abs() < lw => c = lc,
+                        _ if h < edge => c = bc,
+                        _ => {}
+                    }
+                }
+            }
+            if let Some((sc, at, w)) = stripe {
+                if (h - (1.0 - 2.0 * at)).abs() < w {
+                    c = sc;
+                }
+            }
+            // the fin's colour round the rear fuselage: from the fin's front edge at the top, back towards the bottom
+            if tail && along < f.fin[1] - (1.0 - h) * ratio * 0.9 {
+                c = fin;
+            }
+            let o = (y * TEX_W + x) * 4;
+            px[o] = (c >> 16) as u8;
+            px[o + 1] = (c >> 8) as u8;
+            px[o + 2] = c as u8;
+        }
+    }
+    // the title on both sides
+    let title = l["title"].as_str().unwrap_or("");
+    let style = l["titleStyle"].as_str().unwrap_or("700");
+    if let Some(mask) = (!title.trim().is_empty()).then(|| text_mask(title, style)).flatten() {
+        let (d, th0) = title_at(l["titleAt"].as_str());
+        let th = l["titleHeight"].as_f64().map_or(th0, |v| v as f32);
+        let max_len = l["titleLength"].as_f64().map_or(3.0, |v| v as f32);
+        let aspect = mask.0 as f32 / mask.1 as f32;
+        let th = th.min(max_len / aspect);
+        let a1 = 0.5 - 2.4 * ratio;
+        let a0 = a1 - aspect * th * ratio;
+        let row = |h: f32| (1.0 - h) / 2.0 * fus_rows as f32;
+        let (y0, y1) = (row(1.0 - 2.0 * d + th), row(1.0 - 2.0 * d - th));
+        let tc = rgb_of(col(l, "titleColor", 0));
+        blit(&mut px, &mask, (0.5 - a1) * half as f32, y0, (0.5 - a0) * half as f32, y1, tc);
+        blit(&mut px, &mask, half as f32 + (a0 + 0.5) * half as f32, y0, half as f32 + (a1 + 0.5) * half as f32, y1, tc);
+    }
+    // the fin
+    let [fy0, fy1, fz0, fz1] = f.fin;
+    let (flen, fhgt) = ((fy1 - fy0).max(1e-4), (fz1 - fz0).max(1e-4));
+    let (r0, r1) = ((FIN_V0 * TEX_H as f32) as usize, (FIN_V1 * TEX_H as f32) as usize);
+    let mark = &l["mark"];
+    let kind = mark["kind"].as_str().unwrap_or("");
+    let logo = mark["logo"].as_str().unwrap_or("star");
+    let ma = rgb_of(num(&mark["color"]).unwrap_or(fin));
+    let mb = rgb_of(num(&mark["color2"]).or(num(&mark["color"])).unwrap_or(fin));
+    let size = mark["size"].as_f64().unwrap_or(1.0) as f32;
+    let (cy, cz) = (fy0 + 0.36 * flen, fz0 + 0.55 * fhgt);
+    let rad = 0.26 * fhgt * if kind == "logo" { 1.0 } else { size };
+    let fc = rgb_of(fin);
+    for y in r0..r1 {
+        let fz = 1.0 - (y as f32 + 0.5 - r0 as f32) / (r1 - r0) as f32;
+        let pz = fz0 + fz * fhgt;
+        for x in 0..TEX_W {
+            let u = ((x % half) as f32 + 0.5) / half as f32;
+            let fyn = if x < half { 1.0 - u } else { u };
+            let py = fy0 + fyn * flen;
+            let (cov, second) = if kind.is_empty() || kind == "text" || (kind == "logo" && logo == "klm") { (0.0, false) } else { mark_at(kind, logo, ((py - cy) / rad, (pz - cz) / rad)) };
+            let mc = if second { mb } else { ma };
+            let o = (y * TEX_W + x) * 4;
+            for c in 0..3 {
+                px[o + c] = (fc[c] * (1.0 - cov) + mc[c] * cov).round() as u8;
+            }
+        }
+    }
+    if kind == "text" || (kind == "logo" && logo == "klm") {
+        let text = if kind == "text" { mark["text"].as_str().unwrap_or("") } else { "KLM" };
+        if let Some(mask) = text_mask(text, "700") {
+            let aspect = mask.0 as f32 / mask.1 as f32;
+            // as wide as half the fin's length at most, a quarter of its height at most
+            let w = (0.55 * flen).min(aspect * 0.28 * fhgt);
+            let hgt = w / aspect;
+            let (py0, py1, pz0, pz1) = (cy - w / 2.0, cy + w / 2.0, cz - hgt / 2.0, cz + hgt / 2.0);
+            let row = |pz: f32| r0 as f32 + (1.0 - (pz - fz0) / fhgt) * (r1 - r0) as f32;
+            let (y0, y1) = (row(pz1), row(pz0));
+            let xl = |py: f32| (1.0 - (py - fy0) / flen) * half as f32;
+            let xr = |py: f32| half as f32 + (py - fy0) / flen * half as f32;
+            blit(&mut px, &mask, xl(py1), y0, xl(py0), y1, ma);
+            blit(&mut px, &mask, xr(py0), y0, xr(py1), y1, ma);
+        }
+    }
+    px
+}
+
+/// The picture with every mip level after it (box filtered), for a texture that doesn't shimmer far off.
+pub fn with_mips(base: Vec<u8>, w: usize, h: usize) -> (Vec<u8>, u32) {
+    let mut out = base.clone();
+    let (mut lw, mut lh, mut level) = (w, h, base);
+    let mut n = 1;
+    while lw > 1 || lh > 1 {
+        let (nw, nh) = ((lw / 2).max(1), (lh / 2).max(1));
+        let mut next = vec![0u8; nw * nh * 4];
+        for y in 0..nh {
+            for x in 0..nw {
+                for c in 0..4 {
+                    let s = |dx: usize, dy: usize| level[(((2 * y + dy).min(lh - 1)) * lw + (2 * x + dx).min(lw - 1)) * 4 + c] as u32;
+                    next[(y * nw + x) * 4 + c] = ((s(0, 0) + s(1, 0) + s(0, 1) + s(1, 1) + 2) / 4) as u8;
+                }
+            }
+        }
+        out.extend_from_slice(&next);
+        level = next;
+        lw = nw;
+        lh = nh;
+        n += 1;
+    }
+    (out, n)
+}
+
+#[cfg(test)]
+mod picture_tests {
+    use super::*;
+
+    #[test]
+    fn livery_pictures() {
+        let f = LivFrame { ratio: 0.107, fin: [-0.5, -0.33, 0.055, 0.2] };
+        for id in ["swiss", "easyjet", "klm", "classic-blue", "delta", "lufthansa"] {
+            let l = view3d::liveries().iter().find(|l| l.id == id).unwrap();
+            let px = paint(&l.src, &f);
+            assert_eq!(px.len(), TEX_W * TEX_H * 4);
+            // the title is in the picture: the title's colour somewhere in the window band
+            if std::env::var_os("LIVERY_PNG").is_some() {
+                let small: Vec<u8> = px.chunks(4 * TEX_W).step_by(2).flat_map(|row| row.chunks(4).step_by(2).flatten().copied().collect::<Vec<u8>>()).collect();
+                image::save_buffer(std::env::temp_dir().join(format!("liv_{id}.png")), &small, (TEX_W / 2) as u32, (TEX_H / 2) as u32, image::ExtendedColorType::Rgba8).unwrap();
+            }
+        }
+        let (all, n) = with_mips(vec![255u8; 8 * 4 * 4], 8, 4);
+        assert_eq!(n, 4);
+        assert_eq!(all.len(), (32 + 8 + 2 + 1) * 4);
+    }
+}

@@ -276,16 +276,23 @@ fn load_mesh(file: &str) -> Option<Mesh> {
 
 /// A model's vertices as the shader moves them for plane `p` (its moving parts, wing bend, gear, shock absorbers,
 /// reversers, spoilers: the same as `vs_main`), with their colours from its livery (as `fs_main` paints them,
-/// linear): for the Bevy renderer, which draws them with its own lighting. (positions, normals, colours)
-pub(crate) fn posed(m: &Mesh, p: &Plane) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<[f32; 4]>) {
+/// linear): for the Bevy renderer, which draws them with its own lighting. The fuselage and the fin are white with
+/// their place in the livery's picture (liveries.rs `paint`, framed by `f`) as UVs; the other parts have their own
+/// colours and a white spot of the picture. (positions, normals, colours, UVs)
+#[allow(clippy::type_complexity)]
+pub(crate) fn posed(m: &Mesh, p: &Plane, f: &crate::liveries::LivFrame) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<[f32; 4]>, Vec<[f32; 2]>) {
+    use crate::liveries::{FIN_V0, FIN_V1, FUS_V, WHITE_V};
     let (a0, a1, a2, a3) = (p.anim0, p.anim1, p.anim2, p.anim3);
     let rot2 = |x: f32, y: f32, a: f32| (x * a.cos() - y * a.sin(), x * a.sin() + y * a.cos());
     let lin = |c: [f32; 3]| [c[0].powf(2.2), c[1].powf(2.2), c[2].powf(2.2), 1.0];
     let lv = &p.livery;
     let n = m.vertices.len();
     let (mut ps, mut ns, mut cs) = (Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n));
+    let mut uvs = Vec::with_capacity(n);
+    let white_uv = [0.5, (WHITE_V + 1.0) / 2.0];
     for v in &m.vertices {
         let (mut q, mut nn) = (v.pos, v.normal);
+        let mut uv = white_uv;
         let (k, an) = (v.anim[0], v.anim);
         let mut show = true;
         if k > 0.5 && k < 3.5 {
@@ -357,7 +364,20 @@ pub(crate) fn posed(m: &Mesh, p: &Plane) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<[
         } else if part > 1.5 {
             lin(lv.wing)
         } else if part > 0.5 {
-            lin(lv.fin)
+            // the fin: in its band of the picture, by its place along and up the fin (rest positions, so the rudder's
+            // paint moves with it)
+            let fyn = ((v.pos[1] - f.fin[0]) / (f.fin[1] - f.fin[0]).max(1e-4)).clamp(0.0, 1.0);
+            let fz = ((v.pos[2] - f.fin[2]) / (f.fin[3] - f.fin[2]).max(1e-4)).clamp(0.0, 1.0);
+            let u = if v.normal[0] < 0.0 { 0.5 * (1.0 - fyn) } else { 0.5 + 0.5 * fyn };
+            uv = [u.clamp(0.001, 0.999), FIN_V0 + (FIN_V1 - FIN_V0) * (1.0 - fz)];
+            [1.0, 1.0, 1.0, 1.0]
+        } else if !lv.src.is_null() {
+            // the fuselage: by its height (info.y) and place along (info.z), the left side in the left half
+            let h = v.info[1].clamp(-1.0, 1.0);
+            let along = v.info[2].clamp(-0.5, 0.5);
+            let u = if v.pos[0] < 0.0 { (0.5 * (0.5 - along)).clamp(0.001, 0.499) } else { (0.5 + 0.5 * (along + 0.5)).clamp(0.501, 0.999) };
+            uv = [u, ((1.0 - h) / 2.0 * FUS_V).clamp(0.001, FUS_V - 0.002)];
+            [1.0, 1.0, 1.0, 1.0]
         } else {
             let mut c = lv.body;
             if let Some((belly, from)) = lv.belly {
@@ -379,8 +399,31 @@ pub(crate) fn posed(m: &Mesh, p: &Plane) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<[
         ps.push(q);
         ns.push(nn);
         cs.push(if show { c } else { [0.0, 0.0, 0.0, 0.0] });
+        uvs.push(uv);
     }
-    (ps, ns, cs)
+    (ps, ns, cs, uvs)
+}
+
+/// Where a model's livery goes (for its picture, liveries.rs `paint`): its fuselage's height and its fin's box.
+pub(crate) fn liv_frame(m: &Mesh) -> crate::liveries::LivFrame {
+    let (mut z0, mut z1) = (f32::MAX, f32::MIN);
+    let mut fin = [f32::MAX, f32::MIN, f32::MAX, f32::MIN];
+    for v in &m.vertices {
+        let part = v.info[0];
+        if part < 0.5 && v.info[1] > -0.999 && v.anim[0] < 0.5 {
+            z0 = z0.min(v.pos[2]);
+            z1 = z1.max(v.pos[2]);
+        } else if part > 0.5 && part < 1.5 {
+            fin = [fin[0].min(v.pos[1]), fin[1].max(v.pos[1]), fin[2].min(v.pos[2]), fin[3].max(v.pos[2])];
+        }
+    }
+    let ratio = if z1 > z0 { z1 - z0 } else { 0.1 };
+    if fin[0] >= fin[1] || fin[2] >= fin[3] {
+        fin = [-0.5, -0.32, z1, z1 + 1.4 * ratio];
+    }
+    // (the fin's foot: where it leaves the fuselage, not inside it)
+    fin[2] = fin[2].max(z1 - 0.1 * ratio).min(fin[3] - 0.01);
+    crate::liveries::LivFrame { ratio, fin }
 }
 
 /// What the gear needs to know about a model's shape: the wing root (leading and trailing edge, underside), the
