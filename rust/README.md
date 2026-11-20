@@ -87,6 +87,14 @@ cache folder.
   selected plane, finishing construction, new market offers, time. Unlike the browser game they have a password:
   the first time you set one, after that they ask for it once per start. Only a SHA-256 hash of it is kept, in
   `settings.json` beside the save (with the style and other settings); remove its `dev_hash` to set a new one.
+- **The 3D view drawn by Bevy** (✨ Bevy renderer in the 3D view, on by default; `src/bevy3d.rs`): the same scene
+  with Bevy's physically based lighting: the sun with real shadows (the plane's on the apron, the terminals' across
+  it), glossy paint, the sky from Bevy's atmosphere (blue by day, red and gold at dusk, dark at night, the exposure
+  following the light as a camera's would), haze, soft clouds facing the camera, the terminals' windows in bands
+  that light up at night, tone mapping and bloom. Bevy runs on the window's own wgpu device (main.rs asks for the
+  device Bevy would) and renders into a texture the egui window shows; every moving part is posed as the classic
+  renderer moves it (`view3d::posed`). Where Bevy can't start (or with `FLIGHTGAME_CLASSIC_3D=1`, or the button
+  off) the classic renderer below draws.
 - **3D view** (V, or 🛩 3D in the plane window): the plane as its 3D model from `models/*.glb` (the browser game's
   files), painted in the livery you pick (🎨: SWISS, Lufthansa, KLM, Delta, Ryanair, Eurowings, easyJet, from
   `js/data/liveries.js`), with your other planes nearby, over Esri's satellite pictures (kept on disk once loaded),

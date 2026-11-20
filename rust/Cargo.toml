@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+# the 3D view's renderer (on the window's own wgpu device: src/bevy3d.rs)
+bevy = { version = "0.20.1", default-features = false, features = ["std", "multi_threaded", "async_executor", "bevy_asset", "bevy_log", "bevy_render", "bevy_core_pipeline", "bevy_pbr", "bevy_light", "bevy_camera", "bevy_image", "bevy_mesh", "bevy_shader", "bevy_material", "bevy_color", "bevy_post_process", "bevy_anti_alias", "png", "ktx2", "zstd_rust", "tonemapping_luts", "smaa_luts", "bevy_mikktspace"] }
 bytemuck = { version = "1.25.2", features = ["derive"] }
 dirs = "7.0.0"
 eframe = "0.37.0"

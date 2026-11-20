@@ -144,6 +144,10 @@ impl App {
         let v3_ok = match cc.wgpu_render_state.as_ref() {
             Some(rs) => {
                 crate::view3d::init(rs);
+                // Bevy draws it where it can start (FLIGHTGAME_CLASSIC_3D=1: the classic renderer only)
+                if std::env::var_os("FLIGHTGAME_CLASSIC_3D").is_none() {
+                    crate::bevy3d::init(rs);
+                }
                 true
             }
             None => false,
@@ -2884,6 +2888,12 @@ impl eframe::App for App {
                                 }
                             });
                         });
+                        if crate::bevy3d::available() {
+                            let on = crate::bevy3d::enabled();
+                            if ui.selectable_label(on, "✨ Bevy renderer").on_hover_text("Sun, shadows and a real sky (Bevy); off: the classic renderer").clicked() {
+                                crate::bevy3d::set_enabled(!on);
+                            }
+                        }
                         ui.weak("Drag: turn round it · wheel: closer");
                         if ui.button("🗺 Back to the map (V)").clicked() {
                             self.v3.on = false;

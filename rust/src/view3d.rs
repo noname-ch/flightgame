@@ -129,21 +129,21 @@ fn models_dir() -> std::path::PathBuf {
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Vertex {
-    pos: [f32; 3],
-    normal: [f32; 3],
+    pub(crate) pos: [f32; 3],
+    pub(crate) normal: [f32; 3],
     /// part: 0 fuselage, 1 fin, 2 wings and tailplane, 3 engines, 4 dark, 5 its own colour, 6 a building's wall;
     /// then for the fuselage its height (-1 bottom … 1 top) and the place along it (-0.5 tail … 0.5 nose), for a
     /// wall the height (m) and the distance along it (m)
-    info: [f32; 3],
+    pub(crate) info: [f32; 3],
     /// what moves: kind (1 aileron, 2 flap, 3 elevator: hinge y, z; 4 rudder: hinge y; 5 propeller: hub x, z;
     /// 6 a fan's face: hub x, z, radius; 7 landing gear: the height it folds up to, then 1 on a main leg's or
     /// 2 on the nose leg's shock absorber (it slides); 8 a jet engine's rear: how far it slides back with a
     /// translating sleeve reverser (0 for the parts that don't), the bucket's hinge y, the engine's axis z;
     /// 10 a spoiler panel: its hinge (front edge) y, z); for a wall: 0, its style (0 plain, 1 windows, 2 ribbed),
     /// its top (m)
-    anim: [f32; 4],
+    pub(crate) anim: [f32; 4],
     /// own colour and alpha (parts 5 and 6); on the aircraft x is how far the wing bends there (per unit of flex)
-    color: [f32; 4],
+    pub(crate) color: [f32; 4],
 }
 
 fn vx(pos: [f32; 3], normal: [f32; 3], info: [f32; 3]) -> Vertex {
@@ -153,9 +153,9 @@ fn vx(pos: [f32; 3], normal: [f32; 3], info: [f32; 3]) -> Vertex {
 /// A model, 1 unit long (x right wing, y nose, z up, centred), its vertices sorted into the livery's parts and
 /// what moves; `ground`: the height (model units) its wheels stand on.
 pub struct Mesh {
-    vertices: Vec<Vertex>,
-    indices: Vec<u32>,
-    ground: f32,
+    pub(crate) vertices: Vec<Vertex>,
+    pub(crate) indices: Vec<u32>,
+    pub(crate) ground: f32,
 }
 
 fn load_mesh(file: &str) -> Option<Mesh> {
@@ -246,6 +246,109 @@ fn load_mesh(file: &str) -> Option<Mesh> {
     let ground = add_gear(&mut vertices, &mut indices, file, &shape, rx, zmin, zlow);
     add_spoilers(&mut vertices, &mut indices, &shape);
     Some(Mesh { vertices, indices, ground })
+}
+
+/// A model's vertices as the shader moves them for plane `p` (its moving parts, wing bend, gear, shock absorbers,
+/// reversers, spoilers: the same as `vs_main`), with their colours from its livery (as `fs_main` paints them,
+/// linear): for the Bevy renderer, which draws them with its own lighting. (positions, normals, colours)
+pub(crate) fn posed(m: &Mesh, p: &Plane) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<[f32; 4]>) {
+    let (a0, a1, a2, a3) = (p.anim0, p.anim1, p.anim2, p.anim3);
+    let rot2 = |x: f32, y: f32, a: f32| (x * a.cos() - y * a.sin(), x * a.sin() + y * a.cos());
+    let lin = |c: [f32; 3]| [c[0].powf(2.2), c[1].powf(2.2), c[2].powf(2.2), 1.0];
+    let lv = &p.livery;
+    let n = m.vertices.len();
+    let (mut ps, mut ns, mut cs) = (Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n));
+    for v in &m.vertices {
+        let (mut q, mut nn) = (v.pos, v.normal);
+        let (k, an) = (v.anim[0], v.anim);
+        let mut show = true;
+        if k > 0.5 && k < 3.5 {
+            let a = if k < 1.5 { a0[2] * q[0].signum() } else if k > 2.5 { a0[3] } else { a0[1] };
+            let (y, z) = rot2(q[1] - an[1], q[2] - an[2], a);
+            q[1] = an[1] + y;
+            q[2] = an[2] + z;
+            let (ny, nz) = rot2(nn[1], nn[2], a);
+            nn = [nn[0], ny, nz];
+        } else if k > 3.5 && k < 4.5 {
+            let (x, y) = rot2(q[0], q[1] - an[1], a1[0]);
+            q[0] = x;
+            q[1] = an[1] + y;
+        } else if k > 4.5 && k < 5.5 {
+            let a = a0[0] * an[1].signum();
+            let (x, z) = rot2(q[0] - an[1], q[2] - an[2], a);
+            q[0] = an[1] + x;
+            q[2] = an[2] + z;
+            let (nx, nz) = rot2(nn[0], nn[2], a);
+            nn = [nx, nn[1], nz];
+        } else if k > 6.5 && k < 7.5 {
+            if an[2] > 0.5 {
+                q[2] -= if an[2] < 1.5 { a2[2] } else { a2[3] };
+            }
+            let g = a1[2];
+            if g < 0.02 {
+                q = [0.0, 0.0, an[1]];
+                show = false;
+            } else {
+                q[2] = an[1] + (q[2] - an[1]) * g;
+            }
+        } else if k > 7.5 && k < 8.5 {
+            let on = a2[1] == 0.0 || (a2[1] > 0.0 && q[0].abs() < a2[1]) || (a2[1] < 0.0 && q[0].abs() > -a2[1]);
+            let rk = a3[1];
+            if a2[0] > 0.001 && on {
+                if rk > 0.5 && rk < 2.5 {
+                    if an[1] > 0.0 {
+                        q[1] -= an[1] * a2[0] * if rk > 1.5 { 0.7 } else { 1.0 };
+                    }
+                } else if rk > 2.5 && q[1] < an[2] {
+                    let a = if q[2] >= an[3] { 1.0 } else { -1.0 } * a2[0];
+                    let (y, z) = rot2(q[1] - an[2], q[2] - an[3], a);
+                    q[1] = an[2] + y;
+                    q[2] = an[3] + z;
+                    let (ny, nz) = rot2(nn[1], nn[2], a);
+                    nn = [nn[0], ny, nz];
+                }
+            }
+        } else if k > 9.5 && k < 10.5 {
+            let a = -a3[0];
+            let (y, z) = rot2(q[1] - an[1], q[2] - an[2], a);
+            q[1] = an[1] + y;
+            q[2] = an[2] + z;
+            let (ny, nz) = rot2(nn[1], nn[2], a);
+            nn = [nn[0], ny, nz];
+        }
+        if v.info[0] < 4.5 {
+            q[2] += a1[1] * v.color[0];
+        }
+        let part = v.info[0];
+        let c = if part > 4.5 {
+            lin([v.color[0], v.color[1], v.color[2]])
+        } else if part > 3.5 {
+            lin([0.08, 0.09, 0.1])
+        } else if k > 5.5 && k < 6.5 {
+            lin([0.35, 0.36, 0.38]) // (a fan's face)
+        } else if part > 2.5 {
+            lin(lv.engine)
+        } else if part > 1.5 {
+            lin(lv.wing)
+        } else if part > 0.5 {
+            lin(lv.fin)
+        } else {
+            let mut c = lv.body;
+            if let Some((belly, from)) = lv.belly {
+                if from > 0.0 && v.info[1] < 1.0 - 2.0 * from {
+                    c = belly;
+                }
+            }
+            if lv.tail && v.info[2] < -0.36 {
+                c = lv.fin;
+            }
+            lin(c)
+        };
+        ps.push(q);
+        ns.push(nn);
+        cs.push(if show { c } else { [0.0, 0.0, 0.0, 0.0] });
+    }
+    (ps, ns, cs)
 }
 
 /// What the gear needs to know about a model's shape: the wing root (leading and trailing edge, underside), the
@@ -806,9 +909,12 @@ pub struct Ground {
     /// the tiles the picture shows (None: none yet, a plain colour)
     shown: Option<(u32, u32, u32)>,
     loading: bool,
-    pixels: Option<Vec<u8>>,
-    fresh: bool,
+    pub(crate) pixels: Option<Vec<u8>>,
+    pub(crate) fresh: bool,
 }
+
+/// The ground picture's size (pixels a side).
+pub(crate) const GROUND_PX: u32 = 256 * GROUND_TILES;
 
 const GROUND_TILES: u32 = 4;
 
@@ -903,9 +1009,9 @@ pub struct Plane {
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Puff {
-    at: [f32; 3],
-    size: [f32; 3],
-    color: [f32; 4],
+    pub(crate) at: [f32; 3],
+    pub(crate) size: [f32; 3],
+    pub(crate) color: [f32; 4],
 }
 
 /// What a frame of the 3D view draws.
@@ -913,6 +1019,11 @@ pub struct Puff {
 pub struct Frame {
     pub view_proj: Mat4,
     pub eye: Vec3,
+    /// where the camera looks, which way is up for it
+    pub target: Vec3,
+    pub up: Vec3,
+    /// the sun's true direction (east, north, up) for the Bevy renderer's sky; the classic one's `sun` is lifted
+    pub sun_true: Vec3,
     pub sun: Vec3,
     /// how light it is (0 night … 1 day)
     pub light: f32,
@@ -2019,9 +2130,15 @@ impl View3d {
             buildings.len(),
             planes.iter().map(|p| (p.file.clone(), p.at, p.heading, p.anim1[2])).collect::<Vec<_>>()
         );
+        // the sun's true place in the sky (its hour angle and declination)
+        let (la, de, ha) = (lat0.to_radians(), dec.to_radians(), (lon0 - sun_lon).to_radians());
+        let sun_true = Vec3::new(-(de.cos() * ha.sin()) as f32, (la.cos() * de.sin() - la.sin() * de.cos() * ha.cos()) as f32, (la.sin() * de.sin() + la.cos() * de.cos() * ha.cos()) as f32).normalize_or_zero();
         let frame = Frame {
             view_proj: proj * view,
             eye,
+            target,
+            up,
+            sun_true,
             sun,
             light,
             fog,
@@ -2031,6 +2148,11 @@ impl View3d {
             ground_rect: [x0 as f32, y0 as f32, x1 as f32, y1 as f32],
             ground: self.ground.clone(),
         };
+        // the Bevy renderer (lit by the sun with shadows under a real sky), where it runs
+        if crate::bevy3d::enabled() && crate::bevy3d::draw(ui, rect, &frame) {
+            ui.ctx().request_repaint();
+            return Some(i);
+        }
         // the sky behind: deeper blue up high, the haze's colour at the horizon
         let c32 = |c: [f32; 3]| egui::Color32::from_rgb((c[0].clamp(0.0, 1.0) * 255.0) as u8, (c[1].clamp(0.0, 1.0) * 255.0) as u8, (c[2].clamp(0.0, 1.0) * 255.0) as u8);
         let zenith: [f32; 3] = std::array::from_fn(|c| horizon[c] * if c == 2 { 0.78 } else { 0.55 });

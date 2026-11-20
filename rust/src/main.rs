@@ -3,6 +3,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod bevy3d;
 mod checklist;
 mod editor;
 mod mapview;
@@ -31,6 +32,27 @@ fn main() -> eframe::Result {
         // the 3D view needs a depth buffer and wgpu
         renderer: eframe::Renderer::Wgpu,
         depth_buffer: 24,
+        // the device with everything the adapter can do, as Bevy asks for its own (src/bevy3d.rs renders on it)
+        wgpu_options: eframe::egui_wgpu::WgpuConfiguration {
+            wgpu_setup: eframe::egui_wgpu::WgpuSetup::CreateNew(eframe::egui_wgpu::WgpuSetupCreateNew {
+                device_descriptor: std::sync::Arc::new(|adapter| {
+                    let mut features = adapter.features();
+                    if adapter.get_info().device_type == eframe::wgpu::DeviceType::DiscreteGpu {
+                        features.remove(eframe::wgpu::Features::MAPPABLE_PRIMARY_BUFFERS);
+                    }
+                    eframe::wgpu::DeviceDescriptor {
+                        label: Some("flightgame"),
+                        required_features: features,
+                        required_limits: adapter.limits(),
+                        // SAFETY: as Bevy's own device (bevy_render renderer/mod.rs)
+                        experimental_features: unsafe { eframe::wgpu::ExperimentalFeatures::enabled() },
+                        ..Default::default()
+                    }
+                }),
+                ..eframe::egui_wgpu::WgpuSetupCreateNew::without_display_handle()
+            }),
+            ..Default::default()
+        },
         ..Default::default()
     };
     eframe::run_native("Flightgame", options, Box::new(|cc| Ok(Box::new(app::App::new(cc)))))
