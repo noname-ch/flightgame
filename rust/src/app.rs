@@ -2835,6 +2835,7 @@ impl eframe::App for App {
         // ---------- the map ----------
         let mut picked = None;
         let mut listener = self.listener;
+        let mut ear3d: Option<crate::sound::Ear> = None;
         let (mut edit_took, mut edit_finish) = (false, false);
         egui::CentralPanel::no_frame().show(ui, |ui| {
             let Some(g) = &self.game else { return };
@@ -2846,6 +2847,7 @@ impl eframe::App for App {
                     self.v3.on = false;
                     return;
                 };
+                ear3d = Some(self.v3.ear(g, self.t, i));
                 let p = &g.state.planes[i];
                 let pos = g.flight_pos(i, self.t);
                 let mut save_livery = false;
@@ -3014,7 +3016,9 @@ impl eframe::App for App {
         if let Some(g) = &self.game {
             let running = !self.paused && !g.state.game_over && g.state.news.is_empty();
             let (lat, lon, h) = self.listener;
-            self.sound.update(g, self.t, lat, lon, h, SPEEDS[self.speed], running);
+            let ear = ear3d.unwrap_or_else(|| crate::sound::Ear { lat, lon, h, bearing: 0.0, follow: self.follow.clone(), cam: if self.follow.is_some() { "chase" } else { "" } });
+            let dt = ctx.input(|i| i.stable_dt).min(0.25) as f64;
+            self.sound.update(g, self.t, &ear, SPEEDS[self.speed], running, dt);
         }
     }
 
@@ -3960,7 +3964,7 @@ impl App {
                     for (k, part) in crate::sound::PARTS.iter().enumerate() {
                         ui.label(*part);
                         changed |= ui
-                            .add(egui::Slider::new(&mut mix.level[k], 0.0..=2.0).custom_formatter(|v, _| format!("{:.0}%", v * 100.0)))
+                            .add(egui::Slider::new(mix.part_mut(k), 0.0..=3.0).custom_formatter(|v, _| format!("{:.0}%", v * 100.0)))
                             .changed();
                         let takes: Option<Vec<&str>> = match k {
                             0 => Some(crate::sound::BASS.iter().map(|x| x.0).collect()),
@@ -3981,7 +3985,12 @@ impl App {
                     }
                     ui.label("Screech pitch");
                     changed |= ui
-                        .add(egui::Slider::new(&mut mix.pitch, 0.5..=1.5).custom_formatter(|v, _| format!("{:.0}%", v * 100.0)))
+                        .add(egui::Slider::new(&mut mix.pitch, 0.5..=2.0).custom_formatter(|v, _| format!("{:.0}%", v * 100.0)))
+                        .changed();
+                    ui.end_row();
+                    ui.label("Screech speed");
+                    changed |= ui
+                        .add(egui::Slider::new(&mut mix.speed, 0.25..=2.0).custom_formatter(|v, _| format!("{:.0}%", v * 100.0)))
                         .changed();
                     ui.end_row();
                 });
@@ -3989,7 +3998,7 @@ impl App {
                     *mix = crate::sound::Mix::default();
                     changed = true;
                 }
-                ui.weak("For all planes: the bass and roar near the engines, the screech of the fans, the wash of planes a few kilometres off, the starter whistling up.");
+                ui.weak("For all planes: each nearby plane's engines are made up as they play, with these recordings in them (the bass, roar and screech of jets); far off they turn into the wash of a distant airliner.");
             });
         if !open {
             self.mixer_open = false;

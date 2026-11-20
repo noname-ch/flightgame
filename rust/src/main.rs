@@ -9,6 +9,7 @@ mod mapview;
 mod pictures;
 mod sound;
 mod style;
+mod synth;
 mod view3d;
 
 fn main() -> eframe::Result {

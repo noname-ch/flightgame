@@ -59,9 +59,16 @@ cache folder.
   weather model, storm events as real storms; the airport window shows the weather there). Zoomed in, airports show
   their runways, and the 118 with a real layout in `js/data/layouts` their aprons, terminals, hangars, taxiways and
   stands.
-- **Sound** (🔇 / M, off until turned on; volume in the menu): the browser game's recordings mixed by what the planes
-  near the map's centre do (taxiing, take-off, climb, cruise, approach, reverse thrust), the wash of planes a few
-  kilometres off, and a jet whistling up when it starts at its gate. Above 300× it fades out, paused it is quiet.
+- **Sound** (🔇 / M, off until turned on; volume in the menu): as the browser game, each of the four loudest planes
+  around you has its own voice, its engines made up as they play (`src/synth.rs`) with the browser game's recordings
+  in them: a jet's start (the starter whistling up, the igniters ticking, light-off), the fan's whine at idle, the
+  roar, rumble and screech at take-off power (and louder from behind), climb and cruise power, quiet on the descent,
+  spooling up on the approach, the tyres at touchdown, reverse thrust, the run-down at the gate and the APU;
+  turboprops' two propellers a little out of tune, the air they chop and the turbine's whistle; piston radials
+  cranking, coughing, a rough idle and the growl at full power; the air rushing past. Heard from where you look: the
+  map's centre (higher the further out it is zoomed), or the 3D camera (the followed plane as from close by, on the
+  wing as on it with the wind, the fly-by spot hearing it pass with the Doppler drop). Panned, muffled with distance,
+  far away the wash of a distant airliner. Above 300× it fades out, paused it is quiet.
 - **Looks as the browser game**: the five styles (Night, Tycoon, Metropolis, Pixel, Departure board; the first start
   asks), each type's picture from `models/hangar` on the plane cards, the start screen and in the marketplace's
   hangar, its top view from `models/icons` on the map, the newspaper on paper with a picture and "Next story".
@@ -108,16 +115,17 @@ cache folder.
 - **Bug reports** (F5): a title, what happened and the game's details (version, game date, selection, map position,
   the last crash); then GitHub's new-issue page opens filled in (you send it there), or Copy, or Add to `BUGS.md`
   when it runs from the repo. A crash is written down, and the next start offers to report it.
-- **Sound mixer** (F6): the level of each part (bass, roar, screech, far wash, start), which recording each takes and
-  the screech's pitch, kept in the settings.
+- **Sound mixer** (F6): the level of each part (bass and rumble, roar, screech, far away, engine start, whine,
+  propellers, pistons, air rushing past, APU), which recording the bass, roar and screech take, and the screech's
+  pitch and speed apart (a grain player, as the browser game's), kept in the settings.
 
 ## What it leaves out (for now)
 
 New airport sites (buying land and building an airport from nothing). In 3D the parts are simpler than the browser
 game's (no shock absorbers, gear doors, reversers or spoilers; buildings as plain blocks, not its facades and photo
 roof colours; no rain, snow or lightning), and the airports without a layout of their own have no buildings. The stands of airports the
-browser game reads from OpenStreetMap while it runs are the made-up ones of their size here, and the sound is a mix
-of recordings, not the browser game's engine voices made up as they play.
+browser game reads from OpenStreetMap while it runs are the made-up ones of their size here. The sound has the browser game's Standard style only (not Deep, Open or Soft) and
+one choice of takes for all planes.
 
 One difference: a plane more than half a day behind its timetable (after a strike, say) takes it up again from its
 next departure instead of flying the missed flights late for good.

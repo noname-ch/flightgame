@@ -1461,6 +1461,24 @@ pub struct View3d {
     poses: HashMap<String, Pose>,
 }
 
+impl View3d {
+    /// Where the sound is heard from with plane i on screen: the fly-by spot, else with the plane (the chase camera
+    /// as from close by, the wing camera on it), looking the way the camera does.
+    pub fn ear(&self, g: &flightgame::game::Game, t: f64, i: usize) -> crate::sound::Ear {
+        let p = &g.state.planes[i];
+        let pos = g.flight_pos(i, t);
+        if self.cam == "flyby" {
+            if let Some((la, lo, h, id)) = &self.flyby {
+                if id == &p.id {
+                    let (x, y) = local(*la, *lo, pos.lat, pos.lon);
+                    return crate::sound::Ear { lat: *la, lon: *lo, h: *h, bearing: x.atan2(y).to_degrees(), follow: Some(p.id.clone()), cam: "flyby" };
+                }
+            }
+        }
+        crate::sound::Ear { lat: pos.lat, lon: pos.lon, h: pos.alt_ft * 0.3048, bearing: pos.heading + self.yaw as f64, follow: Some(p.id.clone()), cam: self.cam }
+    }
+}
+
 impl Default for View3d {
     fn default() -> Self {
         View3d {

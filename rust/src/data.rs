@@ -86,6 +86,10 @@ pub struct Aircraft {
     pub climb_fpm: Option<f64>,
     pub v_lof: Option<f64>,
     pub v_app: Option<f64>,
+    /// its engines, from looks.js: uw2 / uw4 / tail2 / hw4 (jets), concorde, prop2 (turboprops), radial2 / prop3
+    /// (pistons); big_fan: a modern high-bypass fan (its sound hums lower)
+    pub eng: String,
+    pub big_fan: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -279,6 +283,8 @@ impl Data {
                 aircraft.push(Aircraft {
                     span: of(&looks[&code]["span"]).unwrap_or(35.0),
                     len: of(&looks[&code]["len"]).unwrap_or(37.0),
+                    eng: looks[&code]["eng"].as_str().unwrap_or("uw2").to_string(),
+                    big_fan: looks[&code]["bigFan"].as_bool().unwrap_or(false),
                     cruise_ft: of(&a["cruiseFt"]),
                     climb_fpm: of(&a["climbFpm"]),
                     v_lof: of(&a["vLofKmh"]),
