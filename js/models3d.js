@@ -2,7 +2,7 @@
 // (models/*.glb, see models/README.md), with landing gear (js/gear3d.js).
 // FG.data.models says which aircraft type uses which model.
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { paintLivery } from './livery.js';
+import { paintLivery, maskOf } from './livery.js';
 import { addGear, gearKey } from './gear3d.js';
 
 const MODELS = new URL('../models/', import.meta.url);
@@ -49,12 +49,12 @@ function raw(file) {
 export function loadModel(type, livery = FG.livery()) {
   const size = modelSize(type);
   const { file, stretch } = size;
-  const key = `${file}|${stretch}|${FG.liveries ? FG.liveries.key(livery) : livery.id}|${gearKey(type, file)}`;
+  const key = `${file}|${stretch}|${FG.liveries ? FG.liveries.key(livery) : livery.id}|${gearKey(type, file)}|${maskOf(file, type) ? 'mask' : ''}`;
   if (!loads[key]) {
     loads[key] = raw(file).then((scene) => {
       const copy = scene.clone();
       copy.traverse((o) => { if (o.isMesh) o.material = o.material.clone(); });
-      return addGear(paintLivery(copy, file, patchFacing, stretch, livery), scene, file, size, patchFacing, type);
+      return addGear(paintLivery(copy, file, patchFacing, stretch, livery, type), scene, file, size, patchFacing, type);
     });
     loads[key].catch((e) => console.warn(`3D model ${file} not loaded`, e));
   }
@@ -69,6 +69,6 @@ export function paintFresh(type, livery) {
   return raw(size.file).then((scene) => {
     const copy = scene.clone();
     copy.traverse((o) => { if (o.isMesh) o.material = o.material.clone(); });
-    return addGear(paintLivery(copy, size.file, patchFacing, size.stretch, livery), scene, size.file, size, patchFacing, type);
+    return addGear(paintLivery(copy, size.file, patchFacing, size.stretch, livery, type), scene, size.file, size, patchFacing, type);
   });
 }

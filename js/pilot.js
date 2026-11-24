@@ -325,7 +325,7 @@
     Object.assign(s, {
       active: true, loading: true, startOpts: opts, type, spec: sp, startAt: performance.now(),
       lat: 0, lon: 0, h: 0, groundH: 0, V: 0, gamma: 0, psi: 0, theta: 0, phi: 0, alpha: 0,
-      onGround: true, landed: false, n1: n1At(IDLE_N1), lever: 0, rev: 0, gearDown: true, gear: 1,
+      load: 0, onGround: true, landed: false, n1: n1At(IDLE_N1), lever: 0, rev: 0, gearDown: true, gear: 1,
       conf: sp.toConf, flapPos: sp.toConf, sb: 0, gs: 0, armed: sp.groundSpoilers, brake: 0, parking: false, afloor: false,
       stick: 0, roll: 0, rud: 0, crashed: null, touch: null, tail: false, paused: false, calls: {}, near: null,
       hideId: opts.plane ? opts.plane.id : null, mass: sp.toMass, prevAgl: null, ghReal: null, ghAt: 0,
@@ -858,7 +858,7 @@
       lat: s.lat, lon: s.lon, altM: a, altMSL: s.h, heading: wrap360(s.psi + (s.onGround ? 0 : s.alpha * Math.sin(s.phi * DEG))), bank: s.phi + s.sway.r + shakeR, pitch: s.theta + s.sway.p + shakeP, flying: true,
       st: { phase, speedKmh: kmh, altFt: s.h / FT, fieldFt: s.groundH / FT, ground: s.onGround, windKt: 0, windFrom: 0, gusty: false, airFrac: 0 },
       pilot: { gear: s.gear, flap: confAt(s.flapPos).flap, ail: s.roll, elev: s.onGround ? s.stick : s.stick * 0.7, rud: s.onGround ? s.rud : s.rud, rev: s.rev, n1: s.n1.reduce((x, y) => x + y, 0) / s.n1.length, gamma: s.gamma / DEG, vs,
-        nz: s.load + bf * 0.25 * Math.sin(tb * 13), stall: s.stallAmt },
+        nz: (s.load || 0) + bf * 0.25 * Math.sin(tb * 13), stall: s.stallAmt || 0 },
     };
   }
 

@@ -20,11 +20,17 @@ const CLEAN = {
 // The black mask round the cockpit windows of the newer Airbuses (the A350's "raccoon mask"), in fuselage widths:
 // from `front` behind the nose back to `tip`; its top edge `hi` below the top of the fuselage, its lower edge `lo`
 // below it and rising from `rise` behind the nose to meet the top edge at the tip, so the mask ends in a point
-// sweeping up and back; below the windscreen (`rakeFrom` below the top) the front edge rakes back by `rake` per
-// unit down. Read off the a359 model (its windows lie 0.26 .. 0.62 widths behind the nose, down to 0.47 below the top).
+// sweeping up and back (`curve`: 1 a straight line, more: up quickly, then a long thin point); below the windscreen
+// (`rakeFrom` below the top) the front edge rakes back by `rake` per unit down. Read off the a359 model (its windows lie 0.26 .. 0.62 widths behind the nose, down to 0.47 below the top).
+// `types`: only these types of a model shared with older ones (the A320neo family, not the A320ceo).
+const NEO_MASK = { front: 0.2, rise: 0.86, tip: 1.1, hi: 0.235, lo: 0.43, rakeFrom: 0.38, rake: 1.3, curve: 1.8 };
 const MASKS = {
-  a359: { front: 0.25, rise: 0.55, tip: 0.88, hi: 0.29, lo: 0.52, rakeFrom: 0.47, rake: 1.5 },
+  a359: { front: 0.25, rise: 0.62, tip: 0.98, hi: 0.27, lo: 0.52, rakeFrom: 0.47, rake: 1.5, curve: 1.8 },
+  a320: { types: ['A320neo'], ...NEO_MASK },
+  a321: { types: ['A321neo', 'A321XLR'], ...NEO_MASK },
 };
+// Whether a type flies with the mask (its model's, unless the model's mask is only for some of its types).
+export const maskOf = (file, type) => { const k = MASKS[file]; return k && (!k.types || k.types.includes(type)) ? k : null; };
 
 // Models whose cabin windows are deep pockets in the fuselage skin, which look like dents: flushWindows moves
 // the pockets' floors out level with the skin, and they are painted as glass.
@@ -1423,6 +1429,7 @@ uniform float livBellyAft; // the belly colour is only behind this y
 uniform vec4 livMask;     // the cockpit windows' mask: front y, y where its lower edge starts to rise, tip y, top z
 uniform vec3 livMaskLo;   // ... its lower edge's z (in front of the rise), how far back its front edge rakes per unit down below z
 uniform vec3 livMaskColor;
+uniform float livMaskCurve; // how its lower edge sweeps up: 1 straight, more: up quickly, then a long thin point
 uniform vec3 livLine;
 uniform float livLineW;  // half width of the stripe along the belly's edge
 uniform vec3 livStripe;    // the cheatline along the fuselage: its middle z, half width, and 1 where there is one
@@ -1474,11 +1481,14 @@ const FRAG_BODY = `
   float bellyZ = livBellyZ + max(0.0, vLivPos.y - livBellyNose.x) * livBellyNose.y;
   if (fuselage > 0.5 && vLivPos.y < livBellyAft && vLivPos.z < bellyZ + livLineW) paint = vLivPos.z > bellyZ - livLineW && livLineW > 0.0 ? livLine : livBelly;
   if (fuselage > 0.5 && livStripe.z > 0.5 && abs(vLivPos.z - livStripe.x) < livStripe.y) paint = livStripeColor;
-  if (fuselage > 0.5 && vLivPos.y < livMask.x - max(0.0, livMaskLo.z - vLivPos.z) * livMaskLo.y && vLivPos.y > livMask.z) {
-    // the mask round the cockpit windows: its front edge raked back under the windscreen, its lower edge rising
-    // behind the windows to a point at the top edge
-    float maskLo = livMaskLo.x + max(0.0, livMask.y - vLivPos.y) * (livMask.w - livMaskLo.x) / max(1e-5, livMask.y - livMask.z);
-    if (vLivPos.z > maskLo && vLivPos.z < livMask.w) paint = livMaskColor;
+  if (fuselage > 0.5 && livMask.z < 90.0) {
+    // the mask round the cockpit windows: its front edge raked back under the windscreen, its lower edge sweeping
+    // up behind the windows in a curve to a sharp point at the top edge; soft edges (no jagged steps)
+    float maskFront = livMask.x - max(0.0, livMaskLo.z - vLivPos.z) * livMaskLo.y;
+    float maskT = clamp((livMask.y - vLivPos.y) / max(1e-5, livMask.y - livMask.z), 0.0, 1.0);
+    float maskLo = mix(livMaskLo.x, livMask.w, 1.0 - pow(1.0 - maskT, livMaskCurve));
+    float maskIn = min(min(maskFront - vLivPos.y, vLivPos.y - livMask.z), min(vLivPos.z - maskLo, livMask.w - vLivPos.z));
+    paint = mix(paint, livMaskColor, clamp(maskIn / (fwidth(maskIn) + 1e-6) + 0.5, 0.0, 1.0));
   }
   paint = mix(paint, livWinglet, step(livWingletX, abs(vLivPos.x)) * upright);
   if (vLivFlap.x > 0.5) {
@@ -1569,7 +1579,7 @@ export const OWN_UNIFORMS = ['livFlex', 'livSpin', 'livAil', 'livFlap', 'livElev
 
 // Paints a loaded model in a livery (its materials are changed in place; clones of the model share them).
 // `extra(shader)` can patch the shader further.
-export function paintLivery(scene, file, extra, stretch = 1, livery = FG.livery()) {
+export function paintLivery(scene, file, extra, stretch = 1, livery = FG.livery(), type = null) {
   const title = textMask(livery.title, livery.titleStyle);
   const mark = livery.mark || {};
   const finText = mark.kind === 'text' ? textMask(mark.text, mark.style) : mark.kind === 'logo' ? (LOGOS[mark.logo] || LOGOS.star)() : title;
@@ -1583,7 +1593,7 @@ export function paintLivery(scene, file, extra, stretch = 1, livery = FG.livery(
   const belly = livery.belly;
   const color = (c) => new THREE.Color(c);
   // (a livery can leave the mask off with `mask: false`, or paint it in its own colour)
-  const cockpit = livery.mask === false ? null : MASKS[file];
+  const cockpit = livery.mask === false ? null : maskOf(file, type);
   const behind = (w) => 0.5 - w * m.width / stretch;
   const wing = livery.wing == null ? livery.body : livery.wing;
   const cross = m.cross.clone();
@@ -1607,6 +1617,7 @@ export function paintLivery(scene, file, extra, stretch = 1, livery = FG.livery(
     livBellyAft: { value: belly && belly.aft != null ? belly.aft : 99 },
     livMask: { value: cockpit ? new THREE.Vector4(behind(cockpit.front), behind(cockpit.rise), behind(cockpit.tip), m.top - cockpit.hi * m.width) : new THREE.Vector4(-99, -99, 99, 0) },
     livMaskLo: { value: cockpit ? new THREE.Vector3(m.top - cockpit.lo * m.width, cockpit.rake / stretch, m.top - cockpit.rakeFrom * m.width) : new THREE.Vector3() },
+    livMaskCurve: { value: cockpit ? cockpit.curve || 1 : 1 },
     livMaskColor: { value: color(typeof livery.mask === 'string' || typeof livery.mask === 'number' ? livery.mask : 0x16191d) },
     livLine: { value: color(belly && belly.line != null ? belly.line : 0) },
     livLineW: { value: belly && belly.line != null ? (belly.lineWidth || 0.04) * m.width / 2 : 0 },

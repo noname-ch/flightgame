@@ -417,7 +417,7 @@ function wingFlex(type, pose, ph) {
   if (!st) return -0.012 * soft;
   // flown by hand (js/pilot.js): the real load on the wings, nz (on the wheels: the share of the weight they carry
   // already). They bow up pulling out of a dive or in a hard turn, unload in a stall or pushing over, and droop below 0 g.
-  if (pose.pilot && pose.pilot.nz != null) {
+  if (pose.pilot && Number.isFinite(pose.pilot.nz)) {
     const nz = Math.max(-1, Math.min(3, pose.pilot.nz));
     const carried = Math.max(0, Math.min(1, nz));
     return soft * (-0.015 * (1 - carried) + 0.06 * nz);
@@ -1291,7 +1291,7 @@ function placeModel(e, pose, altM, exag, globe, now, lineUp) {
     const target = wingFlex(e.type, pose, e.obj.id * 1.7);
     // propellers and fans spin up and down with the engines (looks only: slow enough not to strobe)
     const dt = e.lastFrame == null ? 0 : Math.min(0.25, Math.max(0, (now - e.lastFrame) / 1000));
-    if (e.pilot && e.flex != null) {
+    if (e.pilot && Number.isFinite(e.flex) && Number.isFinite(e.flexV || 0)) {
       // flown by hand: the wing is a lightly damped spring (about one swing a second), so a sharp pull or a bump
       // makes the tips overshoot and bounce a few times before they settle
       const w = 2 * Math.PI * 1.0, zeta = 0.15;
@@ -1301,7 +1301,7 @@ function placeModel(e, pose, altM, exag, globe, now, lineUp) {
         e.flexV += (w * w * (target - e.flex) - 2 * zeta * w * e.flexV) * h;
         e.flex += e.flexV * h;
       }
-    } else e.flex = e.flex == null ? target : e.flex + (target - e.flex) * k;
+    } else { e.flex = !Number.isFinite(e.flex) ? target : e.flex + (target - e.flex) * k; e.flexV = 0; }
     // thrust reversers deploy in about a second and stow again below 60 kt; reversing propellers spin up
     const rev = e.obj.userData.rev;
     e.rev = (e.rev || 0) + (revTarget(pose) - (e.rev || 0)) * (1 - Math.exp(-dt / 0.4));
@@ -2521,7 +2521,8 @@ function setFollow(on, cam) {
   if (map.touchZoomRotate) { if (v.follow) map.touchZoomRotate.disableRotation(); else map.touchZoomRotate.enableRotation(); }
   // The fly-by camera looks up at planes passing over it and the wing camera rolls with the plane.
   const cine = v.follow && v.cam !== 'chase';
-  map.setMaxPitch(cine ? 175 : 80);
+  // (following, the chase camera may tilt on past level to look up at the plane: chaseTick's maxPitch)
+  map.setMaxPitch(v.follow ? 175 : 80);
   if (!cine && map.getRoll && map.getRoll()) map.jumpTo({ roll: 0 });
 }
 function camButtons() {
@@ -2577,6 +2578,14 @@ function chaseTick(map, p, e, pose) {
   const o = v.orbit;
   if (o.base == null) o.base = drawn ? map.getBearing() : heading;
   o.base += wrap180(heading - o.base) * (drawn ? 0.06 : 1);
+  // How far the drag may tilt the camera: past level and on round under the plane (up to 170°), as long as the
+  // camera stays above the ground (it is `dist` metres from the plane, which is `agl` above the ground).
+  const st = pose.st || {};
+  const agl = pose.pilot ? pose.altM : Math.max(0, ((st.altFt || 0) - (st.fieldFt || 0)) * 0.3048) * TERRAIN_EXAG;
+  const mpp = (40075016 * Math.cos(pose.lat * DEG)) / (512 * 2 ** map.getZoom());
+  const dist = ((map.transform && map.transform.cameraToCenterDistance) || map.getCanvas().clientHeight * 1.5) * mpp;
+  o.maxPitch = Math.max(80, Math.min(170, Math.acos(Math.max(-1, Math.min(1, (3 - agl) / Math.max(1, dist)))) / DEG));
+  if (o.pitch != null && o.pitch > o.maxPitch) o.pitch = o.maxPitch;
   const opts = { center: [pose.lon, pose.lat], bearing: o.base + o.yaw, pitch: o.pitch != null ? o.pitch : Math.max(map.getPitch(), 62) };
   if (v.followStart) {
     // Close behind the plane, in the air too: its real length about a quarter of the view across (at zoom 12 in the
@@ -2941,7 +2950,7 @@ function createMap(fit) {
     drag.y = ev.clientY;
     if (v.cam !== 'chase') setFollow(true, 'chase');
     v.orbit.yaw = wrap180(v.orbit.yaw + dx * 0.35);
-    v.orbit.pitch = Math.max(5, Math.min(80, (v.orbit.pitch != null ? v.orbit.pitch : map.getPitch()) - dy * 0.25));
+    v.orbit.pitch = Math.max(5, Math.min(v.orbit.maxPitch || 80, (v.orbit.pitch != null ? v.orbit.pitch : map.getPitch()) - dy * 0.25));
     map.triggerRepaint();
   });
   const up = (ev) => {
