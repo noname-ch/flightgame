@@ -1671,13 +1671,14 @@
   }
 
   // Their planes in the air as dots, every third tick.
-  function updateRivalPlanes() {
+  // The rival airlines' planes: placed every frame (`tick`: on a game tick, when their routes are drawn too).
+  function updateRivalPlanes(tick) {
     if (!ui.map.hasLayer(ui.rivalLayer)) return;
-    drawRivalRoutes();
-    ui.rivalTick = (ui.rivalTick || 0) + 1;
-    if (ui.rivalTick % 3) return;
+    if (tick) drawRivalRoutes();
+    if (ui.map._animatingZoom) return; // (Leaflet places them itself during a zoom animation)
+    if (!tick && (ui.paused || st.open)) return; // (standing still between ticks)
     const view = ui.map.getBounds().pad(0.1);
-    const flights = G.rivalFlights(nowMinutes())
+    const flights = G.rivalFlights(nowMinutes(tick || ui.frameAt == null ? undefined : ui.frameAt))
       .map((f) => { [f.lat, f.lon] = nearView([f.lat, f.lon]); return f; })
       .filter((f) => view.contains([f.lat, f.lon]) && (!ui.selectedRival || f.r.id === ui.selectedRival));
     const pool = ui.rivalDots;
@@ -2276,10 +2277,11 @@
       refreshPlanes();
       drawRoutes();
       updatePlanes(true);
-      updateRivalPlanes();
+      updateRivalPlanes(true);
       if (FG.weather) FG.weather.redraw();
     }
     updatePlanes(false);
+    updateRivalPlanes(false);
   }
 
   // The frame rate (Settings → Show the frame rate): frames a second and the slowest frame, twice a second.
@@ -2914,7 +2916,7 @@
     renderHeader();
     if (!in3d()) {
       updatePlanes(true);
-      updateRivalPlanes();
+      updateRivalPlanes(true);
     }
     if (ui.hoverCard) updateStripTip();
     if (mk.open) {

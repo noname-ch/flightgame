@@ -137,7 +137,7 @@ FG.config = {
   // Game modes, picked when starting a new game. makerCrashMult multiplies the crash
   // chance for planes of that maker (11 = +1000%).
   modes: {
-    arcade: { name: 'Arcade', desc: 'Normal accident rates, like the real world.', makerCrashMult: {} },
+    arcade: { name: 'Arcade', desc: 'Normal accident rates.', makerCrashMult: {} },
     realistic: { name: 'Realistic', desc: 'Boeing aircraft crash 1000% more often.', makerCrashMult: { Boeing: 11 } },
   },
   defaultMode: 'arcade',

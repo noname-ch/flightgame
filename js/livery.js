@@ -1496,6 +1496,7 @@ uniform float livRev;      // thrust reversers: 0 stowed .. 1 deployed
 uniform float livRevKind;  // 0 none, 1 translating sleeve (cascade), 2 pivoting doors, 3 target buckets
 uniform float livRevX;     // on which engines: 0 all, above 0 those nearer than it (|axis x|), below 0 those further out than -it
 varying float vLivRev;     // 1 on a moved part of a reverser (faces between it and the fixed cowl are the opening)
+uniform float livBlur;     // 1: turning too fast to see the blades (js/view3d.js shows the disc instead)
 varying vec3 vLivPos;
 varying vec3 vLivNor;
 varying float vLivPart;
@@ -1527,6 +1528,7 @@ if (livHub.z > 0.5) {
   float livC = cos(livSpin);
   float livS = sin(livSpin);
   transformed.xz = livHub.xy + vec2(livC * livR.x - livS * livR.y, livS * livR.x + livC * livR.y);
+  if (livBlur > 0.98) transformed.xz = livHub.xy;   // (the blades go: the disc shows them)
 }
 vLivRev = 0.0;
 if (livEng.z > 0.0 && livRev > 0.001 && livRevKind > 0.5 &&
@@ -1833,7 +1835,7 @@ const NOISY = { cs100: 1, cs300: 1 };
 // Uniforms each material has its own of (in its userData), for the aircraft drawn with it.
 // livLight: how light it is where the aircraft is (1 day … dark at night, js/view3d.js placeModel).
 // livCut, livKeep: the parts broken off it, or the part it is (PARTS).
-export const OWN_UNIFORMS = ['livFlex', 'livSpin', 'livAil', 'livFlap', 'livElev', 'livRud', 'livRev', 'livRevKind', 'livRevX', 'livLight', 'livCut', 'livKeep'];
+export const OWN_UNIFORMS = ['livFlex', 'livSpin', 'livBlur', 'livAil', 'livFlap', 'livElev', 'livRud', 'livRev', 'livRevKind', 'livRevX', 'livLight', 'livCut', 'livKeep'];
 const OWN_VEC4 = { livCut: 1, livKeep: 1 };
 
 // The parts of every model that can break off in a crash, read off the same geometry as the control surfaces

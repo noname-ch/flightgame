@@ -182,6 +182,43 @@ function reshape(src, cut, extra, grow, key) {
   return scene;
 }
 
+// The disc a propeller turning fast makes (FG.data.props): see-through dark grey with the yellow ring of the
+// blade tips. Hidden here; js/view3d.js fades it in as the propellers spin up (and the shader hides the blades).
+let discMaterial = null;
+function propDiscs(scene, file) {
+  const prop = FG.data.props && FG.data.props[file];
+  // (only where the propellers turn: js/livery.js marks their blades with their hub, livHub)
+  let turns = false;
+  scene.traverse((o) => {
+    const hub = o.isMesh && o.geometry.attributes.livHub;
+    if (hub && !turns) for (let i = 2; i < hub.array.length; i += 3) if (hub.array[i] > 0.5) { turns = true; break; }
+  });
+  if (!prop || !turns) return scene;
+  if (!discMaterial) {
+    const c = document.createElement('canvas');
+    c.width = c.height = 256;
+    const g = c.getContext('2d');
+    const grad = g.createRadialGradient(128, 128, 0, 128, 128, 128);
+    for (const [at, col] of [[0, 'rgba(32,34,38,0)'], [0.22, 'rgba(32,34,38,0.12)'], [0.5, 'rgba(32,34,38,0.22)'],
+      [0.86, 'rgba(32,34,38,0.24)'], [0.89, 'rgba(242,182,0,0.42)'], [0.96, 'rgba(242,182,0,0.34)'], [1, 'rgba(242,182,0,0)']]) grad.addColorStop(at, col);
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 256, 256);
+    const map = new THREE.CanvasTexture(c);
+    map.colorSpace = THREE.SRGBColorSpace;
+    discMaterial = new THREE.MeshBasicMaterial({ map, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide });
+  }
+  const discs = new THREE.Group();
+  discs.name = 'propDiscs';
+  discs.visible = false;
+  for (const s of [-1, 1]) {
+    const d = new THREE.Mesh(new THREE.CircleGeometry(prop.r * 1.03, 48).rotateX(Math.PI / 2), discMaterial);
+    d.position.set(s * prop.x, prop.y + prop.t * 0.5, prop.z);
+    discs.add(d);
+  }
+  scene.add(discs);
+  return scene;
+}
+
 // The model of a type painted in a livery (the airline's, FG.livery(), unless another is asked for), 1 unit
 // long: scale it with modelSize(type). The scene is shared, clone() it
 // for every aircraft drawn. Stretched types get their own materials, so the livery can keep its proportions.
@@ -194,7 +231,7 @@ export function loadModel(type, livery = FG.livery()) {
     loads[key] = rawOf(type, size).then((scene) => {
       const copy = scene.clone();
       copy.traverse((o) => { if (o.isMesh) o.material = o.material.clone(); });
-      return addGear(paintLivery(copy, file, patchFacing, stretch, livery, type), scene, file, size, patchFacing, type);
+      return propDiscs(addGear(paintLivery(copy, file, patchFacing, stretch, livery, type), scene, file, size, patchFacing, type), file);
     });
     loads[key].catch((e) => console.warn(`3D model ${file} not loaded`, e));
   }

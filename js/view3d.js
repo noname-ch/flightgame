@@ -83,6 +83,9 @@ function flaredM(m) {
   return SINK_M * u * (0.25 + u * (1.5 - 0.75 * u));
 }
 
+// Planes drawn shorter than this (pixels) get no landing gear drawn.
+const GEAR_PX = 45;
+
 // The landing gear (js/gear3d.js): down on the ground; after lift-off it folds away between 300 and 700 ft,
 // on the way down it comes out between 2200 and 1800 ft. From the height, so it moves at any game speed.
 function gearFor(e, pose) {
@@ -98,6 +101,8 @@ function gearFor(e, pose) {
     else f = (2200 - agl) / 400;
   }
   setGear(gear, Math.max(0, Math.min(1, f)));
+  // too small on the screen to make out (zoomed out): not drawn at all, it only costs draw calls
+  gear.visible = !(e.pxLen < GEAR_PX);
   // a tail-wheel aircraft sits nose up on the ground and flies level
   if (e.obj.userData.sit) gear.parent.rotation.x = f >= 1 && pose.altM < 1 ? e.obj.userData.sit : 0;
 }
@@ -226,6 +231,13 @@ function planeModel(type, livery = FG.livery()) {
     const lights = navLights(type, model);
     g.userData.nav = lights.material.uniforms;
     if (REHEAT.has(type) && scene.userData.revEngines && scene.userData.revEngines.length) g.userData.reheat = reheatFlames(model, scene.userData.revEngines, size);
+    // its propeller discs (js/models3d.js propDiscs), with a material of its own to fade them in
+    const discs = model.getObjectByName('propDiscs');
+    if (discs) {
+      const material = discs.children[0].material.clone();
+      for (const d of discs.children) d.material = material;
+      g.userData.disc = { group: discs, material };
+    }
     g.clear();
     g.add(model, lights);
   }, () => {});
@@ -392,12 +404,18 @@ function reverserUniforms(type, scene) {
 const revTarget = (pose) => (pose.pilot ? pose.pilot.rev : pose.st && pose.st.phase === 'landing' && pose.st.ground && pose.st.speedKmh > 110 ? 1 : 0);
 
 // How fast the propellers and fans turn (rad/s, js/livery.js livHub): off at the gate, slow while taxiing, fastest
-// for take-off and climb.
-const PROP_RATE = { pushback: 5, 'taxi-out': 7, takeoff: 15, climb: 14, cruise: 12, descent: 9, approach: 10, landing: 9, 'taxi-in': 7 };
-function propRate(pose) {
-  if (pose.pilot) return 2 + 13 * Math.max(0, pose.pilot.n1 - 20) / 80;
+// for take-off and climb. Jet fans turn at FAN_RATE, slow enough not to strobe; propellers about as fast as real
+// ones (PROP_RATE; a turboprop's 1200 rpm are 125 rad/s). Up to SEEN rad/s their blades are drawn turning; faster
+// they would strobe, so they blur into the propeller disc (js/models3d.js propDiscs) between SEEN and BLURRED, and
+// the shader hides them beyond (livBlur). Flown by hand they follow the N1, propellers as much faster.
+const FAN_RATE = { pushback: 5, 'taxi-out': 7, takeoff: 15, climb: 14, cruise: 12, descent: 9, approach: 10, landing: 9, 'taxi-in': 7 };
+const PROP_RATE = { pushback: 8, 'taxi-out': 30, takeoff: 125, climb: 120, cruise: 105, descent: 85, approach: 100, landing: 80, 'taxi-in': 30 };
+const SEEN = 22;
+const BLURRED = 45;
+function propRate(pose, prop) {
+  if (pose.pilot) return (2 + 13 * Math.max(0, pose.pilot.n1 - 20) / 80) * (prop ? PROP_RATE.takeoff / FAN_RATE.takeoff : 1);
   if (!pose.st || !(FG.ui && FG.ui.speed > 0)) return 0; // (paused: still)
-  return PROP_RATE[pose.st.phase] || 0;
+  return (prop ? PROP_RATE : FAN_RATE)[pose.st.phase] || 0;
 }
 
 // Where the control surfaces go (radians; js/livery.js livSurf): flaps out for take-off and further for landing;
@@ -1315,7 +1333,7 @@ function placeModel(e, pose, altM, exag, globe, now, lineUp) {
   const liv = e.obj.userData.liv;
   if (liv && liv.length) {
     const target = wingFlex(e.type, pose, e.obj.id * 1.7);
-    // propellers and fans spin up and down with the engines (looks only: slow enough not to strobe)
+    // propellers and fans spin up and down with the engines (looks only); propellers blur into their disc when fast
     const dt = e.lastFrame == null ? 0 : Math.min(0.25, Math.max(0, (now - e.lastFrame) / 1000));
     if (e.pilot && Number.isFinite(e.flex) && Number.isFinite(e.flexV || 0)) {
       // flown by hand: the wing is a lightly damped spring (about one swing a second), so a sharp pull or a bump
@@ -1333,9 +1351,12 @@ function placeModel(e, pose, altM, exag, globe, now, lineUp) {
     e.rev = (e.rev || 0) + (revTarget(pose) - (e.rev || 0)) * (1 - Math.exp(-dt / 0.4));
     if (e.rev < 0.002) e.rev = 0;
     if (e.obj.userData.reheat) reheatTick(e.obj.userData.reheat, pose, dt, now, light);
-    const rate = propRate(pose) * (rev && rev.prop ? 1 + 0.5 * e.rev : 1);
+    const disc = e.obj.userData.disc;
+    const rate = propRate(pose, !!disc) * (rev && rev.prop ? 1 + 0.5 * e.rev : 1);
     e.spinRate = (e.spinRate || 0) + (rate - (e.spinRate || 0)) * (1 - Math.exp(-dt / 1.5));
-    e.spin = ((e.spin || 0) + e.spinRate * dt) % (2 * Math.PI);
+    e.spin = ((e.spin || 0) + Math.min(e.spinRate, SEEN) * dt) % (2 * Math.PI);
+    const blur = disc ? Math.min(1, Math.max(0, (e.spinRate - SEEN) / (BLURRED - SEEN))) : 0;
+    if (disc) { disc.group.visible = blur > 0.01; disc.material.opacity = blur; }
     // control surfaces move over a few tenths of a second, flaps over a few seconds
     const c = surfaceAngles(pose, toGo);
     if (!e.ctl) e.ctl = c;
@@ -1346,6 +1367,7 @@ function placeModel(e, pose, altM, exag, globe, now, lineUp) {
       u.livFlex.value = e.flex;
       if (u.livLight) u.livLight.value = 0.15 + 0.85 * light;
       u.livSpin.value = e.spin;
+      u.livBlur.value = blur;
       u.livAil.value = e.ctl.ail;
       u.livFlap.value = e.ctl.flap;
       u.livElev.value = e.ctl.elev;
@@ -2547,6 +2569,10 @@ const water = waterLayer('fg-water', {
   exag: TERRAIN_EXAG,
 });
 
+// A plane moving faster than this across the screen (pixels a second) is drawn every frame; slower ones less
+// often (each frame still moves them under a pixel).
+const SMOOTH_PX = 10;
+
 const planeLayer = {
   id: 'fg-planes',
   type: 'custom',
@@ -2686,7 +2712,7 @@ const planeLayer = {
     // Next frame: right away while a plane in view visibly moves or the camera follows one; planes that
     // crawl across the screen less often; when nothing in view moves (paused), once a second for the
     // planes that come into view.
-    if (v.follow || pilotOn() || moving > 30 || (animating && FG.ui && FG.ui.speed > 0)) map.triggerRepaint();
+    if (v.follow || pilotOn() || moving > SMOOTH_PX || (animating && FG.ui && FG.ui.speed > 0)) map.triggerRepaint();
     else repaintIn(moving > 0 ? Math.min(250, 1000 / moving) : 1000);
   },
   // The plane the player flies by hand (Fly it yourself, flightgame-fly): real size, posed from its own physics, hidden from the cockpit.
