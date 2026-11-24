@@ -17,21 +17,22 @@ const CLEAN = {
   b752: { y: [-1, 1], z: [-1, 9] },   // dark stripes and numbers all over the fuselage and fin
 };
 
-// The black mask round the cockpit windows of the newer Airbuses (the A350's "raccoon mask"). It is drawn round each
-// model's own cockpit windows, seen from the side: `windows` is their outline from the rearmost to the windscreen's
-// front, [y, top z, bottom z] in model units (measured off the models: the A350's dark texels, the A320's and
-// A321's window glass and frames). The mask reaches `over` and `under` the windows' height above and below them,
-// `ahead` of it in front, and behind them runs out in a thin tail `tail` the windows' length long, its point `tipDrop`
-// their height below the top edge, its lower edge sweeping up into it (cockpitMask).
+// The black mask round the cockpit windows of the newer Airbuses (the A350's "raccoon mask"). As on the real jet the
+// black is a band of the same width all round the glass, seen from any side (photos of real A350s on Wikimedia Commons:
+// "Airbus A350 cockpit windows (14274972354).jpg" from the side, "Airbus A350 Front View.jpg" from the front). It is
+// made from the model's own cockpit glass (cockpitMask): every triangle in `region` (from y on, between these z) that
+// is glass: see-through, or of a part without a texture (the A320's frames), or textured dark (the A350's windows,
+// which are triangles of their own on a black patch of its texture). That glass is drawn seen from the side (y, z) and,
+// where it faces forward (the windscreen: `front` and more of its normal along y), seen from the front (x, z), each
+// with what its frames enclose filled in and grown by `border` of the windows' height with round
+// corners and rounded `round` of it. The shader takes the side's picture where the skin faces sideways and the front's
+// where it faces forward, so the band is as wide from the front as from the side.
 // `types`: only these types of a model shared with older ones (the A320neo family, not the A320ceo).
-const MASK_STYLE = { over: 0.3, under: 0.42, ahead: 0.3, tail: 0.85, tipDrop: 0.15 };
+const MASK_STYLE = { border: 0.07, round: 0.12 };
 const MASKS = {
-  a359: { windows: [[0.445, -0.0365, -0.0423], [0.449, -0.0329, -0.0451], [0.455, -0.0327, -0.0458], [0.461, -0.0334, -0.0448],
-    [0.466, -0.0350, -0.0436], [0.470, -0.0387, -0.0441], [0.4755, -0.0435, -0.0456]] },
-  a320: { types: ['A320neo'], windows: [[0.415, -0.0432, -0.0516], [0.419, -0.0395, -0.0540], [0.429, -0.0395, -0.0543],
-    [0.441, -0.0400, -0.0532], [0.451, -0.0395, -0.0525], [0.457, -0.0450, -0.0530], [0.4655, -0.0535, -0.0542]] },
-  a321: { types: ['A321neo', 'A321XLR'], windows: [[0.427, -0.0309, -0.0388], [0.431, -0.0280, -0.0408], [0.441, -0.0288, -0.0403],
-    [0.455, -0.0280, -0.0392], [0.461, -0.0310, -0.0392], [0.465, -0.0346, -0.0398], [0.4695, -0.0387, -0.0405]] },
+  a359: { region: { y: 0.44, z: [-0.05, -0.03] }, front: 0.4 },
+  a320: { types: ['A320neo'], region: { y: 0.41, z: [-0.056, -0.037] }, front: 0.4 },
+  a321: { types: ['A321neo', 'A321XLR'], region: { y: 0.42, z: [-0.042, -0.026] }, front: 0.4 },
 };
 // Whether a type flies with the mask (its model's, unless the model's mask is only for some of its types).
 export const maskOf = (file, type) => { const k = MASKS[file]; return k && (!k.types || k.types.includes(type)) ? k : null; };
@@ -159,50 +160,129 @@ function mask(key, width, height, draw) {
   return (masks[key] = { texture, aspect: c.width / c.height });
 }
 
-// The cockpit mask of a model (MASKS) as a picture seen from the side, and where it lies: { texture, box: y0, z0,
-// 1 / its length, 1 / its height }. The shader lays it across the nose sideways, so it wraps round the windscreen.
-function cockpitMask(file) {
-  const k = { ...MASK_STYLE, ...MASKS[file] };
-  const win = k.windows;
-  const last = win.length - 1;
-  const h = Math.max(...win.map((w) => w[1])) - Math.min(...win.map((w) => w[2]));
-  const len = win[last][0] - win[0][0];
-  const top = win.map(([y, t]) => [y, t + k.over * h]);
-  const bot = win.map(([y, , b]) => [y, b - k.under * h]);
-  const tip = [win[0][0] - k.tail * len, Math.max(...top.map((p) => p[1])) - k.tipDrop * h];
-  const front = win[last][0] + k.ahead * h;
-  const pad = 0.3 * h;
-  const y0 = tip[0] - pad, y1 = front + pad;
-  const z0 = Math.min(...bot.map((p) => p[1])) - pad, z1 = Math.max(...top.map((p) => p[1])) + pad;
-  const PX = 1024;
-  const s = PX / (y1 - y0);
-  return {
-    box: new THREE.Vector4(y0, z0, 1 / (y1 - y0), 1 / (z1 - z0)),
-    texture: mask(`cockpit|${file}`, PX, (z1 - z0) * s, (ctx) => {
-      const at = ([y, z]) => [(y - y0) * s, (z1 - z) * s];
-      // a smooth line through points (through the middles between them, each point pulling it its way)
-      const through = (pts) => {
-        for (let i = 0; i < pts.length - 1; i++) {
-          const [ax, ay] = at(pts[i]), [bx, by] = at(pts[i + 1]);
-          ctx.quadraticCurveTo(ax, ay, (ax + bx) / 2, (ay + by) / 2);
-        }
-        ctx.lineTo(...at(pts[pts.length - 1]));
-      };
-      const midZ = (top[last][1] + bot[last][1]) / 2;
-      ctx.fillStyle = '#fff';
-      ctx.beginPath();
-      ctx.moveTo(...at(tip));
-      ctx.lineTo(...at(top[1]));                  // the tail's top edge, straight on from the windows' top edge
-      through(top.slice(1));                       // over the windows
-      ctx.quadraticCurveTo(...at([front, top[last][1]]), ...at([front, midZ]));   // round the windscreen
-      ctx.quadraticCurveTo(...at([front, bot[last][1]]), ...at(bot[last]));
-      through(bot.slice().reverse());              // under the windows
-      // up behind the windows, then on back thin into the point
-      ctx.quadraticCurveTo(...at([win[0][0] - 0.35 * (win[0][0] - tip[0]), tip[1] - 0.45 * h]), ...at(tip));
-      ctx.closePath();
-      ctx.fill();
-    }).texture,
+// The cockpit glass of a model (MASKS): its triangles, [[x, y, z] x 3], once per model.
+const glassOf = {};
+function cockpitGlass(scene, file) {
+  if (glassOf[file]) return glassOf[file];
+  const { region } = MASKS[file];
+  const tris = [];
+  const pixels = new Map();   // a texture's pixels, to tell its dark parts
+  const texel = (tex) => {
+    if (!pixels.has(tex)) {
+      const img = tex.image;
+      const c = document.createElement('canvas');
+      c.width = img.width;
+      c.height = img.height;
+      const ctx = c.getContext('2d');
+      ctx.drawImage(img, 0, 0);
+      pixels.set(tex, { w: c.width, h: c.height, d: ctx.getImageData(0, 0, c.width, c.height).data });
+    }
+    return pixels.get(tex);
   };
+  const p = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];
+  scene.traverse((o) => {
+    if (!o.isMesh || !o.geometry.attributes.position) return;
+    const g = o.geometry, pos = g.attributes.position, uv = g.attributes.uv, idx = g.index;
+    const mat = Array.isArray(o.material) ? o.material[0] : o.material;
+    const tex = mat.map && uv ? texel(mat.map) : null;
+    const n = idx ? idx.count : pos.count;
+    for (let i = 0; i < n; i += 3) {
+      const j = [0, 1, 2].map((k) => (idx ? idx.getX(i + k) : i + k));
+      j.forEach((v, k) => p[k].fromBufferAttribute(pos, v));
+      if (p.some((v) => v.y < region.y || v.z < region.z[0] || v.z > region.z[1])) continue;
+      if (tex && !mat.transparent) {
+        // textured: glass where it is dark (the middle of the triangle in the texture)
+        let u = (uv.getX(j[0]) + uv.getX(j[1]) + uv.getX(j[2])) / 3 % 1, v = (uv.getY(j[0]) + uv.getY(j[1]) + uv.getY(j[2])) / 3 % 1;
+        if (u < 0) u += 1;
+        if (v < 0) v += 1;
+        const q = (Math.min(tex.h - 1, Math.floor(v * tex.h)) * tex.w + Math.min(tex.w - 1, Math.floor(u * tex.w))) * 4;
+        if (0.2126 * tex.d[q] + 0.7152 * tex.d[q + 1] + 0.0722 * tex.d[q + 2] > 45) continue;
+      }
+      tris.push(p.map((v) => [v.x, v.y, v.z]));
+    }
+  });
+  return (glassOf[file] = tris);
+}
+
+// The cockpit mask of a model as two pictures, its glass grown by the border: seen from the side (y, z) and seen from
+// the front (x, z, the windscreen), with where they lie: box y0, z0, 1 / length, 1 / height (front: x0, z0, ...).
+function cockpitMask(scene, file) {
+  const k = { ...MASK_STYLE, ...MASKS[file] };
+  const glass = cockpitGlass(scene, file);
+  if (!glass.length) return null;
+  const zs = glass.flat().map((v) => v[2]);
+  const h = Math.max(...zs) - Math.min(...zs);
+  const border = k.border * h, round = k.round * h;
+  const picture = (key, tris, a, b) => {
+    const pad = border + 2 * round + 0.05 * h;
+    const as = tris.flat().map((v) => v[a]), bs = tris.flat().map((v) => v[b]);
+    const a0 = Math.min(...as) - pad, a1 = Math.max(...as) + pad, b0 = Math.min(...bs) - pad, b1 = Math.max(...bs) + pad;
+    const PX = 1024;
+    const s = PX / Math.max(a1 - a0, b1 - b0);
+    const w = Math.ceil((a1 - a0) * s), ht = Math.ceil((b1 - b0) * s);
+    return {
+      box: new THREE.Vector4(a0, b0, 1 / (w / s), 1 / (ht / s)),
+      texture: mask(`cockpit|${file}|${key}`, w, ht, (ctx) => {
+        // the glass, and round it a border `border` wide with round corners (each triangle drawn round thick)
+        ctx.lineWidth = 2 * border * s;
+        for (const t of tris) {
+          ctx.beginPath();
+          t.forEach((v, i) => (i ? ctx.lineTo((v[a] - a0) * s, (b1 - v[b]) * s) : ctx.moveTo((v[a] - a0) * s, (b1 - v[b]) * s)));
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+        }
+        const img = ctx.getImageData(0, 0, w, ht);
+        const al = new Float32Array(w * ht);
+        for (let i = 0; i < al.length; i++) al[i] = img.data[4 * i + 3];
+        // ... with what the frames enclose (the panes: on the A350 only its frames are dark) filled in: everything the
+        // outside can't reach
+        const out = new Uint8Array(w * ht);
+        const todo = [];
+        for (let x = 0; x < w; x++) todo.push(x, (ht - 1) * w + x);
+        for (let y = 0; y < ht; y++) todo.push(y * w, y * w + w - 1);
+        while (todo.length) {
+          const i = todo.pop();
+          if (out[i] || al[i] > 127) continue;
+          out[i] = 1;
+          const x = i % w;
+          if (x > 0) todo.push(i - 1);
+          if (x < w - 1) todo.push(i + 1);
+          if (i >= w) todo.push(i - w);
+          if (i < (ht - 1) * w) todo.push(i + w);
+        }
+        for (let i = 0; i < al.length; i++) if (!out[i]) al[i] = 255;
+        // ... blurred `round` wide (the shader cuts it at half): every corner rounded. (By hand: not every browser has
+        // ctx.filter.)
+        const r = Math.max(1, Math.round(round * s));
+        const pass = (n, stride, step, count) => {   // a running box average along lines
+          const line = new Float32Array(count);
+          for (let l = 0; l < n; l++) {
+            const o = l * stride;
+            for (let i = 0; i < count; i++) line[i] = al[o + i * step];
+            let sum = 0;
+            for (let i = -r; i <= r; i++) sum += line[Math.min(count - 1, Math.max(0, i))];
+            for (let i = 0; i < count; i++) {
+              al[o + i * step] = sum / (2 * r + 1);
+              sum += line[Math.min(count - 1, i + r + 1)] - line[Math.max(0, i - r)];
+            }
+          }
+        };
+        for (let k2 = 0; k2 < 2; k2++) { pass(ht, w, 1, w); pass(w, 1, w, ht); }
+        for (let i = 0; i < al.length; i++) { img.data[4 * i] = img.data[4 * i + 1] = img.data[4 * i + 2] = 255; img.data[4 * i + 3] = al[i]; }
+        ctx.putImageData(img, 0, 0);
+      }).texture,
+    };
+  };
+  const side = picture('side', glass, 1, 2);
+  // (the windscreen: the glass facing forward, `front` and more of its normal along y)
+  const windscreen = glass.filter(([a, b, c]) => {
+    const u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+    const n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+    return Math.abs(n[1]) / (Math.hypot(...n) || 1) > k.front;
+  });
+  const front = picture('front', windscreen.length ? windscreen : glass, 0, 2);
+  return { box: side.box, texture: side.texture, frontBox: front.box, frontTexture: front.texture };
 }
 
 // A text; the capital letters fill the height of the picture (more is added below for descenders).
@@ -1478,6 +1558,8 @@ uniform vec2 livBellyNose; // ahead of this y the belly's edge rises by this muc
 uniform float livBellyAft; // the belly colour is only behind this y
 uniform sampler2D livMaskTex; // the cockpit windows' mask seen from the side (cockpitMask)
 uniform vec4 livMaskBox;  // ... where it lies: y0, z0, 1 / length, 1 / height (length 0: none)
+uniform sampler2D livMaskTexF; // ... and seen from the front
+uniform vec4 livMaskBoxF; // ... where that lies: x0, z0, 1 / width, 1 / height
 uniform vec3 livMaskColor;
 uniform vec3 livLine;
 uniform float livLineW;  // half width of the stripe along the belly's edge
@@ -1531,11 +1613,18 @@ const FRAG_BODY = `
   if (fuselage > 0.5 && vLivPos.y < livBellyAft && vLivPos.z < bellyZ + livLineW) paint = vLivPos.z > bellyZ - livLineW && livLineW > 0.0 ? livLine : livBelly;
   if (fuselage > 0.5 && livStripe.z > 0.5 && abs(vLivPos.z - livStripe.x) < livStripe.y) paint = livStripeColor;
   if (fuselage > 0.5 && livMaskBox.z > 0.0) {
-    // the mask round the cockpit windows, laid across the nose from the side (sharp edges, without steps)
+    // the mask round the cockpit windows: the glass grown by the border seen from the side where the skin faces
+    // sideways, seen from the front where it faces forward (a band as wide from either side; sharp edges)
     vec2 mUv = (vLivPos.yz - livMaskBox.xy) * livMaskBox.zw;
-    if (mUv.x > 0.0 && mUv.x < 1.0 && mUv.y > 0.0 && mUv.y < 1.0) {
-      float mA = texture2D(livMaskTex, mUv).a - 0.5;
-      paint = mix(paint, livMaskColor, clamp(mA / (fwidth(mA) + 1e-4) + 0.5, 0.0, 1.0));
+    vec2 fUv = (vLivPos.xz - livMaskBoxF.xy) * livMaskBoxF.zw;
+    float sideA = mUv.x > 0.0 && mUv.x < 1.0 && mUv.y > 0.0 && mUv.y < 1.0 ? texture2D(livMaskTex, mUv).a : 0.0;
+    float frontA = fUv.x > 0.0 && fUv.x < 1.0 && fUv.y > 0.0 && fUv.y < 1.0 ? texture2D(livMaskTexF, fUv).a : 0.0;
+    float facing = smoothstep(0.35, 0.75, normalize(vLivNor).y);
+    float mA = mix(sideA, frontA, facing) - 0.5;
+    if (sideA > 0.0 || frontA > 0.0) {
+      float mC = clamp(mA / (fwidth(mA) + 1e-4) + 0.5, 0.0, 1.0);
+      paint = mix(paint, livMaskColor, mC);
+      own = mix(own, own * 0.06, mC);   // the windows in it really dark (their frames still just show)
     }
   }
   paint = mix(paint, livWinglet, step(livWingletX, abs(vLivPos.x)) * upright);
@@ -1641,7 +1730,30 @@ export function paintLivery(scene, file, extra, stretch = 1, livery = FG.livery(
   const belly = livery.belly;
   const color = (c) => new THREE.Color(c);
   // (a livery can leave the mask off with `mask: false`, or paint it in its own colour)
-  const cockpit = livery.mask === false || !maskOf(file, type) ? null : cockpitMask(file);
+  const cockpit = livery.mask === false || !maskOf(file, type) ? null : cockpitMask(scene, file);
+  if (cockpit) {
+    // cockpit glass of its own (the A320's: see-through, light): dark, as the mask round it
+    const [y0, z0] = [cockpit.box.x, cockpit.box.y];
+    const [y1, z1] = [y0 + 1 / cockpit.box.z, z0 + 1 / cockpit.box.w];
+    // (one glass part holds the cabin windows too: only its vertices round the cockpit go dark and nearly opaque,
+    // through vertex colours with alpha; the geometry is shared, its other materials don't use them)
+    scene.traverse((o) => {
+      if (!o.isMesh || !o.material.transparent || !o.geometry.attributes.position) return;
+      const pos = o.geometry.attributes.position;
+      const col = new Float32Array(pos.count * 4).fill(1);
+      let any = false;
+      for (let i = 0; i < pos.count; i++) {
+        const y = pos.getY(i), z = pos.getZ(i);
+        if (y < y0 || y > y1 || z < z0 || z > z1) continue;
+        col.set([0.004, 0.0045, 0.006, 0.97 / Math.max(0.05, o.material.opacity)], 4 * i);   // (linear: about #0c0d10)
+        any = true;
+      }
+      if (!any) return;
+      o.geometry.setAttribute('color', new THREE.BufferAttribute(col, 4));
+      o.material.vertexColors = true;
+      o.material.needsUpdate = true;
+    });
+  }
   const wing = livery.wing == null ? livery.body : livery.wing;
   const cross = m.cross.clone();
   cross.z *= mark.kind === 'text' || mark.kind === 'logo' ? 1 : mark.size || 1;
@@ -1664,6 +1776,8 @@ export function paintLivery(scene, file, extra, stretch = 1, livery = FG.livery(
     livBellyAft: { value: belly && belly.aft != null ? belly.aft : 99 },
     livMaskTex: { value: cockpit ? cockpit.texture : title.texture },
     livMaskBox: { value: cockpit ? cockpit.box : new THREE.Vector4() },
+    livMaskTexF: { value: cockpit ? cockpit.frontTexture : title.texture },
+    livMaskBoxF: { value: cockpit ? cockpit.frontBox : new THREE.Vector4() },
     livMaskColor: { value: color(typeof livery.mask === 'string' || typeof livery.mask === 'number' ? livery.mask : 0x16191d) },
     livLine: { value: color(belly && belly.line != null ? belly.line : 0) },
     livLineW: { value: belly && belly.line != null ? (belly.lineWidth || 0.04) * m.width / 2 : 0 },
