@@ -1,0 +1,1963 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plane scanner</title>
+<style>
+  :root { --bg: #0c1118; --card: #151c26; --line: #263142; --text: #e5e7eb; --dim: #94a3b8; --blue: #38bdf8; --orange: #fb923c; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.45 system-ui, sans-serif; display: flex; flex-direction: column; }
+  header { padding: 8px 14px; border-bottom: 1px solid var(--line); display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap; }
+  header h1 { font-size: 17px; margin: 0; }
+  header p { margin: 0; color: var(--dim); }
+  main { flex: 1; min-height: 0; display: grid; grid-template-columns: 330px 1fr 1fr; gap: 10px; padding: 10px; }
+  #left { overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding-right: 2px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
+  .card h2 { font-size: 13px; margin: 0 0 8px; color: var(--blue); text-transform: uppercase; letter-spacing: .04em; }
+  button, select, input[type=text], input[type=number] { background: #1f2937; color: var(--text); border: 1px solid #334155; border-radius: 6px; padding: 5px 9px; font: inherit; }
+  button { cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--blue); }
+  button:disabled { opacity: .45; cursor: default; }
+  button.main { background: #0e7490; border-color: #0891b2; }
+  .row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin: 6px 0; }
+  #slots { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .slot { border: 1px solid #334155; border-radius: 6px; padding: 4px; cursor: pointer; text-align: center; background: #111827; }
+  .slot.on { border-color: var(--blue); box-shadow: 0 0 0 1px var(--blue) inset; }
+  .slot canvas { width: 100%; height: 52px; display: block; background: #0b1220; border-radius: 4px; }
+  .slot b { display: block; font-size: 12px; margin-top: 3px; }
+  .slot small { color: var(--dim); font-size: 11px; }
+  .tools label { display: inline-flex; align-items: center; gap: 3px; border: 1px solid #334155; border-radius: 6px; padding: 3px 7px; cursor: pointer; }
+  .tools input { margin: 0; }
+  .knob { display: grid; grid-template-columns: 1fr 52px; gap: 2px 8px; margin: 5px 0; }
+  .knob span { color: var(--dim); }
+  .knob output { text-align: right; font-variant-numeric: tabular-nums; }
+  .knob input { grid-column: 1 / 3; width: 100%; }
+  .hint { color: var(--dim); font-size: 12px; margin: 4px 0 0; }
+  #status { color: #fde68a; min-height: 1.4em; }
+  .pane { position: relative; background: #0b1220; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; min-height: 300px; }
+  .pane canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
+  .pane .tag { position: absolute; left: 8px; top: 6px; background: #000a; padding: 2px 8px; border-radius: 4px; pointer-events: none; }
+  .pane .tag2 { position: absolute; right: 8px; top: 6px; display: flex; gap: 4px; }
+  #snippet { white-space: pre-wrap; font: 11px/1.4 ui-monospace, monospace; background: #0b1220; border-radius: 6px; padding: 6px; margin: 6px 0 0; max-height: 220px; overflow: auto; }
+  video { display: none; }
+  @media (max-width: 1100px) {
+    main { grid-template-columns: 1fr; grid-auto-rows: minmax(360px, auto); }
+    #left { overflow: visible; }
+  }
+</style>
+<script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/"
+    }
+  }
+</script>
+</head>
+<body>
+<header>
+  <h1>Plane scanner</h1>
+  <p>Makes a 3D aircraft model from pictures or video frames: a side view (needed), a top or bottom view and a front view.
+    Three-view drawings work best, photos taken square on from the side work too. Saves a .glb like the ones in <code>models/</code>.</p>
+</header>
+<main>
+  <section id="left">
+    <div class="card">
+      <h2>1 · Pictures</h2>
+      <div id="slots"></div>
+      <div class="row">
+        <button id="load">Open picture or video…</button>
+        <button id="clear">Remove</button>
+      </div>
+      <input type="file" id="file" accept="image/*,video/*" hidden>
+      <div id="videoBox" hidden>
+        <input type="range" id="scrub" min="0" max="1" step="0.01" value="0" style="width:100%">
+        <div class="row"><span id="vtime">0.0 s</span>
+          <button id="findFrame" title="Looks through the video for the frame where the aircraft looks longest">Find side-on frame</button></div>
+      </div>
+      <p class="hint">Drop or paste (Ctrl+V) a picture onto the view. From a video, pick the frame with the slider.</p>
+    </div>
+
+    <div class="card">
+      <h2>2 · Cut out and line up</h2>
+      <div class="row tools" id="tools">
+        <label><input type="radio" name="tool" value="marks" checked>Marks</label>
+        <label><input type="radio" name="tool" value="add">Brush +</label>
+        <label><input type="radio" name="tool" value="erase">Brush −</label>
+        <label><input type="radio" name="tool" value="wandAdd">Wand +</label>
+        <label><input type="radio" name="tool" value="wandErase">Wand −</label>
+      </div>
+      <div class="knob"><span>Brush size</span><output id="brushOut">24</output><input type="range" id="brush" min="3" max="120" value="24"></div>
+      <div class="knob"><span>Colour tolerance (cut-out and wand)</span><output id="thrOut">32</output><input type="range" id="thr" min="6" max="140" value="32"></div>
+      <div class="row">
+        <button id="recut">Cut out again</button>
+        <button id="remark">Find the ends</button>
+        <button id="swap">Swap ends</button>
+        <button id="flip">Upside down</button>
+      </div>
+      <label class="row" id="belowRow"><input type="checkbox" id="below" checked> The top view is seen from below</label>
+      <p class="hint" id="toolHint"></p>
+    </div>
+
+    <div class="card">
+      <h2>3 · Model</h2>
+      <div class="row">
+        <button id="build" class="main">Build model</button>
+        <button id="match" title="Moves wing, tailplane and engines until the model's outlines cover the pictures">Match the outlines</button>
+      </div>
+      <div class="row">
+        <label>Wing <select id="wingPos"><option value="low">low</option><option value="high">high</option></select></label>
+        <label>Tailplane <select id="tailType"><option value="low">on the fuselage</option><option value="T">T-tail</option></select></label>
+        <label>Engines <select id="engKind"><option value="jet">jets</option><option value="prop">propellers</option></select></label>
+        <label>Blades <select id="blades"><option>2</option><option>3</option><option selected>4</option><option>5</option><option>6</option><option>8</option></select></label>
+      </div>
+      <div id="knobs"></div>
+      <p class="hint">The orange outline in the picture is the model: it should cover the aircraft.</p>
+    </div>
+
+    <div class="card">
+      <h2>4 · Save</h2>
+      <div class="row">
+        <label>File <input type="text" id="name" value="myplane" size="10"></label>
+        <label>Length <input type="number" id="realLen" value="38" min="5" max="120" step="0.1" style="width:70px"> m</label>
+      </div>
+      <div class="row">
+        <button id="saveGame" class="main" title="White with dark windows: the game paints the airline's livery on it">Save for the game (.glb)</button>
+        <button id="savePhoto" title="With the colours of the pictures">Save with photo colours</button>
+      </div>
+      <pre id="snippet">Build a model first.</pre>
+    </div>
+  </section>
+
+  <section class="pane" id="viewPane">
+    <canvas id="view"></canvas>
+    <div class="tag" id="viewTag">Side view</div>
+    <div class="tag2"><button id="zoomFit">Fit</button></div>
+  </section>
+
+  <section class="pane" id="threePane">
+    <div class="tag" id="stats">3D model</div>
+    <div class="tag2">
+      <select id="look"><option value="game">game look</option><option value="photo">photo colours</option></select>
+    </div>
+  </section>
+</main>
+<div style="padding:0 14px 8px" id="status"></div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+// Model axes as in models/: x = right wing, y = nose, z = up; the aircraft is 1 unit long from nose to tail
+// (the two marks in the side and top views), the middle of that line at y = 0.
+
+const $ = (id) => document.getElementById(id);
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const lerp = (a, b, t) => a + (b - a) * t;
+const RAD = Math.PI / 180;
+const sgnpow = (v, e) => Math.sign(v) * Math.abs(v) ** e;
+const status = (s) => { $('status').textContent = s; };
+const tick = () => new Promise((r) => setTimeout(r, 0));
+function quantile(list, q) {
+  const s = list.filter(Number.isFinite).sort((a, b) => a - b);
+  return s.length ? s[clamp(Math.round(q * (s.length - 1)), 0, s.length - 1)] : NaN;
+}
+function smooth(arr, r) {   // moving average over the finite values
+  const out = Float64Array.from(arr);
+  for (let i = 0; i < arr.length; i++) {
+    if (!Number.isFinite(arr[i])) continue;
+    let s = 0, n = 0;
+    for (let k = i - r; k <= i + r; k++) if (k >= 0 && k < arr.length && Number.isFinite(arr[k])) { s += arr[k]; n++; }
+    out[i] = s / n;
+  }
+  return out;
+}
+function medianOf(arr, r) {
+  const out = Float64Array.from(arr);
+  for (let i = 0; i < arr.length; i++) {
+    const w = [];
+    for (let k = i - r; k <= i + r; k++) if (k >= 0 && k < arr.length) w.push(arr[k]);
+    out[i] = quantile(w, 0.5);
+  }
+  return out;
+}
+// Erosion then dilation over w values: drops bumps upwards narrower than w, keeps straight slopes.
+function openUp(arr, w) {
+  const n = arr.length, r = w >> 1, e = new Float64Array(n), o = new Float64Array(n);
+  for (let i = 0; i < n; i++) { let m = Infinity; for (let k = Math.max(0, i - r); k <= Math.min(n - 1, i + r); k++) m = Math.min(m, arr[k]); e[i] = m; }
+  for (let i = 0; i < n; i++) { let m = -Infinity; for (let k = Math.max(0, i - r); k <= Math.min(n - 1, i + r); k++) m = Math.max(m, e[k]); o[i] = m; }
+  return o;
+}
+function lineFit(xs, ys) {
+  let sx = 0, sy = 0, sxx = 0, sxy = 0;
+  const n = xs.length;
+  for (let i = 0; i < n; i++) { sx += xs[i]; sy += ys[i]; sxx += xs[i] * xs[i]; sxy += xs[i] * ys[i]; }
+  const k1 = (n * sxy - sx * sy) / (n * sxx - sx * sx || 1);
+  return { k0: (sy - k1 * sx) / n, k1 };
+}
+// A straight line along the inner edge of points that only stray to one side (below: they stray upwards).
+function envelopeFit(xs, ys, below) {
+  let f = lineFit(xs, ys);
+  for (let it = 0; it < 6; it++) {
+    const res = xs.map((x, i) => (ys[i] - (f.k0 + f.k1 * x)) * (below ? 1 : -1));
+    const cut = quantile(res, 0.45);
+    const kx = [], ky = [];
+    xs.forEach((x, i) => { if (res[i] <= cut) { kx.push(x); ky.push(ys[i]); } });
+    if (kx.length < 5) break;
+    f = lineFit(kx, ky);
+  }
+  return f;
+}
+
+// ======================================================================================================
+// The pictures
+// ======================================================================================================
+const KINDS = ['side', 'top', 'front'];
+const NAMES = { side: 'Side view', top: 'Top view', front: 'Front view' };
+// What each view's grid covers in model units: a across the picture, b up it.
+const EXT = { side: [-0.6, 0.6, -0.4, 0.4], top: [-0.6, 0.6, -0.8, 0.8], front: [-0.8, 0.8, -0.45, 0.45] };
+// Model axes along a, along b, and towards the camera.
+const AX = { side: [1, 2, 0], top: [1, 0, 2], front: [0, 2, 1] };
+const MAXPX = 1600;
+const views = {};
+for (const k of KINDS) views[k] = { kind: k, src: null, w: 0, h: 0, data: null, mask: null, marks: null, flip: 1, thr: 32, below: true, video: null, tint: null, cam: null, cache: {} };
+let cur = 'side';
+let P = null;       // the fitted aircraft (see fit)
+let built = null;   // the last build: { low, flatLow }
+
+function setPicture(v, source, sw, sh, max = MAXPX) {
+  const s = Math.min(1, max / Math.max(sw, sh));
+  const w = Math.max(1, Math.round(sw * s)), h = Math.max(1, Math.round(sh * s));
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const g = c.getContext('2d', { willReadFrequently: true });
+  g.drawImage(source, 0, 0, w, h);
+  Object.assign(v, { src: c, w, h, data: g.getImageData(0, 0, w, h).data });
+  autoMask(v);
+  autoMarks(v);
+  v.cam = null;
+  changed(v);
+}
+function changed(v) {
+  v.cache = {};
+  v.tint = null;
+  v.outline = null;
+  if (P && v.kind === 'side') P.detailKey = null;
+  updateSlots();
+  draw();
+}
+
+// ---------- cutting the aircraft out ----------
+function kmeans(px, k) {
+  const n = px.length / 3;
+  const lum = (i) => px[i * 3];
+  const order = Array.from({ length: n }, (_, i) => i).sort((a, b) => lum(a) - lum(b));
+  const c = [];
+  for (let i = 0; i < k; i++) { const j = order[Math.floor((i + 0.5) / k * n)] * 3; c.push(px[j], px[j + 1], px[j + 2]); }
+  const sum = new Float64Array(k * 4);
+  for (let it = 0; it < 10; it++) {
+    sum.fill(0);
+    for (let i = 0; i < n; i++) {
+      let best = 0, bd = Infinity;
+      for (let q = 0; q < k; q++) {
+        const dr = px[i * 3] - c[q * 3], dg = px[i * 3 + 1] - c[q * 3 + 1], db = px[i * 3 + 2] - c[q * 3 + 2];
+        const d = dr * dr + dg * dg + db * db;
+        if (d < bd) { bd = d; best = q; }
+      }
+      sum[best * 4] += px[i * 3]; sum[best * 4 + 1] += px[i * 3 + 1]; sum[best * 4 + 2] += px[i * 3 + 2]; sum[best * 4 + 3]++;
+    }
+    for (let q = 0; q < k; q++) if (sum[q * 4 + 3]) for (let e = 0; e < 3; e++) c[q * 3 + e] = sum[q * 4 + e] / sum[q * 4 + 3];
+  }
+  // (a colour seldom seen along the edge is the aircraft reaching it, a wing tip out of the picture: not background)
+  const keep = [];
+  for (let q = 0; q < k; q++) if (sum[q * 4 + 3] >= 0.03 * n) keep.push(c[q * 3], c[q * 3 + 1], c[q * 3 + 2]);
+  return keep;
+}
+// Everything the edge of the picture reaches through pixels that pass.
+function flood(w, h, pass) {
+  const n = w * h, seen = new Uint8Array(n), q = new Int32Array(n);
+  let qh = 0, qt = 0;
+  const add = (p) => { if (!seen[p] && pass(p)) { seen[p] = 1; q[qt++] = p; } };
+  for (let x = 0; x < w; x++) { add(x); add((h - 1) * w + x); }
+  for (let y = 0; y < h; y++) { add(y * w); add(y * w + w - 1); }
+  while (qh < qt) {
+    const p = q[qh++], x = p % w;
+    if (x > 0) add(p - 1);
+    if (x < w - 1) add(p + 1);
+    if (p >= w) add(p - w);
+    if (p < n - w) add(p + w);
+  }
+  return seen;
+}
+function grow(w, h, on, r) {   // set where anything within r pixels (a square) is set
+  const a = new Uint8Array(w * h), b = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) {
+    let last = -1e9;
+    for (let x = 0; x < w; x++) { if (on[y * w + x]) last = x; if (x - last <= r) a[y * w + x] = 1; }
+    last = 1e9;
+    for (let x = w - 1; x >= 0; x--) { if (on[y * w + x]) last = x; if (last - x <= r) a[y * w + x] = 1; }
+  }
+  for (let x = 0; x < w; x++) {
+    let last = -1e9;
+    for (let y = 0; y < h; y++) { if (a[y * w + x]) last = y; if (y - last <= r) b[y * w + x] = 1; }
+    last = 1e9;
+    for (let y = h - 1; y >= 0; y--) { if (a[y * w + x]) last = y; if (last - y <= r) b[y * w + x] = 1; }
+  }
+  return b;
+}
+function largestPiece(w, h, on) {
+  const n = w * h, lab = new Int32Array(n), q = new Int32Array(n);
+  let best = 0, bestSize = 0, id = 0;
+  for (let s = 0; s < n; s++) {
+    if (!on[s] || lab[s]) continue;
+    id++;
+    let qh = 0, qt = 0;
+    q[qt++] = s; lab[s] = id;
+    while (qh < qt) {
+      const p = q[qh++], x = p % w, y = (p - x) / w;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const xx = x + dx, yy = y + dy;
+        if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+        const r = yy * w + xx;
+        if (on[r] && !lab[r]) { lab[r] = id; q[qt++] = r; }
+      }
+    }
+    if (qt > bestSize) { bestSize = qt; best = id; }
+  }
+  const out = new Uint8Array(n);
+  for (let p = 0; p < n; p++) out[p] = lab[p] === best && best ? 1 : 0;
+  return out;
+}
+// The background is what the edge of the picture reaches through colours like those along the edge (sky,
+// paper, a studio wall); the aircraft is the largest piece of the rest, with its holes filled.
+function autoMask(v) {
+  const { w, h, data } = v, n = w * h;
+  const px = [];
+  const band = Math.max(2, Math.round(Math.min(w, h) * 0.012));
+  const every = Math.max(1, Math.round((w + h) / 1200));
+  // (brightness and twice the colour: a light grey aircraft against a pale blue sky differs mostly in colour)
+  const yc = (r, g, b, out) => { const Y = 0.299 * r + 0.587 * g + 0.114 * b; out[0] = Y; out[1] = 1.13 * (b - Y); out[2] = 1.43 * (r - Y); };
+  const q = [0, 0, 0];
+  const take = (x, y) => { const i = (y * w + x) * 4; yc(data[i], data[i + 1], data[i + 2], q); px.push(q[0], q[1], q[2]); };
+  for (let x = 0; x < w; x += every) for (let b = 0; b < band; b += 2) { take(x, b); take(x, h - 1 - b); }
+  for (let y = 0; y < h; y += every) for (let b = 0; b < band; b += 2) { take(b, y); take(w - 1 - b, y); }
+  const c = kmeans(px, 8);
+  const t2 = v.thr * v.thr;
+  const sky = new Uint8Array(n), col = new Float32Array(n * 3);
+  for (let p = 0, i = 0; p < n; p++, i += 4) {
+    yc(data[i], data[i + 1], data[i + 2], q);
+    col[p * 3] = q[0]; col[p * 3 + 1] = q[1]; col[p * 3 + 2] = q[2];
+    for (let k = 0; k < c.length; k += 3) {
+      const dr = q[0] - c[k], dg = q[1] - c[k + 1], db = q[2] - c[k + 2];
+      if (dr * dr + dg * dg + db * db < t2) { sky[p] = 1; break; }
+    }
+  }
+  // the background spreads from the edge of the picture, but not across an outline: a step in colour that
+  // the sky's own slow gradient never makes (a grey aircraft against a pale sky)
+  const e2 = Math.max(8, v.thr * 0.4) ** 2;
+  const bg = new Uint8Array(n), qu = new Int32Array(n);
+  let qh = 0, qt = 0;
+  const step = (a, b) => { const dr = col[a * 3] - col[b * 3], dg = col[a * 3 + 1] - col[b * 3 + 1], db = col[a * 3 + 2] - col[b * 3 + 2]; return dr * dr + dg * dg + db * db; };
+  const add = (p, from) => { if (!bg[p] && sky[p] && (from < 0 || step(p, from) < e2)) { bg[p] = 1; qu[qt++] = p; } };
+  for (let x = 0; x < w; x++) { add(x, -1); add((h - 1) * w + x, -1); }
+  for (let y = 0; y < h; y++) { add(y * w, -1); add(y * w + w - 1, -1); }
+  while (qh < qt) {
+    const p = qu[qh++], x = p % w;
+    if (x > 0) add(p - 1, p);
+    if (x < w - 1) add(p + 1, p);
+    if (p >= w) add(p - w, p);
+    if (p < n - w) add(p + w, p);
+  }
+  const fg = new Uint8Array(n);
+  for (let p = 0; p < n; p++) fg[p] = bg[p] ? 0 : 1;
+  // (pieces a few pixels apart belong together: a shiny wing root can look like the sky)
+  const near = grow(w, h, fg, Math.max(2, Math.round(Math.max(w, h) / 400)));
+  const one = largestPiece(w, h, near);
+  const plane = new Uint8Array(n);
+  for (let p = 0; p < n; p++) plane[p] = fg[p] & one[p];
+  const out = flood(w, h, (p) => !plane[p]);
+  const mask = new Uint8Array(n);
+  for (let p = 0; p < n; p++) mask[p] = out[p] ? 0 : 1;
+  v.mask = mask;
+}
+function wand(v, x0, y0, on) {
+  const { w, h, data, mask } = v;
+  const s = (y0 * w + x0) * 4, t2 = v.thr * v.thr;
+  const r0 = data[s], g0 = data[s + 1], b0 = data[s + 2];
+  const seen = new Uint8Array(w * h), q = new Int32Array(w * h);
+  let qh = 0, qt = 0;
+  const ok = (p) => { const i = p * 4, dr = data[i] - r0, dg = data[i + 1] - g0, db = data[i + 2] - b0; return dr * dr + dg * dg + db * db < t2; };
+  const add = (p) => { if (!seen[p] && ok(p)) { seen[p] = 1; q[qt++] = p; } };
+  add(y0 * w + x0);
+  while (qh < qt) {
+    const p = q[qh++], x = p % w;
+    mask[p] = on ? 1 : 0;
+    if (x > 0) add(p - 1);
+    if (x < w - 1) add(p + 1);
+    if (p >= w) add(p - w);
+    if (p < w * h - w) add(p + w);
+  }
+}
+
+// ---------- lining the picture up: two marks ----------
+// Side and top view: marks[0] on the nose, marks[1] on the tail. Front view: on the two wing tips.
+function pca(v) {
+  const { w, h, mask } = v;
+  const step = Math.max(1, Math.round(Math.sqrt(w * h / 250000)));
+  const pts = [];
+  let sx = 0, sy = 0;
+  for (let y = 0; y < h; y += step) for (let x = 0; x < w; x += step) if (mask[y * w + x]) { pts.push(x, y); sx += x; sy += y; }
+  const n = pts.length / 2;
+  if (n < 20) return null;
+  const mx = sx / n, my = sy / n;
+  let xx = 0, xy = 0, yy = 0;
+  for (let i = 0; i < pts.length; i += 2) { const dx = pts[i] - mx, dy = pts[i + 1] - my; xx += dx * dx; xy += dx * dy; yy += dy * dy; }
+  const ang = 0.5 * Math.atan2(2 * xy, xx - yy);
+  const tr = (xx + yy) / n, det = (xx * yy - xy * xy) / (n * n), disc = Math.sqrt(Math.max(0, tr * tr / 4 - det));
+  return { pts, mx, my, ux: Math.cos(ang), uy: Math.sin(ang), l1: tr / 2 + disc, l2: Math.max(1e-9, tr / 2 - disc) };
+}
+function autoMarks(v) {
+  const s = pca(v);
+  if (!s) { v.marks = [{ x: v.w * 0.8, y: v.h / 2 }, { x: v.w * 0.2, y: v.h / 2 }]; return; }
+  const ends = (ox, oy, ux, uy) => {
+    let lo = Infinity, hi = -Infinity;
+    for (let i = 0; i < s.pts.length; i += 2) { const t = (s.pts[i] - ox) * ux + (s.pts[i + 1] - oy) * uy; if (t < lo) lo = t; if (t > hi) hi = t; }
+    return { lo, hi };
+  };
+  let { ux, uy } = s;
+  // seen from above, a wing can be as long as the fuselage: the fuselage is the axis the aircraft is
+  // symmetric about
+  if (v.kind === 'top') {
+    const sym = (ax, ay) => {
+      let hit = 0, n = 0;
+      for (let i = 0; i < s.pts.length; i += 6) {
+        const dx = s.pts[i] - s.mx, dy = s.pts[i + 1] - s.my, t = dx * ax + dy * ay;
+        const x = Math.round(s.mx + 2 * t * ax - dx), y = Math.round(s.my + 2 * t * ay - dy);
+        n++;
+        if (x >= 0 && y >= 0 && x < v.w && y < v.h && v.mask[y * v.w + x]) hit++;
+      }
+      return hit / n;
+    };
+    if (sym(-uy, ux) > sym(ux, uy)) [ux, uy] = [-uy, ux];
+  }
+  const { lo, hi } = ends(s.mx, s.my, ux, uy);
+  const A = { x: s.mx + lo * ux, y: s.my + lo * uy }, B = { x: s.mx + hi * ux, y: s.my + hi * uy };
+  if (v.kind === 'front') { v.marks = A.x <= B.x ? [A, B] : [B, A]; return; }
+  // the tail is the end with more aircraft in its last tenth (fin, tailplane; the nose only tapers, and
+  // propeller blades are thin)
+  const len = hi - lo;
+  let e0 = 0, e1 = 0;
+  for (let i = 0; i < s.pts.length; i += 2) {
+    const t = (s.pts[i] - s.mx) * ux + (s.pts[i + 1] - s.my) * uy;
+    if (t < lo + 0.1 * len) e0++;
+    else if (t > hi - 0.1 * len) e1++;
+  }
+  v.marks = e1 > e0 ? [A, B] : [B, A];
+  // then the axis along the middle of the fuselage: between its two edges (roof and belly, or the two sides),
+  // each a straight line that what is attached (fin, engines, gear, wings) only sticks out of
+  for (let it = 0; it < 3; it++) {
+    const g = rect(v, [-0.15, 0.32, -0.3, 0.3], 200);
+    const as = [], los = [], his = [];
+    for (let ia = 0; ia < g.na; ia++) {
+      const r = runs(g, ia);
+      if (!r.length) continue;
+      const mid = g.nb / 2;
+      const best = v.kind === 'side' ? r.reduce((p, q) => (q[1] - q[0] > p[1] - p[0] ? q : p))
+        : r.reduce((p, q) => (Math.abs((q[0] + q[1]) / 2 - mid) < Math.abs((p[0] + p[1]) / 2 - mid) ? q : p));
+      as.push(cellA(g, ia));
+      los.push(cellB(g, best[0]));
+      his.push(cellB(g, best[1]));
+    }
+    if (as.length < 10) break;
+    const top = envelopeFit(as, his, true), bot = envelopeFit(as, los, false);
+    const k0 = (top.k0 + bot.k0) / 2, k1 = (top.k1 + bot.k1) / 2;
+    const fr = frame(v);
+    const P0 = img(fr, -0.5, k0 - 0.5 * k1), P1 = img(fr, 0.5, k0 + 0.5 * k1);
+    let dx = P1.x - P0.x, dy = P1.y - P0.y;
+    const dl = Math.hypot(dx, dy);
+    dx /= dl; dy /= dl;
+    const e = ends(P0.x, P0.y, dx, dy);
+    v.marks = [{ x: P0.x + e.hi * dx, y: P0.y + e.hi * dy }, { x: P0.x + e.lo * dx, y: P0.y + e.lo * dy }];
+  }
+}
+// Where model point (a, b) of a view is in its picture: M + a U + b V (pixels).
+function frame(v) {
+  const [m0, m1] = v.marks;
+  const front = v.kind === 'front';
+  const span = front ? (P ? P.span : 1) : 1;
+  const U = front ? { x: (m1.x - m0.x) / span, y: (m1.y - m0.y) / span } : { x: m0.x - m1.x, y: m0.y - m1.y };
+  let V = { x: U.y, y: -U.x };
+  if (V.y > 0 || (V.y === 0 && V.x > 0)) V = { x: -V.x, y: -V.y };
+  V = { x: V.x * v.flip, y: V.y * v.flip };
+  const z = front && P ? P.frontZ : 0;
+  return { M: { x: (m0.x + m1.x) / 2 - z * V.x, y: (m0.y + m1.y) / 2 - z * V.y }, U, V };
+}
+const img = (f, a, b) => ({ x: f.M.x + a * f.U.x + b * f.V.x, y: f.M.y + a * f.U.y + b * f.V.y });
+
+// The picture's cut-out on a grid in model units: cell (ia, ib) is at a = a0 + (ia + ½) / res, b likewise.
+function rect(v, ext, res, fr = frame(v)) {
+  const [a0, a1, b0, b1] = ext, na = Math.round((a1 - a0) * res), nb = Math.round((b1 - b0) * res);
+  const data = new Uint8Array(na * nb), { w, h, mask } = v;
+  for (let ib = 0; ib < nb; ib++) {
+    const b = b0 + (ib + 0.5) / res, bx = fr.M.x + b * fr.V.x, by = fr.M.y + b * fr.V.y;
+    for (let ia = 0; ia < na; ia++) {
+      const a = a0 + (ia + 0.5) / res;
+      const x = Math.floor(bx + a * fr.U.x), y = Math.floor(by + a * fr.U.y);
+      if (x >= 0 && y >= 0 && x < w && y < h) data[ib * na + ia] = mask[y * w + x];
+    }
+  }
+  return { a0, b0, res, na, nb, data };
+}
+function rectCached(v, ext, res) {
+  const key = `${ext}|${res}|${v.kind === 'front' && P ? `${P.span}|${P.frontZ}` : ''}`;
+  return v.cache[key] || (v.cache[key] = rect(v, ext, res));
+}
+const cellA = (g, ia) => g.a0 + (ia + 0.5) / g.res;
+const cellB = (g, ib) => g.b0 + (ib + 0.5) / g.res;
+const idxA = (g, a) => clamp(Math.floor((a - g.a0) * g.res), 0, g.na - 1);
+function runs(g, ia) {
+  const out = [];
+  let lo = -1;
+  for (let ib = 0; ib < g.nb; ib++) {
+    const on = g.data[ib * g.na + ia];
+    if (on && lo < 0) lo = ib;
+    if (!on && lo >= 0) { out.push([lo, ib - 1]); lo = -1; }
+  }
+  if (lo >= 0) out.push([lo, g.nb - 1]);
+  return out;
+}
+// Connected pieces of a grid: { cells, x0, x1, y0, y1, sx, sy } (x = column, y = row).
+function label(nx, ny, on, eight) {
+  const lab = new Int32Array(nx * ny), q = new Int32Array(nx * ny), out = [];
+  for (let s = 0; s < nx * ny; s++) {
+    if (!on[s] || lab[s]) continue;
+    const c = { cells: [], x0: Infinity, x1: -Infinity, y0: Infinity, y1: -Infinity, sx: 0, sy: 0 };
+    let qh = 0, qt = 0;
+    q[qt++] = s; lab[s] = out.length + 1;
+    while (qh < qt) {
+      const p = q[qh++], x = p % nx, y = (p - x) / nx;
+      c.cells.push(p); c.sx += x; c.sy += y;
+      if (x < c.x0) c.x0 = x;
+      if (x > c.x1) c.x1 = x;
+      if (y < c.y0) c.y0 = y;
+      if (y > c.y1) c.y1 = y;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        if (!dx && !dy) continue;
+        if (!eight && dx && dy) continue;
+        const xx = x + dx, yy = y + dy;
+        if (xx < 0 || yy < 0 || xx >= nx || yy >= ny) continue;
+        const r = yy * nx + xx;
+        if (on[r] && !lab[r]) { lab[r] = out.length + 1; q[qt++] = r; }
+      }
+    }
+    out.push(c);
+  }
+  return out;
+}
+
+// ======================================================================================================
+// Fitting an aircraft to the cut-outs
+// ======================================================================================================
+const R = 480;   // grid cells per aircraft length
+
+// The top view: the fuselage's half width along it, then what sticks out of it on either side (mirrored
+// together): the wing with the engines in front of it, the tailplane, and engines beside the rear fuselage.
+function topFit(tg) {
+  const na = tg.na, c0 = Math.round(-tg.b0 * R);
+  const xLo = (ib) => (ib - c0) / R, xHi = (ib) => (ib + 1 - c0) / R;
+  const around = (ia, half) => {
+    let lo = Infinity, hi = -Infinity;
+    for (const [a, b] of runs(tg, ia)) if (xHi(b) > -half && xLo(a) < half) { lo = Math.min(lo, xLo(a)); hi = Math.max(hi, xHi(b)); }
+    return lo < hi ? Math.min(-lo, hi) : NaN;
+  };
+  const W = [];
+  for (let ia = idxA(tg, 0.15); ia <= idxA(tg, 0.32); ia++) W.push(around(ia, 1 / R));
+  const W0 = quantile(W, 0.5);
+  if (!(W0 > 0)) return null;
+  const hw = new Float64Array(na).fill(NaN);
+  const s0 = idxA(tg, 0.22);
+  for (const dir of [1, -1]) {
+    let prev = W0;
+    for (let ia = dir > 0 ? s0 : s0 - 1; ia >= 0 && ia < na; ia += dir) {
+      const h = Math.min(around(ia, prev), prev);
+      if (!(h > 0.6 / R)) break;
+      hw[ia] = prev = h;
+    }
+  }
+  const hwS = smooth(hw, 3);
+  let hwMax = 0;
+  for (const h of hwS) if (h > hwMax) hwMax = h;
+
+  const nh = tg.nb - c0;
+  const half = new Uint8Array(na * nh);
+  for (let j = 0; j < nh; j++) {
+    const x = (j + 0.5) / R, up = (c0 + j) * na, dn = (c0 - 1 - j) * na;
+    for (let ia = 0; ia < na; ia++) {
+      if (x <= (hwS[ia] || 0) + 1.5 / R) continue;
+      if (tg.data[up + ia] || (c0 - 1 - j >= 0 && tg.data[dn + ia])) half[j * na + ia] = 1;
+    }
+  }
+  const comps = label(na, nh, half, false).filter((c) => c.cells.length > 25).map((c) => ({
+    ...c, n: c.cells.length, amin: tg.a0 + c.x0 / R, amax: tg.a0 + (c.x1 + 1) / R, xmin: c.y0 / R, xmax: (c.y1 + 1) / R,
+    ca: tg.a0 + (c.sx / c.cells.length + 0.5) / R,
+  }));
+  const biggest = (list) => list.reduce((p, q) => (!p || q.n > p.n ? q : p), null);
+  const wingC = biggest(comps.filter((c) => c.xmax > 2.2 * hwMax));
+  const tailC = wingC && biggest(comps.filter((c) => c !== wingC && c.ca < wingC.ca - 0.12 && c.xmax > 1.4 * hwMax));
+  const rearC = comps.filter((c) => c !== wingC && c !== tailC && c.xmax - c.xmin < 0.1 && c.amax - c.amin > 1.3 * (c.xmax - c.xmin) &&
+    c.xmin < hwMax + 0.05 && c.ca < 0.05 && c.n > 60);
+  // the leading and trailing edge of a piece, column by column across the span (not counting what is thin
+  // along the fuselage there: propeller blades, aerials)
+  const planform = (c) => {
+    const n = c.y1 - c.y0 + 1, le = new Float64Array(n).fill(-Infinity), te = new Float64Array(n).fill(Infinity);
+    const own = new Uint8Array(na * nh);
+    for (const p of c.cells) own[p] = 1;
+    const thin = Math.round(0.02 * R);
+    for (let j = 0; j < n; j++) {
+      const row = (c.y0 + j) * na;
+      for (let ia = c.x0; ia <= c.x1; ia++) {
+        if (!own[row + ia]) continue;
+        let e = ia;
+        while (e + 1 <= c.x1 && own[row + e + 1]) e++;
+        if (e - ia + 1 >= thin) { le[j] = Math.max(le[j], tg.a0 + (e + 1) / R); te[j] = Math.min(te[j], tg.a0 + ia / R); }
+        ia = e;
+      }
+    }
+    for (let j = 0; j < n; j++) if (!Number.isFinite(le[j])) { le[j] = NaN; te[j] = NaN; }
+    // (columns with only thin bits take their neighbours' edges)
+    for (const arr of [le, te]) {
+      let last = NaN;
+      for (let j = 0; j < n; j++) if (Number.isFinite(arr[j])) last = arr[j]; else arr[j] = last;
+      last = NaN;
+      for (let j = n - 1; j >= 0; j--) if (Number.isFinite(arr[j])) last = arr[j]; else if (!Number.isFinite(arr[j])) arr[j] = last;
+    }
+    const xs = Float64Array.from({ length: n }, (_, j) => (c.y0 + j + 0.5) / R);
+    return { xs, le: medianOf(le, 2), te: medianOf(te, 2) };
+  };
+  const engines = [];
+  let wing = null, tail = null;
+  if (wingC) {
+    wing = planform(wingC);
+    // engines stick out of the leading edge (and propeller nacelles often out of the trailing edge too)
+    const w = Math.round(0.075 * R);
+    const leBase = openUp(wing.le, w), teBase = openUp(wing.te.map((t) => -t), w).map((t) => -t);
+    const diff = wing.le.map((l, j) => l - leBase[j]);
+    for (let j = 0; j < diff.length; j++) {
+      if (diff[j] < 0.012) continue;
+      let k = j;
+      while (k + 1 < diff.length && diff[k + 1] > 0.004) k++;
+      let j0 = j;
+      while (j0 > 0 && diff[j0 - 1] > 0.004) j0--;
+      let peak = 0;
+      for (let m = j0; m <= k; m++) peak = Math.max(peak, diff[m]);
+      let a = j0, b = k;
+      while (a < b && diff[a] < 0.3 * peak) a++;
+      while (b > a && diff[b] < 0.3 * peak) b--;
+      const d = (b - a + 2) / R, mid0 = (a + b) >> 1;
+      // (not the wing root's fairing: an engine sticks out at least about its own width, off the fuselage)
+      if (d > 0.008 && d < 0.12 && wing.xs[a] > 1.25 * hwMax && peak > 0.6 * d && wing.le[mid0] - leBase[mid0] > 0.5 * d) {
+        let front = -Infinity, rear = Infinity;
+        for (let m = a; m <= b; m++) front = Math.max(front, wing.le[m]);
+        const lo = Math.max(0, a - 2), hi = Math.min(diff.length - 1, b + 2);
+        let back = 0;
+        for (let m = lo; m <= hi; m++) { back = Math.max(back, teBase[m] - wing.te[m]); rear = Math.min(rear, wing.te[m]); }
+        const mid = (a + b) >> 1;
+        engines.push({ mount: 'wing', x: (wing.xs[a] + wing.xs[b]) / 2, d, front, protrude: front - leBase[mid],
+          rear: back > 0.01 ? rear : null, chord: leBase[mid] - teBase[mid], leAt: leBase[mid] });
+      }
+      for (let m = Math.max(0, j0 - 1); m <= Math.min(diff.length - 1, k + 1); m++) wing.le[m] = leBase[m];
+      for (let m = Math.max(0, j0 - 3); m <= Math.min(diff.length - 1, k + 3); m++) wing.te[m] = Math.max(wing.te[m], teBase[m]);
+      j = k;
+    }
+    wing.le = smooth(wing.le, 1);
+    wing.te = smooth(wing.te, 1);
+  }
+  if (tailC) { tail = planform(tailC); tail.le = smooth(tail.le, 1); tail.te = smooth(tail.te, 1); }
+  for (const c of rearC) {
+    const d = Math.min(c.xmax - c.xmin, (c.amax - c.amin) / 2.2) * 0.9;
+    engines.push({ mount: 'rear', x: c.xmax - d / 2, d, front: c.amax, len: c.amax - c.amin, rear: c.amin });
+  }
+  return { hw: hwS, hwMax, wing, tail, engines };
+}
+
+// The side view: the fuselage's top and bottom along it (without fin, engines, gear and wing), then the fin.
+function sideFit(sg, top) {
+  const na = sg.na, nb = sg.nb;
+  const longest = (ia) => { const r = runs(sg, ia); return r.length ? r.reduce((p, q) => (q[1] - q[0] > p[1] - p[0] ? q : p)) : null; };
+  const T = [], B = [];
+  for (let ia = idxA(sg, -0.2); ia <= idxA(sg, 0.25); ia++) { const r = longest(ia); if (r) { T.push(r[1]); B.push(r[0]); } }
+  const Tc = quantile(T, 0.5), Bc = quantile(B, 0.5);
+  if (!(Tc > Bc)) return null;
+  // a high wing shows above the cabin roof: the roof is kept level under it
+  let high = false, capFrom = -1, capTo = -1, wingTop = NaN;
+  if (top && top.wing) {
+    const le = top.wing.le[0], te = top.wing.te[0];
+    const tops = [];
+    for (let ia = idxA(sg, te); ia <= idxA(sg, le); ia++) { const r = longest(ia); if (r) tops.push(r[1]); }
+    wingTop = quantile(tops, 0.6);
+    if (wingTop - Tc > 0.08 * (Tc - Bc)) { high = true; capFrom = idxA(sg, te - 0.015); capTo = idxA(sg, le + 0.015); }
+  }
+  const lo = new Float64Array(na).fill(NaN), hi = new Float64Array(na).fill(NaN);
+  const s0 = idxA(sg, 0.1);
+  for (const dir of [1, -1]) {
+    let pl = Bc, ph = Tc;
+    for (let ia = dir > 0 ? s0 : s0 - 1; ia >= 0 && ia < na; ia += dir) {
+      let l = Infinity, h = -Infinity;
+      for (const [a, b] of runs(sg, ia)) if (b >= pl && a <= ph) { l = Math.min(l, a); h = Math.max(h, b); }
+      if (l > h) break;
+      // towards the nose the roof may rise (a 747's upper deck), towards the tail it only comes down;
+      // the belly only rises towards either end
+      const flat = dir < 0 || (ia >= capFrom && ia <= capTo);
+      h = Math.min(h, flat ? ph : ph + 0.7);
+      l = Math.max(l, pl);
+      if (h < l) break;
+      lo[ia] = pl = l;
+      hi[ia] = ph = h;
+    }
+  }
+  let iN = -1, iT = na;
+  for (let ia = 0; ia < na; ia++) if (Number.isFinite(hi[ia])) { iN = Math.max(iN, ia); iT = Math.min(iT, ia); }
+  if (iN - iT < 40) return null;
+  const topZ = smooth(hi, 2).map((h) => cellB(sg, h) + 0.5 / R);
+  const botZ = smooth(lo, 2).map((l) => cellB(sg, l) - 0.5 / R);
+
+  // the fin: what is above the roof in the rear half
+  const res = new Uint8Array(na * nb);
+  const tailMid = Math.round((hi[iT] + lo[iT]) / 2);
+  for (let ia = 0; ia < na; ia++) {
+    if (cellA(sg, ia) > 0.05) continue;
+    const from = Number.isFinite(hi[ia]) ? hi[ia] + 2 : ia < iT ? tailMid : nb;
+    for (let ib = from; ib < nb; ib++) res[ib * na + ia] = sg.data[ib * na + ia];
+  }
+  for (const e of (top && top.engines) || []) {
+    if (e.mount !== 'rear') continue;
+    for (let ia = idxA(sg, e.rear - 0.01); ia <= idxA(sg, e.front + 0.01); ia++) {
+      const zc = (topZ[ia] + botZ[ia]) / 2 + 0.3 * (topZ[ia] - botZ[ia]) / 2;
+      for (let ib = 0; ib < nb; ib++) if (Math.abs(cellB(sg, ib) - zc) < e.d * 0.6) res[ib * na + ia] = 0;
+    }
+  }
+  const finC = label(na, nb, res, true).filter((c) => c.cells.length > 40).reduce((p, q) => (!p || q.cells.length > p.cells.length ? q : p), null);
+  let fin = null;
+  if (finC) {
+    const n = finC.y1 - finC.y0 + 1, le = new Float64Array(n).fill(-Infinity), te = new Float64Array(n).fill(Infinity);
+    for (const p of finC.cells) {
+      const ia = p % na, j = (p - ia) / na - finC.y0;
+      le[j] = Math.max(le[j], sg.a0 + (ia + 1) / R);
+      te[j] = Math.min(te[j], sg.a0 + ia / R);
+    }
+    const zs = Float64Array.from({ length: n }, (_, j) => cellB(sg, finC.y0 + j));
+    fin = { zs, le: smooth(medianOf(le, 2), 1), te: smooth(medianOf(te, 2), 1) };
+  }
+  // a wing engine below the belly: its lowest point under the middle of the nacelle
+  const podBottom = (e, len) => {
+    const bots = [];
+    for (let ia = idxA(sg, e.front - 0.6 * len); ia <= idxA(sg, e.front - 0.2 * len); ia++) {
+      if (!Number.isFinite(lo[ia])) continue;
+      let l = Infinity;
+      for (const [a, b] of runs(sg, ia)) if (b >= lo[ia] - 2.5 * e.d * R && a <= hi[ia]) l = Math.min(l, a);
+      if (l < Infinity) bots.push(cellB(sg, l) - 0.5 / R);
+    }
+    return quantile(bots, 0.5);
+  };
+  const fus = { a: [], top: [], bot: [] };
+  for (let ia = iN; ia >= iT; ia--) { fus.a.push(cellA(sg, ia)); fus.top.push(topZ[ia]); fus.bot.push(botZ[ia]); }
+  return { fus, high, wingTop: cellB(sg, wingTop) + 0.5 / R, cabinTop: cellB(sg, Tc), cabinBot: cellB(sg, Bc), fin, podBottom };
+}
+
+// A wing on top of the fuselage or under it (propeller nacelles hang under a high wing, sit on a low one).
+function setHigh(h) {
+  P.high = h;
+  P.wing.z = h ? P.wingHighZ : P.wingLowZ;
+  P.wing.dih = h ? 1 : 5;
+  if (P.kind === 'prop') for (const e of P.eng) if (e.mount === 'wing') e.drop = h ? -0.45 : -0.1;
+}
+// Along the fuselage (nose to tail, F.a falling): the value of arr at a.
+function along(F, arr, a) {
+  const n = F.a.length, t = clamp((F.a[0] - a) / (F.a[0] - F.a[n - 1]) * (n - 1), 0, n - 1);
+  const i = Math.min(n - 2, Math.floor(t));
+  return lerp(arr[i], arr[i + 1], t - i);
+}
+const fusAt = (F, a) => ({ top: along(F, F.top, a), bot: along(F, F.bot, a), hw: along(F, F.hw, a) });
+function stAt(st, x) {   // a planform at x across the span (st sorted by x)
+  if (x <= st[0].x) return st[0];
+  for (let i = 1; i < st.length; i++) {
+    if (x <= st[i].x) {
+      const t = (x - st[i - 1].x) / (st[i].x - st[i - 1].x || 1);
+      return { x, le: lerp(st[i - 1].le, st[i].le, t), te: lerp(st[i - 1].te, st[i].te, t) };
+    }
+  }
+  return st[st.length - 1];
+}
+const wingZ = (W, x) => W.z + x * Math.tan(W.dih * RAD);
+function straight(span, root, tipC, sweep, leRoot, x0 = 0) {
+  return [{ x: x0, le: leRoot, te: leRoot - root }, { x: span / 2, le: leRoot - (span / 2 - x0) * Math.tan(sweep * RAD), te: leRoot - (span / 2 - x0) * Math.tan(sweep * RAD) - tipC }];
+}
+
+function fit() {
+  const S = views.side;
+  if (!S.mask) throw new Error('A side view is needed.');
+  const sg = rect(S, EXT.side, R);
+  const tg = views.top.mask ? rect(views.top, EXT.top, R) : null;
+  const top = tg ? topFit(tg) : null;
+  const side = sideFit(sg, top);
+  if (!side) throw new Error('No fuselage found in the side view: check the cut-out and the marks on nose and tail.');
+  const F = side.fus;
+  // the fuselage's width: from the top view where it shows, else as wide as it is high
+  const n = F.a.length;
+  const hwTop = F.a.map((a) => (top ? top.hw[idxA(sg, a)] : NaN));
+  const ratios = [];
+  for (let i = 0; i < n; i++) if (Number.isFinite(hwTop[i]) && F.top[i] > F.bot[i]) ratios.push(hwTop[i] / ((F.top[i] - F.bot[i]) / 2));
+  const ratio = clamp(quantile(ratios, 0.5) || 1, 0.5, 2);
+  F.hw = F.a.map((a, i) => (Number.isFinite(hwTop[i]) ? hwTop[i] : ratio * (F.top[i] - F.bot[i]) / 2));
+  F.hw = Array.from(smooth(F.hw, 2));
+  let H = 0, hwMax = 0;
+  for (let i = 0; i < n; i++) { H = Math.max(H, F.top[i] - F.bot[i]); hwMax = Math.max(hwMax, F.hw[i]); }
+  const at = (a) => fusAt(F, a);
+
+  // wing
+  let wingSt;
+  if (top && top.wing) wingSt = Array.from(top.wing.xs, (x, j) => ({ x, le: top.wing.le[j], te: top.wing.te[j] }));
+  else wingSt = straight(0.95, 0.17, 0.055, 27, 0.08);
+  const root = wingSt[0], rootChord = root.le - root.te;
+  const mid = at((root.le + root.te) / 2);
+  const wing = { st: wingSt, tc0: 0.15, tc1: 0.11, dih: side.high ? 1 : 5 };
+  const wingLowZ = mid.bot + 0.22 * (mid.top - mid.bot);
+  const wingHighZ = side.high ? side.wingTop - 0.5 * wing.tc0 * rootChord : mid.top - 0.08 * (mid.top - mid.bot);
+  wing.z = side.high ? wingHighZ : wingLowZ;
+
+  // fin
+  let fin = null, finTop = null, tType = 'low';
+  if (side.fin && side.fin.zs.length > 6) {
+    const f = side.fin, m = f.zs.length;
+    const st = Array.from(f.zs, (z, j) => ({ z, le: f.le[j], te: f.te[j] }));
+    const c = (q) => { const j = Math.round(q * (m - 1)); return f.le[j] - f.te[j]; };
+    // a T-tail: the fin hardly narrows to the top, or the tailplane on top reaches back past the fin's trailing edge
+    const teAt = (q) => f.te[Math.round(q * (m - 1))];
+    const kick = teAt(0.75) + (teAt(0.75) - teAt(0.4)) / 0.35 * 0.2 - teAt(0.95);   // (past a swept trailing edge's line)
+    if (c(0.85) > 0.7 * c(0.4) || kick > 0.015) tType = 'T';
+    const rootA = (st[0].le + st[0].te) / 2, rf = at(clamp(rootA, F.a[n - 1], F.a[0]));
+    st.unshift({ z: (rf.top + rf.bot) / 2, le: st[0].le, te: st[0].te });
+    fin = { st, tc: 0.11 };
+    finTop = st[st.length - 1];
+  } else {
+    const tz = at(F.a[n - 1] + 0.06);
+    const z0 = (tz.top + tz.bot) / 2;
+    const le0 = F.a[n - 1] + 0.2;
+    fin = { st: [{ z: z0, le: le0, te: le0 - 0.14 }, { z: tz.top + 0.17, le: le0 - 0.13, te: le0 - 0.18 }], tc: 0.11 };
+    finTop = fin.st[1];
+  }
+
+  // tailplane
+  let tailSt;
+  if (top && top.tail) tailSt = Array.from(top.tail.xs, (x, j) => ({ x, le: top.tail.le[j], te: top.tail.te[j] }));
+  else tailSt = straight(0.34, 0.1, 0.04, 32, tType === 'T' ? finTop.le + 0.02 : fin.st[1].le - 0.02);
+  const tr = at(clamp((tailSt[0].le + tailSt[0].te) / 2, F.a[n - 1], F.a[0]));
+  const tailLowZ = (tr.top + tr.bot) / 2 + 0.3 * (tr.top - tr.bot) / 2;
+  const tailTZ = finTop.z - 0.012;
+  const tail = { st: tailSt, tc0: 0.11, tc1: 0.09, dih: tType === 'T' ? 0 : 6, z: tType === 'T' ? tailTZ : tailLowZ };
+
+  // engines
+  const span = 2 * wingSt[wingSt.length - 1].x;
+  let eng = top ? top.engines.map((e) => ({ ...e })) : [];
+  if (!top) {
+    const x = 0.18 * span, s = stAt(wingSt, x);
+    eng = [{ mount: 'wing', x, d: 0.055, front: s.le + 0.06, protrude: 0.06, rear: null, chord: s.le - s.te, leAt: s.le }];
+  }
+  const wingEng = eng.filter((e) => e.mount === 'wing').sort((p, q) => p.x - q.x);
+  const props = wingEng.length && wingEng.every((e) => e.protrude / e.d > 1.9);
+  const kind = props ? 'prop' : 'jet';
+  for (const e of wingEng) {
+    // (js/livery.js takes a nacelle for an engine only up to 6 times as long as it is wide)
+    if (kind === 'prop') e.len = Math.min(5 * e.d, e.rear != null ? e.front - e.rear : e.protrude + 0.8 * e.chord);
+    else e.len = Math.max(2.1 * e.d, e.protrude + 0.9 * e.d);
+    e.drop = kind === 'prop' ? (side.high ? -0.45 : -0.1) : -0.75;
+  }
+  if (wingEng.length && kind === 'jet') {
+    const e = wingEng[0], bot = side.podBottom(e, e.len), fb = at(e.front - 0.4 * e.len).bot;
+    if (bot < fb - 0.15 * e.d) {
+      const drop = (bot + e.d / 2 - wingZ(wing, e.x)) / e.d;
+      for (const q of wingEng) q.drop = clamp(drop, -1.6, 0.3);
+      e.zSide = bot + e.d / 2;
+    }
+  }
+  for (const e of eng) if (e.mount === 'rear') {
+    const f = at(e.front - e.len / 2);
+    e.z = (f.top + f.bot) / 2 + 0.3 * (f.top - f.bot) / 2;
+  }
+
+  const old = P;
+  P = {
+    fus: F, H, hwMax, hwScale: 1,
+    wing, tail, fin, eng, kind, blades: Number($('blades').value), engLift: 0, engScale: 1, propScale: 1,
+    tType, tailLowZ, tailTZ, span, frontZ: wingZ(wing, span / 2), detail: old ? old.detail : 0.1, detailKey: null,
+    high: side.high, wingLowZ, wingHighZ,
+  };
+  for (const v of Object.values(views)) v.cache = {};
+  if (views.front.mask) frontFit();
+}
+// The front view: where the fuselage is (so the picture's height can be lined up), and the wing beside it:
+// above or below the middle of the fuselage, and how it rises to the tips.
+function frontFit() {
+  P.frontZ = 0;
+  const g = rect(views.front, EXT.front, R), F = P.fus;
+  let k = 0;
+  for (let i = 1; i < F.a.length; i++) if (F.top[i] - F.bot[i] > F.top[k] - F.bot[k]) k = i;
+  const zc = (F.top[k] + F.bot[k]) / 2, hw = P.hwMax * P.hwScale;
+  const col = (x) => clamp(Math.floor((x - g.a0) * R), 0, g.na - 1);
+  const B = (ib) => g.b0 + (ib + 0.5) / R;
+  // the fuselage: the longest run half way out from the middle, on both sides
+  const ft = [], fb = [];
+  for (const s of [-1, 1]) for (let x = 0.35 * hw; x <= 0.65 * hw; x += 1 / R) {
+    const r = runs(g, col(s * x));
+    if (!r.length) continue;
+    const l = r.reduce((p, q) => (q[1] - q[0] > p[1] - p[0] ? q : p));
+    ft.push(B(l[1]) + 0.5 / R); fb.push(B(l[0]) - 0.5 / R);
+  }
+  const fTop = quantile(ft, 0.5), fBot = quantile(fb, 0.5);
+  if (!(fTop > fBot)) return;
+  const bc = (fTop + fBot) / 2;
+  P.frontZ = zc - bc;
+  // the wing: the top of what is beside the fuselage, out to near the tips (engines hang below it)
+  const xs = [], tops = [];
+  const tip = P.span / 2, tailTip = P.tail ? P.tail.st[P.tail.st.length - 1].x : 0;
+  // (outboard of the tailplane, which is seen behind the wing; if it is about as wide, from the fuselage side)
+  const x0 = tailTip < 0.6 * tip ? Math.max(1.4 * hw, tailTip + 0.02) : 1.4 * hw;
+  for (const s of [-1, 1]) for (let x = x0; x <= 0.85 * tip; x += 2 / R) {
+    const r = runs(g, col(s * x)).filter((q) => B(q[1]) > fBot - 0.5 * (fTop - fBot) && B(q[0]) < fTop + 0.5 * (fTop - fBot) + x * 0.3);
+    if (!r.length) continue;
+    const top = r.reduce((p, q) => (q[1] > p[1] ? q : p));
+    xs.push(x); tops.push(B(top[1]) + 0.5 / R);
+  }
+  if (xs.length < 10) return;
+  const f = envelopeFit(xs, tops, true);
+  const rootTop = f.k0 + f.k1 * hw;   // the wing's top where it meets the fuselage side
+  const high = (rootTop - fBot) / (fTop - fBot) > 0.62;
+  setHigh(high);
+  const rootC = P.wing.st[0].le - P.wing.st[0].te;
+  P.wing.dih = clamp(Math.atan(f.k1) / RAD, -10, 15);
+  P.wing.z = zc + (f.k0 - bc) - 0.5 * P.wing.tc0 * rootC;
+  // engines measured in the side view stay where they were seen
+  for (const e of P.eng) if (e.zSide != null) e.drop = clamp((e.zSide - wingZ(P.wing, e.x)) / e.d, -1.6, 0.3);
+}
+
+// ======================================================================================================
+// Building the model: every part is a grid of points (rows × columns), so it has its own piece of texture
+// ======================================================================================================
+const QUALITY = {
+  low: { fus: 90, around: 24, span: 12, chord: 8, eng: 14 },
+  high: { fus: 220, around: 64, span: 40, chord: 20, eng: 32 },
+};
+function piece(kind, nu, nv, closed, dark) { return { kind, nu, nv, closed, dark, pos: new Float32Array(nu * nv * 3) }; }
+function put(pc, i, j, x, y, z) { const k = (i * pc.nv + j) * 3; pc.pos[k] = x; pc.pos[k + 1] = y; pc.pos[k + 2] = z; }
+
+function fuselagePiece(P, q) {
+  const F = P.fus, n = F.a.length, N = q.fus, M = q.around, e = 2 / 2.3;
+  const pc = piece('fuselage', N + 2, M + 1, true, false);
+  const aN = F.a[0], aT = F.a[n - 1];
+  for (let i = 0; i < N + 2; i++) {
+    const k = clamp(i - 1, 0, N - 1);
+    const a = i === 0 ? aN + 0.4 / R : i === N + 1 ? aT - 0.4 / R : lerp(aN, aT, k / (N - 1));
+    const f = fusAt(F, clamp(a, aT, aN));
+    const tip = i === 0 || i === N + 1;
+    const hw = tip ? 0 : f.hw * P.hwScale, hh = tip ? 0 : (f.top - f.bot) / 2, zc = (f.top + f.bot) / 2;
+    for (let j = 0; j <= M; j++) {
+      const p = 2 * Math.PI * j / M;
+      put(pc, i, j, hw * sgnpow(Math.sin(p), e), a, zc + hh * sgnpow(Math.cos(p), e));
+    }
+  }
+  return pc;
+}
+// A wing-like part: stations from root to tip, each { o: leading edge, c: chord (back along cd), t: thickness
+// for its chord (along td) }, and closed at the tip.
+function naca(x) { return 5 * (0.2969 * Math.sqrt(x) - 0.126 * x - 0.3516 * x * x + 0.2843 * x ** 3 - 0.1036 * x ** 4); }
+function surfacePiece(kind, st, cd, td, nc, dark) {
+  const nv = 2 * nc + 1, nu = st.length + 1;
+  const pc = piece(kind, nu, nv, true, dark);
+  for (let i = 0; i < nu; i++) {
+    const s = st[Math.min(i, st.length - 1)], t = i === st.length ? 0 : s.t;
+    const C = s.cd || cd, D = s.td || td;
+    for (let j = 0; j < nv; j++) {
+      const th = 2 * Math.PI * j / (nv - 1), xc = (1 + Math.cos(th)) / 2;
+      const yt = (Math.sin(th) >= 0 ? 1 : -1) * naca(clamp(xc, 0, 1)) * t * s.c;
+      put(pc, i, j, s.o[0] + C[0] * xc * s.c + D[0] * yt, s.o[1] + C[1] * xc * s.c + D[1] * yt, s.o[2] + C[2] * xc * s.c + D[2] * yt);
+    }
+  }
+  return pc;
+}
+function revolvePiece(kind, cx, cz, front, len, rad, prof, M, dark) {
+  const pc = piece(kind, prof.length, M + 1, true, dark);
+  prof.forEach(([s, r], i) => {
+    for (let j = 0; j <= M; j++) {
+      const p = 2 * Math.PI * j / M;
+      put(pc, i, j, cx + r * rad * Math.sin(p), front - s * len, cz + r * rad * Math.cos(p));
+    }
+  });
+  return pc;
+}
+function wingPiece(W, kind, q) {
+  const tip = W.st[W.st.length - 1].x, st = [];
+  for (let k = 0; k < q.span; k++) {
+    const x = tip * k / (q.span - 1), s = stAt(W.st, x);
+    st.push({ o: [x, s.le, wingZ(W, x)], c: Math.max(0.002, s.le - s.te), t: lerp(W.tc0, W.tc1, x / tip) });
+  }
+  return surfacePiece(kind, st, [0, -1, 0], [-Math.sin(W.dih * RAD), 0, Math.cos(W.dih * RAD)], q.chord, false);
+}
+function finPiece(Fn, q) {
+  const z0 = Fn.st[0].z, z1 = Fn.st[Fn.st.length - 1].z, st = [];
+  const at = (z) => {
+    for (let i = 1; i < Fn.st.length; i++) if (z <= Fn.st[i].z) {
+      const t = (z - Fn.st[i - 1].z) / (Fn.st[i].z - Fn.st[i - 1].z || 1);
+      return { le: lerp(Fn.st[i - 1].le, Fn.st[i].le, t), te: lerp(Fn.st[i - 1].te, Fn.st[i].te, t) };
+    }
+    return Fn.st[Fn.st.length - 1];
+  };
+  for (let k = 0; k < q.span; k++) {
+    const z = lerp(z0, z1, k / (q.span - 1)), s = at(z);
+    st.push({ o: [0, s.le, z], c: Math.max(0.002, s.le - s.te), t: Fn.tc });
+  }
+  return surfacePiece('fin', st, [0, -1, 0], [1, 0, 0], q.chord, false);
+}
+const JET = [[0.1, 0.8], [0.0, 0.88], [0.03, 0.97], [0.12, 1], [0.5, 0.97], [0.8, 0.85], [0.93, 0.72], [0.93, 0.5], [1.02, 0.32], [1.12, 0]];
+const PROP = [[0, 0.55], [0.02, 0.8], [0.08, 0.97], [0.2, 1], [0.6, 0.95], [0.85, 0.7], [1, 0]];
+function engineZ(P, e) { return e.mount === 'wing' ? wingZ(P.wing, e.x) + (e.drop + P.engLift) * e.d * P.engScale : e.z + P.engLift * e.d * P.engScale; }
+function enginePieces(P, e, q) {
+  const d = e.d * P.engScale, r = d / 2, len = e.len * P.engScale, z = engineZ(P, e), out = [];
+  const prop = P.kind === 'prop' && e.mount === 'wing';
+  if (prop) {
+    out.push(revolvePiece('nacelle', e.x, z, e.front, len, r, PROP, q.eng, false));
+    const sl = 1.3 * r, sr = 0.52 * r;   // (a little narrower than the nacelle's front: a piece of its own)
+    out.push(revolvePiece('spinner', e.x, z, e.front + sl, sl, sr, [[0, 0], [0.25, 0.5], [0.6, 0.85], [1, 1]], q.eng, false));
+    const Rp = 1.75 * d * P.propScale, hubY = e.front + 0.35 * sl;
+    const along = [0.22, 0.4, 0.65, 0.85, 1], chord = [0.15, 0.2, 0.18, 0.14, 0.08], pitch = [55, 42, 32, 25, 20];
+    for (let b = 0; b < P.blades; b++) {
+      const al = (b + 0.5) * 2 * Math.PI / P.blades, rad = [Math.cos(al), 0, Math.sin(al)], tan = [-Math.sin(al), 0, Math.cos(al)];
+      const st = along.map((s, k) => {
+        const p = pitch[k] * RAD, c = chord[k] * Rp;
+        const cd = [tan[0] * Math.cos(p), -Math.sin(p), tan[2] * Math.cos(p)];
+        const td = [rad[1] * cd[2] - rad[2] * cd[1], rad[2] * cd[0] - rad[0] * cd[2], rad[0] * cd[1] - rad[1] * cd[0]];
+        return { o: [e.x + rad[0] * s * Rp - cd[0] * c / 2, hubY - cd[1] * c / 2, z + rad[2] * s * Rp - cd[2] * c / 2], c, t: 0.1, cd, td };
+      });
+      out.push(surfacePiece('blade', st, null, null, 4, true));
+    }
+    e.hub = { x: e.x, z, y: hubY, r: Rp, tip: e.front + sl };
+  } else {
+    out.push(revolvePiece('nacelle', e.x, z, e.front, len, r, JET, q.eng, false));
+    out.push(revolvePiece('fan', e.x, z, e.front, len, r, [[0.1, 0], [0.1, 0.8]], q.eng, true));
+    out.push(revolvePiece('fan', e.x, z, e.front, len, r, [[0.02, 0], [0.06, 0.18], [0.1, 0.26]], q.eng, true));
+  }
+  if (e.mount === 'wing' && !prop) {
+    const top = wingZ(P.wing, e.x) + 0.01, bot = z + 0.3 * d, c = 0.75 * len;
+    if (top > bot) {
+      const st = [bot, top].map((zz) => ({ o: [e.x, e.front - 0.2 * len, zz], c, t: Math.min(0.3, 0.22 * d / c) }));
+      out.push(surfacePiece('pylon', st, [0, -1, 0], [1, 0, 0], 6, false));
+    }
+  } else if (e.mount === 'rear') {
+    const f = fusAt(P.fus, e.front - len / 2);
+    const st = [0.3 * f.hw, e.x].map((x) => ({ o: [x, e.front - 0.3 * len, z], c: 0.5 * len, t: 0.14 }));
+    out.push(surfacePiece('pylon', st, [0, -1, 0], [0, 0, 1], 6, false));
+  }
+  return out;
+}
+// Normals, pointing out of the part.
+function finish(pc) {
+  const { nu, nv, pos } = pc, nor = new Float32Array(pos.length);
+  const v = (i, j) => (i * nv + j) * 3;
+  const add = (a, b, c) => {
+    const ux = pos[b] - pos[a], uy = pos[b + 1] - pos[a + 1], uz = pos[b + 2] - pos[a + 2];
+    const wx = pos[c] - pos[a], wy = pos[c + 1] - pos[a + 1], wz = pos[c + 2] - pos[a + 2];
+    const nx = uy * wz - uz * wy, ny = uz * wx - ux * wz, nz = ux * wy - uy * wx;
+    for (const k of [a, b, c]) { nor[k] += nx; nor[k + 1] += ny; nor[k + 2] += nz; }
+  };
+  for (let i = 0; i < nu - 1; i++) for (let j = 0; j < nv - 1; j++) {
+    add(v(i, j), v(i + 1, j), v(i + 1, j + 1));
+    add(v(i, j), v(i + 1, j + 1), v(i, j + 1));
+  }
+  if (pc.closed) for (let i = 0; i < nu; i++) {
+    const a = v(i, 0), b = v(i, nv - 1);
+    for (let k = 0; k < 3; k++) { const s = nor[a + k] + nor[b + k]; nor[a + k] = nor[b + k] = s; }
+  }
+  let cx = 0, cy = 0, cz = 0;
+  const n = nu * nv;
+  for (let k = 0; k < pos.length; k += 3) { cx += pos[k]; cy += pos[k + 1]; cz += pos[k + 2]; }
+  cx /= n; cy /= n; cz /= n;
+  let out = 0;
+  for (let k = 0; k < pos.length; k += 3) {
+    const l = Math.hypot(nor[k], nor[k + 1], nor[k + 2]) || 1;
+    nor[k] /= l; nor[k + 1] /= l; nor[k + 2] /= l;
+    out += (pos[k] - cx) * nor[k] + (pos[k + 1] - cy) * nor[k + 1] + (pos[k + 2] - cz) * nor[k + 2];
+  }
+  pc.inv = out < 0;
+  if (pc.inv) for (let k = 0; k < nor.length; k++) nor[k] = -nor[k];
+  pc.nor = nor;
+  return pc;
+}
+function mirrored(pc) {
+  const m = { ...pc, pos: Float32Array.from(pc.pos), nor: Float32Array.from(pc.nor), inv: !pc.inv, mirror: true };
+  for (let k = 0; k < m.pos.length; k += 3) { m.pos[k] = -m.pos[k]; m.nor[k] = -m.nor[k]; }
+  return m;
+}
+function buildPieces(P, quality) {
+  const q = QUALITY[quality], out = [finish(fuselagePiece(P, q))];
+  const both = (pc) => { finish(pc); out.push(pc, mirrored(pc)); };
+  if (P.wing) both(wingPiece(P.wing, 'wing', q));
+  if (P.tail) both(wingPiece(P.tail, 'tail', q));
+  if (P.fin) out.push(finish(finPiece(P.fin, q)));
+  for (const e of P.eng) for (const pc of enginePieces(P, e, q)) both(pc);
+  return out;
+}
+// All triangles in one list (for drawing outlines and depths).
+function flatten(pieces) {
+  let nv = 0;
+  for (const pc of pieces) nv += pc.nu * pc.nv;
+  const pos = new Float32Array(nv * 3), idx = [];
+  let base = 0;
+  for (const pc of pieces) {
+    pos.set(pc.pos, base * 3);
+    for (let i = 0; i < pc.nu - 1; i++) for (let j = 0; j < pc.nv - 1; j++) {
+      const a = base + i * pc.nv + j, b = a + pc.nv, c = b + 1, d = a + 1;
+      if (pc.inv) idx.push(a, c, b, a, d, c); else idx.push(a, b, c, a, c, d);
+    }
+    base += pc.nu * pc.nv;
+  }
+  return { pos, idx: Uint32Array.from(idx) };
+}
+
+// ---------- looking at the model as a picture would: depth of the nearest surface per grid cell ----------
+function raster(flat, kind, ext, res, sign = 1) {
+  const [ia, ib, id] = AX[kind], [a0, a1, b0, b1] = ext;
+  const na = Math.round((a1 - a0) * res), nb = Math.round((b1 - b0) * res);
+  const buf = new Float32Array(na * nb).fill(-Infinity), { pos, idx } = flat;
+  for (let t = 0; t < idx.length; t += 3) {
+    const p = idx[t] * 3, q = idx[t + 1] * 3, r = idx[t + 2] * 3;
+    const ax = (pos[p + ia] - a0) * res - 0.5, ay = (pos[p + ib] - b0) * res - 0.5, ad = sign * pos[p + id];
+    const bx = (pos[q + ia] - a0) * res - 0.5, by = (pos[q + ib] - b0) * res - 0.5, bd = sign * pos[q + id];
+    const cx = (pos[r + ia] - a0) * res - 0.5, cy = (pos[r + ib] - b0) * res - 0.5, cd = sign * pos[r + id];
+    const area = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+    if (Math.abs(area) < 1e-12) continue;
+    const x0 = Math.max(0, Math.ceil(Math.min(ax, bx, cx))), x1 = Math.min(na - 1, Math.floor(Math.max(ax, bx, cx)));
+    const y0 = Math.max(0, Math.ceil(Math.min(ay, by, cy))), y1 = Math.min(nb - 1, Math.floor(Math.max(ay, by, cy)));
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+      const w0 = ((bx - x) * (cy - y) - (by - y) * (cx - x)) / area;
+      const w1 = ((cx - x) * (ay - y) - (cy - y) * (ax - x)) / area;
+      const w2 = 1 - w0 - w1;
+      if (w0 < -1e-7 || w1 < -1e-7 || w2 < -1e-7) continue;
+      const d = w0 * ad + w1 * bd + w2 * cd, k = y * na + x;
+      if (d > buf[k]) buf[k] = d;
+    }
+  }
+  return { buf, na, nb, a0, b0, res };
+}
+function iou(sil, photo) {
+  let i = 0, u = 0;
+  for (let k = 0; k < sil.buf.length; k++) {
+    const s = sil.buf[k] > -Infinity, p = photo.data[k] === 1;
+    if (s && p) i++;
+    if (s || p) u++;
+  }
+  return u ? i / u : 0;
+}
+function scores(P) {
+  const flat = flatten(buildPieces(P, 'low')), out = {};
+  for (const k of KINDS) {
+    const v = views[k];
+    if (!v.mask) continue;
+    out[k] = iou(raster(flat, k, EXT[k], 150), rectCached(v, EXT[k], 150));
+  }
+  return out;
+}
+const total = (s) => { const l = Object.values(s); return l.reduce((a, b) => a + b, 0) / (l.length || 1); };
+
+// Moves one thing at a time while the outlines cover the pictures better.
+async function match() {
+  if (!P) return;
+  const tune = [
+    { get: () => P.wing.z, set: (v) => { P.wing.z = v; }, step: 0.01, lo: -0.25, hi: 0.25, wing: true },
+    { get: () => P.wing.dih, set: (v) => { P.wing.dih = v; }, step: 2, lo: -8, hi: 14, wing: true },
+    { get: () => P.tail.z, set: (v) => { P.tail.z = v; }, step: 0.01, lo: -0.25, hi: 0.4, tail: true },
+    { get: () => P.tail.dih, set: (v) => { P.tail.dih = v; }, step: 3, lo: -12, hi: 15, tail: true },
+    { get: () => P.engLift, set: (v) => { P.engLift = v; }, step: 0.25, lo: -2, hi: 2, skip: !P.eng.length },
+    { get: () => P.engScale, set: (v) => { P.engScale = v; }, step: 0.1, lo: 0.5, hi: 1.8, skip: !P.eng.length },
+    { get: () => P.frontZ, set: (v) => { P.frontZ = v; }, step: 0.01, lo: -0.4, hi: 0.4, skip: !views.front.mask, front: true },
+    { get: () => P.hwScale, set: (v) => { P.hwScale = v; }, step: 0.06, lo: 0.6, hi: 1.6, skip: !!views.top.mask || !views.front.mask },
+  ].filter((t) => !t.skip);
+  let best = total(scores(P)), evals = 0;
+  const start = best;
+  const descend = async (list, rounds) => {
+    const steps = list.map((t) => t.step);
+    for (let round = 0; round < rounds; round++) {
+      let moved = true;
+      while (moved) {
+        moved = false;
+        list.forEach((t, i) => { t.step = steps[i]; });
+        for (const t of list) {
+          for (const dir of [1, -1]) {
+            const was = t.get(), now = clamp(was + dir * t.step, t.lo, t.hi);
+            if (now === was) continue;
+            t.set(now);
+            const s = total(scores(P));
+            evals++;
+            if (s > best + 1e-5) { best = s; moved = true; break; }
+            t.set(was);
+          }
+          if (evals % 6 === 0) { status(`Matching the outlines… ${(best * 100).toFixed(1)} % covered`); await tick(); }
+        }
+        if (evals > 700) break;
+      }
+      for (let i = 0; i < steps.length; i++) steps[i] /= 2;
+    }
+    list.forEach((t, i) => { t.step = steps[i] * 2 ** rounds; });
+  };
+  // The front view shows best whether the wing is above or below the fuselage, and the tailplane on the
+  // fuselage or on top of the fin; inside the fuselage nothing changes the outline, so both are tried.
+  const flip = async (save, other, list) => {
+    const was = save(), wasBest = best;
+    other();
+    best = total(scores(P));
+    await descend(list, 5);
+    if (best <= wasBest) { was(); best = wasBest; }
+  };
+  await descend(tune, 7);
+  if (views.front.mask) {
+    await flip(() => { const t = P.tType, z = P.tail.z, d = P.tail.dih; return () => { P.tType = t; P.tail.z = z; P.tail.dih = d; }; },
+      () => { P.tType = P.tType === 'T' ? 'low' : 'T'; P.tail.z = P.tType === 'T' ? P.tailTZ : P.tailLowZ; P.tail.dih = P.tType === 'T' ? 0 : 6; },
+      tune.filter((t) => t.tail));
+  }
+  status(`Outlines matched: ${(start * 100).toFixed(1)} % → ${(best * 100).toFixed(1)} % (${evals} tries).`);
+  syncKnobs();
+  rebuild();
+}
+
+// ======================================================================================================
+// Texture: windows for the game look, the pictures' colours for the photo look
+// ======================================================================================================
+// Dark spots in the side view on the fuselage that are small and not too tall: windows (cockpit and cabin).
+function detailGrid() {
+  const v = views.side, key = `${P.detail}|${v.marks.map((m) => `${m.x},${m.y}`)}|${v.flip}`;
+  if (P.detailKey === key && P.detailGrid) return P.detailGrid;
+  const res = 1600, ext = [-0.56, 0.56, -0.3, 0.3], fr = frame(v);
+  const na = Math.round(1.12 * res), nb = Math.round(0.6 * res), { w, h, data, mask } = v;
+  const lum = new Float32Array(na * nb), on = new Uint8Array(na * nb);
+  for (let ib = 0; ib < nb; ib++) for (let ia = 0; ia < na; ia++) {
+    const p = img(fr, ext[0] + (ia + 0.5) / res, ext[2] + (ib + 0.5) / res);
+    const x = Math.floor(p.x), y = Math.floor(p.y);
+    if (x < 0 || y < 0 || x >= w || y >= h) continue;
+    const i = (y * w + x) * 4;
+    lum[ib * na + ia] = (0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2]) / 255;
+    on[ib * na + ia] = mask[y * w + x];
+  }
+  const S = new Float64Array((na + 1) * (nb + 1));
+  for (let ib = 0; ib < nb; ib++) for (let ia = 0; ia < na; ia++) S[(ib + 1) * (na + 1) + ia + 1] = lum[ib * na + ia] + S[ib * (na + 1) + ia + 1] + S[(ib + 1) * (na + 1) + ia] - S[ib * (na + 1) + ia];
+  const r = Math.round(0.009 * res);
+  const dark = new Uint8Array(na * nb), F = P.fus;
+  for (let ia = 0; ia < na; ia++) {
+    const a = ext[0] + (ia + 0.5) / res;
+    if (a > F.a[0] || a < F.a[F.a.length - 1]) continue;
+    const f = fusAt(F, a), m = 0.06 * (f.top - f.bot);
+    for (let ib = 0; ib < nb; ib++) {
+      const b = ext[2] + (ib + 0.5) / res, k = ib * na + ia;
+      if (!on[k] || b > f.top - m || b < f.bot + m) continue;
+      const x0 = Math.max(0, ia - r), x1 = Math.min(na, ia + r + 1), y0 = Math.max(0, ib - r), y1 = Math.min(nb, ib + r + 1);
+      const mean = (S[y1 * (na + 1) + x1] - S[y0 * (na + 1) + x1] - S[y1 * (na + 1) + x0] + S[y0 * (na + 1) + x0]) / ((x1 - x0) * (y1 - y0));
+      if (lum[k] < mean - P.detail && lum[k] < 0.55) dark[k] = 1;
+    }
+  }
+  const keep = new Uint8Array(na * nb);
+  for (const c of label(na, nb, dark, true)) {
+    if (c.cells.length < 3) continue;
+    const a = ext[0] + (c.x0 + c.x1 + 1) / 2 / res, f = fusAt(F, clamp(a, F.a[F.a.length - 1], F.a[0]));
+    const tall = (c.y1 - c.y0 + 1) / res / (f.top - f.bot);
+    const cockpit = a > F.a[0] - 0.08;
+    if (tall < 0.12 || (cockpit && tall < 0.35 && (c.x1 - c.x0 + 1) / res < 0.06)) for (const p of c.cells) keep[p] = 1;
+  }
+  P.detailKey = key;
+  P.detailGrid = { ext, res, na, nb, keep, at(y, z) {
+    const ia = Math.floor((y - ext[0]) * res), ib = Math.floor((z - ext[2]) * res);
+    return ia >= 0 && ib >= 0 && ia < na && ib < nb && keep[ib * na + ia] === 1;
+  } };
+  return P.detailGrid;
+}
+// Each part gets a rectangle of the texture about as big as it is.
+function pack(pieces, W, H, pad) {
+  let area = 0;
+  for (const pc of pieces) {
+    let u = 0, v = 0;
+    for (let j = 0; j < pc.nv; j++) for (let i = 0; i < pc.nu - 1; i++) {
+      const a = (i * pc.nv + j) * 3, b = a + pc.nv * 3;
+      u += Math.hypot(pc.pos[b] - pc.pos[a], pc.pos[b + 1] - pc.pos[a + 1], pc.pos[b + 2] - pc.pos[a + 2]);
+    }
+    for (let i = 0; i < pc.nu; i++) for (let j = 0; j < pc.nv - 1; j++) {
+      const a = (i * pc.nv + j) * 3, b = a + 3;
+      v += Math.hypot(pc.pos[b] - pc.pos[a], pc.pos[b + 1] - pc.pos[a + 1], pc.pos[b + 2] - pc.pos[a + 2]);
+    }
+    pc.uLen = Math.max(1e-3, u / pc.nv);
+    pc.vLen = Math.max(1e-3, v / pc.nu);
+    area += pc.uLen * pc.vLen;
+  }
+  let s = Math.sqrt(0.7 * W * H / area);
+  for (let tries = 0; tries < 40; tries++, s *= 0.94) {
+    const items = pieces.map((pc) => ({ pc, w: Math.max(2, Math.round(pc.uLen * s)), h: Math.max(2, Math.round(pc.vLen * s)) }))
+      .sort((p, q) => q.h - p.h);
+    let x = 0, y = 0, rowH = 0, ok = true;
+    for (const it of items) {
+      const fw = it.w + 2 * pad, fh = it.h + 2 * pad;
+      if (fw > W) { ok = false; break; }
+      if (x + fw > W) { x = 0; y += rowH; rowH = 0; }
+      if (y + fh > H) { ok = false; break; }
+      it.pc.rect = { x: x + pad, y: y + pad, w: it.w, h: it.h };
+      x += fw;
+      rowH = Math.max(rowH, fh);
+    }
+    if (ok) return;
+  }
+  throw new Error('The texture is too small for the model.');
+}
+const DARK = [15, 17, 20];
+function bake(pieces, flat, W, mode) {
+  const H = W, PAD = 2;
+  pack(pieces, W, H, PAD);
+  const px = new Uint8ClampedArray(W * H * 4);
+  const base = mode === 'game' ? 255 : 205;
+  for (let i = 0; i < px.length; i += 4) { px[i] = px[i + 1] = px[i + 2] = base; px[i + 3] = 255; }
+  const det = mode === 'game' && views.side.mask ? detailGrid() : null;
+  // photo look: from where each picture was taken, which surfaces it shows
+  const dirs = [];
+  if (mode === 'photo') {
+    for (const k of KINDS) {
+      const v = views[k];
+      if (!v.mask) continue;
+      for (const sign of [1, -1]) {
+        const w = k === 'top' ? ((sign < 0) === v.below ? 1 : 0.6) : 1;
+        dirs.push({ k, v, sign, w, fr: frame(v), d: raster(flat, k, EXT[k], 500, sign) });
+      }
+    }
+  }
+  const p = [0, 0, 0], n = [0, 0, 0];
+  for (const pc of pieces) {
+    const r = pc.rect, { nu, nv } = pc;
+    for (let ty = -PAD; ty < r.h + PAD; ty++) for (let tx = -PAD; tx < r.w + PAD; tx++) {
+      const X = r.x + tx, Y = r.y + ty;
+      if (X < 0 || Y < 0 || X >= W || Y >= H) continue;
+      let col;
+      if (pc.dark) col = DARK;
+      else {
+        const fi = clamp((tx + 0.5) / r.w * (nu - 1), 0, nu - 1), fj = clamp((ty + 0.5) / r.h * (nv - 1), 0, nv - 1);
+        const i0 = Math.min(nu - 2, Math.floor(fi)), j0 = Math.min(nv - 2, Math.floor(fj)), fu = fi - i0, fv = fj - j0;
+        const a = (i0 * nv + j0) * 3, b = a + nv * 3, c = b + 3, d = a + 3;
+        for (let e = 0; e < 3; e++) {
+          p[e] = (1 - fu) * ((1 - fv) * pc.pos[a + e] + fv * pc.pos[d + e]) + fu * ((1 - fv) * pc.pos[b + e] + fv * pc.pos[c + e]);
+          n[e] = (1 - fu) * ((1 - fv) * pc.nor[a + e] + fv * pc.nor[d + e]) + fu * ((1 - fv) * pc.nor[b + e] + fv * pc.nor[c + e]);
+        }
+        const nl = Math.hypot(n[0], n[1], n[2]) || 1;
+        n[0] /= nl; n[1] /= nl; n[2] /= nl;
+        if (mode === 'game') col = det && pc.kind === 'fuselage' && Math.abs(n[0]) > 0.25 && det.at(p[1], p[2]) ? DARK : null;
+        else col = photoColour(dirs, p, n);
+      }
+      if (!col) continue;
+      const o = (Y * W + X) * 4;
+      px[o] = col[0]; px[o + 1] = col[1]; px[o + 2] = col[2];
+    }
+  }
+  const cv = document.createElement('canvas');
+  cv.width = W; cv.height = H;
+  cv.getContext('2d').putImageData(new ImageData(px, W, H), 0, 0);
+  return cv;
+}
+function photoColour(dirs, p, n) {
+  let r = 0, g = 0, b = 0, ws = 0;
+  for (const D of dirs) {
+    const [ia, ib, id] = AX[D.k];
+    const dot = n[id] * D.sign;
+    if (dot < 0.12) continue;
+    const g0 = D.d, ca = Math.floor((p[ia] - g0.a0) * g0.res), cb = Math.floor((p[ib] - g0.b0) * g0.res);
+    if (ca < 0 || cb < 0 || ca >= g0.na || cb >= g0.nb) continue;
+    if (D.sign * p[id] < g0.buf[cb * g0.na + ca] - 0.008) continue;   // something else is in front of it
+    const q = img(D.fr, p[ia], p[ib]), v = D.v;
+    const x = clamp(q.x - 0.5, 0, v.w - 1.001), y = clamp(q.y - 0.5, 0, v.h - 1.001);
+    const xi = Math.floor(x), yi = Math.floor(y), fx = x - xi, fy = y - yi;
+    if (!v.mask[Math.round(y) * v.w + Math.round(x)]) continue;
+    const at = (xx, yy, e) => v.data[(yy * v.w + xx) * 4 + e];
+    const w = dot * dot * D.w;
+    const c = [0, 1, 2].map((e) => (1 - fy) * ((1 - fx) * at(xi, yi, e) + fx * at(xi + 1, yi, e)) + fy * ((1 - fx) * at(xi, yi + 1, e) + fx * at(xi + 1, yi + 1, e)));
+    r += w * c[0]; g += w * c[1]; b += w * c[2]; ws += w;
+  }
+  return ws > 0 ? [r / ws, g / ws, b / ws] : null;
+}
+function geometry(pieces, W) {
+  let nv = 0;
+  for (const pc of pieces) nv += pc.nu * pc.nv;
+  const pos = new Float32Array(nv * 3), nor = new Float32Array(nv * 3), uv = new Float32Array(nv * 2), idx = [];
+  let base = 0;
+  for (const pc of pieces) {
+    pos.set(pc.pos, base * 3);
+    nor.set(pc.nor, base * 3);
+    const r = pc.rect;
+    for (let i = 0; i < pc.nu; i++) for (let j = 0; j < pc.nv; j++) {
+      const k = (base + i * pc.nv + j) * 2;
+      uv[k] = (r.x + i / (pc.nu - 1) * r.w) / W;
+      uv[k + 1] = (r.y + j / (pc.nv - 1) * r.h) / W;
+    }
+    for (let i = 0; i < pc.nu - 1; i++) for (let j = 0; j < pc.nv - 1; j++) {
+      const a = base + i * pc.nv + j, b = a + pc.nv, c = b + 1, d = a + 1;
+      if (pc.inv) idx.push(a, c, b, a, d, c); else idx.push(a, b, c, a, c, d);
+    }
+    base += pc.nu * pc.nv;
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  g.setIndex(idx);
+  return g;
+}
+function makeMesh(quality, mode, W) {
+  const pieces = buildPieces(P, quality);
+  const flat = mode === 'photo' ? flatten(pieces) : null;
+  const cv = bake(pieces, flat, W, mode);
+  const map = new THREE.CanvasTexture(cv);
+  map.flipY = false;
+  map.colorSpace = THREE.SRGBColorSpace;
+  map.anisotropy = 4;
+  map.userData.mimeType = mode === 'photo' ? 'image/jpeg' : 'image/png';
+  const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, map, roughness: 0.55, metalness: 0, side: THREE.DoubleSide });
+  const mesh = new THREE.Mesh(geometry(pieces, W), mat);
+  return { mesh, pieces };
+}
+
+// ======================================================================================================
+// The 3D preview
+// ======================================================================================================
+const three = (() => {
+  const pane = $('threePane');
+  const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+  renderer.setPixelRatio(Math.min(2, devicePixelRatio));
+  pane.prepend(renderer.domElement);
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x1c2533);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x445066, 2.0));
+  const sun = new THREE.DirectionalLight(0xfff4e0, 2.2);
+  sun.position.set(-0.8, 1.2, 2);
+  scene.add(sun);
+  const camera = new THREE.PerspectiveCamera(32, 1, 0.01, 50);
+  camera.up.set(0, 0, 1);
+  camera.position.set(-1.5, 1.25, 0.75);
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.target.set(0, 0, 0);
+  const render = () => renderer.render(scene, camera);
+  controls.addEventListener('change', render);
+  const resize = () => {
+    const w = pane.clientWidth, h = pane.clientHeight;
+    renderer.setSize(w, h, false);
+    renderer.domElement.style.width = '100%';
+    renderer.domElement.style.height = '100%';
+    camera.aspect = w / Math.max(1, h);
+    camera.updateProjectionMatrix();
+    render();
+  };
+  new ResizeObserver(resize).observe(pane);
+  let mesh = null;
+  return {
+    renderer, scene, camera, render,
+    set(m) {
+      if (mesh) { scene.remove(mesh); mesh.geometry.dispose(); mesh.material.map?.dispose(); mesh.material.dispose(); }
+      mesh = m;
+      if (m) scene.add(m);
+      render();
+    },
+  };
+})();
+
+let rebuildTimer = 0;
+function rebuild(now) {
+  clearTimeout(rebuildTimer);
+  const go = () => {
+    if (!P) return;
+    const t0 = performance.now();
+    const pieces = buildPieces(P, 'low');
+    built = { flatLow: flatten(pieces) };
+    for (const v of Object.values(views)) v.outline = null;
+    draw();
+    const mode = $('look').value;
+    const { mesh, pieces: hp } = makeMesh('high', mode, mode === 'photo' ? 1024 : 2048);
+    three.set(mesh);
+    const s = scores(P);
+    let tris = 0;
+    for (const pc of hp) tris += (pc.nu - 1) * (pc.nv - 1) * 2;
+    $('stats').textContent = `${Math.round(tris / 1000)}k triangles · outlines cover ` +
+      Object.entries(s).map(([k, x]) => `${k} ${(x * 100).toFixed(0)} %`).join(', ') + ` · ${Math.round(performance.now() - t0)} ms`;
+    snippet();
+  };
+  if (now) go(); else rebuildTimer = setTimeout(go, 120);
+}
+
+// ======================================================================================================
+// The picture view: photo, cut-out, marks and the model's outline
+// ======================================================================================================
+const cv = $('view'), cx = cv.getContext('2d');
+let tool = 'marks';
+function fitCam(v) {
+  const w = cv.clientWidth, h = cv.clientHeight;
+  const k = Math.min(w / v.w, h / v.h) * 0.94;
+  v.cam = { k, ox: (w - v.w * k) / 2, oy: (h - v.h * k) / 2 };
+}
+function tintOf(v) {
+  if (v.tint) return v.tint;
+  const c = document.createElement('canvas');
+  c.width = v.w; c.height = v.h;
+  const g = c.getContext('2d'), id = g.createImageData(v.w, v.h);
+  for (let p = 0; p < v.w * v.h; p++) if (v.mask[p]) { id.data[p * 4] = 56; id.data[p * 4 + 1] = 189; id.data[p * 4 + 2] = 248; id.data[p * 4 + 3] = 80; }
+  g.putImageData(id, 0, 0);
+  return (v.tint = c);
+}
+function outlineOf(v) {
+  if (v.outline || !built) return v.outline;
+  const res = 400, ext = EXT[v.kind], s = raster(built.flatLow, v.kind, ext, res);
+  const c = document.createElement('canvas');
+  c.width = s.na; c.height = s.nb;
+  const g = c.getContext('2d'), id = g.createImageData(s.na, s.nb);
+  const on = (x, y) => x >= 0 && y >= 0 && x < s.na && y < s.nb && s.buf[y * s.na + x] > -Infinity;
+  for (let y = 0; y < s.nb; y++) for (let x = 0; x < s.na; x++) {
+    if (!on(x, y)) continue;
+    const edge = !on(x - 1, y) || !on(x + 1, y) || !on(x, y - 1) || !on(x, y + 1);
+    const o = ((s.nb - 1 - y) * s.na + x) * 4;   // rows from the top
+    id.data[o] = 251; id.data[o + 1] = 146; id.data[o + 2] = 60; id.data[o + 3] = edge ? 255 : 40;
+  }
+  g.putImageData(id, 0, 0);
+  return (v.outline = { c, res, ext });
+}
+function draw() {
+  const dpr = devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight;
+  if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
+  cx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  cx.clearRect(0, 0, w, h);
+  const v = views[cur];
+  $('viewTag').textContent = NAMES[cur] + (v.src ? '' : ' — no picture yet');
+  if (!v.src) {
+    cx.fillStyle = '#64748b';
+    cx.font = '15px system-ui';
+    cx.textAlign = 'center';
+    cx.fillText(cur === 'side' ? 'Open a picture of the aircraft from the side' : `Open a ${cur} view (optional)`, w / 2, h / 2);
+    return;
+  }
+  if (!v.cam) fitCam(v);
+  const { k, ox, oy } = v.cam;
+  cx.imageSmoothingEnabled = true;
+  cx.setTransform(dpr * k, 0, 0, dpr * k, dpr * ox, dpr * oy);
+  cx.drawImage(v.src, 0, 0);
+  cx.drawImage(tintOf(v), 0, 0);
+  const ol = outlineOf(v);
+  if (ol && v.marks) {
+    const f = frame(v), r = ol.res, [a0, , , b1] = ol.ext;
+    const E = img(f, a0, b1);
+    cx.setTransform(1, 0, 0, 1, 0, 0);
+    cx.transform(dpr * k, 0, 0, dpr * k, dpr * ox, dpr * oy);
+    cx.transform(f.U.x / r, f.U.y / r, -f.V.x / r, -f.V.y / r, E.x, E.y);
+    cx.imageSmoothingEnabled = false;
+    cx.drawImage(ol.c, 0, 0);
+  }
+  cx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  if (v.marks) {
+    const names = v.kind === 'front' ? ['tip', 'tip'] : ['nose', 'tail'];
+    const s = v.marks.map((m) => ({ x: ox + m.x * k, y: oy + m.y * k }));
+    cx.strokeStyle = '#ffffffaa';
+    cx.setLineDash([5, 4]);
+    cx.beginPath(); cx.moveTo(s[0].x, s[0].y); cx.lineTo(s[1].x, s[1].y); cx.stroke();
+    cx.setLineDash([]);
+    s.forEach((p, i) => {
+      cx.fillStyle = v.kind === 'front' ? '#facc15' : i ? '#ef4444' : '#22c55e';
+      cx.beginPath(); cx.arc(p.x, p.y, 7, 0, 2 * Math.PI); cx.fill();
+      cx.strokeStyle = '#000'; cx.lineWidth = 1.5; cx.stroke();
+      cx.fillStyle = '#fff'; cx.font = 'bold 12px system-ui'; cx.textAlign = 'left';
+      cx.fillText(names[i], p.x + 10, p.y - 8);
+    });
+  }
+}
+new ResizeObserver(() => { for (const v of Object.values(views)) v.cam = null; draw(); }).observe($('viewPane'));
+
+let drag = null;
+const toImage = (v, e) => { const r = cv.getBoundingClientRect(); return { x: (e.clientX - r.left - v.cam.ox) / v.cam.k, y: (e.clientY - r.top - v.cam.oy) / v.cam.k }; };
+cv.addEventListener('pointerdown', (e) => {
+  const v = views[cur];
+  if (!v.src) { $('file').click(); return; }
+  cv.setPointerCapture(e.pointerId);
+  const p = toImage(v, e);
+  if (tool === 'marks' || e.button !== 0) {
+    const i = v.marks.findIndex((m) => Math.hypot(m.x - p.x, m.y - p.y) * v.cam.k < 14);
+    drag = i >= 0 && e.button === 0 ? { mark: i } : { pan: { x: e.clientX, y: e.clientY, ox: v.cam.ox, oy: v.cam.oy } };
+  } else if (tool === 'wandAdd' || tool === 'wandErase') {
+    const x = Math.round(p.x), y = Math.round(p.y);
+    if (x >= 0 && y >= 0 && x < v.w && y < v.h) { wand(v, x, y, tool === 'wandAdd'); changed(v); }
+  } else {
+    drag = { brush: true };
+    paint(v, p);
+  }
+});
+cv.addEventListener('pointermove', (e) => {
+  if (!drag) return;
+  const v = views[cur];
+  if (drag.mark != null) { v.marks[drag.mark] = toImage(v, e); v.outline = null; draw(); }
+  else if (drag.pan) { v.cam.ox = drag.pan.ox + e.clientX - drag.pan.x; v.cam.oy = drag.pan.oy + e.clientY - drag.pan.y; draw(); }
+  else if (drag.brush) paint(v, toImage(v, e));
+});
+cv.addEventListener('pointerup', () => {
+  const v = views[cur];
+  if (drag && (drag.mark != null || drag.brush)) {
+    changed(v);
+    if (P && cur === 'front') rebuild();
+  }
+  drag = null;
+});
+cv.addEventListener('wheel', (e) => {
+  const v = views[cur];
+  if (!v.cam) return;
+  e.preventDefault();
+  const r = cv.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
+  const f = Math.exp(-e.deltaY * 0.0015);
+  v.cam.ox = mx - (mx - v.cam.ox) * f;
+  v.cam.oy = my - (my - v.cam.oy) * f;
+  v.cam.k *= f;
+  draw();
+}, { passive: false });
+function paint(v, p) {
+  const rad = Number($('brush').value) / v.cam.k, on = tool === 'add' ? 1 : 0;
+  const x0 = Math.max(0, Math.floor(p.x - rad)), x1 = Math.min(v.w - 1, Math.ceil(p.x + rad));
+  const y0 = Math.max(0, Math.floor(p.y - rad)), y1 = Math.min(v.h - 1, Math.ceil(p.y + rad));
+  for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) if ((x - p.x) ** 2 + (y - p.y) ** 2 <= rad * rad) v.mask[y * v.w + x] = on;
+  const g = tintOf(v).getContext('2d');
+  g.globalCompositeOperation = 'destination-out';
+  g.beginPath(); g.arc(p.x, p.y, rad, 0, 2 * Math.PI); g.fill();
+  g.globalCompositeOperation = 'source-over';
+  if (on) { g.fillStyle = 'rgba(56,189,248,0.31)'; g.fill(); }
+  draw();
+}
+
+// ======================================================================================================
+// The panel
+// ======================================================================================================
+function updateSlots() {
+  const box = $('slots');
+  if (!box.children.length) {
+    for (const k of KINDS) {
+      const d = document.createElement('div');
+      d.className = 'slot';
+      d.dataset.kind = k;
+      d.innerHTML = `<canvas width="160" height="80"></canvas><b>${NAMES[k]}</b><small>${k === 'side' ? 'needed' : 'optional'}</small>`;
+      d.onclick = () => select(k);
+      box.append(d);
+    }
+  }
+  for (const d of box.children) {
+    const v = views[d.dataset.kind];
+    d.classList.toggle('on', d.dataset.kind === cur);
+    const c = d.querySelector('canvas'), g = c.getContext('2d');
+    g.fillStyle = '#0b1220';
+    g.fillRect(0, 0, c.width, c.height);
+    if (v.src) {
+      const k = Math.min(c.width / v.w, c.height / v.h);
+      g.drawImage(v.src, (c.width - v.w * k) / 2, (c.height - v.h * k) / 2, v.w * k, v.h * k);
+    }
+  }
+  const v = views[cur];
+  $('videoBox').hidden = !v.video;
+  $('findFrame').hidden = cur !== 'side';
+  $('belowRow').hidden = cur !== 'top';
+  $('below').checked = views.top.below;
+  $('thr').value = v.thr;
+  $('thrOut').textContent = v.thr;
+  const hints = {
+    marks: cur === 'front' ? 'Drag the yellow marks onto the two wing tips. Drag elsewhere to move the picture, the wheel zooms.'
+      : 'Drag the green mark onto the tip of the nose and the red one onto the end of the tail. Drag elsewhere to move the picture, the wheel zooms.',
+    add: 'Paint over parts of the aircraft the cut-out missed.',
+    erase: 'Paint over things that are not the aircraft (ground, buildings, people, shadows).',
+    wandAdd: 'Click a part of the aircraft: everything around it of that colour is added.',
+    wandErase: 'Click the background: everything around it of that colour is removed.',
+  };
+  $('toolHint').textContent = hints[tool];
+  for (const id of ['clear', 'recut', 'remark', 'swap', 'flip']) $(id).disabled = !v.src;
+  $('match').disabled = !P;
+  $('saveGame').disabled = $('savePhoto').disabled = !P;
+}
+function select(k) {
+  cur = k;
+  updateSlots();
+  draw();
+}
+
+const KNOBS = [
+  { id: 'wingZ', label: 'Wing height', min: -0.25, max: 0.25, step: 0.001, get: () => P.wing.z, set: (v) => { P.wing.z = v; } },
+  { id: 'wingDih', label: 'Wing dihedral (°)', min: -10, max: 15, step: 0.1, get: () => P.wing.dih, set: (v) => { P.wing.dih = v; } },
+  { id: 'wingT', label: 'Wing thickness (% of chord)', min: 5, max: 22, step: 0.5, get: () => P.wing.tc0 * 100, set: (v) => { P.wing.tc1 = P.wing.tc1 / P.wing.tc0 * v / 100; P.wing.tc0 = v / 100; } },
+  { id: 'tailZ', label: 'Tailplane height', min: -0.25, max: 0.4, step: 0.001, get: () => P.tail.z, set: (v) => { P.tail.z = v; } },
+  { id: 'tailDih', label: 'Tailplane dihedral (°)', min: -15, max: 15, step: 0.1, get: () => P.tail.dih, set: (v) => { P.tail.dih = v; } },
+  { id: 'engLift', label: 'Engines up / down (diameters)', min: -2, max: 2, step: 0.01, get: () => P.engLift, set: (v) => { P.engLift = v; } },
+  { id: 'engScale', label: 'Engine size (×)', min: 0.5, max: 1.8, step: 0.01, get: () => P.engScale, set: (v) => { P.engScale = v; } },
+  { id: 'propScale', label: 'Propeller size (×)', min: 0.5, max: 1.6, step: 0.01, get: () => P.propScale, set: (v) => { P.propScale = v; } },
+  { id: 'hwScale', label: 'Fuselage width (×)', min: 0.6, max: 1.6, step: 0.01, get: () => P.hwScale, set: (v) => { P.hwScale = v; } },
+  { id: 'detail', label: 'Window detection (contrast)', min: 0.02, max: 0.35, step: 0.005, get: () => P.detail, set: (v) => { P.detail = v; } },
+];
+function makeKnobs() {
+  const box = $('knobs');
+  for (const kb of KNOBS) {
+    const d = document.createElement('div');
+    d.className = 'knob';
+    d.innerHTML = `<span>${kb.label}</span><output></output><input type="range" min="${kb.min}" max="${kb.max}" step="${kb.step}">`;
+    const inp = d.querySelector('input'), out = d.querySelector('output');
+    inp.oninput = () => { if (!P) return; kb.set(Number(inp.value)); out.textContent = Number(inp.value).toFixed(kb.step < 0.01 ? 3 : 2); rebuild(); };
+    kb.el = inp; kb.out = out;
+    box.append(d);
+  }
+  syncKnobs();
+}
+function syncKnobs() {
+  for (const kb of KNOBS) {
+    kb.el.disabled = !P;
+    if (!P) continue;
+    kb.el.value = kb.get();
+    kb.out.textContent = Number(kb.get()).toFixed(kb.step < 0.01 ? 3 : 2);
+  }
+  if (P) { $('wingPos').value = P.high ? 'high' : 'low'; $('tailType').value = P.tType; $('engKind').value = P.kind; $('blades').value = String(P.blades); }
+}
+
+// ---------- pictures in ----------
+async function openFile(file, v = views[cur]) {
+  if (!file) return;
+  if (v.video) { URL.revokeObjectURL(v.video.src); v.video.remove(); v.video = null; }
+  if (file.type.startsWith('video/')) {
+    const vid = document.createElement('video');
+    vid.muted = true; vid.playsInline = true; vid.preload = 'auto';
+    vid.src = URL.createObjectURL(file);
+    document.body.append(vid);
+    await new Promise((ok, no) => { vid.onloadeddata = ok; vid.onerror = () => no(new Error('This video cannot be played here.')); });
+    if (!Number.isFinite(vid.duration)) {
+      // (a recorded WebM often does not say how long it is: the browser finds out when asked for the end)
+      await new Promise((ok) => {
+        const done = () => { if (Number.isFinite(vid.duration)) { vid.removeEventListener('durationchange', done); ok(); } };
+        vid.addEventListener('durationchange', done);
+        vid.currentTime = 1e7;
+        setTimeout(ok, 5000);
+      });
+    }
+    if (!Number.isFinite(vid.duration)) throw new Error('This video does not say how long it is.');
+    v.video = vid;
+    $('scrub').max = vid.duration;
+    $('scrub').value = 0;
+    await seek(vid, Math.min(vid.duration / 2, 0.1));
+    setPicture(v, vid, vid.videoWidth, vid.videoHeight);
+  } else {
+    const bmp = await createImageBitmap(file);
+    setPicture(v, bmp, bmp.width, bmp.height);
+  }
+  status(`${NAMES[v.kind]}: ${file.name}`);
+}
+function seek(vid, t) {
+  return new Promise((ok) => {
+    let timer = 0;
+    const done = () => { clearTimeout(timer); vid.removeEventListener('seeked', done); ok(); };
+    vid.addEventListener('seeked', done);
+    timer = setTimeout(done, 3000);
+    vid.currentTime = clamp(t, 0, vid.duration || 0);
+  });
+}
+$('load').onclick = () => $('file').click();
+$('file').onchange = (e) => { openFile(e.target.files[0]).catch((err) => status(err.message)); e.target.value = ''; };
+$('clear').onclick = () => {
+  const v = views[cur];
+  if (v.video) { v.video.remove(); v.video = null; }
+  Object.assign(v, { src: null, data: null, mask: null, marks: null, tint: null, outline: null, cache: {} });
+  updateSlots(); draw();
+};
+$('scrub').oninput = async () => {
+  const v = views[cur];
+  if (!v.video) return;
+  await seek(v.video, Number($('scrub').value));
+  $('vtime').textContent = `${v.video.currentTime.toFixed(2)} s`;
+  const g = cx, w = cv.clientWidth, h = cv.clientHeight, dpr = devicePixelRatio || 1;
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, w, h);
+  const k = Math.min(w / v.video.videoWidth, h / v.video.videoHeight) * 0.94;
+  g.drawImage(v.video, (w - v.video.videoWidth * k) / 2, (h - v.video.videoHeight * k) / 2, v.video.videoWidth * k, v.video.videoHeight * k);
+};
+$('scrub').onchange = async () => {
+  const v = views[cur];
+  if (!v.video) return;
+  await seek(v.video, Number($('scrub').value));
+  setPicture(v, v.video, v.video.videoWidth, v.video.videoHeight);
+};
+// The side-on frame of a fly-by: where the aircraft's outline is longest for its height.
+$('findFrame').onclick = async () => {
+  const v = views[cur], vid = v.video;
+  if (!vid) return;
+  let best = null;
+  const n = 32;
+  for (let i = 0; i < n; i++) {
+    const t = (i + 0.5) / n * vid.duration;
+    await seek(vid, t);
+    const tmp = { kind: v.kind, thr: v.thr, flip: 1 };
+    setPictureQuiet(tmp, vid, vid.videoWidth, vid.videoHeight, 360);
+    const s = pca(tmp);
+    let fill = 0, edge = 0;
+    for (const m of tmp.mask) fill += m;
+    // (an aircraft cut off by the edge of the frame is no use)
+    for (let y = 0; y < tmp.h; y++) edge += tmp.mask[y * tmp.w] + tmp.mask[y * tmp.w + tmp.w - 1];
+    for (let x = 0; x < tmp.w; x++) edge += tmp.mask[x] + tmp.mask[(tmp.h - 1) * tmp.w + x];
+    const score = s && fill / tmp.mask.length < 0.6 && edge < 3 ? s.l1 / s.l2 : 0;
+    if (!best || score > best.score) best = { t, score };
+    status(`Looking through the video… ${i + 1}/${n}`);
+  }
+  await seek(vid, best.t);
+  $('scrub').value = best.t;
+  setPicture(v, vid, vid.videoWidth, vid.videoHeight);
+  status(`Side-on frame at ${best.t.toFixed(2)} s.`);
+};
+function setPictureQuiet(v, source, sw, sh, max) {
+  const s = Math.min(1, max / Math.max(sw, sh));
+  const w = Math.max(1, Math.round(sw * s)), h = Math.max(1, Math.round(sh * s));
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const g = c.getContext('2d', { willReadFrequently: true });
+  g.drawImage(source, 0, 0, w, h);
+  Object.assign(v, { w, h, data: g.getImageData(0, 0, w, h).data });
+  autoMask(v);
+}
+window.addEventListener('paste', (e) => {
+  const f = [...e.clipboardData.files].find((x) => x.type.startsWith('image/'));
+  if (f) openFile(f).catch((err) => status(err.message));
+});
+$('viewPane').addEventListener('dragover', (e) => e.preventDefault());
+$('viewPane').addEventListener('drop', (e) => { e.preventDefault(); openFile(e.dataTransfer.files[0]).catch((err) => status(err.message)); });
+
+// ---------- cut-out tools ----------
+$('tools').onchange = (e) => { tool = e.target.value; updateSlots(); };
+$('brush').oninput = () => { $('brushOut').textContent = $('brush').value; };
+$('thr').oninput = () => { views[cur].thr = Number($('thr').value); $('thrOut').textContent = $('thr').value; };
+$('recut').onclick = () => { const v = views[cur]; autoMask(v); changed(v); };
+$('remark').onclick = () => { const v = views[cur]; autoMarks(v); changed(v); };
+$('swap').onclick = () => { const v = views[cur]; v.marks.reverse(); changed(v); };
+$('flip').onclick = () => { const v = views[cur]; v.flip *= -1; changed(v); };
+$('below').onchange = () => { views.top.below = $('below').checked; if (P) rebuild(); };
+$('zoomFit').onclick = () => { views[cur].cam = null; draw(); };
+
+// ---------- model ----------
+$('build').onclick = () => {
+  try {
+    fit();
+    syncKnobs();
+    rebuild(true);
+    status(`Model built${P.kind === 'prop' ? ' (propeller aircraft)' : ''}${P.tType === 'T' ? ', T-tail' : ''}, ${P.eng.length * 2} engines.` +
+      (views.front.mask ? ' "Match the outlines" lines it up with the front view.' : ''));
+  } catch (err) { status(err.message); console.warn(err); }
+  updateSlots();
+};
+$('match').onclick = () => match().catch((err) => status(err.message));
+$('tailType').onchange = () => { if (!P) return; P.tType = $('tailType').value; P.tail.z = P.tType === 'T' ? P.tailTZ : P.tailLowZ; syncKnobs(); rebuild(); };
+$('wingPos').onchange = () => { if (!P) return; setHigh($('wingPos').value === 'high'); syncKnobs(); rebuild(); };
+$('engKind').onchange = () => { if (!P) return; P.kind = $('engKind').value; rebuild(); };
+$('blades').onchange = () => { if (!P) return; P.blades = Number($('blades').value); rebuild(); };
+$('look').onchange = () => rebuild(true);
+
+// ---------- saving ----------
+// The file has the model 1 unit long, centred.
+function finalMesh(mode) {
+  const { mesh, pieces } = makeMesh('high', mode, 2048);
+  const g = mesh.geometry;
+  g.computeBoundingBox();
+  const b = g.boundingBox, c = b.getCenter(new THREE.Vector3()), s = 1 / (b.max.y - b.min.y);
+  g.translate(-c.x, -c.y, -c.z);
+  g.scale(s, s, s);
+  mesh.name = $('name').value || 'plane';
+  return { mesh, pieces, c, s, box: b.clone() };
+}
+async function save(mode) {
+  if (!P) return;
+  status('Making the file…');
+  await tick();
+  const { mesh } = finalMesh(mode);
+  const scene = new THREE.Scene();
+  scene.add(mesh);
+  const glb = await new GLTFExporter().parseAsync(scene, { binary: true });
+  const blob = new Blob([glb], { type: 'model/gltf-binary' });
+  window.result = blob;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `${mesh.name}${mode === 'photo' ? '-photo' : ''}.glb`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  status(`Saved ${a.download} (${Math.round(glb.byteLength / 1024)} kB).`);
+}
+$('saveGame').onclick = () => save('game').catch((err) => status(err.message));
+$('savePhoto').onclick = () => save('photo').catch((err) => status(err.message));
+$('name').oninput = $('realLen').oninput = () => snippet();
+function snippet() {
+  if (!P) return;
+  const name = ($('name').value || 'plane').replace(/[^a-z0-9_]/gi, '').toLowerCase();
+  const L = Number($('realLen').value) || 38;
+  const pieces = buildPieces(P, 'low');
+  let y0 = Infinity, y1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+  for (const pc of pieces) for (let k = 0; k < pc.pos.length; k += 3) {
+    y0 = Math.min(y0, pc.pos[k + 1]); y1 = Math.max(y1, pc.pos[k + 1]); z0 = Math.min(z0, pc.pos[k + 2]); z1 = Math.max(z1, pc.pos[k + 2]);
+  }
+  const s = 1 / (y1 - y0), cy = (y0 + y1) / 2, cz = (z0 + z1) / 2, r4 = (x) => Math.round(x * 1e4) / 1e4;
+  const lines = [
+    `// js/data/models.js — save the file as models/${name}.glb, then:`,
+    `FG.data.models:     'YOUR-TYPE': '${name}',`,
+    `FG.data.modelSize:  ${name}: [${L}, ${(P.H * s * L).toFixed(1)}],`,
+  ];
+  const pe = P.eng.find((e) => e.mount === 'wing' && e.hub && P.kind === 'prop');
+  if (pe) lines.push(`FG.data.props:      ${name}: { x: ${r4(pe.hub.x * s)}, z: ${r4((pe.hub.z - cz) * s)}, y: ${r4((pe.hub.y - cy) * s)}, r: ${r4(pe.hub.r * s)}, t: 0.006, tip: ${r4((pe.hub.tip - cy) * s)} },`);
+  const main = P.kind === 'prop' ? 'nacelle' : P.high ? 'body' : 'wing';
+  lines.push(`FG.data.gear:       ${name}: { main: '${main}', track: 0.9, wheels: '1x2', tyre: ${Math.min(1.4, Math.max(0.5, L * 0.028)).toFixed(2)} },`);
+  lines.push('', `Span ${(P.span * s * L).toFixed(1)} m, height ${((z1 - z0) * s * L).toFixed(1)} m (without gear).`);
+  $('snippet').textContent = lines.join('\n');
+}
+
+// ---------- try it on one of the game's own models: ?demo=a320 ----------
+async function demo(file) {
+  status(`Drawing models/${file}.glb from three sides…`);
+  const gltf = await new GLTFLoader().loadAsync(new URL(`../models/${file}.glb`, location.href).href);
+  const scene = new THREE.Scene();
+  scene.add(gltf.scene, new THREE.HemisphereLight(0xffffff, 0x667080, 2.2));
+  const sun = new THREE.DirectionalLight(0xffffff, 1.6);
+  sun.position.set(1, 0.6, 2);
+  scene.add(sun);
+  const r = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+  r.setClearColor(0x000000, 0);
+  const tilt = Number(new URLSearchParams(location.search).get('tilt')) || 0;
+  const shots = { side: [[3, 0, 0], [0, 0, 1], 0.7, 0.45], top: [[0, 0, 3], [1, 0, 0], 0.85, 0.85], front: [[0, 3, 0], [0, 0, 1], 0.85, 0.45] };
+  for (const [k, [pos, up, hw, hh]] of Object.entries(shots)) {
+    const W = 1400, H = Math.round(W * hh / hw);
+    r.setSize(W, H, false);
+    const cam = new THREE.OrthographicCamera(-hw, hw, hh, -hh, 0.1, 10);
+    cam.position.set(...pos);
+    cam.up.set(...up);
+    cam.lookAt(0, 0, 0);
+    r.render(scene, cam);
+    const c = document.createElement('canvas');
+    c.width = W; c.height = H;
+    const g = c.getContext('2d');
+    const sky = g.createLinearGradient(0, 0, 0, H);
+    sky.addColorStop(0, '#5d8fc9'); sky.addColorStop(1, '#b9d3ec');
+    g.fillStyle = sky;
+    g.fillRect(0, 0, W, H);
+    g.translate(W / 2, H / 2);
+    g.rotate(tilt * RAD);
+    g.drawImage(r.domElement, -W / 2, -H / 2);
+    views[k].below = false;
+    setPicture(views[k], c, W, H);
+  }
+  r.dispose();
+  select('side');
+  $('build').click();
+}
+
+makeKnobs();
+updateSlots();
+draw();
+window.scan = { views, fit, match, scores, rebuild, get P() { return P; }, finalMesh, select, demo, autoMarks, autoMask, pca, rect, runs, frame };
+const q = new URLSearchParams(location.search);
+if (q.get('demo')) demo(q.get('demo')).catch((err) => { status(`Demo failed: ${err.message}`); console.error(err); });
+</script>
+</body>
+</html>

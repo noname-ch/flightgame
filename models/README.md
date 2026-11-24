@@ -56,3 +56,24 @@ move in the shader (`js/livery.js`), so the files need no animation. Propellers 
 nose in front of the engines and the surfaces as the rear of the wing's, tailplane's and fin's chord. A model edited
 in Blender keeps working as long as it stays 1 unit long and centred (export glTF Binary, +Y Up, no Draco); a
 propeller only turns when it is its own piece (Edit Mode, select it, `P` → Selection).
+
+## Making a model from pictures or video (`tools/plane_scan.html`)
+
+Serve the project folder (`./play.sh`) and open `http://localhost:8000/tools/plane_scan.html`. It builds an aircraft
+from a **side view** (needed), a **top or bottom view** and a **front view**: pictures (drop, paste or open) or
+frames of a video (the slider; "Find side-on frame" looks through a fly-by for the frame where the aircraft is
+longest). Three-view drawings work best; photos have to be taken square on, it does not untangle perspective.
+
+1. The aircraft is cut out from the background on its own (sky, paper). Brush and wand (+/−) fix what it gets wrong.
+2. Two marks line each picture up: nose and tail (side and top view), the two wing tips (front view).
+3. "Build model" fits an aircraft to the outlines: the fuselage from side and top view, wing and tailplane
+   from the top view, the fin from the side view, the engines where they stick out of the wing's leading edge
+   (or beside the rear fuselage); propellers where the nacelles reach far forward, a high wing and a T-tail
+   where the pictures show them. "Match the outlines" then moves wing, tailplane and engines until the model's
+   outlines (orange) cover the pictures best. Sliders and menus change anything by hand.
+4. "Save for the game" writes a `.glb` like the others here: 1 unit long, centred, x = right wing, y = nose,
+   z = up, white with the windows (dark spots on the fuselage in the side view) in its texture, each part its
+   own piece so that `js/livery.js` finds engines, propellers and control surfaces. "Save with photo colours"
+   paints it with the pictures instead. The box below the buttons has the lines for `js/data/models.js`.
+
+`?demo=a320` (any file name here) draws one of these models from three sides and builds it again, to try it.
