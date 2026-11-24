@@ -1113,6 +1113,23 @@ try {
       await key('Escape'); await key('q');
       const off = await evaluate(() => ({ active: FG.pilot.active, drawn: !!FG.view3d.pilotE, menu: !document.getElementById('menu').hidden, pm: !!document.getElementById('pilot-menu') }));
       if (off.active || off.menu || off.pm) errors.push(`fly it yourself: Esc, Q did not just leave the plane: ${JSON.stringify(off)}`);
+      // every other type: starts on the runway with its own engines and spools up at take-off thrust
+      step('fly it yourself: each of the ten aircraft starts, is drawn and spools up');
+      const types = await evaluate(() => Object.keys(FG.pilot.types));
+      if (types.length < 10) errors.push(`fly it yourself: only ${types.length} aircraft`);
+      for (const type of types) {
+        await evaluate((type) => {
+          const r = G.airportRunways('ZRH')[0];
+          const course = G.bearing({ lat: r[0], lon: r[1] }, { lat: r[2], lon: r[3] });
+          FG.pilot.start({ type, mode: 'runway', end: { code: 'ZRH', lat: r[0], lon: r[1], far: [r[2], r[3]], course, len: G.runwayLength(r), width: 45, name: 'T' } });
+        }, type);
+        await waitFor(() => FG.pilot.active && !FG.pilot.state.loading, 20000, `the hand-flown ${type} to be ready`);
+        await evaluate(() => { FG.pilot.state.lever = 1; });
+        await waitFor(() => FG.pilot.state.n1.every((n) => n > FG.pilot.state.spec.idle + 10) || FG.pilot.state.crashed, 30000, `the ${type}'s engines to spool up`);
+        const st = await evaluate(() => { const s = FG.pilot.state; return { type: FG.pilot.type, engines: s.n1.length, want: s.spec.engines, crashed: s.crashed, drawn: !!FG.view3d.pilotE && FG.view3d.pilotE.type === FG.pilot.type }; });
+        if (st.type !== type || st.engines !== st.want || st.crashed || !st.drawn) errors.push(`fly it yourself, ${type}: ${JSON.stringify(st)}`);
+        await evaluate(() => FG.pilot.stop());
+      }
       await evaluate(() => FG.ui.follow && FG.ui.follow(G.state.planes[0].id));
     }
 

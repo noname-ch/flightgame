@@ -116,6 +116,9 @@ Recent milestones, newest first (see `git log` for the rest):
 - Fly it yourself (P, ✈ Fly): an A350-900/-1000 flown by hand in 3D (js/pilot.js): Airbus normal law, engines that
   spool, flaps, gear, spoilers, brakes, reversers; PFD, engine and config displays, ILS, GPWS warnings and callouts;
   touchdowns rated; chase, cockpit (HUD), wing and fly-by cameras; start on a runway, on final or take over your A350.
+- Fly it yourself with ten aircraft, each flying in its own way: A350-900/-1000 and A320 (Airbus law), 737-800 and
+  747-400 (conventional: stays trimmed, can stall), Concorde (delta wing, reheat, Mach 2), Dash 8-400 and ATR 72
+  (turboprops, no autothrust), DC-3 and Ju 52 (classics: wings level themselves, a wing drops in a stall).
 - Thrust reversers on every type, each its own kind: in 3D the sleeves of big fans slide back over the cascade vanes,
   the A320ceo's four doors swing out, the old jets' buckets close behind the exhaust (on the A380 and A340-600 only the
   inner engines, on the Il-62, VC10 and Comet the outer ones); the reverse roar as loud as the engines that have them,

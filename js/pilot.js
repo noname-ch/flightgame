@@ -1,5 +1,7 @@
-// Fly it yourself: an A350 flown by hand in the 3D view (P, or ✈ Fly among the 3D view's buttons).
-// The physics are a point-mass model with Airbus-like fly-by-wire (normal law): the stick asks for a pitch rate and
+// Fly it yourself: an aircraft flown by hand in the 3D view (P, or ✈ Fly among the 3D view's buttons). Ten types
+// (TYPES), each flying in its own way: Airbus fly-by-wire, conventional (Boeing, Concorde, turboprops) or classic
+// (DC-3, Ju 52); jets, Concorde's reheat, turboprops and pistons; their own flaps, weights and limits.
+// The A350's physics are a point-mass model with Airbus-like fly-by-wire (normal law): the stick asks for a pitch rate and
 // holds the flight path when let go, the roll keys ask for a roll rate and the bank stays where it is left (up to 33°),
 // the angle of attack is limited so the wing never stalls (alpha protection, alpha floor gives TOGA). The engines spool
 // up slowly from idle; flaps and gear take seconds to move and add drag; wheel brakes, ground spoilers and reversers
@@ -14,13 +16,22 @@
   const wrap360 = (d) => ((d % 360) + 360) % 360;
   const wrap180 = (d) => ((((d % 360) + 540) % 360) - 180);
 
-  // Masses in kg, wing area m², take-off thrust per engine N (Trent XWB-84 / -97), wheelbase m, tail strike pitch °.
-  const TYPES = {
-    'A350-900': { toMass: 250000, landMass: 200000, S: 442, thrust: 374000, wheelbase: 28.7, tail: 11.5 },
-    'A350-1000': { toMass: 290000, landMass: 225000, S: 464, thrust: 431000, wheelbase: 32.5, tail: 9.6 },
-  };
-  // Flap lever positions: flap angle drawn (°), extra lift at 0° alpha, max lift, extra drag, max speed (VFE, kt).
-  const CONF = [
+  // ---------- the aircraft ----------
+  // Each type flies in its own way: its control law, engines, flaps, weights and limits.
+  //   law: 'airbus'  fly-by-wire normal law: the stick asks for a pitch rate and the path is held when let go,
+  //                  bank holds up to 33°, alpha protection and alpha floor, high speed protection;
+  //        'conventional'  (Boeing, Concorde, turboprops) the stick changes the angle of attack and the aircraft
+  //                  stays trimmed where it is let go (so more thrust makes it climb); no protections: it stalls
+  //                  (stick shaker first), overspeed only warns;
+  //        'classic' (DC-3, Ju 52) as conventional, heavier on the controls, the wings level themselves, no
+  //                  stick shaker, and in a stall a wing drops.
+  //   engine: 'jet' (thrust N per engine, falls with height and Mach), 'sst' (Concorde: ram air keeps the thrust up
+  //           at Mach 2, reheat at the take-off detent), 'prop' (turboprop) and 'piston': power W per engine,
+  //           thrust = power / speed, static thrust N per engine.
+  //   Masses kg, wing area S m², wheelbase m, tail: pitch at which the tail strikes (°), speeds kt.
+  //   conf: flap lever positions: flap angle drawn (°), extra lift at 0° alpha, max lift, extra drag, VFE kt.
+  //   aero: lift at 0° alpha (clBase), lift slope /° (clA), drag (cd0, induced k), Mach of the drag rise (mdd).
+  const AIRBUS_CONF = [
     { name: '0', flap: 0, cl0: 0, clmax: 1.30, cd: 0, vfe: 999 },
     { name: '1', flap: 0, cl0: 0.05, clmax: 1.65, cd: 0.004, vfe: 255 },
     { name: '1+F', flap: 8, cl0: 0.28, clmax: 1.92, cd: 0.012, vfe: 220 },
@@ -28,11 +39,130 @@
     { name: '3', flap: 22, cl0: 0.52, clmax: 2.25, cd: 0.032, vfe: 195 },
     { name: 'FULL', flap: 35, cl0: 0.70, clmax: 2.50, cd: 0.055, vfe: 186 },
   ];
-  // Thrust lever detents (Airbus): idle, climb, flex/max continuous, take-off/go-around. Below 0: reverse.
-  const DETENTS = [{ at: 0, name: 'IDLE' }, { at: 0.86, name: 'CL' }, { at: 0.93, name: 'FLX/MCT' }, { at: 1, name: 'TOGA' }];
-  const VMO = 340, MMO = 0.89, VLE = 250;
-  const CL_A = 0.085, CL_BASE = 0.22, CD0 = 0.017, K_IND = 0.0394; // lift slope /°, wing lift at 0°, drag
-  const IDLE_N1 = 21, LOOK_DOWN = 4; // cockpit camera: looks this far below the nose (°)
+  const A350 = {
+    maker: 'Airbus', law: 'airbus', engine: 'jet', engines: 2, idle: 21, spool: 1, rev: 0.45, athr: true,
+    speedBrake: true, groundSpoilers: true, gear: 'retract', conf: AIRBUS_CONF, toConf: 2,
+    vmo: 340, mmo: 0.89, vle: 250, clbKt: 300, crzM: 0.85, vr: 150, finalKt: 165, finalNm: 10, finalConf: 3,
+    clBase: 0.22, clA: 0.085, cd0: 0.017, k: 0.0394, mdd: 0.84, roll: 15,
+    crashFpm: 1100, tipBank: 11, tyreKt: 230, gauge: 'N1 %', lawName: 'NORMAL LAW',
+    detents: ['IDLE', 'CL', 'FLX/MCT', 'TOGA'],
+  };
+  const TYPES = {
+    'A350-900': { ...A350, name: 'Airbus A350-900', toMass: 250000, landMass: 200000, S: 442, thrust: 374000, wheelbase: 28.7, tail: 11.5,
+      blurb: 'Long-haul twin, Airbus fly-by-wire: let go of the stick and it holds its path; it cannot stall.' },
+    'A350-1000': { ...A350, name: 'Airbus A350-1000', toMass: 290000, landMass: 225000, S: 464, thrust: 431000, wheelbase: 32.5, tail: 9.6,
+      blurb: 'The stretched A350: heavier and longer, the tail strikes at under 10° on the rotation.' },
+    'A320': { ...A350, name: 'Airbus A320', toMass: 70000, landMass: 60000, S: 122.6, thrust: 118000, wheelbase: 12.6, tail: 11.7, idle: 19, spool: 1.15,
+      vmo: 350, mmo: 0.82, vle: 280, clbKt: 290, crzM: 0.78, vr: 145, finalKt: 150, finalConf: 3, clBase: 0.25, clA: 0.09, cd0: 0.019, k: 0.042, mdd: 0.79,
+      roll: 17, tipBank: 10, rev: 0.35,
+      conf: [
+        { name: '0', flap: 0, cl0: 0, clmax: 1.35, cd: 0, vfe: 999 },
+        { name: '1', flap: 0, cl0: 0.06, clmax: 1.70, cd: 0.004, vfe: 230 },
+        { name: '1+F', flap: 10, cl0: 0.30, clmax: 2.00, cd: 0.013, vfe: 215 },
+        { name: '2', flap: 15, cl0: 0.45, clmax: 2.20, cd: 0.024, vfe: 200 },
+        { name: '3', flap: 20, cl0: 0.55, clmax: 2.35, cd: 0.034, vfe: 185 },
+        { name: 'FULL', flap: 35, cl0: 0.75, clmax: 2.60, cd: 0.058, vfe: 177 },
+      ],
+      blurb: 'Short-haul Airbus: the same fly-by-wire as the A350, but light and nimble, quick to roll and to speed up.' },
+    'B737-800': { name: 'Boeing 737-800', maker: 'Boeing', law: 'conventional', engine: 'jet', engines: 2, idle: 20, spool: 1, rev: 0.35, athr: true,
+      speedBrake: true, groundSpoilers: true, gear: 'retract', toMass: 70000, landMass: 62000, S: 124.6, thrust: 121000, wheelbase: 15.6, tail: 11,
+      vmo: 340, mmo: 0.82, vle: 270, clbKt: 280, crzM: 0.78, vr: 150, finalKt: 150, finalNm: 10, finalConf: 3,
+      clBase: 0.24, clA: 0.09, cd0: 0.019, k: 0.043, mdd: 0.79, pitchRate: 3.5, roll: 14, aTau: 0.35, shaker: true,
+      crashFpm: 1000, tipBank: 9, tyreKt: 225, gauge: 'N1 %', lawName: 'MANUAL', detents: ['IDLE', 'CLB', 'CON', 'TO/GA'],
+      conf: [
+        { name: 'UP', flap: 0, cl0: 0, clmax: 1.30, cd: 0, vfe: 999 },
+        { name: '1', flap: 1, cl0: 0.10, clmax: 1.65, cd: 0.005, vfe: 250 },
+        { name: '5', flap: 5, cl0: 0.28, clmax: 1.90, cd: 0.012, vfe: 250 },
+        { name: '15', flap: 15, cl0: 0.45, clmax: 2.15, cd: 0.024, vfe: 200 },
+        { name: '30', flap: 30, cl0: 0.65, clmax: 2.45, cd: 0.050, vfe: 175 },
+        { name: '40', flap: 40, cl0: 0.75, clmax: 2.60, cd: 0.065, vfe: 162 },
+      ], toConf: 2,
+      blurb: 'Conventional Boeing: it stays trimmed where you let go of the stick, so thrust changes the path. It can stall: watch the stick shaker.' },
+    'B747-400': { name: 'Boeing 747-400', maker: 'Boeing', law: 'conventional', engine: 'jet', engines: 4, idle: 22, spool: 0.7, rev: 0.4, athr: true,
+      speedBrake: true, groundSpoilers: true, gear: 'retract', toMass: 360000, landMass: 260000, S: 541, thrust: 252000, wheelbase: 25.6, tail: 11,
+      vmo: 365, mmo: 0.92, vle: 270, clbKt: 320, crzM: 0.85, vr: 165, finalKt: 155, finalNm: 10, finalConf: 4,
+      clBase: 0.24, clA: 0.085, cd0: 0.018, k: 0.045, mdd: 0.86, pitchRate: 2, roll: 8, aTau: 0.7, shaker: true,
+      crashFpm: 1000, tipBank: 10, tyreKt: 225, gauge: 'N1 %', lawName: 'MANUAL', detents: ['IDLE', 'CLB', 'CON', 'TO/GA'],
+      conf: [
+        { name: 'UP', flap: 0, cl0: 0, clmax: 1.30, cd: 0, vfe: 999 },
+        { name: '1', flap: 1, cl0: 0.10, clmax: 1.65, cd: 0.005, vfe: 280 },
+        { name: '5', flap: 5, cl0: 0.25, clmax: 1.85, cd: 0.011, vfe: 260 },
+        { name: '10', flap: 10, cl0: 0.38, clmax: 2.00, cd: 0.018, vfe: 240 },
+        { name: '20', flap: 20, cl0: 0.50, clmax: 2.20, cd: 0.028, vfe: 230 },
+        { name: '25', flap: 25, cl0: 0.62, clmax: 2.40, cd: 0.042, vfe: 205 },
+        { name: '30', flap: 30, cl0: 0.72, clmax: 2.55, cd: 0.055, vfe: 180 },
+      ], toConf: 3,
+      blurb: 'The Jumbo: four engines that spool up slowly and a lot of mass, slow to pitch and to roll. Plan everything early.' },
+    'CONCORDE': { name: 'Concorde', maker: 'Aérospatiale/BAC', law: 'conventional', engine: 'sst', engines: 4, idle: 25, spool: 0.8, rev: 0.3, reheat: 1.2, athr: true,
+      speedBrake: false, groundSpoilers: false, gear: 'retract', toMass: 185000, landMass: 105000, S: 358, thrust: 140000, wheelbase: 18.2, tail: 13.5,
+      vmo: 530, mmo: 2.04, vle: 270, clbKt: 400, crzM: 2.0, vr: 195, finalKt: 165, finalNm: 10, finalConf: 0,
+      clBase: 0, clA: 0.05, cd0: 0.012, k: 0.22, kMin: 0, mdd: 0.95, pitchRate: 2.5, roll: 12, aTau: 0.4, shaker: true,
+      crashFpm: 900, tipBank: 7, tyreKt: 250, gauge: 'N1 %', lawName: 'AFCS OFF', detents: ['IDLE', 'CLB', 'MAX DRY', 'REHEAT'],
+      conf: [{ name: '—', flap: 0, cl0: 0, clmax: 1.15, cd: 0, vfe: 999 }], toConf: 0,
+      blurb: 'No flaps: the delta wing lifts at a high angle, nose high and draggy on the approach. Reheat for take-off and through Mach 1, then Mach 2.' },
+    'Q400': { name: 'Dash 8-400', maker: 'De Havilland Canada', law: 'conventional', engine: 'prop', engines: 2, idle: 8, rev: 0.5, athr: false,
+      speedBrake: false, groundSpoilers: true, gear: 'retract', toMass: 29000, landMass: 27000, S: 63.1, power: 3780000, thrust: 55000, altExp: 0.7,
+      wheelbase: 13.9, tail: 8, vmo: 286, mmo: 0.6, vle: 200, clbKt: 220, crzM: 0.6, vr: 120, finalKt: 130, finalNm: 8, finalConf: 3,
+      clBase: 0.3, clA: 0.1, cd0: 0.024, k: 0.035, mdd: 0.62, pitchRate: 4, roll: 18, aTau: 0.3, shaker: true,
+      crashFpm: 900, tipBank: 9, tyreKt: 170, gauge: 'TQ %', lawName: 'MANUAL', detents: ['FLT IDLE', 'CLB', 'MCL', 'MTOP'],
+      conf: [
+        { name: '0', flap: 0, cl0: 0, clmax: 1.45, cd: 0, vfe: 999 },
+        { name: '5', flap: 5, cl0: 0.20, clmax: 1.85, cd: 0.010, vfe: 200 },
+        { name: '10', flap: 10, cl0: 0.35, clmax: 2.10, cd: 0.020, vfe: 181 },
+        { name: '15', flap: 15, cl0: 0.45, clmax: 2.25, cd: 0.030, vfe: 172 },
+        { name: '35', flap: 35, cl0: 0.75, clmax: 2.70, cd: 0.065, vfe: 158 },
+      ], toConf: 2,
+      blurb: 'The fast turboprop: the propellers answer the levers at once and pull hard when slow. No autothrust: fly the speed yourself.' },
+    'ATR72-600': { name: 'ATR 72-600', maker: 'ATR', law: 'conventional', engine: 'prop', engines: 2, idle: 6, rev: 0.45, athr: false,
+      speedBrake: false, groundSpoilers: false, gear: 'retract', toMass: 23000, landMass: 21500, S: 61, power: 2050000, thrust: 40000, altExp: 0.7,
+      wheelbase: 10.8, tail: 7.5, vmo: 250, mmo: 0.55, vle: 185, clbKt: 170, crzM: 0.5, vr: 110, finalKt: 115, finalNm: 6, finalConf: 1,
+      clBase: 0.35, clA: 0.1, cd0: 0.026, k: 0.033, mdd: 0.55, pitchRate: 3.5, roll: 15, aTau: 0.3, shaker: true,
+      crashFpm: 900, tipBank: 8, tyreKt: 160, gauge: 'TQ %', lawName: 'MANUAL', detents: ['FI', 'CLB', 'MCT', 'RTO'],
+      conf: [
+        { name: '0', flap: 0, cl0: 0, clmax: 1.50, cd: 0, vfe: 999 },
+        { name: '15', flap: 15, cl0: 0.40, clmax: 2.05, cd: 0.020, vfe: 185 },
+        { name: '30', flap: 30, cl0: 0.70, clmax: 2.50, cd: 0.050, vfe: 150 },
+      ], toConf: 1,
+      blurb: 'A slow, gentle high-wing turboprop: short take-offs, no spoilers and no autothrust; only 250 kt at most.' },
+    'DC-3': { name: 'Douglas DC-3', maker: 'Douglas', law: 'classic', tailwheel: true, engine: 'piston', engines: 2, idle: 10, rev: 0, athr: false,
+      speedBrake: false, groundSpoilers: false, gear: 'retract', toMass: 11400, landMass: 11000, S: 91.7, power: 895000, thrust: 13000, altExp: 0.9,
+      wheelbase: 13, tail: 20, vmo: 200, mmo: 0.5, vle: 140, clbKt: 120, crzM: 0.4, vr: 80, finalKt: 90, finalNm: 5, finalConf: 1,
+      clBase: 0.25, clA: 0.095, cd0: 0.03, k: 0.05, mdd: 0.5, pitchRate: 5, roll: 9, aTau: 0.4, shaker: false, dihedral: 1.5,
+      crashFpm: 800, tipBank: 12, tyreKt: 120, gauge: 'PWR %', lawName: 'CABLES', detents: ['IDLE', 'CRUISE', 'METO', 'T.O.'],
+      conf: [
+        { name: 'UP', flap: 0, cl0: 0, clmax: 1.40, cd: 0, vfe: 999 },
+        { name: '½', flap: 20, cl0: 0.30, clmax: 1.80, cd: 0.025, vfe: 110 },
+        { name: 'FULL', flap: 45, cl0: 0.55, clmax: 2.10, cd: 0.070, vfe: 97 },
+      ], toConf: 0,
+      blurb: 'A 1936 classic: cables and pulleys, no protections, no autothrust, no reversers. Slow and forgiving until it stalls; then a wing drops.' },
+    'JU52': { name: 'Junkers Ju 52/3m', maker: 'Junkers', law: 'classic', tailwheel: true, engine: 'piston', engines: 3, idle: 10, rev: 0, athr: false,
+      speedBrake: false, groundSpoilers: false, gear: 'fixed', gearCd: 0, toMass: 10500, landMass: 10000, S: 110.5, power: 540000, thrust: 9000, altExp: 0.9,
+      wheelbase: 10, tail: 20, vmo: 155, mmo: 0.4, vle: 999, clbKt: 90, crzM: 0.3, vr: 60, finalKt: 70, finalNm: 4, finalConf: 1,
+      clBase: 0.25, clA: 0.09, cd0: 0.045, k: 0.06, mdd: 0.45, pitchRate: 4, roll: 6, aTau: 0.5, shaker: false, dihedral: 2,
+      crashFpm: 800, tipBank: 14, tyreKt: 100, gauge: 'PWR %', lawName: 'CABLES', detents: ['IDLE', 'CRUISE', 'CLIMB', 'T.O.'],
+      conf: [
+        { name: 'UP', flap: 0, cl0: 0, clmax: 1.35, cd: 0, vfe: 999 },
+        { name: 'LAND', flap: 25, cl0: 0.35, clmax: 1.75, cd: 0.040, vfe: 100 },
+      ], toConf: 0,
+      blurb: 'Tante Ju: three engines, a corrugated skin full of drag and fixed gear. Lifts off at 60 kt and lands on a field; sluggish to roll.' },
+  };
+  // Defaults for what a type leaves out.
+  for (const t of Object.values(TYPES)) {
+    Object.assign(t, { kMin: 0.1, gearCd: 0.02, pitchRate: 3, aTau: 0.3, dihedral: 0, ...t });
+    t.altExp = t.altExp ?? 0.75;
+  }
+  // What start() sets from the type flown (the A350-900's until then).
+  let CONF, DETENTS, VMO, MMO, VLE, CL_A, CL_BASE, CD0, K_IND, IDLE_N1;
+  function useType(sp) {
+    CONF = sp.conf; VMO = sp.vmo; MMO = sp.mmo; VLE = sp.vle;
+    CL_A = sp.clA; CL_BASE = sp.clBase; CD0 = sp.cd0; K_IND = sp.k; IDLE_N1 = sp.idle;
+    // Thrust lever detents: idle, climb, max continuous, take-off. Below 0: reverse.
+    DETENTS = [0, 0.86, 0.93, 1].map((at, i) => ({ at, name: sp.detents[i] }));
+  }
+  useType(TYPES['A350-900']);
+  const LOOK_DOWN = 4; // cockpit camera: looks this far below the nose (°)
+  const airbus = () => s.spec.law === 'airbus';
+  const lastConf = () => CONF.length - 1;
   const CAMS = ['chase', 'cockpit', 'wing', 'flyby'];
 
   const s = { active: false, keys: new Set(), cam: 'chase', msgs: [], help: false };
@@ -44,12 +174,29 @@
     return { rho: p / (287.05 * T), a: Math.sqrt(1.4 * 287.05 * T) };
   }
   function confAt(f) {
+    if (CONF.length === 1) return CONF[0];
     const i = clamp(Math.floor(f), 0, CONF.length - 2), u = clamp(f - i, 0, 1);
     const a = CONF[i], b = CONF[i + 1];
     const mix = (k) => a[k] + (b[k] - a[k]) * u;
     return { flap: mix('flap'), cl0: mix('cl0'), clmax: mix('clmax'), cd: mix('cd') };
   }
-  const thrustFrac = (n1) => 0.04 + 0.96 * Math.pow(clamp((n1 - IDLE_N1) / (100 - IDLE_N1), 0, 1), 1.8);
+  // share of full thrust at this N1 (jets) or torque/power (propellers: nearly in line with the lever)
+  const thrustFrac = (n1) => 0.04 + 0.96 * Math.pow(clamp((n1 - IDLE_N1) / (100 - IDLE_N1), 0, 1), s.spec.engine === 'jet' || s.spec.engine === 'sst' ? 1.8 : 1.1);
+  // Full thrust of one engine (N) at this air density, true airspeed (m/s) and Mach.
+  function engineThrust(sp, rho, V, M) {
+    const r = rho / 1.225;
+    if (sp.engine === 'jet') return sp.thrust * Math.pow(r, 0.75) * (1 - 0.35 * M + 0.1 * M * M);
+    if (sp.engine === 'sst') return sp.thrust * Math.pow(r, 0.6) * (1 + 0.5 * M) * (s.lever > 0.98 ? sp.reheat : 1);
+    // propellers: power / speed, the static thrust when standing still
+    const P = sp.power * 0.8 * Math.pow(r, sp.altExp);
+    const v0 = (sp.power * 0.8) / sp.thrust;
+    return P / Math.sqrt(V * V + v0 * v0);
+  }
+  // Drag rise near and past Mach 1. Concorde: the hump through the sound barrier, little left at Mach 2.
+  function waveDrag(sp, M) {
+    if (sp.engine === 'sst') return M < 0.85 ? 0 : 0.018 * Math.exp(-(((M - 1.15) / 0.25) ** 2)) + 0.006 * clamp((M - 0.95) / 0.2, 0, 1);
+    return M > sp.mdd ? 12 * Math.pow(M - sp.mdd, 2) : 0;
+  }
   const ias = () => s.V * Math.sqrt(atmo(s.h).rho / 1.225) / KT;
   const detentName = (l) => (l < 0 ? (l < -0.9 ? 'MAX REV' : 'REV') : (DETENTS.find((d) => Math.abs(l - d.at) < 0.005) || { name: 'MAN THR' }).name);
   const agl = () => (s.h - s.groundH) / FT;
@@ -60,13 +207,15 @@
   // 10,000 ft, then 300 kt up to M 0.85; with flaps out a speed between the flaps' lowest and highest, on the
   // approach (FULL, or 3 with the gear down) VLS + 5.
   function spdTarget() {
-    const top = Math.min(VMO - 10, s.conf ? CONF[s.conf].vfe - 5 : 999, s.gear > 0.05 ? VLE - 5 : 999);
+    const sp = s.spec;
+    const top = Math.min(VMO - 10, s.conf ? CONF[s.conf].vfe - 5 : 999, s.gear > 0.05 && sp.gear !== 'fixed' ? VLE - 5 : 999);
     if (s.spdSel != null) return { kt: Math.min(s.spdSel, top + 5), sel: true };
     let kt;
-    if (!s.conf) {
+    if (CONF.length === 1 && s.gearDown && sp.gear !== 'fixed') kt = sp.finalKt; // (no flaps: the approach speed with the gear down)
+    else if (!s.conf) {
       const at = atmo(s.h);
-      kt = s.h / FT < 10000 ? 250 : Math.min(300, (0.85 * at.a * Math.sqrt(at.rho / 1.225)) / KT);
-    } else if (s.conf >= 5 || (s.conf === 4 && s.gearDown)) kt = vls(s.conf) + 5;
+      kt = s.h / FT < 10000 ? Math.min(250, sp.clbKt) : Math.min(sp.clbKt, (sp.crzM * at.a * Math.sqrt(at.rho / 1.225)) / KT);
+    } else if (s.conf >= lastConf() || (s.conf === lastConf() - 1 && s.gearDown)) kt = vls(s.conf) + 5;
     else kt = vls(s.conf) + 25;
     return { kt: Math.round(Math.min(kt, top)), sel: false };
   }
@@ -116,7 +265,7 @@
     const ends = [];
     for (const a of airportList()) {
       if (Math.abs(a.lat - s.lat) > 0.6 || G.distanceKm(here, a) > 60) continue;
-      for (const e of runwayEnds(a.code)) if (e.len > 1200) ends.push(e);
+      for (const e of runwayEnds(a.code)) if (e.len > 500) ends.push(e);
     }
     s.near = { at: now, ends };
     return ends;
@@ -166,15 +315,18 @@
     const v = FG.view3d;
     if (!v) { toast('The 3D view is not available here.'); return; }
     const type = TYPES[opts.type] ? opts.type : 'A350-900';
+    const sp = TYPES[type];
+    useType(sp);
     if (opts !== s.startOpts) s.ck = null; // (a checkpoint belongs to its flight: kept when it starts again)
+    const n1At = (v) => Array(sp.engines).fill(v);
     Object.assign(s, {
-      active: true, loading: true, startOpts: opts, type, spec: TYPES[type], startAt: performance.now(),
+      active: true, loading: true, startOpts: opts, type, spec: sp, startAt: performance.now(),
       lat: 0, lon: 0, h: 0, groundH: 0, V: 0, gamma: 0, psi: 0, theta: 0, phi: 0, alpha: 0,
-      onGround: true, landed: false, n1: [IDLE_N1, IDLE_N1], lever: 0, rev: 0, gearDown: true, gear: 1,
-      conf: 2, flapPos: 2, sb: 0, gs: 0, armed: true, brake: 0, parking: false, afloor: false,
+      onGround: true, landed: false, n1: n1At(IDLE_N1), lever: 0, rev: 0, gearDown: true, gear: 1,
+      conf: sp.toConf, flapPos: sp.toConf, sb: 0, gs: 0, armed: sp.groundSpoilers, brake: 0, parking: false, afloor: false,
       stick: 0, roll: 0, rud: 0, crashed: null, touch: null, tail: false, paused: false, calls: {}, near: null,
-      hideId: opts.plane ? opts.plane.id : null, mass: TYPES[type].toMass, prevAgl: null, ghReal: null, ghAt: 0,
-      gref: null, athr: true, spdSel: null, athrN1: null, iasPrev: null, iasAcc: 0, menu: false, lvrClb: false, sway: { p: 0, pv: 0, r: 0, rv: 0 }, vPrev: null,
+      hideId: opts.plane ? opts.plane.id : null, mass: sp.toMass, prevAgl: null, ghReal: null, ghAt: 0,
+      gref: null, aCmd: null, stalled: false, drop: 0, athr: sp.athr, spdSel: null, athrN1: null, iasPrev: null, iasAcc: 0, menu: false, lvrClb: false, sway: { p: 0, pv: 0, r: 0, rv: 0 }, vPrev: null,
     });
     s.msgs = [];
     const e = opts.end;
@@ -186,20 +338,21 @@
       s.V = Math.max(75, st.speedKmh / 3.6); s.onGround = false; s.mass = (s.spec.toMass + s.spec.landMass) / 2;
       const a = (st.altFt || 0) - (st.fieldFt || 0);
       const ph = st.phase;
-      s.conf = ph === 'approach' ? (a < 2000 ? 4 : 2) : ph === 'climb' && a < 3000 ? 2 : 0;
+      s.conf = ph === 'approach' ? (a < 2000 ? sp.finalConf : Math.min(sp.toConf, sp.finalConf)) : ph === 'climb' && a < 3000 ? sp.toConf : 0;
       s.flapPos = s.conf;
-      s.gearDown = ph === 'approach' && a < 2500; s.gear = s.gearDown ? 1 : 0;
+      s.gearDown = sp.gear === 'fixed' || (ph === 'approach' && a < 2500); s.gear = s.gearDown ? 1 : 0;
       s.lever = 0.86; // (CL: the autothrust holds the speed)
       s.gamma = ph === 'climb' ? 4 * DEG : ph === 'cruise' ? 0 : -3 * DEG;
-      s.n1 = ph === 'climb' ? [86, 86] : ph === 'cruise' ? [70, 70] : [45, 45];
+      s.n1 = n1At(ph === 'climb' ? 86 : ph === 'cruise' ? 70 : 45);
       s.groundH = (st.fieldFt || 0) * FT;
       pts = [[s.lat, s.lon]];
     } else if (opts.mode === 'final') {
       s.mode = 'final';
-      const [lat, lon] = offset(e.lat, e.lon, e.course + 180, 18520); // 10 NM out on the centre line
-      Object.assign(s, { lat, lon, psi: e.course, V: 165 * KT, onGround: false, conf: 3, flapPos: 3, gearDown: false, gear: 0,
-        lever: 0.86, gamma: -3 * DEG, mass: s.spec.landMass });
-      s.n1 = [60, 60];
+      const [lat, lon] = offset(e.lat, e.lon, e.course + 180, sp.finalNm * 1852); // on the centre line
+      const fixed = sp.gear === 'fixed';
+      Object.assign(s, { lat, lon, psi: e.course, V: (sp.finalKt + 15) * KT, onGround: false, conf: sp.finalConf, flapPos: sp.finalConf,
+        gearDown: fixed, gear: fixed ? 1 : 0, lever: 0.86, gamma: -3 * DEG, mass: s.spec.landMass });
+      s.n1 = n1At(sp.engine === 'jet' || sp.engine === 'sst' ? 60 : 45);
       pts = [[e.lat, e.lon], [lat, lon]];
     } else {
       s.mode = 'runway';
@@ -210,13 +363,14 @@
     s.alpha = s.onGround ? 0 : 3;
     s.theta = s.alpha + s.gamma / DEG;
     s.gref = s.onGround ? null : s.gamma; // (in the air: fly on along the path it has)
+    s.trimStart = !s.onGround;
     // heights where it starts (the 3D map's own tiles may not be there yet)
     heightsAt(pts).then((h) => {
       if (!s.active || s.startOpts !== opts) return;
       if (s.mode === 'final') {
         const thr = h[0] ?? 0;
         e.h = thr;
-        s.h = thr + 15 + Math.tan(3 * DEG) * 18520;
+        s.h = thr + 15 + Math.tan(3 * DEG) * sp.finalNm * 1852;
         s.groundH = h[1] ?? thr;
       } else if (s.mode === 'runway') {
         s.h = s.groundH = h[0] ?? 0;
@@ -230,8 +384,9 @@
     const go = () => { v.pilotCam(s.cam = 'chase'); };
     if (!v.on) v.setOn(true);
     go();
-    say(s.mode === 'runway' ? `Lined up on runway ${e.name} at ${e.code}. Flaps 1+F. Throttle up (4 = TOGA), pull ↓ at 150 kt.`
-      : s.mode === 'final' ? `10 NM final for runway ${e.code} ${e.name}. Gear (G), flaps (F), follow the ILS.` : 'You have control.', 'info', 7000);
+    const flapsTxt = CONF.length > 1 ? `Flaps ${CONF[sp.toConf].name}. ` : '';
+    say(s.mode === 'runway' ? `${sp.name}, lined up on runway ${e.name} at ${e.code}. ${flapsTxt}Throttle up (4 = ${DETENTS[3].name}), pull ↓ at ${sp.vr} kt.`
+      : s.mode === 'final' ? `${sp.finalNm} NM final for runway ${e.code} ${e.name}, ${sp.name}. ${sp.gear === 'fixed' ? '' : 'Gear (G), '}${CONF.length > 1 ? 'flaps (F), ' : ''}about ${sp.finalKt} kt, follow the ILS.` : 'You have control.', 'info', 7000);
     if (s.mode === 'air') speak('You have control');
   }
   function stop() {
@@ -249,7 +404,7 @@
   // Z keeps the flight as it is now; Backspace puts it back there (paused, P to go on), as often as it takes.
   const CK = ['lat', 'lon', 'h', 'groundH', 'V', 'gamma', 'psi', 'theta', 'phi', 'alpha', 'onGround', 'landed', 'n1', 'lever',
     'rev', 'revOk', 'gearDown', 'gear', 'conf', 'flapPos', 'sb', 'gs', 'armed', 'brake', 'parking', 'afloor', 'tail', 'mass',
-    'gref', 'athr', 'spdSel', 'athrN1', 'iasPrev', 'iasAcc', 'lvrClb', 'sway', 'vPrev', 'ghReal', 'calls', 'prevAgl'];
+    'gref', 'aCmd', 'trimStart', 'stalled', 'drop', 'athr', 'spdSel', 'athrN1', 'iasPrev', 'iasAcc', 'lvrClb', 'sway', 'vPrev', 'ghReal', 'calls', 'prevAgl'];
   function saveCheckpoint() {
     if (s.loading || s.crashed) { say('No checkpoint while crashed', 'amber', 2000); return; }
     const st = {};
@@ -300,16 +455,22 @@
       case 'p': s.paused = !s.paused; say(s.paused ? 'Paused (P)' : 'Resumed', 'info', 1500); break;
       case 'h': s.help = !s.help; break;
       case 'g':
+        if (s.spec.gear === 'fixed') { say(`The ${s.spec.name}'s gear is fixed: always down`, 'info', 2000); break; }
         if (s.onGround && !s.gearDown) break;
         if (s.onGround) { say('The gear cannot come up on the ground', 'amber'); break; }
         s.gearDown = !s.gearDown; break;
       case 'f':
+        if (CONF.length === 1) { say('No flaps: the delta wing lands at a high angle of attack instead', 'info', 2500); break; }
         s.conf = clamp(s.conf + (e.shiftKey ? -1 : 1), 0, CONF.length - 1); break;
       case 'x':
-        if (e.shiftKey) { s.armed = !s.armed; say(s.armed ? 'Ground spoilers armed' : 'Ground spoilers disarmed', 'info', 1500); }
+        if (e.shiftKey) {
+          if (!s.spec.groundSpoilers) { say(`The ${s.spec.name} has no ground spoilers`, 'info', 2000); break; }
+          s.armed = !s.armed; say(s.armed ? 'Ground spoilers armed' : 'Ground spoilers disarmed', 'info', 1500);
+        } else if (!s.spec.speedBrake) say(`The ${s.spec.name} has no speed brakes: thrust back and fly the path`, 'info', 2500);
         else s.sb = s.sb >= 1 ? 0 : s.sb + 0.5;
         break;
       case 'r':
+        if (!s.spec.rev) { say(`The ${s.spec.name} has no reversers: brakes only`, 'amber', 2500); break; }
         if (!s.onGround) { say('Reversers only on the ground', 'amber'); break; }
         s.lever = s.lever < 0 ? 0 : -1; break;
       case '1': s.lever = 0; s.afloor = false; break;
@@ -321,12 +482,13 @@
       case 'n': FG.view3d.pilotCam(s.cam === 'wing' ? 'wing2' : 'wing'); s.cam = 'wing'; break;
       case 'k': s.parking = !s.parking; break;
       case 't':
+        if (!s.spec.athr) { say(`The ${s.spec.name} has no autothrust: set the power yourself`, 'info', 2500); break; }
         s.athr = !s.athr; s.athrN1 = null;
         say(s.athr ? 'A/THR on: levers in CL, it holds the speed' : 'A/THR off: the levers set the thrust', s.athr ? 'info' : 'amber', 2500);
         break;
       case '[': case ']': {
         const now = Math.round(spdTarget().kt);
-        s.spdSel = clamp(Math.round((now + (k === ']' ? 5 : -5)) / 5) * 5, 120, VMO - 10);
+        s.spdSel = clamp(Math.round((now + (k === ']' ? 5 : -5)) / 5) * 5, Math.min(120, s.spec.vr), VMO - 10);
         break;
       }
       case '\\': s.spdSel = null; say('Managed speed', 'info', 1500); break;
@@ -353,7 +515,7 @@
     if (thr) {
       s.afloor = false;
       // into reverse only on the ground, and only from idle on a fresh press (it stops at idle first)
-      const min = s.onGround && (s.lever < 0 || s.revOk) ? -1 : 0;
+      const min = s.onGround && s.spec.rev && (s.lever < 0 || s.revOk) ? -1 : 0;
       s.lever = clamp(s.lever + thr * 0.45 * dt, min, 1);
       if (thr > 0 || s.lever > 0) s.revOk = false;
     } else s.revOk = s.lever <= 0 && s.onGround;
@@ -369,9 +531,12 @@
     const M = V / at.a;
     s.flapPos += clamp(s.conf - s.flapPos, -dt / 7, dt / 7); // about 7 s a notch
     const c = confAt(s.flapPos);
+    if (sp.gear === 'fixed') { s.gearDown = true; s.gear = 1; }
     s.gear += clamp((s.gearDown ? 1 : 0) - s.gear, -dt / 10, dt / 10);
-    // engines: spool up slowly from idle, faster once turning; reverse once the sleeves are open
-    s.rev += clamp((s.lever < 0 && s.onGround ? 1 : 0) - s.rev, -dt / 2.5, dt / 2);
+    // engines: jets spool up slowly from idle, faster once turning; propellers answer at once. Reverse once the
+    // sleeves are open (or the blades past fine pitch)
+    const props = sp.engine === 'prop' || sp.engine === 'piston';
+    s.rev += clamp((s.lever < 0 && s.onGround && sp.rev ? 1 : 0) - s.rev, -dt / 2.5, dt / (props ? 1 : 2));
     let target = s.lever < 0 ? (s.rev > 0.95 ? IDLE_N1 + (75 - IDLE_N1) * -s.lever : IDLE_N1) : IDLE_N1 + (100 - IDLE_N1) * s.lever;
     // autothrust: N1 asked for from the speed error and how fast the speed changes
     const spdNow = V * Math.sqrt(at.rho / 1.225) / KT;
@@ -379,24 +544,28 @@
     s.iasPrev = spdNow;
     if (athrOn()) {
       const most = IDLE_N1 + (100 - IDLE_N1) * s.lever;
-      if (s.athrN1 == null) s.athrN1 = clamp((s.n1[0] + s.n1[1]) / 2, IDLE_N1, most);
+      if (s.athrN1 == null) s.athrN1 = clamp(s.n1.reduce((x, y) => x + y, 0) / s.n1.length, IDLE_N1, most);
       const want = clamp((spdTarget().kt - spdNow) * 0.25, -1.5, 1.5); // kt/s
       s.athrN1 = clamp(s.athrN1 + clamp((want - s.iasAcc) * 5, -6, 6) * dt, IDLE_N1, most);
       target = s.athrN1;
     } else s.athrN1 = null;
     if (s.afloor) target = 100;
-    for (let i = 0; i < 2; i++) {
+    let fr = 0;
+    for (let i = 0; i < s.n1.length; i++) {
       const n = s.n1[i];
       const diff = target - n;
-      const up = n < 45 ? 3 + (n - IDLE_N1) * 0.35 : 12;
-      s.n1[i] = clamp(n + clamp(diff * (diff > 0 ? 0.9 : 1.2), -15, up) * dt, IDLE_N1 - 1, 101);
+      if (props) s.n1[i] = clamp(n + clamp(diff * 2.5, -35, 30) * dt, IDLE_N1 - 1, 101);
+      else {
+        const up = (n < 45 ? 3 + (n - IDLE_N1) * 0.35 : 12) * sp.spool;
+        s.n1[i] = clamp(n + clamp(diff * (diff > 0 ? 0.9 : 1.2) * sp.spool, -15 * sp.spool, up) * dt, IDLE_N1 - 1, 101);
+      }
+      fr += thrustFrac(s.n1[i]);
     }
-    const lapse = Math.pow(at.rho / 1.225, 0.75) * (1 - 0.35 * M + 0.1 * M * M);
-    let T = sp.thrust * lapse * (thrustFrac(s.n1[0]) + thrustFrac(s.n1[1]));
-    T *= 1 - 1.45 * s.rev; // (reversed: up to 45% of it backwards)
+    let T = engineThrust(sp, at.rho, V, M) * fr;
+    T *= 1 - (1 + sp.rev) * s.rev; // (reversed: part of it backwards)
     // ground spoilers: up on the ground with the thrust levers at idle (armed, or in reverse) after touchdown, and
     // for a rejected take-off above 72 kt
-    const gsUp = s.onGround && s.lever <= 0.02 && (s.armed || s.lever < 0) && (s.landed ? V > 40 * KT : V > 72 * KT);
+    const gsUp = sp.groundSpoilers && s.onGround && s.lever <= 0.02 && (s.armed || s.lever < 0) && (s.landed ? V > 40 * KT : V > 72 * KT);
     s.gs += clamp((gsUp ? 1 : 0) - s.gs, -dt, dt * 2);
     const spoil = Math.max(s.gs, s.sb * (s.onGround ? 1 : 0.5));
     // aerodynamics
@@ -406,60 +575,39 @@
     let CL = clBase + CL_A * s.alpha;
     if (s.alpha > aStall) CL = c.clmax - 0.05 * Math.pow(s.alpha - aStall, 1.5);
     CL -= 0.45 * spoil;
-    const wave = M > 0.84 ? 12 * Math.pow(M - 0.84, 2) : 0;
-    const CD = CD0 + c.cd + 0.02 * s.gear + 0.05 * spoil + K_IND * Math.pow(CL - 0.1, 2) + wave;
+    const CD = CD0 + c.cd + sp.gearCd * s.gear + 0.05 * spoil + K_IND * Math.pow(CL - sp.kMin, 2) + waveDrag(sp, M);
     const L = q * sp.S * CL, D = q * sp.S * CD;
     s.load = L / W;
+    s.aStall = aStall;
     let psiRate = 0; // °/s
     if (!s.onGround) {
       const Vs = Math.max(30, V);
       const cg = Math.cos(s.gamma), cphi = Math.cos(s.phi * DEG);
-      // normal law. The stick moves the flight path the aircraft is asked to fly (gref), up to 3°/s at full; the
-      // angle of attack asked for is the one for 1 g along the path plus what it takes to bend the path onto gref
-      // at the wing's own pace. So the nose turns smoothly at the stick's rate and the path follows a moment later,
-      // without the nose jumping as the stick is pressed or let go (it used to snap up or down a few degrees and
-      // come back). Let go, gref stays: the path is held. Pitch 30° up, 15° down at most.
       const cphiL = Math.max(0.5, cphi);
       const Ty = T * Math.sin(s.alpha * DEG);
       const alphaFor = (nz) => ((nz * W - Ty) / Math.max(1, q * sp.S) + 0.45 * spoil - clBase) / CL_A;
-      const aHold = alphaFor(cg / cphiL);
-      if (s.gref == null) s.gref = s.gamma + (s.alpha - aHold) * cphiL * DEG;
-      let rate = s.stick * 3; // °/s
-      if (s.theta > 25 && rate > 0) rate *= clamp((30 - s.theta) / 5, 0, 1);
-      if (s.theta < -10 && rate < 0) rate *= clamp((s.theta + 15) / 5, 0, 1);
-      // high speed protection: the nose comes up by itself above VMO / MMO
-      const over = Math.max(ias() - VMO - 6, (M - MMO - 0.01) * 600);
-      if (over > 0 && s.stick <= 0) rate += Math.min(2, over * 0.15);
-      s.gref += rate * DEG * dt;
-      const flaps = s.flapPos > 0.5;
-      const aMin = Math.max(-6, alphaFor(flaps ? 0 : -1)), aMax = Math.min(s.aProt, alphaFor(flaps ? 2 : 2.5));
-      // (the path asked for can't run away from the one flown while the angle of attack is at a limit)
-      s.gref = clamp(s.gref, s.gamma + (aMin - aHold) * cphiL * DEG, s.gamma + (aMax - aHold) * cphiL * DEG);
-      const aCmd = clamp(aHold + (s.gref - s.gamma) / DEG / cphiL, aMin, aMax);
-      s.alpha += (aCmd - s.alpha) * (1 - Math.exp(-dt / 0.3));
+      if (airbus()) airbusLaw(dt, alphaFor, cg, cphiL, M);
+      else conventionalLaw(dt, alphaFor, q, aStall);
       s.V += ((T * Math.cos(s.alpha * DEG) - D) / m - G0 * Math.sin(s.gamma)) * dt;
       s.gamma += (((L + Ty) * cphi) / (m * Vs) - (G0 * cg) / Vs) * dt;
       s.gamma = clamp(s.gamma, -80 * DEG, 80 * DEG);
       psiRate = (((L + Ty) * Math.sin(s.phi * DEG)) / (m * Vs * Math.max(0.2, cg))) / DEG + s.rud * 1.5;
-      // roll: 15°/s at full; let go the bank stays (up to 33°, beyond that it comes back to 33°); 67° at most
-      if (Math.abs(s.roll) > 0.02) s.phi += s.roll * 15 * dt;
-      else if (Math.abs(s.phi) > 33) s.phi -= Math.sign(s.phi) * Math.min(5 * dt, Math.abs(s.phi) - 33);
-      s.phi += s.rud * 2 * dt;
-      s.phi = clamp(s.phi, -67, 67);
+      rollLaw(dt);
       // the nose is alpha above the path in the aircraft's own up direction: banked, part of it is sideways
       s.theta = s.gamma / DEG + s.alpha * Math.cos(s.phi * DEG);
       // alpha floor: TOGA by itself near the stall (away from the ground)
-      if (!s.afloor && s.alpha > s.aProt - 0.3 && agl() > 100) { s.afloor = true; say('A.FLOOR — TOGA', 'amber', 4000); }
+      if (airbus() && !s.afloor && s.alpha > s.aProt - 0.3 && agl() > 100) { s.afloor = true; say('A.FLOOR — TOGA', 'amber', 4000); }
     } else {
       s.gamma = 0;
-      s.gref = null;
+      s.gref = null; s.aCmd = null; s.gPrev = null; s.stalled = false;
       s.phi *= Math.exp(-dt / 0.3);
       // rotation: the elevator lifts the nose once there is speed; let go, the nose wheel comes back down
-      const auth = clamp(q / (0.5 * 1.225 * 72 * 72), 0, 1);
+      const vRot = sp.vr * KT;
+      const auth = clamp(q / (0.5 * 1.225 * vRot * vRot * 0.9), 0, 1);
       const liftFrac = clamp(L / W, 0, 1);
       let rate = s.stick > 0 ? s.stick * 3.5 * auth : s.stick * 2 * auth;
       rate -= (1 + 2 * (1 - liftFrac)) * (1 - clamp(s.stick, 0, 1));
-      s.theta = clamp(s.theta + rate * dt, 0, 16);
+      s.theta = clamp(s.theta + rate * dt, 0, sp.tail + 4);
       s.alpha = s.theta;
       if (s.theta > sp.tail && !s.tail) { s.tail = true; say('TAIL STRIKE', 'red', 5000); speak('tail strike'); }
       if (s.theta < sp.tail - 2) s.tail = false;
@@ -473,7 +621,7 @@
       const steerIn = Math.abs(s.rud) > Math.abs(s.roll) ? s.rud : s.roll;
       const most = 60 + (6 - 60) * clamp((V - 5) / 30, 0, 1);
       psiRate = ((s.V / sp.wheelbase) * Math.tan(steerIn * most * DEG)) / DEG;
-      if (L > W && s.V > 50) {
+      if (L > W && s.V > vRot * 0.7) {
         s.onGround = false; s.landed = false; s.gamma = 0.002; s.liftAt = performance.now();
       }
     }
@@ -485,6 +633,70 @@
     s.lon += (run * Math.sin(s.psi * DEG)) / (R_E * Math.cos(s.lat * DEG)) / DEG;
     if (!s.onGround && s.h <= s.groundH) touchdown();
     if (s.onGround) s.h = s.groundH;
+  }
+
+  // Conventional controls (Boeing, Concorde, turboprops, the classics): the stick moves the elevator, which changes
+  // the angle of attack at the type's own pace (heavier at low speed, quicker at high). Let go, the aircraft stays
+  // trimmed at that angle of attack: as it slows or speeds up the path changes by itself. Nothing stops it from
+  // stalling: past the stall the lift breaks away, the nose drops by itself and (classics) a wing goes down; the
+  // stick has to come forward to recover. 2.5 g pulling, -1 g pushing at most.
+  function conventionalLaw(dt, alphaFor, q, aStall) {
+    const sp = s.spec;
+    // (started in the air: trimmed for 1 g along the path it has; just lifted off: where the rotation left it)
+    if (s.aCmd == null) s.aCmd = s.trimStart ? (s.alpha = clamp(alphaFor(Math.cos(s.gamma)), -4, aStall - 2)) : s.alpha;
+    s.trimStart = false;
+    const auth = clamp(q / (0.5 * 1.225 * (sp.vr * KT * 1.3) ** 2), 0.3, 1.4);
+    s.aCmd += s.stick * sp.pitchRate * auth * dt;
+    const aMax = Math.min(alphaFor(2.5), aStall + 10), aMin = Math.max(-8, alphaFor(-1));
+    s.aCmd = clamp(s.aCmd, aMin, Math.max(aMin, aMax));
+    // stalled: the nose drops unless the stick is held back; a wing drops on the classics (and a little on all)
+    const stalled = s.alpha > aStall;
+    if (stalled && !s.stalled) { s.drop = (Math.random() < 0.5 ? -1 : 1) * (sp.law === 'classic' ? 14 : 5); speak('stall'); }
+    s.stalled = stalled;
+    if (stalled) {
+      if (s.stick < 0.3) s.aCmd -= 3 * dt;
+      s.phi += s.drop * dt;
+    }
+    // (the tail damps the slow up-and-down swing of the path: a little less angle of attack while the path rises)
+    const gdot = s.gPrev == null ? 0 : (s.gamma - s.gPrev) / DEG / Math.max(1e-3, dt);
+    s.gPrev = s.gamma;
+    s.alpha += (s.aCmd - 0.8 * clamp(gdot, -2, 2) - s.alpha) * (1 - Math.exp(-dt / sp.aTau));
+  }
+
+  // Airbus normal law. The stick moves the flight path the aircraft is asked to fly (gref), up to 3°/s at full; the
+  // angle of attack asked for is the one for 1 g along the path plus what it takes to bend the path onto gref
+  // at the wing's own pace. So the nose turns smoothly at the stick's rate and the path follows a moment later,
+  // without the nose jumping as the stick is pressed or let go (it used to snap up or down a few degrees and
+  // come back). Let go, gref stays: the path is held. Pitch 30° up, 15° down at most.
+  function airbusLaw(dt, alphaFor, cg, cphiL, M) {
+    const aHold = alphaFor(cg / cphiL);
+    if (s.gref == null) s.gref = s.gamma + (s.alpha - aHold) * cphiL * DEG;
+    let rate = s.stick * 3; // °/s
+    if (s.theta > 25 && rate > 0) rate *= clamp((30 - s.theta) / 5, 0, 1);
+    if (s.theta < -10 && rate < 0) rate *= clamp((s.theta + 15) / 5, 0, 1);
+    // high speed protection: the nose comes up by itself above VMO / MMO
+    const over = Math.max(ias() - VMO - 6, (M - MMO - 0.01) * 600);
+    if (over > 0 && s.stick <= 0) rate += Math.min(2, over * 0.15);
+    s.gref += rate * DEG * dt;
+    const flaps = s.flapPos > 0.5;
+    const aMin = Math.max(-6, alphaFor(flaps ? 0 : -1)), aMax = Math.min(s.aProt, alphaFor(flaps ? 2 : 2.5));
+    // (the path asked for can't run away from the one flown while the angle of attack is at a limit)
+    s.gref = clamp(s.gref, s.gamma + (aMin - aHold) * cphiL * DEG, s.gamma + (aMax - aHold) * cphiL * DEG);
+    const aCmd = clamp(aHold + (s.gref - s.gamma) / DEG / cphiL, aMin, aMax);
+    s.alpha += (aCmd - s.alpha) * (1 - Math.exp(-dt / 0.3));
+  }
+
+  // Roll. Airbus: the stick asks for a roll rate, let go the bank stays (up to 33°, beyond that it comes back to
+  // 33°); 67° at most. Conventional: the bank stays where it is left, up to 75°. Classics: the dihedral levels
+  // the wings by themselves. Each type rolls at its own rate (°/s at full).
+  function rollLaw(dt) {
+    const sp = s.spec;
+    const rate = sp.roll * (airbus() ? 1 : clamp(s.V / (sp.vr * KT * 1.2), 0.4, 1.2));
+    if (Math.abs(s.roll) > 0.02) s.phi += s.roll * rate * dt;
+    else if (airbus() && Math.abs(s.phi) > 33) s.phi -= Math.sign(s.phi) * Math.min(5 * dt, Math.abs(s.phi) - 33);
+    else if (sp.dihedral && !s.stalled) s.phi -= Math.sign(s.phi) * Math.min(sp.dihedral * dt, Math.abs(s.phi));
+    s.phi += s.rud * 2 * dt;
+    s.phi = airbus() ? clamp(s.phi, -67, 67) : clamp(s.phi, -75, 75);
   }
 
   // On its legs the aircraft sways on the shock absorbers (drawn only: the physics keep the wheels on the runway):
@@ -510,13 +722,14 @@
     s.onGround = true;
     s.gamma = 0;
     let crash = null;
+    const sp = s.spec;
     if (s.gear < 0.99) crash = s.gear < 0.1 ? 'Gear-up landing' : 'The gear was not down and locked';
-    else if (fpm < -1100) crash = `Hit the ground at ${Math.round(-fpm)} ft/min`;
-    else if (Math.abs(s.phi) > 11) crash = 'A wing tip and an engine hit the ground';
-    else if (s.theta < -2.5) crash = 'Nose wheel first: the nose gear collapsed';
-    else if (s.V > 230 * KT) crash = 'Far too fast for the tyres';
+    else if (fpm < -sp.crashFpm) crash = `Hit the ground at ${Math.round(-fpm)} ft/min`;
+    else if (Math.abs(s.phi) > sp.tipBank) crash = sp.engine === 'piston' ? 'A wing tip hit the ground' : 'A wing tip and an engine hit the ground';
+    else if (s.theta < -2.5) crash = sp.tailwheel ? 'Nosed over: the propellers hit the runway' : 'Nose wheel first: the nose gear collapsed';
+    else if (s.V > sp.tyreKt * KT) crash = 'Far too fast for the tyres';
     if (crash) {
-      s.crashed = crash; s.V = 0; s.lever = 0; s.n1 = [IDLE_N1, IDLE_N1];
+      s.crashed = crash; s.V = 0; s.lever = 0; s.n1 = s.n1.map(() => IDLE_N1);
       speak('crash');
       return;
     }
@@ -534,28 +747,31 @@
     const M = s.V / atmo(s.h).a;
     if (s.onGround) {
       if (s.lever >= 0.86 && !s.landed && s.V < 80 * KT) {
-        if (s.conf === 0) w.push(['CONFIG: FLAPS NOT IN T.O. CONFIG', 'red']);
+        if (s.conf === 0 && s.spec.toConf > 0) w.push(['CONFIG: FLAPS NOT IN T.O. CONFIG', 'red']);
         if (s.sb > 0) w.push(['CONFIG: SPEED BRAKES NOT RETRACTED', 'red']);
         if (s.parking) w.push(['CONFIG: PARK BRAKE ON', 'red']);
       }
       if (s.V > 40 * KT && !onRunway()) w.push(['OFF THE RUNWAY', 'red']);
     } else {
-      if (spd > VMO + 4 || M > MMO + 0.006) w.push([s.lever > 0.87 ? 'OVERSPEED: thrust back to CL (2)' : 'OVERSPEED', 'red']);
+      if (spd > VMO + 4 || M > MMO + 0.006) w.push([s.lever > 0.87 ? `OVERSPEED: thrust back to ${DETENTS[1].name} (2)` : 'OVERSPEED', 'red']);
       // after take-off: the levers come back to CL, where the autothrust takes over
-      if (s.lever > 0.87 && !s.afloor && s.athr && a > 1200 && !s.landed) {
+      if (airbus() && s.lever > 0.87 && !s.afloor && s.athr && a > 1200 && !s.landed) {
         w.push(['LVR CLB: thrust levers to CL (2)', 'amber']);
         if (!s.lvrClb) { s.lvrClb = true; speak('thrust levers climb'); }
       } else if (s.lever <= 0.87) s.lvrClb = false;
       if (spd > CONF[s.conf].vfe + 4 && s.conf > 0) w.push([`FLAP SPEED (VFE ${CONF[s.conf].vfe} kt)`, 'red']);
-      if (s.gear > 0.05 && spd > VLE + 4) w.push(['GEAR SPEED (VLE 250 kt)', 'red']);
-      if (s.alpha > s.aProt - 0.5) w.push(['ALPHA PROT', 'amber']);
-      if (s.afloor) w.push(['A.FLOOR — TOGA LOCK (any throttle key)', 'amber']);
+      if (s.spec.gear !== 'fixed' && s.gear > 0.05 && spd > VLE + 4) w.push([`GEAR SPEED (VLE ${VLE} kt)`, 'red']);
+      if (airbus()) {
+        if (s.alpha > s.aProt - 0.5) w.push(['ALPHA PROT', 'amber']);
+        if (s.afloor) w.push(['A.FLOOR — TOGA LOCK (any throttle key)', 'amber']);
+      } else if (s.stalled) w.push(['STALL — stick forward, power up', 'red']);
+      else if (s.spec.shaker && s.alpha > s.aProt) w.push(['STICK SHAKER', 'red']);
       const sinking = vs < 0 ? a / (-vs / 60) : Infinity; // seconds to the ground
-      const landing = s.gear > 0.99 && s.conf >= 3;
+      const landing = s.gear > 0.99 && s.conf >= Math.min(s.spec.finalConf, lastConf());
       if (a < 2500 && sinking < 9 && !landing) w.push(['PULL UP', 'red']);
       else if (a < 2500 && vs < -Math.max(1500, 1000 + a * 1.2)) w.push(['SINK RATE', 'red']);
       if (a < 500 && s.gear < 0.99 && vs < 0) w.push(['TOO LOW — GEAR', 'red']);
-      else if (a < 245 && s.conf < 3 && vs < 0) w.push(['TOO LOW — FLAPS', 'red']);
+      else if (a < 245 && s.conf < Math.min(s.spec.finalConf, lastConf()) && vs < 0) w.push(['TOO LOW — FLAPS', 'red']);
       if (s.gearDown !== (s.gear > 0.99) && s.gear > 0 && s.gear < 1) w.push(['GEAR IN TRANSIT', 'amber']);
     }
     // radio altitude callouts on the way down
@@ -616,7 +832,7 @@
     return {
       lat: s.lat, lon: s.lon, altM: a, altMSL: s.h, heading: wrap360(s.psi + (s.onGround ? 0 : s.alpha * Math.sin(s.phi * DEG))), bank: s.phi + s.sway.r, pitch: s.theta + s.sway.p, flying: true,
       st: { phase, speedKmh: kmh, altFt: s.h / FT, fieldFt: s.groundH / FT, ground: s.onGround, windKt: 0, windFrom: 0, gusty: false, airFrac: 0 },
-      pilot: { gear: s.gear, flap: confAt(s.flapPos).flap, ail: s.roll, elev: s.onGround ? s.stick : s.stick * 0.7, rud: s.onGround ? s.rud : s.rud, rev: s.rev, n1: (s.n1[0] + s.n1[1]) / 2, gamma: s.gamma / DEG, vs },
+      pilot: { gear: s.gear, flap: confAt(s.flapPos).flap, ail: s.roll, elev: s.onGround ? s.stick : s.stick * 0.7, rud: s.onGround ? s.rud : s.rud, rev: s.rev, n1: s.n1.reduce((x, y) => x + y, 0) / s.n1.length, gamma: s.gamma / DEG, vs },
     };
   }
 
@@ -647,12 +863,12 @@
   }
 
   const HELP = [
-    ['↑ ↓  /  W S', 'nose down / up (stick: pitch rate, holds the path)'],
-    ['← →  /  A D', 'roll (bank holds); steer on the ground'],
+    ['↑ ↓  /  W S', () => (airbus() ? 'nose down / up (stick: pitch rate, holds the path)' : 'nose down / up (stays trimmed where you let go: it can stall)')],
+    ['← →  /  A D', () => (s.spec.dihedral ? 'roll (the wings level by themselves); steer on the ground' : 'roll (bank holds); steer on the ground')],
     ['Q E', 'rudder / nose wheel'],
     ['PgUp PgDn  + −', 'thrust levers (on the ground, − past idle = reverse)'],
-    ['1 2 3 4', 'IDLE · CL · FLX/MCT · TOGA'],
-    ['2 = CL', 'autothrust: holds the speed (magenta, or [ ] to pick one, \\ managed)'],
+    ['1 2 3 4', () => DETENTS.map((d) => d.name).join(' · ')],
+    ['2', () => (s.spec.athr ? `${DETENTS[1].name}: autothrust holds the speed (magenta, or [ ] to pick one, \\ managed)` : 'no autothrust on this one: set the power yourself')],
     ['T', 'autothrust off / on (off: the levers set the thrust)'],
     ['R', 'full reverse / stow (on the ground)'],
     ['G', 'landing gear'],
@@ -719,7 +935,7 @@
     ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
     HELP.forEach(([key, what], i) => {
       ctx.font = '600 13px ui-monospace, monospace'; ctx.fillStyle = '#7fd4ff'; ctx.fillText(key, x + 16, y + 22 + i * 22);
-      ctx.font = '13px system-ui, sans-serif'; ctx.fillStyle = '#e8eef8'; ctx.fillText(what, x + 160, y + 22 + i * 22);
+      ctx.font = '13px system-ui, sans-serif'; ctx.fillStyle = '#e8eef8'; ctx.fillText(typeof what === 'function' ? what() : what, x + 160, y + 22 + i * 22);
     });
   }
 
@@ -734,10 +950,10 @@
     const dn = detentName(s.lever);
     if (athrOn()) c.fillText(s.spdSel != null ? 'SPEED SEL' : 'SPEED', 100, 16);
     else c.fillText(s.afloor ? 'A.FLOOR' : s.lever < 0 ? 'REV' : dn === 'MAN THR' ? dn : `MAN ${dn}`, 100, 16);
-    if (!s.onGround && s.lever > 0.87 && s.athr && !s.afloor && Math.floor(performance.now() / 500) % 2) { c.fillStyle = '#ffb000'; c.font = '600 11px system-ui, sans-serif'; c.fillText('LVR CLB', 100, 30); c.font = '600 13px system-ui, sans-serif'; }
-    c.fillStyle = s.athr ? '#e8eef8' : '#ffb000'; c.font = '600 10px system-ui, sans-serif'; c.fillText(s.athr ? (athrOn() ? 'A/THR' : 'A/THR ARM') : 'A/THR OFF', 300, 30); c.font = '600 13px system-ui, sans-serif';
-    c.fillStyle = '#e8eef8'; c.fillText(`CONF ${CONF[s.conf].name}`, 200, 16);
-    c.fillStyle = '#30d158'; c.fillText('NORMAL LAW', 300, 16);
+    if (airbus() && !s.onGround && s.lever > 0.87 && s.athr && !s.afloor && Math.floor(performance.now() / 500) % 2) { c.fillStyle = '#ffb000'; c.font = '600 11px system-ui, sans-serif'; c.fillText('LVR CLB', 100, 30); c.font = '600 13px system-ui, sans-serif'; }
+    c.fillStyle = s.athr || !s.spec.athr ? '#e8eef8' : '#ffb000'; c.font = '600 10px system-ui, sans-serif'; c.fillText(!s.spec.athr ? 'NO A/THR' : s.athr ? (athrOn() ? 'A/THR' : 'A/THR ARM') : 'A/THR OFF', 300, 30); c.font = '600 13px system-ui, sans-serif';
+    c.fillStyle = '#e8eef8'; c.fillText(CONF.length > 1 ? `FLAPS ${CONF[s.conf].name}` : 'NO FLAPS', 200, 16);
+    c.fillStyle = airbus() ? '#30d158' : '#e8eef8'; c.fillText(s.spec.lawName, 300, 16);
     // attitude
     const ax = 200, ay = 128, r = 82, ppd = 4;
     c.save();
@@ -794,7 +1010,7 @@
     // speed tape
     const spd = ias();
     tape(10, 40, 62, 176, spd, 3, 10, 20, (vv) => String(vv), '#fff');
-    const top = Math.min(VMO, CONF[s.conf].vfe, s.gear > 0.05 ? VLE : 999);
+    const top = Math.min(VMO, CONF[s.conf].vfe, s.gear > 0.05 && s.spec.gear !== 'fixed' ? VLE : 999);
     // red band above the max speed
     const yTop = 128 - (top - spd) * 3;
     if (yTop > 40) { c.fillStyle = '#ff3b30'; c.fillRect(64, 40, 6, Math.min(176, yTop - 40)); }
@@ -810,7 +1026,7 @@
       c.strokeStyle = '#ffd60a'; c.lineWidth = 2; c.beginPath(); c.moveTo(74, 128); c.lineTo(74, clamp(ty, 40, 216)); c.stroke();
     }
     // the speed the autothrust flies: magenta managed, cyan picked ([ ])
-    { const tg = spdTarget(); const y = clamp(128 - (tg.kt - spd) * 3, 40, 216);
+    if (s.spec.athr) { const tg = spdTarget(); const y = clamp(128 - (tg.kt - spd) * 3, 40, 216);
       c.fillStyle = tg.sel ? '#5ac8fa' : '#ff6ef2'; c.beginPath(); c.moveTo(64, y); c.lineTo(76, y - 6); c.lineTo(76, y + 6); c.fill();
       if (Math.abs(tg.kt - spd) > 26) { c.font = '600 11px system-ui'; c.textAlign = 'center'; c.fillText(String(tg.kt), 41, tg.kt > spd ? 33 : 223); } }
     box(10, 128, 62, String(Math.round(spd)), '#ffd60a');
@@ -869,20 +1085,22 @@
     const c = ctx;
     c.fillStyle = 'rgba(8,10,14,0.82)'; roundRect(0, 0, 250, 270, 10); c.fill();
     c.textBaseline = 'middle';
-    for (let i = 0; i < 2; i++) {
-      const cx = 62 + i * 126, cy = 52, r = 34;
+    const ne = s.n1.length;
+    for (let i = 0; i < ne; i++) {
+      const r = ne > 2 ? (ne > 3 ? 22 : 27) : 34, cx = ne > 2 ? 125 + (i - (ne - 1) / 2) * (ne > 3 ? 56 : 72) : 62 + i * 126, cy = 52;
       c.lineWidth = 3; c.strokeStyle = '#555';
       c.beginPath(); c.arc(cx, cy, r, Math.PI * 0.75, Math.PI * 2.25); c.stroke();
       const f = clamp(s.n1[i] / 110, 0, 1);
       c.strokeStyle = s.rev > 0.05 ? '#30d158' : '#fff'; c.lineWidth = 4;
       c.beginPath(); c.arc(cx, cy, r, Math.PI * 0.75, Math.PI * (0.75 + 1.5 * f)); c.stroke();
       // the lever's target (cyan)
-      const tl = s.lever < 0 ? IDLE_N1 : IDLE_N1 + 79 * s.lever;
+      const tl = s.lever < 0 ? IDLE_N1 : IDLE_N1 + (100 - IDLE_N1) * s.lever;
       const ta = Math.PI * (0.75 + 1.5 * tl / 110);
       c.fillStyle = '#5ac8fa'; c.beginPath(); c.arc(cx + Math.cos(ta) * (r + 6), cy + Math.sin(ta) * (r + 6), 3, 0, 7); c.fill();
-      c.font = '600 16px ui-monospace, monospace'; c.fillStyle = '#30d158'; c.textAlign = 'center';
-      c.fillText(s.n1[i].toFixed(1), cx, cy + 4);
-      c.font = '10px system-ui'; c.fillStyle = '#9ab'; c.fillText(`N1 %  ENG ${i + 1}`, cx, cy + 32);
+      c.font = `600 ${ne > 2 ? 12 : 16}px ui-monospace, monospace`; c.fillStyle = '#30d158'; c.textAlign = 'center';
+      c.fillText(s.n1[i].toFixed(ne > 3 ? 0 : 1), cx, cy + 4);
+      c.font = '10px system-ui'; c.fillStyle = '#9ab'; c.fillText(ne > 2 ? `ENG ${i + 1}` : `${s.spec.gauge}  ENG ${i + 1}`, cx, cy + r - 2);
+      if (ne > 2 && i === 0) c.fillText(s.spec.gauge, 125, 90);
       if (s.rev > 0.05) { c.fillStyle = s.rev > 0.95 ? '#30d158' : '#ffb000'; c.font = '600 12px system-ui'; c.fillText('REV', cx, cy - 16); }
     }
     // thrust lever
@@ -890,12 +1108,14 @@
     c.fillText(`THR LVR  ${detentName(s.lever)}  ${s.lever < 0 ? '' : Math.round(s.lever * 100) + '%'}`, 14, 106);
     // flaps
     c.fillStyle = '#e8eef8'; c.fillText('FLAPS', 14, 134);
-    for (let i = 0; i < CONF.length; i++) {
-      const x = 70 + i * 28;
+    if (CONF.length === 1) { c.fillStyle = '#9ab'; c.font = '11px system-ui'; c.fillText('none: delta wing', 70, 134); }
+    const fStep = CONF.length > 1 ? Math.min(28, 166 / (CONF.length - 1)) : 0;
+    for (let i = 0; i < CONF.length && CONF.length > 1; i++) {
+      const x = 70 + i * fStep;
       c.fillStyle = i === s.conf ? '#5ac8fa' : '#556'; c.font = (i === s.conf ? '600 ' : '') + '11px system-ui'; c.textAlign = 'center';
       c.fillText(CONF[i].name, x, 134);
     }
-    c.fillStyle = '#30d158'; c.fillRect(56, 144, clamp(s.flapPos / (CONF.length - 1), 0, 1) * 180, 4);
+    c.fillStyle = '#30d158'; c.fillRect(56, 144, clamp(s.flapPos / Math.max(1, CONF.length - 1), 0, 1) * 180, 4);
     c.strokeStyle = '#556'; c.strokeRect(56, 144, 180, 4);
     // gear
     c.textAlign = 'left'; c.font = '600 13px system-ui'; c.fillStyle = '#e8eef8'; c.fillText('GEAR', 14, 172);
@@ -909,12 +1129,14 @@
       else if (moving) c.fillText('UNLK', x + 21, 172);
     }
     c.textAlign = 'left'; c.font = '11px system-ui'; c.fillStyle = '#9ab';
-    c.fillText(`lever ${s.gearDown ? 'DOWN' : 'UP'}`, 14, 190);
+    c.fillText(s.spec.gear === 'fixed' ? 'fixed gear' : `lever ${s.gearDown ? 'DOWN' : 'UP'}`, 14, 190);
     // spoilers, brakes
     c.font = '600 12px system-ui';
     const spl = Math.max(s.gs, s.sb);
     c.fillStyle = spl > 0.05 ? '#30d158' : s.armed ? '#5ac8fa' : '#556';
-    c.fillText(spl > 0.05 ? `SPD BRK ${Math.round(spl * 100)}%` : s.armed ? 'GND SPLR ARMED' : 'SPD BRK RET', 14, 212);
+    if (s.spec.speedBrake || s.spec.groundSpoilers) c.fillText(spl > 0.05 ? `SPD BRK ${Math.round(spl * 100)}%` : s.armed ? 'GND SPLR ARMED' : 'SPD BRK RET', 14, 212);
+    else if (s.spec.engine === 'sst' && s.lever > 0.98 && !s.onGround || s.spec.engine === 'sst' && s.lever > 0.98) { c.fillStyle = '#ffb000'; c.fillText('REHEAT ON', 14, 212); }
+    else { c.fillStyle = '#556'; c.fillText('NO SPOILERS', 14, 212); }
     c.fillStyle = s.parking ? '#ffb000' : s.brake > 0.05 ? '#30d158' : '#556';
     c.fillText(s.parking ? 'PARK BRK ON' : `BRAKES ${Math.round(s.brake * 100)}%`, 140, 212);
     c.font = '11px system-ui'; c.fillStyle = '#9ab';
@@ -1019,18 +1241,19 @@
     if (el) { el.remove(); return; }
     const ui = FG.ui || {};
     const sel = ui.selectedPlane && G.plane(ui.selectedPlane);
-    const mine = sel && /^A350/.test(sel.type) ? sel : null;
+    const mine = sel && TYPES[sel.type] ? sel : null;
     el = document.createElement('div');
     el.id = 'pilot-start';
     el.innerHTML = `<div class="ps-card" role="dialog" aria-modal="true">
       <h2>✈ Fly it yourself</h2>
-      <p class="ps-sub">An A350 flown by hand: throttle, flaps, gear and brakes, Airbus fly-by-wire. It flies in real time, apart from your airline.</p>
-      <label>Aircraft <select id="ps-type"><option>A350-900</option><option>A350-1000</option></select></label>
+      <p class="ps-sub">Fly by hand: throttle, flaps, gear and brakes. Each aircraft flies in its own way. It flies in real time, apart from your airline.</p>
+      <label>Aircraft <select id="ps-type">${Object.entries(TYPES).map(([k, t]) => `<option value="${k}">${t.name}</option>`).join('')}</select></label>
+      <p class="ps-sub" id="ps-blurb"></p>
       <label>Airport <input id="ps-ap" maxlength="4" spellcheck="false" autocomplete="off"></label>
       <label>Runway <select id="ps-rw"></select></label>
       <div class="ps-modes">
         <label class="check"><input type="radio" name="ps-mode" value="runway" checked> Lined up on the runway, ready for take-off</label>
-        <label class="check"><input type="radio" name="ps-mode" value="final"> On final: 10 NM out, 3,000 ft, gear up</label>
+        <label class="check"><input type="radio" name="ps-mode" value="final"> On final: on the ILS, gear up</label>
         ${mine && mine.status === 'flying' ? `<label class="check"><input type="radio" name="ps-mode" value="takeover"> Take over ${mine.reg || mine.name || 'my ' + mine.type} where it is now</label>` : ''}
       </div>
       <p class="ps-err" id="ps-err"></p>
@@ -1039,18 +1262,24 @@
     </div>`;
     document.body.appendChild(el);
     const ap = el.querySelector('#ps-ap'), rw = el.querySelector('#ps-rw'), err = el.querySelector('#ps-err');
-    if (mine) el.querySelector('#ps-type').value = mine.type.includes('1000') ? 'A350-1000' : 'A350-900';
+    const typeSel = el.querySelector('#ps-type'), blurb = el.querySelector('#ps-blurb');
+    typeSel.value = mine ? mine.type : s.type && TYPES[s.type] ? s.type : 'A350-900';
     let ends = [];
     const fill = () => {
       const code = ap.value.trim().toUpperCase();
-      ends = G.airportByCode[code] ? runwayEnds(code).filter((e) => e.len >= 800) : [];
+      const t = TYPES[typeSel.value];
+      blurb.textContent = t.blurb;
+      // the runway it needs: longer for the heavy jets, a field will do for the old propliners
+      const need = t.engine === 'piston' ? 600 : t.engine === 'prop' ? 1200 : t.toMass > 150000 ? 2500 : 1800;
+      ends = G.airportByCode[code] ? runwayEnds(code).filter((e) => e.len >= Math.min(800, need)) : [];
       const best = ends.length ? bestEnd(ends, code) : null;
-      rw.innerHTML = ends.map((e, i) => `<option value="${i}"${e === best ? ' selected' : ''}>${e.name} · ${Math.round(e.len).toLocaleString()} m${e.len < 2500 ? ' (short!)' : ''}</option>`).join('');
+      rw.innerHTML = ends.map((e, i) => `<option value="${i}"${e === best ? ' selected' : ''}>${e.name} · ${Math.round(e.len).toLocaleString()} m${e.len < need ? ' (short!)' : ''}</option>`).join('');
       err.textContent = !G.airportByCode[code] ? (code ? 'No airport with that code.' : '') : ends.length ? '' : 'No runways known there.';
     };
     ap.value = defaultAirport();
     fill();
     ap.addEventListener('input', fill);
+    typeSel.addEventListener('change', fill);
     el.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Escape') el.remove(); if (e.key === 'Enter') go(); });
     const go = () => {
       const mode = (el.querySelector('input[name="ps-mode"]:checked') || {}).value || 'runway';
@@ -1095,6 +1324,7 @@
     get hideId() { return s.hideId; },
     get ready() { return s.active && !s.loading; },
     LOOK_DOWN,
+    types: TYPES,
     open: openDialog, start, stop, step, pose,
     state: s, // (for debugging)
   };

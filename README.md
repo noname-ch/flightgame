@@ -344,12 +344,28 @@ Cameras, as in DCS (on phones the buttons show only their icons):
 - 🪽 Wing (N, DCS's F4): a camera on the wing, out towards the tip, looking ahead; it pitches and rolls with the
   plane. N again: the other wing.
 
-**Fly it yourself** (P, or ✈ Fly among the 3D buttons): an A350-900 or -1000 you fly by hand, lined up on any
-runway, 10 NM out on final at 3,000 ft, or taking over one of your own A350s in the air (it carries on with its
-timetable when you leave). It flies in real time whatever the game speed and earns nothing: it's for flying. While
+**Fly it yourself** (P, or ✈ Fly among the 3D buttons): an aircraft you fly by hand, lined up on any
+runway, on final on the ILS, or taking over one of your own planes of that type in the air (it carries on with its
+timetable when you leave). Ten aircraft, each flying in its own way:
+- **A350-900, A350-1000, A320**: Airbus fly-by-wire (below). The A320 is light and nimble, the A350-1000 heavy, with
+  a tail that strikes at under 10°.
+- **Boeing 737-800, 747-400**: conventional controls. The stick changes the angle of attack and the aircraft stays
+  trimmed where you let go, so more thrust makes it climb and less makes it sink; no protections: it stalls (stick
+  shaker first) and overspeed only warns. The bank holds where you leave it, up to 75°. The 747 has four slow engines
+  and a lot of mass: slow to pitch, to roll and to speed up.
+- **Concorde**: no flaps: the delta wing lands at about 13-15° nose up and 160 kt, with a lot of drag. Reheat at
+  the take-off detent (4) for the take-off and through Mach 1, then Mach 2 at 50,000 ft. No spoilers.
+- **Dash 8-400, ATR 72-600**: turboprops. The propellers answer the levers at once (torque, TQ %) and pull hardest
+  when slow; reverse is the propellers' beta. No autothrust. The ATR has no spoilers and only 250 kt at most.
+- **DC-3, Ju 52/3m**: classics on cables: no autothrust, no reversers, no spoilers; the wings level by themselves,
+  they roll slowly, and in a stall a wing drops. The Ju 52 has three engines and fixed gear, lifts off at about
+  60 kt and stops in a few hundred metres.
+
+The dialog says how each one flies and marks the runways too short for it. Thrust detents, flaps, speed limits,
+crash limits (sink rate, bank, tyre speed) are each type's own. It flies in real time whatever the game speed and earns nothing: it's for flying. While
 you fly, the keyboard is the plane's (the game's keys come back when you leave):
-- ↑ ↓ (W S): stick, nose down / up. As in an Airbus (normal law) it asks for a pitch rate; let go and it holds the
-  flight path. ← → (A D): roll; let go and the bank stays (up to 33°). On the ground they steer, Q E = rudder.
+- ↑ ↓ (W S): stick, nose down / up. In an Airbus (normal law) it asks for a pitch rate; let go and it holds the
+  flight path (the others: see above). ← → (A D): roll; let go and the bank stays (up to 33°). On the ground they steer, Q E = rudder.
 - PgUp / PgDn or + / −: thrust levers; 1 2 3 4 = the IDLE, CL, FLX/MCT and TOGA detents. The engines spool up
   slowly from idle (about 8 s to take-off thrust). On the ground − past idle (or R) is reverse thrust.
 - Autothrust (A/THR): in the air with the levers in CL (2) it holds a speed, the magenta mark on the speed tape:
