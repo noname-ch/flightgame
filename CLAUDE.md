@@ -19,7 +19,9 @@ Play online: https://noname-ch.github.io/flightgame/ (GitHub Pages, deployed fro
 - Run the smoke test first: `node tools/smoke.mjs`. Push only when it ends with `✓ smoke test passed`.
   See "The smoke test" below.
 - `index.html` loads every CSS/JS file with `?v=<timestamp>`. Bump all of them (sed the `?v=`) on
-  every push, or browsers mix the new page with old cached files.
+  every push, or browsers mix the new page with old cached files. ES modules imported by other modules
+  (`./models3d.js`, `./livery.js`, `./gear3d.js`) get theirs through the import map in index.html: a new
+  module imported that way needs an entry there too, or its changes don't reach players for a while.
 - When a ROADMAP.md item gets built, tick it and move it to the `## Done` section.
 - Keep README.md current when gameplay or controls change.
 
