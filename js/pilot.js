@@ -150,6 +150,9 @@
   for (const t of Object.values(TYPES)) {
     Object.assign(t, { kMin: 0.1, gearCd: 0.02, pitchRate: 3, aTau: 0.3, dihedral: 0, ...t });
     t.altExp = t.altExp ?? 0.75;
+    // inertia (s): how long the roll and the pitch take to get going and to stop, from the mass (about 0.35 s for
+    // the DC-3 and the Ju 52, about 1.1 s for the A350 and the 747)
+    t.inertia = t.inertia ?? clamp(0.35 + 0.8 * Math.log10(t.toMass / 10000) / Math.log10(36), 0.35, 1.2);
   }
   // What start() sets from the type flown (the A350-900's until then).
   let CONF, DETENTS, VMO, MMO, VLE, CL_A, CL_BASE, CD0, K_IND, IDLE_N1;
@@ -326,7 +329,7 @@
       conf: sp.toConf, flapPos: sp.toConf, sb: 0, gs: 0, armed: sp.groundSpoilers, brake: 0, parking: false, afloor: false,
       stick: 0, roll: 0, rud: 0, crashed: null, touch: null, tail: false, paused: false, calls: {}, near: null,
       hideId: opts.plane ? opts.plane.id : null, mass: sp.toMass, prevAgl: null, ghReal: null, ghAt: 0,
-      gref: null, aCmd: null, stalled: false, drop: 0, athr: sp.athr, spdSel: null, athrN1: null, iasPrev: null, iasAcc: 0, menu: false, lvrClb: false, sway: { p: 0, pv: 0, r: 0, rv: 0 }, vPrev: null,
+      gref: null, aCmd: null, qCmd: 0, p: 0, stalled: false, stallAmt: 0, buffet: 0, drop: 0, athr: sp.athr, spdSel: null, athrN1: null, iasPrev: null, iasAcc: 0, menu: false, lvrClb: false, sway: { p: 0, pv: 0, r: 0, rv: 0 }, vPrev: null,
     });
     s.msgs = [];
     const e = opts.end;
@@ -404,7 +407,7 @@
   // Z keeps the flight as it is now; Backspace puts it back there (paused, P to go on), as often as it takes.
   const CK = ['lat', 'lon', 'h', 'groundH', 'V', 'gamma', 'psi', 'theta', 'phi', 'alpha', 'onGround', 'landed', 'n1', 'lever',
     'rev', 'revOk', 'gearDown', 'gear', 'conf', 'flapPos', 'sb', 'gs', 'armed', 'brake', 'parking', 'afloor', 'tail', 'mass',
-    'gref', 'aCmd', 'trimStart', 'stalled', 'drop', 'athr', 'spdSel', 'athrN1', 'iasPrev', 'iasAcc', 'lvrClb', 'sway', 'vPrev', 'ghReal', 'calls', 'prevAgl'];
+    'gref', 'aCmd', 'qCmd', 'p', 'trimStart', 'stalled', 'stallAmt', 'buffet', 'drop', 'athr', 'spdSel', 'athrN1', 'iasPrev', 'iasAcc', 'lvrClb', 'sway', 'vPrev', 'ghReal', 'calls', 'prevAgl'];
   function saveCheckpoint() {
     if (s.loading || s.crashed) { say('No checkpoint while crashed', 'amber', 2000); return; }
     const st = {};
@@ -508,8 +511,8 @@
     const pitch = (held('ArrowDown', 's') ? 1 : 0) - (held('ArrowUp', 'w') ? 1 : 0); // ↓ pulls the nose up (a stick)
     const roll = (held('ArrowRight', 'd') ? 1 : 0) - (held('ArrowLeft', 'a') ? 1 : 0);
     const rud = (held('e') ? 1 : 0) - (held('q') ? 1 : 0);
-    s.stick = ease(s.stick, pitch, 0.25);
-    s.roll = ease(s.roll, roll, 0.15);
+    s.stick = ease(s.stick, pitch, 0.35);
+    s.roll = ease(s.roll, roll, 0.25);
     s.rud = ease(s.rud, rud, 0.3);
     const thr = (held('PageUp', '+', '=', 'NumpadAdd') ? 1 : 0) - (held('PageDown', '-', 'NumpadSubtract') ? 1 : 0);
     if (thr) {
@@ -572,10 +575,16 @@
     const clBase = CL_BASE + c.cl0;
     const aStall = (c.clmax - clBase) / CL_A;
     s.aProt = aStall - 2;
-    let CL = clBase + CL_A * s.alpha;
-    if (s.alpha > aStall) CL = c.clmax - 0.05 * Math.pow(s.alpha - aStall, 1.5);
+    // stalled, the flow breaks away from the wing: about a third of the lift goes within half a second, and it stays
+    // gone until the angle of attack is well back below the stall (stallAmt, set by conventionalLaw)
+    s.stallAmt += ((s.stalled ? 1 : 0) - s.stallAmt) * (1 - Math.exp(-dt / 0.4));
+    let CL = Math.min(clBase + CL_A * s.alpha, c.clmax);
+    if (s.alpha > aStall) CL -= 0.04 * (s.alpha - aStall);
+    CL *= 1 - 0.35 * s.stallAmt;
     CL -= 0.45 * spoil;
-    const CD = CD0 + c.cd + sp.gearCd * s.gear + 0.05 * spoil + K_IND * Math.pow(CL - sp.kMin, 2) + waveDrag(sp, M);
+    const CD = CD0 + c.cd + sp.gearCd * s.gear + 0.05 * spoil + K_IND * Math.pow(CL - sp.kMin, 2) + waveDrag(sp, M) + 0.2 * s.stallAmt;
+    // buffet: the airframe shakes as the flow starts to break away, hard once stalled (looks only: pose())
+    s.buffet = s.onGround || airbus() ? 0 : clamp(Math.max((s.alpha - (aStall - 1.5)) / 3, s.stallAmt), 0, 1);
     const L = q * sp.S * CL, D = q * sp.S * CD;
     s.load = L / W;
     s.aStall = aStall;
@@ -599,7 +608,7 @@
       if (airbus() && !s.afloor && s.alpha > s.aProt - 0.3 && agl() > 100) { s.afloor = true; say('A.FLOOR — TOGA', 'amber', 4000); }
     } else {
       s.gamma = 0;
-      s.gref = null; s.aCmd = null; s.gPrev = null; s.stalled = false;
+      s.gref = null; s.aCmd = null; s.gPrev = null; s.stalled = false; s.p = 0;
       s.phi *= Math.exp(-dt / 0.3);
       // rotation: the elevator lifts the nose once there is speed; let go, the nose wheel comes back down
       const vRot = sp.vr * KT;
@@ -608,6 +617,7 @@
       let rate = s.stick > 0 ? s.stick * 3.5 * auth : s.stick * 2 * auth;
       rate -= (1 + 2 * (1 - liftFrac)) * (1 - clamp(s.stick, 0, 1));
       s.theta = clamp(s.theta + rate * dt, 0, sp.tail + 4);
+      s.qCmd = s.theta > 0 && s.theta < sp.tail + 4 ? rate : 0; // (still rotating as it lifts off: the nose goes on coming up)
       s.alpha = s.theta;
       if (s.theta > sp.tail && !s.tail) { s.tail = true; say('TAIL STRIKE', 'red', 5000); speak('tail strike'); }
       if (s.theta < sp.tail - 2) s.tail = false;
@@ -646,17 +656,20 @@
     if (s.aCmd == null) s.aCmd = s.trimStart ? (s.alpha = clamp(alphaFor(Math.cos(s.gamma)), -4, aStall - 2)) : s.alpha;
     s.trimStart = false;
     const auth = clamp(q / (0.5 * 1.225 * (sp.vr * KT * 1.3) ** 2), 0.3, 1.4);
-    s.aCmd += s.stick * sp.pitchRate * auth * dt;
+    // the elevator starts and stops the nose at the aircraft's own pace (its inertia): let go, it comes up a little more
+    s.qCmd += (s.stick * sp.pitchRate * auth - s.qCmd) * (1 - Math.exp(-dt / (sp.inertia * 0.6)));
+    s.aCmd += s.qCmd * dt;
     const aMax = Math.min(alphaFor(2.5), aStall + 10), aMin = Math.max(-8, alphaFor(-1));
-    s.aCmd = clamp(s.aCmd, aMin, Math.max(aMin, aMax));
-    // stalled: the nose drops unless the stick is held back; a wing drops on the classics (and a little on all)
-    const stalled = s.alpha > aStall;
-    if (stalled && !s.stalled) { s.drop = (Math.random() < 0.5 ? -1 : 1) * (sp.law === 'classic' ? 14 : 5); speak('stall'); }
+    const aTop = Math.max(aMin, aMax);
+    if (s.aCmd > aTop || s.aCmd < aMin) s.qCmd = 0;
+    s.aCmd = clamp(s.aCmd, aMin, aTop);
+    // stalled past the critical angle of attack, and it stays stalled until the angle is 2° back below it: the lift
+    // breaks away (physics()), the nose drops by itself even with the stick held back (fully back it only just stays
+    // stalled, sinking fast), a wing drops (hard on the classics) and the ailerons hardly answer. Stick forward to recover.
+    const stalled = s.stalled ? s.alpha > aStall - 2 : s.alpha > aStall;
+    if (stalled && !s.stalled) { s.drop = (Math.random() < 0.5 ? -1 : 1) * (sp.law === 'classic' ? 14 : 6); speak('stall'); }
     s.stalled = stalled;
-    if (stalled) {
-      if (s.stick < 0.3) s.aCmd -= 3 * dt;
-      s.phi += s.drop * dt;
-    }
+    if (stalled) s.aCmd -= (4 + 4 * (1 - clamp(s.stick, 0, 1))) * dt;
     // (the tail damps the slow up-and-down swing of the path: a little less angle of attack while the path rises)
     const gdot = s.gPrev == null ? 0 : (s.gamma - s.gPrev) / DEG / Math.max(1e-3, dt);
     s.gPrev = s.gamma;
@@ -671,7 +684,8 @@
   function airbusLaw(dt, alphaFor, cg, cphiL, M) {
     const aHold = alphaFor(cg / cphiL);
     if (s.gref == null) s.gref = s.gamma + (s.alpha - aHold) * cphiL * DEG;
-    let rate = s.stick * 3; // °/s
+    s.qCmd += (s.stick * 3 - s.qCmd) * (1 - Math.exp(-dt / (s.spec.inertia * 0.5)));
+    let rate = s.qCmd; // °/s
     if (s.theta > 25 && rate > 0) rate *= clamp((30 - s.theta) / 5, 0, 1);
     if (s.theta < -10 && rate < 0) rate *= clamp((s.theta + 15) / 5, 0, 1);
     // high speed protection: the nose comes up by itself above VMO / MMO
@@ -683,7 +697,7 @@
     // (the path asked for can't run away from the one flown while the angle of attack is at a limit)
     s.gref = clamp(s.gref, s.gamma + (aMin - aHold) * cphiL * DEG, s.gamma + (aMax - aHold) * cphiL * DEG);
     const aCmd = clamp(aHold + (s.gref - s.gamma) / DEG / cphiL, aMin, aMax);
-    s.alpha += (aCmd - s.alpha) * (1 - Math.exp(-dt / 0.3));
+    s.alpha += (aCmd - s.alpha) * (1 - Math.exp(-dt / (0.2 + 0.25 * s.spec.inertia)));
   }
 
   // Roll. Airbus: the stick asks for a roll rate, let go the bank stays (up to 33°, beyond that it comes back to
@@ -691,12 +705,20 @@
   // the wings by themselves. Each type rolls at its own rate (°/s at full).
   function rollLaw(dt) {
     const sp = s.spec;
-    const rate = sp.roll * (airbus() ? 1 : clamp(s.V / (sp.vr * KT * 1.2), 0.4, 1.2));
-    if (Math.abs(s.roll) > 0.02) s.phi += s.roll * rate * dt;
-    else if (airbus() && Math.abs(s.phi) > 33) s.phi -= Math.sign(s.phi) * Math.min(5 * dt, Math.abs(s.phi) - 33);
-    else if (sp.dihedral && !s.stalled) s.phi -= Math.sign(s.phi) * Math.min(sp.dihedral * dt, Math.abs(s.phi));
-    s.phi += s.rud * 2 * dt;
-    s.phi = airbus() ? clamp(s.phi, -67, 67) : clamp(s.phi, -75, 75);
+    let rate = sp.roll * (airbus() ? 1 : clamp(s.V / (sp.vr * KT * 1.2), 0.4, 1.2));
+    if (s.stalled) rate *= 0.35; // (stalled: the ailerons hardly answer)
+    // the roll rate wanted; the aircraft gets into it and out of it at its own pace (s.p, its inertia)
+    let want = 0;
+    if (Math.abs(s.roll) > 0.02) want = s.roll * rate;
+    else if (airbus() && Math.abs(s.phi) > 33) want = -Math.sign(s.phi) * Math.min(5, (Math.abs(s.phi) - 33) * 2);
+    else if (sp.dihedral && !s.stalled) want = -Math.sign(s.phi) * Math.min(sp.dihedral, Math.abs(s.phi) * 0.5);
+    if (s.stalled) want += s.drop;
+    want += s.rud * 2;
+    const tau = sp.inertia * (airbus() ? 0.4 : 0.6);
+    s.p += (want - s.p) * (1 - Math.exp(-dt / tau));
+    s.phi += s.p * dt;
+    const most = airbus() ? 67 : 75;
+    if (Math.abs(s.phi) > most) { s.phi = Math.sign(s.phi) * most; s.p = 0; }
   }
 
   // On its legs the aircraft sways on the shock absorbers (drawn only: the physics keep the wheels on the runway):
@@ -829,10 +851,14 @@
     const phase = s.onGround ? (s.V < 30 * KT ? 'taxi-out' : s.landed ? 'landing' : 'takeoff')
       : a < 900 && vs < -1 ? 'approach' : vs > 2 ? 'climb' : vs < -2 ? 'descent' : 'cruise';
     const kmh = s.V * 3.6;
+    const tb = performance.now() / 1000, bf = s.paused || s.menu || s.crashed ? 0 : s.buffet;
+    const shakeP = bf * (0.5 * Math.sin(tb * 37) + 0.3 * Math.sin(tb * 23 + 1.3));
+    const shakeR = bf * (0.6 * Math.sin(tb * 29 + 0.7) + 0.4 * Math.sin(tb * 17 + 2.1));
     return {
-      lat: s.lat, lon: s.lon, altM: a, altMSL: s.h, heading: wrap360(s.psi + (s.onGround ? 0 : s.alpha * Math.sin(s.phi * DEG))), bank: s.phi + s.sway.r, pitch: s.theta + s.sway.p, flying: true,
+      lat: s.lat, lon: s.lon, altM: a, altMSL: s.h, heading: wrap360(s.psi + (s.onGround ? 0 : s.alpha * Math.sin(s.phi * DEG))), bank: s.phi + s.sway.r + shakeR, pitch: s.theta + s.sway.p + shakeP, flying: true,
       st: { phase, speedKmh: kmh, altFt: s.h / FT, fieldFt: s.groundH / FT, ground: s.onGround, windKt: 0, windFrom: 0, gusty: false, airFrac: 0 },
-      pilot: { gear: s.gear, flap: confAt(s.flapPos).flap, ail: s.roll, elev: s.onGround ? s.stick : s.stick * 0.7, rud: s.onGround ? s.rud : s.rud, rev: s.rev, n1: s.n1.reduce((x, y) => x + y, 0) / s.n1.length, gamma: s.gamma / DEG, vs },
+      pilot: { gear: s.gear, flap: confAt(s.flapPos).flap, ail: s.roll, elev: s.onGround ? s.stick : s.stick * 0.7, rud: s.onGround ? s.rud : s.rud, rev: s.rev, n1: s.n1.reduce((x, y) => x + y, 0) / s.n1.length, gamma: s.gamma / DEG, vs,
+        nz: s.load + bf * 0.25 * Math.sin(tb * 13), stall: s.stallAmt },
     };
   }
 

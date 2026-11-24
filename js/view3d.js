@@ -415,6 +415,13 @@ function wingFlex(type, pose, ph) {
   const look = D.looks && D.looks[type];
   const soft = 0.6 + 0.4 * Math.min(1, (look ? look.len : 40) / 60);
   if (!st) return -0.012 * soft;
+  // flown by hand (js/pilot.js): the real load on the wings, nz (on the wheels: the share of the weight they carry
+  // already). They bow up pulling out of a dive or in a hard turn, unload in a stall or pushing over, and droop below 0 g.
+  if (pose.pilot && pose.pilot.nz != null) {
+    const nz = Math.max(-1, Math.min(3, pose.pilot.nz));
+    const carried = Math.max(0, Math.min(1, nz));
+    return soft * (-0.015 * (1 - carried) + 0.06 * nz);
+  }
   const vLift = G.perf(type).vLof;
   const air = AIRBORNE[st.phase] || (st.phase === 'takeoff' && !st.ground);
   const lift = air ? 1 : Math.min(1, (st.speedKmh / Math.max(1, vLift)) ** 2);
@@ -1282,9 +1289,19 @@ function placeModel(e, pose, altM, exag, globe, now, lineUp) {
   const liv = e.obj.userData.liv;
   if (liv && liv.length) {
     const target = wingFlex(e.type, pose, e.obj.id * 1.7);
-    e.flex = e.flex == null ? target : e.flex + (target - e.flex) * k;
     // propellers and fans spin up and down with the engines (looks only: slow enough not to strobe)
     const dt = e.lastFrame == null ? 0 : Math.min(0.25, Math.max(0, (now - e.lastFrame) / 1000));
+    if (e.pilot && e.flex != null) {
+      // flown by hand: the wing is a lightly damped spring (about one swing a second), so a sharp pull or a bump
+      // makes the tips overshoot and bounce a few times before they settle
+      const w = 2 * Math.PI * 1.0, zeta = 0.15;
+      e.flexV = e.flexV || 0;
+      for (let left = dt; left > 1e-6; left -= 1 / 120) {
+        const h = Math.min(1 / 120, left);
+        e.flexV += (w * w * (target - e.flex) - 2 * zeta * w * e.flexV) * h;
+        e.flex += e.flexV * h;
+      }
+    } else e.flex = e.flex == null ? target : e.flex + (target - e.flex) * k;
     // thrust reversers deploy in about a second and stow again below 60 kt; reversing propellers spin up
     const rev = e.obj.userData.rev;
     e.rev = (e.rev || 0) + (revTarget(pose) - (e.rev || 0)) * (1 - Math.exp(-dt / 0.4));

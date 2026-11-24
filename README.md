@@ -351,12 +351,17 @@ timetable when you leave). Ten aircraft, each flying in its own way:
   a tail that strikes at under 10°.
 - **Boeing 737-800, 747-400**: conventional controls. The stick changes the angle of attack and the aircraft stays
   trimmed where you let go, so more thrust makes it climb and less makes it sink; no protections: it stalls (stick
-  shaker first) and overspeed only warns. The bank holds where you leave it, up to 75°. The 747 has four slow engines
+  shaker first) and overspeed only warns. Stalled, a third of the lift goes, the airframe shakes, the nose drops
+  even with the stick held back and a wing goes down; it stays stalled until the stick comes forward. Pulling too hard
+  on the rotation stalls it just after lift-off. The bank holds where you leave it, up to 75°. The 747 has four slow engines
   and a lot of mass: slow to pitch, to roll and to speed up.
 - **Concorde**: no flaps: the delta wing lands at about 13-15° nose up and 160 kt, with a lot of drag. Reheat at
   the take-off detent (4) for the take-off and through Mach 1, then Mach 2 at 50,000 ft. No spoilers.
 - **Dash 8-400, ATR 72-600**: turboprops. The propellers answer the levers at once (torque, TQ %) and pull hardest
   when slow; reverse is the propellers' beta. No autothrust. The ATR has no spoilers and only 250 kt at most.
+- Every type has its weight: the roll and the pitch take a moment to get going and to stop (about a second on the
+  A350 and the 747, a third of one on the classics). The wings bend with the real load: up pulling out of a dive or
+  in a hard turn, less in a stall or pushing over, and they bounce a little after a sharp pull.
 - **DC-3, Ju 52/3m**: classics on cables: no autothrust, no reversers, no spoilers; the wings level by themselves,
   they roll slowly, and in a stall a wing drops. The Ju 52 has three engines and fixed gear, lifts off at about
   60 kt and stops in a few hundred metres.
