@@ -205,8 +205,28 @@ pub const START_AIRPORTS: [(&str, &[&str]); 6] = [
 /// Aircraft offered as the first (leased) plane on the start screen.
 pub const STARTER_AIRCRAFT: [&str; 6] = ["ATR72-600", "Q400", "E190", "A220-300", "A320neo", "B737-800"];
 
-/// Game minutes per real second, as in the browser game's speed menu.
+/// Multiples of real time, as in the browser game's speed menu (1: a game minute takes a minute). (They were game
+/// minutes per second here once: "Real" ran 60 times faster than real time.)
 pub const SPEEDS: [f64; 7] = [1.0, 10.0, 60.0, 300.0, 1200.0, 3600.0, 36000.0];
+/// The speed slider (as the browser's #speed): 0 … SLIDER_MAX, real time to the fastest speed, evenly by the
+/// logarithm.
+pub const SLIDER_MAX: f64 = 1000.0;
+pub fn slider_to_speed(v: f64) -> f64 {
+    SPEEDS[SPEEDS.len() - 1].powf(v / SLIDER_MAX).round().max(1.0)
+}
+pub fn speed_to_slider(x: f64) -> f64 {
+    (x.max(1.0).ln() / SPEEDS[SPEEDS.len() - 1].ln() * SLIDER_MAX).round()
+}
+/// A speed as the browser writes it: "Real", "10×", "1.2k×", "36k×".
+pub fn speed_label(x: f64) -> String {
+    if x <= 1.0 {
+        "Real".into()
+    } else if x >= 1000.0 {
+        format!("{:.*}k×", if x >= 10000.0 { 0 } else { 1 }, x / 1000.0)
+    } else {
+        format!("{x:.0}×")
+    }
+}
 pub const SPEED_LABELS: [&str; 7] = ["Real", "10×", "60×", "300×", "1.2k×", "3.6k×", "36k×"];
 
 // Story mode: the game starts on the first Monday of one of these years, and each aircraft type reaches the market

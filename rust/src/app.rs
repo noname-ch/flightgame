@@ -58,7 +58,9 @@ pub struct App {
     map: MapMemory,
     /// exact (fractional) game time for animation
     t: f64,
+    /// the speed preset picked (SPEEDS), unless the slider set one of its own (`rate`)
     speed: usize,
+    rate: Option<f64>,
     paused: bool,
     section: Option<Section>,
     selected: Option<Pick>,
@@ -175,7 +177,8 @@ impl App {
             slot_code: String::new(),
             map,
             t: 0.0,
-            speed: 2,
+            speed: 0,
+            rate: None,
             paused: false,
             section: Some(Section::Fleet),
             selected: None,
@@ -613,13 +616,27 @@ impl App {
                 if ui.button(pause_label).on_hover_text("Pause (Space)").clicked() {
                     self.paused = !self.paused;
                 }
-                for (k, label) in SPEED_LABELS.iter().enumerate() {
-                    let tip = format!("{} game minutes per second (← → change the speed)", SPEEDS[k]);
-                    if ui.selectable_label(!self.paused && self.speed == k, *label).on_hover_text(tip).clicked() {
-                        self.speed = k;
-                        self.paused = false;
-                    }
+                // the speed as the browser's: a slider (any speed from real time to the fastest; ← → move it) and the
+                // speed, a button with the presets
+                let mut v = flightgame::config::speed_to_slider(self.rate());
+                let slider = egui::Slider::new(&mut v, 0.0..=flightgame::config::SLIDER_MAX).show_value(false);
+                if ui.add_sized([90.0, 18.0], slider).on_hover_text("Game speed (← / →): from real time to 36 000 times as fast").changed() {
+                    self.set_rate(flightgame::config::slider_to_speed(v));
                 }
+                let label = if self.paused { "Paused".to_string() } else { flightgame::config::speed_label(self.rate()) };
+                ui.menu_button(label, |ui| {
+                    for (k, label) in SPEED_LABELS.iter().enumerate() {
+                        let tip = if k == 0 { "Real time: a game minute takes a minute".to_string() } else { format!("{label} real time (1 … 7)") };
+                        if ui.selectable_label(!self.paused && self.rate.is_none() && self.speed == k, *label).on_hover_text(tip).clicked() {
+                            self.speed = k;
+                            self.rate = None;
+                            self.paused = false;
+                            ui.close();
+                        }
+                    }
+                })
+                .response
+                .on_hover_text("Game speed: presets");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let Some(g) = &self.game else { return };
                     // as the browser game: the clock big, the day small under it, the sun or the moon at home
@@ -2778,12 +2795,12 @@ impl eframe::App for App {
                 if i.key_pressed(egui::Key::Space) {
                     self.paused = !self.paused;
                 }
-                if i.key_pressed(egui::Key::ArrowRight) {
-                    self.speed = (self.speed + 1).min(SPEEDS.len() - 1);
-                    self.paused = false;
-                }
-                if i.key_pressed(egui::Key::ArrowLeft) {
-                    self.speed = self.speed.saturating_sub(1);
+                // (as the browser: the slider a twentieth of its way)
+                for (key, step) in [(egui::Key::ArrowRight, 50.0), (egui::Key::ArrowLeft, -50.0)] {
+                    if i.key_pressed(key) {
+                        let v = (flightgame::config::speed_to_slider(self.rate()) + step).clamp(0.0, flightgame::config::SLIDER_MAX);
+                        self.set_rate(flightgame::config::slider_to_speed(v));
+                    }
                 }
                 if i.key_pressed(egui::Key::Escape) {
                     // closes the windows, as Esc does in the browser game before it opens the menu
@@ -2794,6 +2811,7 @@ impl eframe::App for App {
                 for (k, key) in [egui::Key::Num1, egui::Key::Num2, egui::Key::Num3, egui::Key::Num4, egui::Key::Num5, egui::Key::Num6, egui::Key::Num7].iter().enumerate() {
                     if i.key_pressed(*key) {
                         self.speed = k;
+                        self.rate = None;
                         self.paused = false;
                     }
                 }
@@ -2801,11 +2819,13 @@ impl eframe::App for App {
         }
         let news_open = self.newspaper(&ctx);
         // ---------- time ----------
+        let rate = self.rate();
         if let Some(g) = &mut self.game {
             let running = !self.paused && !news_open && !g.state.game_over;
             if running {
                 let dt = ctx.input(|i| i.stable_dt).min(0.1) as f64;
-                self.t += dt * SPEEDS[self.speed];
+                // (the speed is a multiple of real time; the clock counts game minutes)
+                self.t += dt * rate / 60.0;
                 let target = self.t.floor() as i64;
                 if target > g.state.time {
                     g.advance((target - g.state.time).min(DAY));
@@ -3048,7 +3068,7 @@ impl eframe::App for App {
             let (lat, lon, h) = self.listener;
             let ear = ear3d.unwrap_or_else(|| crate::sound::Ear { lat, lon, h, bearing: 0.0, follow: self.follow.clone(), cam: if self.follow.is_some() { "chase" } else { "" } });
             let dt = ctx.input(|i| i.stable_dt).min(0.25) as f64;
-            self.sound.update(g, self.t, &ear, SPEEDS[self.speed], running, dt);
+            self.sound.update(g, self.t, &ear, self.rate() / 60.0, running, dt);
         }
     }
 
@@ -3068,6 +3088,23 @@ impl eframe::App for App {
 }
 
 impl App {
+    /// How fast the game runs: a multiple of real time.
+    fn rate(&self) -> f64 {
+        self.rate.unwrap_or(SPEEDS[self.speed.min(SPEEDS.len() - 1)])
+    }
+
+    /// A speed of the slider's: a preset where it is one (its button lit), else its own.
+    fn set_rate(&mut self, x: f64) {
+        match SPEEDS.iter().position(|&s| (s - x).abs() < 0.5) {
+            Some(k) => {
+                self.speed = k;
+                self.rate = None;
+            }
+            None => self.rate = Some(x),
+        }
+        self.paused = false;
+    }
+
     /// The self-test: a new game with a timetable to Vienna at full speed, a screenshot of each section, a report.
     fn selftest_tick(&mut self, ctx: &egui::Context) {
         let Some((dir, step, at)) = self.selftest.clone() else { return };
