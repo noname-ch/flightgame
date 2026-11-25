@@ -938,7 +938,20 @@
     // The engines follow the levers with a lag (in game time).
     const sm = v.sm || (v.sm = { ...e });
     const k = 1 - Math.exp(-dtGame / (SPOOL * S.spool));
-    for (const f of ['pw', 'np', 'n2', 'rev']) sm[f] += ((e[f] || 0) - sm[f]) * (e.start != null || e.phase === 'shutdown' ? Math.max(k, 0.5) : k);
+    // Spooling up (the throttles forward for take-off, a go-around) never faster than in real time, however fast the
+    // game runs: the engines are heard winding up, screeching, as they do (the user: "when starting on take off the
+    // engines should screech like irl"; fast-forwarded the power jumped to full at once).
+    const dtReal = speed > 0 ? dtGame / speed : 0;
+    const kUp = 1 - Math.exp(-Math.min(dtGame, dtReal) / (SPOOL * S.spool));
+    const quick = e.start != null || e.phase === 'shutdown';
+    for (const f of ['pw', 'np', 'n2', 'rev']) {
+      const to = e[f] || 0;
+      sm[f] += (to - sm[f]) * (quick ? Math.max(k, 0.5) : to > sm[f] && f !== 'rev' ? kUp : k);
+    }
+    // The spool-up screech: on while the power is winding up to take-off or climb thrust, dying away over a few
+    // seconds once it is there (real time).
+    if (pr.kind === 'jet' && !quick && (e.pw || 0) > 0.6 && (e.pw || 0) - sm.pw > 0.05) v.spoolScr = 1;
+    else v.spoolScr = (v.spoolScr || 0) * Math.exp(-dtReal / 2.5);
     for (const f of ['run', 'apu', 'crank', 'rough']) sm[f] = e[f] || 0;
     const sz = pr.size;
     const front = Math.max(0, g.ahead);
@@ -979,7 +992,9 @@
       T(L2.droneF.frequency, 150 + 350 * n1);
       // The whine: clear at idle, it fades under the roar as the power comes up.
       const fanHz = n1 < IDLE ? pr.fanLo * n1 / IDLE : pr.fanLo + (pr.fanHi - pr.fanLo) * (n1 - IDLE) / (1 - IDLE);
-      T(L2.fan.gain, U.fan * M.whine * sz * 0.16 * S.fan * smooth(0.04, 0.18, n1) * (0.6 + 0.9 * front) * (pr.old ? 0.35 : 1) * (1 - 0.75 * smooth(0.3, 0.9, n1)));
+      const spool = v.spoolScr || 0; // (winding up: the whine and the screech come through, as loud as without the recordings and more)
+      const scrUnder = Math.max(U.screech, e.phase === 'takeoff' ? 0.6 : 0); // (the take-off roll: the screech stays well in)
+      T(L2.fan.gain, (U.fan + (1.5 - U.fan) * spool) * M.whine * sz * 0.16 * S.fan * smooth(0.04, 0.18, n1) * (0.6 + 0.9 * front) * (pr.old ? 0.35 : 1) * (1 - 0.75 * smooth(0.3, 0.9, n1)));
       T(L2.fan1.frequency, Math.max(20, fanHz * dop));
       T(L2.fan2.frequency, Math.max(20, fanHz * dop)); // (in tune: 0.12 % apart they swelled about once a second, "it rotates")
       T(L2.core.gain, U.core * M.whine * sz * 0.035 * S.core * smooth(0.02, 0.12, n2) * (pr.old ? 2 : 1) * (1 - 0.8 * n1));
@@ -987,7 +1002,7 @@
       T(L2.saw.gain, pr.old ? 0 : sz * 1.2 * S.saw * smooth(0.82, 0.92, n1) * front ** 1.5);
       // The screech: up with the power, from all round (a little more ahead), old jets more.
       const scrHz = Math.min(1550, 1.15 * pr.fan * (0.55 + 0.45 * n1)) * dop * M.screechPitch; // (higher: a hiss, small fans)
-      T(L2.screech.gain, U.screech * M.screech * run * sz * SCREECH * S.screech * (0.04 + 0.96 * smooth(0.25, 0.9, n1)) * (0.8 + 0.4 * front) * (pr.old ? 1.3 : 1));
+      T(L2.screech.gain, (scrUnder + (1.8 - scrUnder) * spool) * M.screech * run * sz * SCREECH * S.screech * (0.04 + 0.96 * smooth(0.25, 0.9, n1)) * (0.8 + 0.4 * front) * (pr.old ? 1.3 : 1));
       if (L2.scr1) {
         // (pitch: the fan's, × the mixer's; speed: as fast as the fan's pitch would play it, × the mixer's speed)
         const pitch = scrHz / v.takes.screech.hz;
