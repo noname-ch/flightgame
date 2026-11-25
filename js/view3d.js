@@ -5,6 +5,7 @@ import * as maplibregl from 'maplibre-gl';
 import * as THREE from 'three';
 import { loadModel, modelSize, facing, patchFacing } from './models3d.js';
 import { setGear, setBogies, setOleo } from './gear3d.js';
+import { waterLayer } from './water3d.js';
 
 const G = FG.game;
 const D = FG.data;
@@ -2161,6 +2162,18 @@ function lightsLayer(id, rendererOf) {
   };
 }
 const airportLights = lightsLayer('fg-lights', () => planeLayer.renderer);
+// The water (js/water3d.js): OpenStreetMap's water areas as moving, sunlit water over the ground, before the lights.
+const water = waterLayer('fg-water', {
+  rendererOf: () => planeLayer.renderer,
+  isOn: (map) => map === v.map && v.on,
+  frameAt, tmp, restoreGl, lightAt, skyOf,
+  setLonRef: (lon) => { lonRef = lon; },
+  time: () => smoothTime(frameNow()),
+  weatherOn: () => !!(FG.weather && FG.weather.enabled()),
+  weatherAt: (lat, lon, t) => G.weatherAt(lat, lon, t),
+  heightsAt: (pts) => (FG.flat ? FG.flat.heightsAt(pts, 12) : heightsAt(pts, 12)),
+  exag: TERRAIN_EXAG,
+});
 
 const planeLayer = {
   id: 'fg-planes',
@@ -2925,6 +2938,7 @@ function createMap(fit) {
     phoneDrapes(map);
     map.addLayer(planeLayer, 'fg-airport-labels');
     map.addLayer(airportLights, 'fg-planes');
+    map.addLayer(water, 'fg-lights');
     v.ready = true;
     refreshData();
     if (!at) fitNetwork();
@@ -3217,6 +3231,7 @@ v.setOn = (on) => setOn(on);
 v.setSatellite = (on) => setSatellite(on); // Settings → Map style
 v.from2d = () => from2d(); // the 2D map moved while 3D is open (a new game, a loaded save)
 v.lights = airportLights;
+v.water = water;
 v.pilotCam = (mode) => pilotCam(mode); // js/pilot.js
 v.fov = () => (v.map && v.map.getVerticalFieldOfView ? v.map.getVerticalFieldOfView() : 36.87);
 FG.view3d = v; // for debugging

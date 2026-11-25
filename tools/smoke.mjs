@@ -1079,6 +1079,15 @@ try {
       else step(`${n.lights} lights at Zurich, ${n.airports} airports lit round the view`);
     }
     await evaluate(() => { FG.view3d.lights.st.always = false; });
+    // water (js/water3d.js): the sea and the river Var at Nice, made from the map's water areas
+    step('3D water: Nice by the sea');
+    await evaluate(() => { FG.view3d.map.jumpTo({ center: [7.21, 43.655], zoom: 13.5, pitch: 70, bearing: 190 }); });
+    const wet = await waitFor(() => [...FG.view3d.water.st.tiles.values()].some((e) => e.ready && e.mesh), 30000);
+    if (!wet) {
+      const n = await evaluate(() => ({ tiles: FG.view3d.water.st.tiles.size, masks: [...FG.view3d.water.st.tiles.values()].filter((e) => e.mask).length }));
+      if (n.tiles && !n.masks) errors.push(`3D water: ${n.tiles} map tiles at Nice but no water in them`);
+      else warnings.push(`3D water: not drawn at Nice in 30 s (map tiles? ${JSON.stringify(n)})`);
+    }
     await evaluate(() => FG.ui.follow && FG.ui.follow(G.state.planes[0].id));
     await sleep(8000);
     // the chase camera starts close to the plane, in the air too (GitHub issue #6: at zoom 12 it was kilometres away)

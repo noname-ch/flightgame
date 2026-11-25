@@ -421,7 +421,9 @@ V goes back to the chase camera from the fly-by or wing camera; otherwise it swi
 open the 3D view if needed and take the selected plane (or the first one in the air). The camera buttons and
 🛰 Satellite sit at the bottom of the 3D view. 🛰 Satellite toggles the satellite imagery (on by default);
 Settings → Map style sets it too (Satellite, or the map for Standard and Dark). Where the pictures are still
-loading, the ground is dark. The aircraft are glTF models from
+loading, the ground is dark. From zoom 10, seas, lakes, rivers and swimming pools (OpenStreetMap's water areas) are
+drawn as moving water: waves that run with the wind, the sun's glint and the sky mirrored in it, each kind with its
+own look (the sea's swell, a lake's ripples, a pool's turquoise). On phones the water stands still. The aircraft are glTF models from
 `models/` (Flightradar24's GPLv2 models, see `models/README.md`); `js/data/models.js` says which type uses
 which file; six more come from FlightGear aircraft, and the Saab 340 and Saab 2000 from 3D-print models on Thingiverse.
 Every model stands on 3D landing gear (`js/gear3d.js`, sizes and layout per model in `FG.data.gear`): nose and
@@ -522,6 +524,8 @@ All content is plain data:
   `fgdem://`, and round every airport the runways, taxiways, aprons and what lies between them become one gently
   tilted plane (at most 0.6 % with a long runway), sloping back to the real hills. Steep altiports (`REAL`:
   Courchevel, Lukla, Megève, Alpe d'Huez, Méribel) keep their real slope, only smoothed
+- `js/water3d.js` – the 3D view's water: a mask per vector tile of where the water is (from the map's
+  `water` layer) and a lit, moving water surface over it (custom layer `fg-water`, before the runway lights)
 - `js/ground.js` – ground heights along a flight (the 3D view's terrain tiles): flights climb over the
   mountains, circling over a valley airport such as Lugano when the ridges are too close to outclimb, and
   fly a steeper glide path (up to 7°) where the final approach needs it
