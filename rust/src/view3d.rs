@@ -280,17 +280,18 @@ fn load_mesh(file: &str) -> Option<Mesh> {
 /// their place in the livery's picture (liveries.rs `paint`, framed by `f`) as UVs; the other parts have their own
 /// colours and a white spot of the picture. (positions, normals, colours, UVs)
 #[allow(clippy::type_complexity)]
-pub(crate) fn posed(m: &Mesh, p: &Plane, f: &crate::liveries::LivFrame) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<[f32; 4]>, Vec<[f32; 2]>) {
+pub(crate) fn posed(m: &Mesh, p: &Plane, f: &crate::liveries::LivFrame, split: &LivSplit) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<[f32; 4]>, Vec<[f32; 2]>) {
     use crate::liveries::{FIN_V0, FIN_V1, FUS_V, WHITE_V};
     let (a0, a1, a2, a3) = (p.anim0, p.anim1, p.anim2, p.anim3);
     let rot2 = |x: f32, y: f32, a: f32| (x * a.cos() - y * a.sin(), x * a.sin() + y * a.cos());
     let lin = |c: [f32; 3]| [c[0].powf(2.2), c[1].powf(2.2), c[2].powf(2.2), 1.0];
     let lv = &p.livery;
-    let n = m.vertices.len();
+    let n = split.src.len();
     let (mut ps, mut ns, mut cs) = (Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n));
     let mut uvs = Vec::with_capacity(n);
     let white_uv = [0.5, (WHITE_V + 1.0) / 2.0];
-    for v in &m.vertices {
+    for (&src, &group) in split.src.iter().zip(&split.group) {
+        let v = &m.vertices[src as usize];
         let (mut q, mut nn) = (v.pos, v.normal);
         let mut uv = white_uv;
         let (k, an) = (v.anim[0], v.anim);
@@ -363,21 +364,23 @@ pub(crate) fn posed(m: &Mesh, p: &Plane, f: &crate::liveries::LivFrame) -> (Vec<
             lin(lv.engine)
         } else if part > 1.5 {
             lin(lv.wing)
-        } else if part > 0.5 {
+        } else if group >= FIN_L && !lv.src.is_null() {
             // the fin: in its band of the picture, by its place along and up the fin (rest positions, so the rudder's
-            // paint moves with it)
+            // paint moves with it), the side its triangle faces (each triangle wholly on one side: `liv_split`)
             let fyn = ((v.pos[1] - f.fin[0]) / (f.fin[1] - f.fin[0]).max(1e-4)).clamp(0.0, 1.0);
             let fz = ((v.pos[2] - f.fin[2]) / (f.fin[3] - f.fin[2]).max(1e-4)).clamp(0.0, 1.0);
-            let u = if v.normal[0] < 0.0 { 0.5 * (1.0 - fyn) } else { 0.5 + 0.5 * fyn };
+            let u = if group == FIN_L { 0.5 * (1.0 - fyn) } else { 0.5 + 0.5 * fyn };
             uv = [u.clamp(0.001, 0.999), FIN_V0 + (FIN_V1 - FIN_V0) * (1.0 - fz)];
             [1.0, 1.0, 1.0, 1.0]
-        } else if !lv.src.is_null() {
+        } else if group >= FUS_L && !lv.src.is_null() {
             // the fuselage: by its height (info.y) and place along (info.z), the left side in the left half
             let h = v.info[1].clamp(-1.0, 1.0);
             let along = v.info[2].clamp(-0.5, 0.5);
-            let u = if v.pos[0] < 0.0 { (0.5 * (0.5 - along)).clamp(0.001, 0.499) } else { (0.5 + 0.5 * (along + 0.5)).clamp(0.501, 0.999) };
+            let u = if group == FUS_L { (0.5 * (0.5 - along)).clamp(0.001, 0.499) } else { (0.5 + 0.5 * (along + 0.5)).clamp(0.501, 0.999) };
             uv = [u, ((1.0 - h) / 2.0 * FUS_V).clamp(0.001, FUS_V - 0.002)];
             [1.0, 1.0, 1.0, 1.0]
+        } else if part > 0.5 {
+            lin(lv.fin)
         } else {
             let mut c = lv.body;
             if let Some((belly, from)) = lv.belly {
@@ -404,6 +407,70 @@ pub(crate) fn posed(m: &Mesh, p: &Plane, f: &crate::liveries::LivFrame) -> (Vec<
     (ps, ns, cs, uvs)
 }
 
+/// The groups of a model's triangles for the livery's picture: plain (their own colours), the fuselage's left and
+/// right side, the fin's left and right side.
+pub(crate) const PLAIN: u8 = 0;
+pub(crate) const FUS_L: u8 = 1;
+pub(crate) const FUS_R: u8 = 2;
+pub(crate) const FIN_L: u8 = 3;
+pub(crate) const FIN_R: u8 = 4;
+
+/// A model's vertices as the livery's picture needs them: each triangle wholly in one group (one side of the
+/// fuselage or the fin, or plain), a vertex shared by triangles of two groups copied, one for each. (Before, a
+/// triangle with a corner on the other side, or on a wing, ran across the whole picture between its corners'
+/// places in it: the fin's mark and the title smeared over the fin, the tailplane and the wing roots.)
+/// `src`: the model's vertex each one is, `group`: its group, `indices`: the triangles.
+pub(crate) struct LivSplit {
+    pub(crate) src: Vec<u32>,
+    pub(crate) group: Vec<u8>,
+    pub(crate) indices: Vec<u32>,
+}
+
+pub(crate) fn liv_split(m: &Mesh) -> LivSplit {
+    let vs = &m.vertices;
+    let mut out = LivSplit { src: Vec::with_capacity(vs.len()), group: Vec::with_capacity(vs.len()), indices: Vec::with_capacity(m.indices.len()) };
+    let mut seen: HashMap<(u32, u8), u32> = HashMap::with_capacity(vs.len());
+    for tri in m.indices.chunks_exact(3) {
+        let [a, b, c] = [tri[0] as usize, tri[1] as usize, tri[2] as usize].map(|i| &vs[i]);
+        let parts = [a.info[0], b.info[0], c.info[0]];
+        // painted only where all three corners are on the fuselage or the fin (a wing's or an engine's own colour
+        // otherwise, as the browser's `fuselage` test leaves them)
+        let group = if parts.iter().all(|&p| p < 1.5) {
+            let pa = Vec3::from(a.pos);
+            let (e1, e2) = (Vec3::from(b.pos) - pa, Vec3::from(c.pos) - pa);
+            let nrm = e1.cross(e2);
+            // (the face normal the way the vertices' normals point)
+            let nrm = if nrm.dot(Vec3::from(a.normal) + Vec3::from(b.normal) + Vec3::from(c.normal)) < 0.0 { -nrm } else { nrm };
+            let cx = (a.pos[0] + b.pos[0] + c.pos[0]) / 3.0;
+            let fin = parts.iter().filter(|&&p| p > 0.5).count() >= 2;
+            let left = if fin {
+                if nrm.x.abs() > 0.2 * nrm.length() { nrm.x < 0.0 } else { cx < 0.0 }
+            } else if cx.abs() > 1e-5 {
+                cx < 0.0
+            } else {
+                nrm.x < 0.0
+            };
+            match (fin, left) {
+                (true, true) => FIN_L,
+                (true, false) => FIN_R,
+                (false, true) => FUS_L,
+                (false, false) => FUS_R,
+            }
+        } else {
+            PLAIN
+        };
+        for &i in tri {
+            let k = *seen.entry((i, group)).or_insert_with(|| {
+                out.src.push(i);
+                out.group.push(group);
+                (out.src.len() - 1) as u32
+            });
+            out.indices.push(k);
+        }
+    }
+    out
+}
+
 /// Where a model's livery goes (for its picture, liveries.rs `paint`): its fuselage's height and its fin's box.
 pub(crate) fn liv_frame(m: &Mesh) -> crate::liveries::LivFrame {
     let (mut z0, mut z1) = (f32::MAX, f32::MIN);
@@ -423,7 +490,29 @@ pub(crate) fn liv_frame(m: &Mesh) -> crate::liveries::LivFrame {
     }
     // (the fin's foot: where it leaves the fuselage, not inside it)
     fin[2] = fin[2].max(z1 - 0.1 * ratio).min(fin[3] - 0.01);
-    crate::liveries::LivFrame { ratio, fin }
+    // The mark (as js/livery.js `measure`): at half the height of the fin's colour, in the middle of the fin's chord
+    // there, as large as fits the chord and the height. (The box's own middle is off the fin on a swept one.)
+    let foot = fin[2] + 0.15 * (fin[3] - fin[2]);
+    let height = fin[3] - foot;
+    let cz = foot + 0.5 * height;
+    let (mut y0, mut y1) = (f32::MAX, f32::MIN);
+    for tri in m.indices.chunks_exact(3) {
+        let ps = [tri[0], tri[1], tri[2]].map(|i| &m.vertices[i as usize]);
+        if !ps.iter().all(|v| v.info[0] > 0.5 && v.info[0] < 1.5) {
+            continue;
+        }
+        for k in 0..3 {
+            let (p, q) = (ps[k].pos, ps[(k + 1) % 3].pos);
+            if (p[2] - cz) * (q[2] - cz) >= 0.0 {
+                continue;
+            }
+            let y = p[1] + (q[1] - p[1]) * (cz - p[2]) / (q[2] - p[2]);
+            y0 = y0.min(y);
+            y1 = y1.max(y);
+        }
+    }
+    let cross = if y1 > y0 { [(y0 + y1) / 2.0, cz, (0.22 * height).min(0.27 * (y1 - y0))] } else { [0.0, 0.0, 0.0] };
+    crate::liveries::LivFrame { ratio, fin, cross }
 }
 
 /// What the gear needs to know about a model's shape: the wing root (leading and trailing edge, underside), the
@@ -872,7 +961,7 @@ fn sphere() -> (Vec<Vertex>, Vec<u32>) {
 // ---------- the airports' buildings ----------
 
 /// Ear clipping: the triangles of a simple polygon.
-fn triangulate(p: &[(f32, f32)]) -> Vec<[usize; 3]> {
+pub(crate) fn triangulate(p: &[(f32, f32)]) -> Vec<[usize; 3]> {
     let n = p.len();
     if n < 3 {
         return Vec::new();
@@ -1107,6 +1196,8 @@ pub struct Frame {
     pub planes: Vec<Plane>,
     /// the airports' buildings: key, where the airport's point is, the mesh
     pub buildings: Vec<(String, Vec3, Arc<Mesh>)>,
+    /// the airports' ground (src/airfield.rs: runways, taxiways, aprons, their paint): key, the airport's point, mesh
+    pub airfields: Vec<(String, Vec3, Arc<crate::airfield::Flat>)>,
     pub puffs: Arc<Vec<Puff>>,
     /// the ground picture's corners (metres from the reference point): x0, y0 (south-west), x1, y1 (north-east)
     pub ground_rect: [f32; 4],
@@ -1972,6 +2063,7 @@ pub struct View3d {
     ground: Arc<Mutex<Ground>>,
     meshes: HashMap<String, Option<Arc<Mesh>>>,
     buildings: HashMap<String, Option<Arc<Mesh>>>,
+    airfields: HashMap<String, Option<Arc<crate::airfield::Flat>>>,
     poses: HashMap<String, Pose>,
     /// the real ground for the classic renderer (src/terrain.rs; Bevy has its own), and the tiles its GPU side dropped
     terrain: crate::terrain::Terrain,
@@ -2010,6 +2102,7 @@ impl Default for View3d {
             ground: Arc::new(Mutex::new(Ground { want: (0, 0, 0), shown: None, loading: false, pixels: None, fresh: false })),
             meshes: HashMap::new(),
             buildings: HashMap::new(),
+            airfields: HashMap::new(),
             poses: HashMap::new(),
             terrain: Default::default(),
             tiles_gone: Arc::new(Mutex::new(Vec::new())),
@@ -2346,6 +2439,24 @@ impl View3d {
                 buildings.push((key, Vec3::new(x as f32, y as f32, lift), m));
             }
         }
+        // the ground of the airports within 40 km: runways, taxiways, aprons and their paint (as the browser's map)
+        let mut airfields = Vec::new();
+        for a in &d.airports {
+            if a.factory || (a.lat - lat0).abs() > 0.4 || distance_km(lat0, lon0, a.lat, a.lon) > 40.0 {
+                continue;
+            }
+            // (a made-up apron has as many rows of stands as the planes there need: track.rs `stand_of`)
+            let here = g.state.planes.iter().filter(|q| q.location == a.code || q.flight.as_ref().is_some_and(|f| f.to == a.code || f.from == a.code)).count();
+            let rows = here.div_ceil(8).max(1);
+            let rws = flightgame::game::airport_runways(&a.code);
+            let key = format!("af:{}:{}:{}:{}", a.code, rows, rws.len(), flightgame::layouts::layout(&a.code).map_or(0, |l| l.aprons.len() * 1000 + l.taxiways.len() * 10 + l.stands.len()));
+            let mesh = self.airfields.entry(key.clone()).or_insert_with(|| crate::airfield::airfield_mesh(&a.code, rows).map(Arc::new)).clone();
+            if let Some(m) = mesh {
+                let (x, y) = local(lat0, lon0, a.lat, a.lon);
+                let Some(e) = elev(&a.code) else { continue };
+                airfields.push((key, Vec3::new(x as f32, y as f32, e - ref_m), m));
+            }
+        }
         let puffs = Arc::new(clouds(g, t, lat0, lon0, eye));
         self.debug = format!(
             "eye {eye:?} target {target:?} hdg {hdg} weather {} cover {cover:.2} puffs {} buildings {} planes {:?}",
@@ -2368,6 +2479,7 @@ impl View3d {
             fog,
             planes,
             buildings,
+            airfields,
             puffs,
             ground_rect: [x0 as f32, y0 as f32, x1 as f32, y1 as f32],
             ground: self.ground.clone(),
@@ -2479,6 +2591,53 @@ mod tests {
         // (WGSL errors would only show when the 3D view opens: parse and validate it here)
         let m = naga::front::wgsl::parse_str(super::SHADER).unwrap_or_else(|e| panic!("{}", e.emit_to_string(super::SHADER)));
         naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all()).validate(&m).expect("valid");
+    }
+
+    #[test]
+    fn livery_triangles_stay_on_one_side() {
+        use super::{FIN_L, FIN_R, FUS_L, FUS_R, PLAIN};
+        for file in ["a320", "b738", "a359"] {
+            let Some(m) = super::load_mesh(file) else { continue };
+            let sp = super::liv_split(&m);
+            assert_eq!(sp.indices.len(), m.indices.len(), "{file}: every triangle kept");
+            let groups: Vec<u8> = sp.indices.chunks(3).map(|t| {
+                let g = sp.group[t[0] as usize];
+                assert!(t.iter().all(|&i| sp.group[i as usize] == g), "{file}: a triangle across two groups");
+                g
+            }).collect();
+            for g in [PLAIN, FUS_L, FUS_R, FIN_L, FIN_R] {
+                assert!(groups.contains(&g), "{file}: no triangles in group {g}");
+            }
+            // the fuselage's sides: their triangles' corners on their own side (or on the middle line)
+            for (t, &g) in sp.indices.chunks(3).zip(&groups) {
+                let xs: Vec<f32> = t.iter().map(|&i| m.vertices[sp.src[i as usize] as usize].pos[0]).collect();
+                let cx = xs.iter().sum::<f32>() / 3.0;
+                if g == FUS_L {
+                    assert!(cx <= 1e-5, "{file}: left side triangle at x {cx}");
+                } else if g == FUS_R {
+                    assert!(cx >= -1e-5, "{file}: right side triangle at x {cx}");
+                }
+            }
+            let f = super::liv_frame(&m);
+            assert!(f.cross[2] > 0.0 && f.cross[0] > f.fin[0] && f.cross[0] < f.fin[1], "{file}: the fin's mark {:?} in {:?}", f.cross, f.fin);
+        }
+    }
+
+    #[test]
+    fn airfield_ground() {
+        // Zurich: its real layout, three paved runways with their paint and numbers
+        let z = crate::airfield::airfield_mesh("ZRH", 1).expect("Zurich's ground");
+        assert!(z.indices.len() > 30_000, "Zurich: {} corners", z.indices.len());
+        let white = z.color.iter().filter(|c| c[0] > 0.8 && c[2] > 0.8).count();
+        let yellow = z.color.iter().filter(|c| c[0] > 0.6 && c[2] < 0.1).count();
+        assert!(white > 1000 && yellow > 1000, "Zurich: paint {white} white, {yellow} yellow");
+        assert!(z.pos.iter().all(|p| p[2] > 0.0 && p[2] < 0.3 && p[0].abs() < 8000.0 && p[1].abs() < 8000.0));
+        // an airport without a layout of its own: its runway and the made-up apron with its stands
+        let d = flightgame::data::data();
+        let a = d.airports.iter().find(|a| !a.factory && !flightgame::layouts::has_layout(&a.code) && a.runways.iter().any(|r| r[5] > 0.0 && flightgame::game::runway_length(r) > 1500.0)).expect("an airport without a layout");
+        let m = crate::airfield::airfield_mesh(&a.code, 2).expect("made-up ground");
+        let apron = crate::airfield::tests_apron_colour();
+        assert!(m.color.iter().any(|c| *c == apron), "{}: a made-up apron", a.code);
     }
 
     #[test]

@@ -1026,6 +1026,8 @@ pub const WHITE_V: f32 = 0.96;
 pub struct LivFrame {
     pub ratio: f32,
     pub fin: [f32; 4],
+    /// the mark's middle on the fin (y, z) and its half size (0: none found, the fin's box decides)
+    pub cross: [f32; 3],
 }
 
 /// Where a title stands: its middle below the top of the fuselage and its greatest height, in fuselage widths
@@ -1269,9 +1271,10 @@ pub fn paint(l: &Value, f: &LivFrame) -> Vec<u8> {
     let ma = rgb_of(num(&mark["color"]).unwrap_or(fin));
     let mb = rgb_of(num(&mark["color2"]).or(num(&mark["color"])).unwrap_or(fin));
     let size = mark["size"].as_f64().unwrap_or(1.0) as f32;
-    let (cy, cz) = (fy0 + 0.36 * flen, fz0 + 0.55 * fhgt);
-    let rad = 0.26 * fhgt * if kind == "logo" { 1.0 } else { size };
+    let (cy, cz, rad) = if f.cross[2] > 0.0 { (f.cross[0], f.cross[1], f.cross[2]) } else { (fy0 + 0.36 * flen, fz0 + 0.55 * fhgt, 0.26 * fhgt) };
+    let rad = rad * if kind == "logo" { 1.0 } else { size };
     let fc = rgb_of(fin);
+    let bc = rgb_of(body);
     for y in r0..r1 {
         let fz = 1.0 - (y as f32 + 0.5 - r0 as f32) / (r1 - r0) as f32;
         let pz = fz0 + fz * fhgt;
@@ -1281,9 +1284,12 @@ pub fn paint(l: &Value, f: &LivFrame) -> Vec<u8> {
             let py = fy0 + fyn * flen;
             let (cov, second) = if kind.is_empty() || kind == "text" || (kind == "logo" && logo == "klm") { (0.0, false) } else { mark_at(kind, logo, ((py - cy) / rad, (pz - cz) / rad)) };
             let mc = if second { mb } else { ma };
+            // (its foot stays in the fuselage's colour, the fin's starting a little higher with a level edge, as in
+            // the browser; on a livery with the tail colour round the rear fuselage it goes on down)
+            let base = if !tail && pz < fz0 + 0.15 * fhgt { bc } else { fc };
             let o = (y * TEX_W + x) * 4;
             for c in 0..3 {
-                px[o + c] = (fc[c] * (1.0 - cov) + mc[c] * cov).round() as u8;
+                px[o + c] = (base[c] * (1.0 - cov) + mc[c] * cov).round() as u8;
             }
         }
     }
@@ -1337,7 +1343,7 @@ mod picture_tests {
 
     #[test]
     fn livery_pictures() {
-        let f = LivFrame { ratio: 0.107, fin: [-0.5, -0.33, 0.055, 0.2] };
+        let f = LivFrame { ratio: 0.107, fin: [-0.5, -0.33, 0.055, 0.2], cross: [0.0; 3] };
         for id in ["swiss", "easyjet", "klm", "classic-blue", "delta", "lufthansa"] {
             let l = view3d::liveries().iter().find(|l| l.id == id).unwrap();
             let px = paint(&l.src, &f);

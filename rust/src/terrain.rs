@@ -372,7 +372,12 @@ fn build(sh: &Arc<(Mutex<Shared>, Condvar)>, k: Key) -> Option<TileData> {
         if a.lat < s_lat - pad || a.lat > n_lat + pad || a.lon < w_lon - pad / 0.5 || a.lon > e_lon + pad / 0.5 || a.runway <= 0.0 {
             continue;
         }
-        let r_in = (a.runway * 0.65).clamp(700.0, 3200.0);
+        // (out past the ends of its runways, so their paint and the taxiways round them lie on the level ground)
+        let ends = a.runways.iter().flat_map(|r| [(r[0], r[1]), (r[2], r[3])]).map(|(la, lo)| {
+            let (dy, dx) = ((la - a.lat) * M_PER_DEG, (lo - a.lon) * M_PER_DEG * a.lat.to_radians().cos());
+            (dx * dx + dy * dy).sqrt() + 350.0
+        }).fold(0.0f64, f64::max);
+        let r_in = (a.runway * 0.65).clamp(700.0, 3200.0).max(ends.min(6000.0));
         if let Some(e) = airport_height(sh, &a.code, a.lat, a.lon) {
             ports.push((a.lat, a.lon, e, r_in, r_in + 1800.0));
         }

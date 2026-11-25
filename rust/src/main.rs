@@ -2,6 +2,7 @@
 //! The simulation and data are in the library (`src/lib.rs`); this is the window.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod airfield;
 mod app;
 mod bevy3d;
 mod checklist;

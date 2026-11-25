@@ -47,6 +47,9 @@ struct State {
     windows_mat: b::Handle<b::StandardMaterial>,
     ribs_mat: b::Handle<b::StandardMaterial>,
     buildings: HashMap<String, Vec<b::Entity>>,
+    /// the airports' ground (src/airfield.rs) by key, and its material (lit as the satellite ground is)
+    airfields: HashMap<String, b::Entity>,
+    field_mat: b::Handle<b::StandardMaterial>,
     ground: b::Entity,
     ground_mat: b::Handle<b::StandardMaterial>,
     puff_mesh: b::Handle<b::Mesh>,
@@ -62,6 +65,8 @@ struct State {
     /// key each plane entity is drawn with
     liv_mats: HashMap<String, b::Handle<b::StandardMaterial>>,
     liv_frames: HashMap<String, crate::liveries::LivFrame>,
+    /// each model's triangles regrouped for its livery's picture (view3d.rs `liv_split`), by model and triangles
+    liv_splits: HashMap<String, std::sync::Arc<crate::view3d::LivSplit>>,
     plane_keys: Vec<String>,
 }
 
@@ -157,6 +162,8 @@ fn start(rs: &egui_wgpu::RenderState) -> Option<State> {
     // the aircraft: their livery in the vertices' colours, glossy paint
     let plane_mat = mats.add(b::StandardMaterial { base_color: b::Color::WHITE, perceptual_roughness: 0.32, metallic: 0.05, reflectance: 0.5, double_sided: true, cull_mode: None, ..Default::default() });
     let build_mat = mats.add(b::StandardMaterial { base_color: b::Color::WHITE, perceptual_roughness: 0.9, reflectance: 0.2, ..Default::default() });
+    // the runways, taxiways and aprons: matt, as the satellite ground round them
+    let field_mat = mats.add(b::StandardMaterial { base_color: b::Color::WHITE, perceptual_roughness: 0.95, reflectance: 0.08, ..Default::default() });
     drop(mats);
     // the walls' textures, repeating: a storey (4.2 m) with its band of windows between mullions (2.6 m), and the
     // ribs of a hangar's or a shed's cladding (1.4 m); the windows glow at night (their emissive mask)
@@ -237,6 +244,8 @@ fn start(rs: &egui_wgpu::RenderState) -> Option<State> {
         windows_mat,
         ribs_mat,
         buildings: HashMap::new(),
+        airfields: HashMap::new(),
+        field_mat,
         ground,
         ground_mat,
         puff_mesh,
@@ -248,6 +257,7 @@ fn start(rs: &egui_wgpu::RenderState) -> Option<State> {
         tick: 0,
         liv_mats: HashMap::new(),
         liv_frames: HashMap::new(),
+        liv_splits: HashMap::new(),
         plane_keys: Vec::new(),
     })
 }
@@ -332,7 +342,10 @@ fn render(st: &mut State, frame: &Frame, w: u32, h: u32) -> Option<egui::Texture
     // for each livery and model: liveries.rs `paint`)
     for (k, p) in frame.planes.iter().enumerate() {
         let lf = *st.liv_frames.entry(p.file.clone()).or_insert_with(|| crate::view3d::liv_frame(&p.mesh));
-        let (ps, ns, cs, uvs) = crate::view3d::posed(&p.mesh, p, &lf);
+        // (by the mesh's triangles too: the followed plane's is cut open in the cockpit)
+        let split_key = format!("{}|{}", p.file, p.mesh.indices.len());
+        let split = st.liv_splits.entry(split_key.clone()).or_insert_with(|| std::sync::Arc::new(crate::view3d::liv_split(&p.mesh))).clone();
+        let (ps, ns, cs, uvs) = crate::view3d::posed(&p.mesh, p, &lf, &split);
         let liv_key = {
             use std::hash::{Hash, Hasher};
             let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -364,7 +377,7 @@ fn render(st: &mut State, frame: &Frame, w: u32, h: u32) -> Option<egui::Texture
             * glam::Mat4::from_rotation_y(p.bank.to_radians())
             * glam::Mat4::from_scale(glam::Vec3::splat(p.len));
         let tf = b::Transform::from_matrix(mat(model));
-        if k < st.planes.len() && st.planes[k].2 == p.file {
+        if k < st.planes.len() && st.planes[k].2 == split_key {
             let (e, mh, _) = &st.planes[k];
             if let Some(mut m) = world.resource_mut::<b::Assets<b::Mesh>>().get_mut(mh) {
                 m.insert_attribute(b::Mesh::ATTRIBUTE_POSITION, ps);
@@ -377,15 +390,15 @@ fn render(st: &mut State, frame: &Frame, w: u32, h: u32) -> Option<egui::Texture
                 world.entity_mut(*e).insert(b::MeshMaterial3d(liv_mat));
             }
         } else {
-            let mut mesh = mesh_of(ps, ns, cs, &p.mesh.indices);
+            let mut mesh = mesh_of(ps, ns, cs, &split.indices);
             mesh.insert_attribute(b::Mesh::ATTRIBUTE_UV_0, uvs);
             let mh = world.resource_mut::<b::Assets<b::Mesh>>().add(mesh);
             let e = world.spawn((b::Mesh3d(mh.clone()), b::MeshMaterial3d(liv_mat), tf)).id();
             if k < st.planes.len() {
                 world.despawn(st.planes[k].0);
-                st.planes[k] = (e, mh, p.file.clone());
+                st.planes[k] = (e, mh, split_key.clone());
             } else {
-                st.planes.push((e, mh, p.file.clone()));
+                st.planes.push((e, mh, split_key.clone()));
             }
         }
         if st.plane_keys.len() <= k {
@@ -442,6 +455,28 @@ fn render(st: &mut State, frame: &Frame, w: u32, h: u32) -> Option<egui::Texture
             for e in es.iter() {
                 world.despawn(*e);
             }
+        }
+        keep
+    });
+    // the airports' ground: runways, taxiways, aprons and their paint (flat, just above the levelled ground)
+    let mut seen = Vec::new();
+    for (key, at, f) in &frame.airfields {
+        seen.push(key.clone());
+        let tf = b::Transform::from_matrix(mat(glam::Mat4::from_translation(*at)));
+        if let Some(e) = st.airfields.get(key) {
+            world.entity_mut(*e).insert(tf);
+            continue;
+        }
+        let ns = vec![[0.0, 0.0, 1.0]; f.pos.len()];
+        let mesh = mesh_of(f.pos.clone(), ns, f.color.clone(), &f.indices);
+        let mh = world.resource_mut::<b::Assets<b::Mesh>>().add(mesh);
+        let e = world.spawn((b::Mesh3d(mh), b::MeshMaterial3d(st.field_mat.clone()), tf, bevy::light::NotShadowCaster)).id();
+        st.airfields.insert(key.clone(), e);
+    }
+    st.airfields.retain(|k, e| {
+        let keep = seen.contains(k);
+        if !keep {
+            world.despawn(*e);
         }
         keep
     });
