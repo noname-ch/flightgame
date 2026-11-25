@@ -281,19 +281,20 @@ impl App {
         }
     }
 
-    /// Menu → Save to file: the game as a .json file wherever you like (as the browser game's "Save to file").
+    /// Menu → Save to file: the game as a .json file wherever you like, in the browser game's format, so it loads
+    /// there too (its ⋯ → Load from file) and back here (src/savefmt.rs).
     fn save_file(&mut self, ctx: &egui::Context) {
         let Some(g) = &self.game else { return };
         let name = format!("{}.json", g.state.company.replace(|c: char| !c.is_alphanumeric(), "-"));
         if let Some(path) = rfd::FileDialog::new().add_filter("Flightgame save", &["json"]).set_file_name(name).save_file() {
-            match std::fs::write(&path, g.save_json()) {
-                Ok(()) => self.info(ctx, format!("Saved to {}.", path.display())),
+            match std::fs::write(&path, g.export_json()) {
+                Ok(()) => self.info(ctx, format!("Saved to {} – loads here and in the browser game.", path.display())),
                 Err(e) => self.toast = Some((format!("Could not save: {e}"), true, ctx.input(|i| i.time) + 6.0)),
             }
         }
     }
 
-    /// Menu → Load from file: a save made with Save to file (the browser game's saves have another format).
+    /// Menu → Load from file: a save made with Save to file, here or in the browser game (both formats are read).
     fn load_file(&mut self, ctx: &egui::Context) {
         let Some(path) = rfd::FileDialog::new().add_filter("Flightgame save", &["json"]).pick_file() else { return };
         match std::fs::read_to_string(&path).map_err(|e| e.to_string()).and_then(|t| Game::load_json(&t)) {
@@ -367,6 +368,10 @@ impl App {
             ui.weak(format!("Saved in {}", save_path().display()));
         } else {
             ui.label("No saved game yet: found an airline under New game.");
+        }
+        ui.add_space(8.0);
+        if ui.button("⬆ Load from file…").on_hover_text("A save file from Save to file, here or in the browser game").clicked() {
+            self.load_file(ctx);
         }
     }
 
@@ -528,11 +533,11 @@ impl App {
                         self.load(&ctx);
                         ui.close();
                     }
-                    if ui.button("⬇ Save to file").clicked() {
+                    if ui.button("⬇ Save to file").on_hover_text("A .json file that loads here and in the browser game").clicked() {
                         self.save_file(&ctx);
                         ui.close();
                     }
-                    if ui.button("⬆ Load from file").clicked() {
+                    if ui.button("⬆ Load from file").on_hover_text("A save file from here or from the browser game").clicked() {
                         self.load_file(&ctx);
                         ui.close();
                     }

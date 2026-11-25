@@ -3229,6 +3229,8 @@
     loadFile(text) {
       let s;
       try { s = JSON.parse(text); } catch (e) { return 'That is not a Flightgame save file.'; }
+      // (the desktop game's own save.json; its Menu → Save to file writes this game's format, see rust/src/savefmt.rs)
+      if (s && s.carried_today) return 'That is the desktop game\'s own save. In the desktop game, use Menu → Save to file: that file loads here.';
       if (!s || !Array.isArray(s.planes) || !s.slots || typeof s.time !== 'number') return 'That is not a Flightgame save file.';
       const old = this.state;
       try {

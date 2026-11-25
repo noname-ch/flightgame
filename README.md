@@ -104,7 +104,8 @@ Soft: muffled, for long sessions) and **▶ Preview**, a whole jet, turboprop or
 a chase camera, also while paused, so you can compare them (a style picked during the preview changes it at once).
 
 **Main menu**: the very first start asks for a style, then the main menu offers *Continue*, *New game*,
-*Load game* (the last save in this browser, or a `.json` save file; ⋯ → *Save to file* makes one) and
+*Load game* (the last save in this browser, or a `.json` save file; ⋯ → *Save to file* makes one, and the desktop
+version in `rust/` reads and writes the same files) and
 *Quick start*. A loading screen stays up until the map has its tiles. The 3D view asks once whether the device
 is strong enough (it needs a fast graphics chip) and names the graphics chip the browser reports.
 

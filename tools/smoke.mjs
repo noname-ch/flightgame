@@ -1357,6 +1357,15 @@ try {
   await evaluate(() => document.querySelector('[data-st=continue]') && document.querySelector('[data-st=continue]').click());
   await sleep(2000);
 
+  step('save file: the same game loads from its own file; the desktop game\'s own save.json is turned down with a hint');
+  const fileLoad = await evaluate(() => {
+    const before = { time: G.state.time, planes: G.state.planes.length };
+    const own = G.loadFile(G.saveFile());
+    const desktop = G.loadFile(JSON.stringify({ carried_today: {}, planes: [], slots: {}, time: 0 }));
+    return { own, desktop, same: G.state.time === before.time && G.state.planes.length === before.planes };
+  });
+  if (fileLoad.own || !/desktop game/.test(fileLoad.desktop || '') || !fileLoad.same) errors.push(`save file: ${JSON.stringify(fileLoad)}`);
+
   step('styles: each one picked in Settings, the section bar still there');
   for (const id of await evaluate(() => FG.themes.list.map((t) => t.id))) {
     const bar = await evaluate((id) => {

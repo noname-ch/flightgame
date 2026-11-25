@@ -359,6 +359,10 @@ pub struct State {
     /// story mode: the year the game started in and the year it is now
     #[serde(default)]
     pub story: Option<StoryYears>,
+    /// what only the browser game keeps (its airline livery and designs, winds, airports built from scratch), from
+    /// an imported browser save: written back when the game is saved to a file (see savefmt.rs)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub browser: Option<serde_json::Value>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -1065,6 +1069,7 @@ impl Game {
             game_over: false,
             dev_used: false,
             story: opts.story.map(|y| StoryYears { start: y, year: y }),
+            browser: None,
         };
         let mut g = Game::from_state(state);
         g.setup_rivals();
@@ -3855,13 +3860,23 @@ impl Game {
         serde_json::to_string(&self.state).unwrap_or_default()
     }
 
+    /// The game in the browser game's save format: a file that loads in both games (Menu → Save to file).
+    pub fn export_json(&self) -> String {
+        serde_json::to_string(&crate::savefmt::to_browser(&self.state)).unwrap_or_default()
+    }
+
+    /// A save from this app or from the browser game (its Save to file, or its localStorage save).
     pub fn load_json(text: &str) -> Result<Game, String> {
-        let state: State = serde_json::from_str(text).map_err(|e| format!("Not a save game: {e}"))?;
+        let (state, notes) = crate::savefmt::read(text)?;
         // drop what the data no longer knows
         if data().try_airport(&state.home).is_none() {
             return Err(format!("Unknown home airport {}.", state.home));
         }
-        Ok(Game::from_state(state))
+        let mut g = Game::from_state(state);
+        if !notes.is_empty() {
+            g.log(format!("Loaded from the browser game, except: {}.", notes.join("; ")), LogKind::Bad);
+        }
+        Ok(g)
     }
 }
 
