@@ -396,7 +396,7 @@ crash limits (sink rate, bank, tyre speed) are each type's own. It flies in real
 you fly, the keyboard is the plane's (the game's keys come back when you leave):
 - ↑ ↓ (W S): stick, nose down / up. In an Airbus (normal law) it asks for a pitch rate; let go and it holds the
   flight path (the others: see above). ← → (A D): roll; let go and the bank stays (up to 33°). On the ground they steer, Q E = rudder.
-- PgUp / PgDn or + / −: thrust levers; 1 2 3 4 = the IDLE, CL, FLX/MCT and TOGA detents. The engines spool up
+- PgUp / PgDn or + / −: thrust levers (Shift with them: fine steps; Ctrl with + / −: fast); 1 2 3 4 = the IDLE, CL, FLX/MCT and TOGA detents. The engines spool up
   slowly from idle (about 8 s to take-off thrust). On the ground − past idle (or R) is reverse thrust.
 - Autothrust (A/THR): in the air with the levers in CL (2) it holds a speed, the magenta mark on the speed tape:
   250 kt below 10,000 ft, then 300 kt / M 0.85, with flaps out a flap speed, on the approach VLS + 5. [ ] pick a

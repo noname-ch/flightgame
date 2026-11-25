@@ -478,14 +478,19 @@
   const toast = (t) => (FG.ui && FG.ui.toast ? FG.ui.toast(t) : alert(t));
 
   // ---------- keys ----------
+  // the thrust levers: PgUp / PgDn or + / − (Shift: fine steps, Ctrl: fast, both with Ctrl + / −), in lever per second
+  const THRUST_KEYS = ['PageUp', 'PageDown', '+', '-', '_', '='];
+  const THRUST_RATE = 0.45, THRUST_FINE = 0.12, THRUST_FAST = 1.2;
   const held = (...k) => k.some((x) => s.keys.has(x));
   const held_ = held;
   function onKey(e) {
     if (!s.active) return;
     if (e.target.matches && e.target.matches('input, select, textarea')) return;
-    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.metaKey || e.altKey) return;
     const down = e.type === 'keydown';
     const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+    // Ctrl is the browser's, except for the thrust keys (Ctrl = fast thrust, see below)
+    if (e.ctrlKey && k !== 'Control' && !THRUST_KEYS.includes(k)) return;
     // the sound key, the F keys (bug report, dev tools) and Tab stay the browser's and the game's
     if (k === 'm' || /^F\d+$/.test(k) || k === 'Tab') return;
     e.preventDefault();
@@ -585,12 +590,14 @@
     s.stick = ease(s.stick, pitch, 0.35);
     s.roll = ease(s.roll, roll, 0.25);
     s.rud = ease(s.rud, rud, 0.3);
-    const thr = (held('PageUp', '+', '=', 'NumpadAdd') ? 1 : 0) - (held('PageDown', '-', 'NumpadSubtract') ? 1 : 0);
+    const thr = (held('PageUp', '+', '=', 'NumpadAdd') ? 1 : 0) - (held('PageDown', '-', '_', 'NumpadSubtract') ? 1 : 0);
     if (thr) {
       s.afloor = false;
       // into reverse only on the ground, and only from idle on a fresh press (it stops at idle first)
       const min = s.onGround && s.spec.rev && (s.lever < 0 || s.revOk) ? -1 : 0;
-      s.lever = clamp(s.lever + thr * 0.45 * dt, min, 1);
+      // the rate: Shift for fine steps, Ctrl for fast ones, else the usual
+      const rate = held('Control') ? THRUST_FAST : held('Shift') ? THRUST_FINE : THRUST_RATE;
+      s.lever = clamp(s.lever + thr * rate * dt, min, 1);
       if (thr > 0 || s.lever > 0) s.revOk = false;
     } else s.revOk = s.lever <= 0 && s.onGround;
     s.brake = ease(s.brake, held(' ', 'b', '.') || s.parking ? 1 : 0, 0.3);
@@ -1018,6 +1025,8 @@
     ['← →  /  A D', () => (s.spec.dihedral ? 'roll (the wings level by themselves); steer on the ground' : 'roll (bank holds); steer on the ground')],
     ['Q E', 'rudder / nose wheel'],
     ['PgUp PgDn  + −', 'thrust levers (on the ground, − past idle = reverse)'],
+    ['Shift + thrust keys', 'thrust in fine steps'],
+    ['Ctrl + thrust keys', 'thrust in fast steps'],
     ['1 2 3 4', () => DETENTS.map((d) => d.name).join(' · ')],
     ['2', () => (s.spec.athr ? `${DETENTS[1].name}: autothrust holds the speed (magenta, or [ ] to pick one, \\ managed)` : 'no autothrust on this one: set the power yourself')],
     ['Home End  U J', () => (airbus() ? 'pitch trim (fly-by-wire trims itself)' : 'pitch trim: nose down / up (the angle it flies at hands off)')],
