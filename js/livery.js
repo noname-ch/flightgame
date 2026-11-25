@@ -1606,7 +1606,9 @@ const FRAG_BODY = `
   float lum = dot(own, vec3(0.2126, 0.7152, 0.0722));
   float sat = max(own.r, max(own.g, own.b)) - min(own.r, min(own.g, own.b));
   // dark, colourless parts of the model's own texture stay: windows, tyres, engine intakes
-  float detail = (1.0 - smoothstep(0.06, 0.16, lum)) * (1.0 - smoothstep(0.04, 0.12, sat));
+  // (only very dark colourless parts keep their own colour: intakes, glass, tyres. Dark panels and vertex shading
+  // that were kept as "detail" showed as black boxes and stripes on wing roots and belly, e.g. ATR42, A220)
+  float detail = (1.0 - smoothstep(0.02, 0.05, lum)) * (1.0 - smoothstep(0.02, 0.06, sat));
 #ifdef USE_MAP
   // ... in a noisy texture only where it is dark round about too: lone dark texels in the A220's baked shading
   // speckled its wing root black (GitHub issue #7). (Not in every model: small windows would go.)
