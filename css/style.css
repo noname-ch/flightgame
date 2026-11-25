@@ -1650,3 +1650,28 @@ body.piloting .view3d-controls { display: none; }
   .lw-row img, .lw-noimg { width: 72px; }
   .lw-row select { grid-column: 1 / -1; }
 }
+/* ---------- performance ---------- */
+#fps {
+  position: fixed;
+  left: 8px;
+  bottom: 8px;
+  z-index: 3700;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.65);
+  color: #4ade80;
+  font: 12px ui-monospace, monospace;
+  pointer-events: none;
+}
+#fps[hidden] { display: none; }
+#fps.meh { color: #facc15; }
+#fps.bad { color: #f87171; }
+/* Light mode (Settings): filters and blur are redrawn for every element whenever the map moves, so they go. */
+body.lite *, body.lite *::before, body.lite *::after {
+  filter: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  box-shadow: none !important;
+  text-shadow: none !important;
+}
+body.lite .plane-icon .plane.selected { outline: 2px solid #ffcc00; outline-offset: 2px; border-radius: 50%; }

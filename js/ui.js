@@ -2103,6 +2103,12 @@
       if (!on && ui.map.hasLayer(layer)) ui.map.removeLayer(layer);
     }
     if (ui.legend) ui.legend.style.display = set.legend ? '' : 'none';
+    // Light mode: no shadows or blur, planes on the 2D map move 30 times a second, panels are rebuilt at most
+    // twice a second, and the 3D view draws at 1 pixel per CSS pixel (not the screen's full density).
+    FG.lite = !!set.lite;
+    document.body.classList.toggle('lite', FG.lite);
+    if (FG.view3d && FG.view3d.map && FG.view3d.map.setPixelRatio) FG.view3d.map.setPixelRatio(FG.lite ? 1 : devicePixelRatio);
+    $('fps').hidden = !set.fps;
   }
   function setBasemap(name) {
     if (!ui.base[name]) return;
@@ -2154,6 +2160,9 @@
       <h4>Livery</h4><div class="row"><span>${FG.livery().name}</span><button data-set="liveries" title="Choose the airline's livery, one for each plane, design your own or get one from the community">🎨 Liveries… <span class="muted">F7</span></button></div>
       <h4>Game</h4>
       <label class="check"><input type="checkbox" data-set="autosave" ${set.autosave ? 'checked' : ''}> Save automatically every 30 s</label>
+      <h4>Performance</h4>
+      <label class="check"><input type="checkbox" data-set="lite" ${set.lite ? 'checked' : ''}> Light mode: for slower devices. No shadows or blur, planes move 30 times a second, 3D at lower resolution</label>
+      <label class="check"><input type="checkbox" data-set="fps" ${set.fps ? 'checked' : ''}> Show the frame rate</label>
       ${FG.sound ? `<h4>Sound</h4><label class="check"><input type="checkbox" data-set="sound" ${FG.sound.on ? 'checked' : ''}> Aircraft sounds <span class="muted">M</span></label>
       <label class="set-volume">Volume <input type="range" data-set="volume" min="0" max="100" value="${Math.round(FG.sound.volume * 100)}"></label>
       <div class="chips">${FG.sound.styles.map((x) =>
@@ -2178,6 +2187,7 @@
     if (k === 'overlay') { set.overlays[t.dataset.v] = t.checked; applySettings(); }
     if (k === 'legend') { set.legend = t.checked; applySettings(); }
     if (k === 'autosave') set.autosave = t.checked;
+    if (k === 'lite' || k === 'fps') { set[k] = t.checked; applySettings(); }
     if (k === 'sound') FG.sound.set({ on: t.checked });
     if (k === 'volume') FG.sound.set({ volume: t.value / 100, on: true }); // (while dragged: the input listener)
     if (k === 'soundStyle') FG.sound.set({ style: t.dataset.v }); // (a preview playing changes at once: compare them)
@@ -2255,7 +2265,10 @@
   // Every frame, at the frame's own timestamp (evenly spaced: planes and a followed plane move smoothly).
   function frame(ts) {
     requestAnimationFrame(frame);
+    if (set.fps) countFrame(ts);
     if (in3d()) return;
+    if (FG.lite && ts - (ui.planesAt || 0) < 30 && !ui.map2dStale) return; // (light mode: 30 times a second)
+    ui.planesAt = ts;
     ui.frameAt = ts;
     if (ui.map2dStale) {
       ui.map2dStale = false;
@@ -2267,6 +2280,22 @@
       if (FG.weather) FG.weather.redraw();
     }
     updatePlanes(false);
+  }
+
+  // The frame rate (Settings → Show the frame rate): frames a second and the slowest frame, twice a second.
+  const fps = { n: 0, from: 0, last: 0, worst: 0 };
+  function countFrame(ts) {
+    if (fps.last) fps.worst = Math.max(fps.worst, ts - fps.last);
+    fps.last = ts;
+    fps.n++;
+    if (ts - fps.from < 500) return;
+    const rate = Math.round((fps.n * 1000) / (ts - fps.from));
+    const el = $('fps');
+    el.textContent = `${rate} fps · slowest ${Math.round(fps.worst)} ms`;
+    el.className = fps.worst > 100 ? 'bad' : fps.worst > 40 ? 'meh' : '';
+    fps.n = 0;
+    fps.from = ts;
+    fps.worst = 0;
   }
 
   // ---------- events & newspaper ----------
@@ -2892,8 +2921,9 @@
       if (mk.version !== G.state.market.nextId) renderMarket(); // new weekly offers
       else refreshMarketButtons();
     }
-    if (G.dirty && !sidebarBusy()) {
+    if (G.dirty && !sidebarBusy() && !(FG.lite && now - (ui.renderedAt || 0) < 500)) {
       G.dirty = false;
+      ui.renderedAt = now;
       renderAll();
     }
   }

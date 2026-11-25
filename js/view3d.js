@@ -2925,7 +2925,8 @@ function createMap(fit) {
     zoom: at ? at.zoom : 4.5,
     pitch: 45,
     maxPitch: 80,
-    canvasContextAttributes: { antialias: true },
+    canvasContextAttributes: { antialias: !FG.lite },
+    pixelRatio: FG.lite ? 1 : devicePixelRatio, // (light mode, Settings)
     attributionControl: { compact: true },
   });
   map.setStyle('https://tiles.openfreemap.org/styles/liberty', { transformStyle });
