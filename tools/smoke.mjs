@@ -751,6 +751,35 @@ try {
   if (sun.err) errors.push(`A350-1000ULR: ${sun.err}`);
   else step(`A350-1000ULR: ${sun.legs} (${sun.km} km)`);
 
+  step('A350-20000: only for an airline that owns 20 A350s; the plugged model is 1 unit long');
+  const big = await evaluate(async () => {
+    const home = G.home();
+    const before = G.state.planes.length;
+    const locked = G.notOnSale('A350-20000');
+    if (!locked || !/20/.test(locked)) return { err: `not locked: ${locked}` };
+    const ids = [];
+    for (let i = 0; i < 20; i++) ids.push(G.addPlane('A350-900', home, 'owned', 0));
+    const need = G.needsOf('A350-20000');
+    const open = G.notOnSale('A350-20000');
+    G.state.planes = G.state.planes.filter((p) => !ids.includes(p.id));
+    G.state.crews = G.state.crews.filter((c) => !ids.some((id) => c.id === `crew-${id}`));
+    if (G.state.planes.length !== before) return { err: 'test planes not removed' };
+    if (open || need.have !== 20) return { err: `still locked with 20 A350s: ${open}` };
+    if (G.state.market.listings.some((l) => FG.data.aircraft[l.type].needs)) return { err: 'offered pre-owned' };
+    const { loadModel } = await import(new URL('js/models3d.js', location.href).href);
+    const out = [];
+    for (const t of ['A350-2000', 'A350-20000']) {
+      const m = await loadModel(t);
+      let y0 = Infinity, y1 = -Infinity;
+      m.traverse((o) => { if (o.isMesh && o.name !== 'gear' && o.geometry.boundingBox && !o.parent?.name?.includes('gear')) { const b = o.geometry.boundingBox; y0 = Math.min(y0, b.min.y); y1 = Math.max(y1, b.max.y); } });
+      if (Math.abs(y1 - y0 - 1) > 0.02 || Math.abs(y0 + y1) > 0.02) return { err: `${t} model from ${y0.toFixed(3)} to ${y1.toFixed(3)}` };
+      out.push(`${t} ${FG.data.looks[t].len} m`);
+    }
+    return { msg: `locked until 20 A350s ("${locked.slice(0, 60)}…"); ${out.join(', ')}` };
+  });
+  if (big.err) errors.push(`A350-20000: ${big.err}`);
+  else step(`A350-20000: ${big.msg}`);
+
   step('airport categories: every airport in one of the four, named in the airport panel');
   const cats = await evaluate((home) => {
     const n = {};

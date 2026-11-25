@@ -1481,6 +1481,7 @@
     const fits = G.fitsAirport(o.type, at) && !room;
     const noSlot = at === G.home() && !G.mySlotClasses(at).some((n, c) => n && c >= G.typeClass(o.type));
     const inFleet = G.state.planes.filter((p) => p.type === o.type).length;
+    const need = o.used ? null : G.needsOf(o.type);
     const mult = o.used ? 1 + C.market.agingCostPerYear * o.used.age : 1;
     let h = `<section class="mk-show">
       <div class="mk-stage">${FG.hangar.svg(o.type, 'show')}</div>
@@ -1501,6 +1502,7 @@
           <div><dt>Reversers</dt><dd>${D.reverserText(o.type)}</dd></div>
           <div><dt>Lease rate</dt><dd>${G.fmtMoney(ac.leasePerWeek)}/wk</dd></div>
         </dl>
+        ${need ? `<div class="mk-needs ${need.have >= need.count ? 'pos' : 'neg'}">🔒 Only for airlines that own ${need.count} ${need.names}s: you own ${need.have}${need.have >= need.count ? ' ✓' : ''}.</div>` : ''}
         <div class="mk-delivery">${fits ? mkDelivery(o, at) : room ? `<span class="neg">${room}</span>`
     : `<span class="neg">${G.fitsReason(o.type, at)} Deliver to a larger airport.</span>`}
           ${fits && noSlot ? `<div class="muted">It parks at your base. To fly a timetable from ${at} it needs a class ${G.CLASSES[G.typeClass(o.type)]} slot there.</div>` : ''}</div>

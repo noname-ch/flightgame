@@ -669,6 +669,9 @@ i.s-net { background: var(--muted); }
 .mk-specs dd { margin: 0; font-variant-numeric: tabular-nums; font-weight: 600; }
 .mk-delivery { font-size: 13px; color: #cbd5e1; background: #111827; border-left: 3px solid #16a34a; padding: 8px 10px; border-radius: 4px; }
 .mk-delivery .neg { color: #fca5a5; }
+.mk-needs { font-size: 13px; margin-bottom: 8px; padding: 6px 10px; border-radius: 4px; background: #111827; }
+.mk-needs.neg { color: #fca5a5; border-left: 3px solid #dc2626; }
+.mk-needs.pos { color: #86efac; border-left: 3px solid #16a34a; }
 .mk-buy { display: flex; gap: 8px; margin-top: auto; }
 .mk-buy button.big { flex: 1; padding: 10px 12px; font-size: 15px; font-weight: 700; border-radius: 8px; background: #1e293b; border: 1px solid #334155; }
 .mk-buy button.big.primary { background: var(--accent); border-color: var(--accent); color: #fff; }

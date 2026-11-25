@@ -2846,7 +2846,7 @@
   function randomUsedListing(n) {
     // (in story mode: types that have flown for at least a year and are still around, no older than the type)
     const y = yearNow();
-    const types = Object.keys(D.aircraft).filter((t) => (y === null
+    const types = Object.keys(D.aircraft).filter((t) => !D.aircraft[t].needs && (y === null
       ? D.aircraft[t].category !== 'classic' || Math.random() < 0.3
       : D.aircraft[t].year < y && inService(t, y)));
     const type = types[Math.floor(Math.random() * types.length)];
@@ -4626,8 +4626,19 @@
       return `${M.registrationPrefix}${Date.now()}`;
     },
 
-    // Why a type can't be ordered new now (story mode), or null.
+    // A type only for airlines that already own enough of its relatives (aircraft.js `needs`: { types, count }):
+    // { have, count, names } or null. Planes bought count, leased ones don't.
+    needsOf(type) {
+      const n = D.aircraft[type].needs;
+      if (!n) return null;
+      const have = this.state.planes.filter((p) => p.ownership === 'owned' && n.types.includes(p.type)).length;
+      const names = [...new Set(n.types.map((t) => D.aircraft[t].name.replace(/-\w+$/, '')))].join(', ');
+      return { have, count: n.count, names };
+    },
+    // Why a type can't be ordered now (story mode: not built yet or any more; or the airline lacks what it needs), or null.
     notOnSale(type) {
+      const need = this.needsOf(type);
+      if (need && need.have < need.count) return `Airbus sells the ${D.aircraft[type].name} only to airlines that own ${need.count} ${need.names}s – you own ${need.have}.`;
       if (onSale(type)) return null;
       const ac = D.aircraft[type];
       return ac.year > this.year() ? `The ${ac.name} won't reach the airlines before ${ac.year}.`

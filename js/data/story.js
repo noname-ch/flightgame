@@ -119,6 +119,8 @@ FG.data.story = {
     'C919': 'China\'s own narrowbody enters service with China Eastern.',
     'A321XLR': 'An A321 that can cross the Atlantic.',
     'B777-9': 'The 777X with folding wing tips.',
+    'A350-2000': 'Airbus stretches the A350 again: 82 metres long, with the biggest engines it has ever hung on a twin.',
+    'A350-20000': 'The A350-20000: twice as long as an A350, 920 seats and sixteen-wheel main legs. Airbus sells it only to airlines that already fly 20 A350s.',
     'A350-1000ULR': 'Qantas\' Project Sunrise: an A350-1000 with an extra fuel tank flies Sydney to London and New York non-stop.',
   },
 

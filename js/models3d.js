@@ -1,6 +1,7 @@
 // Loads the 3D aircraft models for the 3D view and the hangar, painted in the airline livery: glTF files
 // (models/*.glb, see models/README.md), with landing gear (js/gear3d.js).
 // FG.data.models says which aircraft type uses which model.
+import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { paintLivery, maskOf } from './livery.js';
 import { addGear, gearKey } from './gear3d.js';
@@ -43,15 +44,154 @@ function raw(file) {
   return raws[file];
 }
 
+// A type drawn with plugs (FG.data.looks `plugs`, cut where FG.data.plugs says for its model) is stretched the way
+// real ones are: barrel sections of its fuselage, windows and all, are repeated ahead of and behind the wing, while
+// the nose, the wing, the tail and the engines keep their shape (a type without plugs is stretched all over, wing
+// chord too). `engines` (× the model's) makes the engines bigger, grown forward and down from where they hang. The
+// unpainted scene, 1 unit long and centred like every model.
+const shapedRaws = {};   // type -> Promise of the reshaped unpainted scene
+function rawOf(type, size) {
+  const look = FG.data.looks[type];
+  const cut = FG.data.plugs && FG.data.plugs[size.file];
+  if (!look.plugs || !cut) return raw(size.file);
+  if (!shapedRaws[type]) shapedRaws[type] = raw(size.file).then((scene) => reshape(scene, cut, size.stretch - 1, look.engines || 1, type));
+  return shapedRaws[type];
+}
+
+// How many barrel sections go in ahead of and behind the wing to add `extra` (model lengths): as near as can be,
+// with about `ahead` of it ahead.
+function plugCount(cut, extra) {
+  const wF = cut.front[1] - cut.front[0], wB = cut.back[1] - cut.back[0];
+  let best = null;
+  for (let f = 0; f * wF <= extra + wF; f++) {
+    for (let b = 0; b * wB <= extra + wB; b++) {
+      const got = f * wF + b * wB;
+      const miss = Math.abs(got - extra) + 0.05 * Math.abs((got ? f * wF / got : cut.ahead) - cut.ahead);
+      if (!best || miss < best.miss) best = { f, b, miss };
+    }
+  }
+  return { f: best.f, b: best.b, wF, wB };
+}
+
+function reshape(src, cut, extra, grow, key) {
+  const scene = src.clone();
+  const n = plugCount(cut, extra);
+  const add = [n.b * n.wB, n.f * n.wF];   // behind the rear sections, ahead of the front ones
+  const c = (add[1] - add[0]) / 2;        // (back to the middle)
+  const k = 1 / (1 + add[0] + add[1]);    // (and to 1 unit long)
+  const e = cut.engine;
+  const EPS = 2e-4;
+  const inside = (y, [y0, y1]) => y >= y0 - EPS && y <= y1 + EPS;
+  // A section is seldom quite a cylinder (the A350's rear one already sweeps up to the tail): its copies are bent
+  // to the shape of the ring away from the wing at both ends, so they meet each other and the nose or tail part
+  // without a step. Each ring as its radius round the inner ring's middle, by angle.
+  const ringAt = (y) => {
+    const pts = [];
+    scene.traverse((o) => {
+      if (!o.isMesh) return;
+      const pos = o.geometry.attributes.position;
+      for (let i = 0; i < pos.count; i++) {
+        if (Math.abs(pos.getY(i) - y) < EPS && Math.abs(pos.getX(i)) < cut.body) pts.push([pos.getX(i), pos.getZ(i)]);
+      }
+    });
+    return pts;
+  };
+  const bend = (sec, inner, outer) => {
+    const a = ringAt(inner), b = ringAt(outer);
+    if (a.length < 8 || b.length < 8) return null;
+    const zs = a.map((p) => p[1]);
+    const zc = (Math.min(...zs) + Math.max(...zs)) / 2;
+    const polar = (pts) => pts.map(([x, z]) => [Math.atan2(z - zc, x), Math.hypot(x, z - zc)]).sort((p, q) => p[0] - q[0]);
+    const radius = (ring, t) => {
+      let i = ring.findIndex((p) => p[0] >= t);
+      if (i < 0) i = ring.length;
+      const [t0, r0] = i === 0 ? [ring[ring.length - 1][0] - 2 * Math.PI, ring[ring.length - 1][1]] : ring[i - 1];
+      const [t1, r1] = i === ring.length ? [ring[0][0] + 2 * Math.PI, ring[0][1]] : ring[i];
+      return t1 - t0 < 1e-9 ? r0 : r0 + (r1 - r0) * (t - t0) / (t1 - t0);
+    };
+    const A = polar(a), B = polar(b);
+    // (x, z) of a vertex at y in a copy: moved out by the difference between the rings, all of it at the inner ring
+    return (x, y, z) => {
+      const u = Math.max(0, Math.min(1, (y - outer) / (inner - outer)));
+      const t = Math.atan2(z - zc, x);
+      const d = u * (radius(B, t) - radius(A, t));
+      const r = Math.hypot(x, z - zc) || 1;
+      return [x + d * x / r, z + d * (z - zc) / r];
+    };
+  };
+  const bends = { front: n.f ? bend(cut.front, cut.front[0], cut.front[1]) : null, back: n.b ? bend(cut.back, cut.back[1], cut.back[0]) : null };
+  scene.traverse((o) => {
+    if (!o.isMesh) return;
+    const g = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone();
+    const pos = g.attributes.position;
+    // the engines first, in the model's own shape
+    if (grow !== 1) {
+      for (let i = 0; i < pos.count; i++) {
+        const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+        if (Math.abs(x) < e.x[0] || Math.abs(x) > e.x[1] || y < e.y[0] || y > e.y[1] || z < e.z[0] || z > e.z[1]) continue;
+        const ax = Math.sign(x) * e.at[0];
+        pos.setXYZ(i, ax + (x - ax) * grow, e.at[1] + (y - e.at[1]) * grow, e.at[2] + (z - e.at[2]) * grow);
+      }
+    }
+    // each triangle: a fuselage one in a barrel section stays and is copied once per plug; the rest move with the
+    // nose or the tail (a long one across a cut, which the A350 has only along its belly, stretches)
+    const attrs = Object.keys(g.attributes);
+    const out = Object.fromEntries(attrs.map((a) => [a, []]));
+    const put = (i, dy, bent) => {
+      for (const a of attrs) {
+        const at = g.attributes[a];
+        if (a === 'position') {
+          let x = at.getX(i), z = at.getZ(i);
+          if (bent) [x, z] = bent(x, at.getY(i), z);
+          out[a].push(x, at.getY(i) + dy, z);
+        } else for (let j = 0; j < at.itemSize; j++) out[a].push(at.array[i * at.itemSize + j]);
+      }
+    };
+    const moved = (y) => (y >= cut.front[1] - EPS ? add[1] : y <= cut.back[0] + EPS ? -add[0] : 0);
+    for (let t = 0; t < pos.count; t += 3) {
+      const ys = [0, 1, 2].map((j) => pos.getY(t + j));
+      const body = [0, 1, 2].every((j) => Math.abs(pos.getX(t + j)) < cut.body);
+      const plug = !body ? null : ys.every((y) => inside(y, cut.front)) ? [n.f, n.wF, bends.front] : ys.every((y) => inside(y, cut.back)) ? [n.b, -n.wB, bends.back] : null;
+      if (plug) {
+        for (let r = 0; r <= plug[0]; r++) for (let j = 0; j < 3; j++) put(t + j, r * plug[1], r ? plug[2] : null);
+      } else {
+        for (let j = 0; j < 3; j++) put(t + j, moved(ys[j]));
+      }
+    }
+    const shaped = new THREE.BufferGeometry();
+    for (const a of attrs) {
+      const at = g.attributes[a];
+      shaped.setAttribute(a, new THREE.BufferAttribute(new at.array.constructor(out[a]), at.itemSize, at.normalized));
+    }
+    const P = shaped.attributes.position, N = shaped.attributes.normal;
+    for (let i = 0; i < P.count; i++) {
+      P.setY(i, (P.getY(i) - c) * k);
+      // (squashed to 1 unit long and drawn stretched to the type's length, the normals squash the other way)
+      if (N) {
+        const nx = N.getX(i), ny = N.getY(i) / k, nz = N.getZ(i);
+        const l = Math.hypot(nx, ny, nz) || 1;
+        N.setXYZ(i, nx / l, ny / l, nz / l);
+      }
+    }
+    shaped.computeBoundingBox();
+    shaped.computeBoundingSphere();
+    o.geometry = shaped;
+  });
+  // (what js/livery.js needs to find the model's own spots, given in the unstretched model's y: shapedY)
+  scene.userData.shape = { key, front: cut.front[1], back: cut.back[0], add, c, k };
+  return scene;
+}
+
 // The model of a type painted in a livery (the airline's, FG.livery(), unless another is asked for), 1 unit
 // long: scale it with modelSize(type). The scene is shared, clone() it
 // for every aircraft drawn. Stretched types get their own materials, so the livery can keep its proportions.
 export function loadModel(type, livery = FG.livery()) {
   const size = modelSize(type);
   const { file, stretch } = size;
-  const key = `${file}|${stretch}|${FG.liveries ? FG.liveries.key(livery) : livery.id}|${gearKey(type, file)}|${maskOf(file, type) ? 'mask' : ''}`;
+  const key = `${file}|${stretch}|${FG.liveries ? FG.liveries.key(livery) : livery.id}|${gearKey(type, file)}|${maskOf(file, type) ? 'mask' : ''}` +
+    (FG.data.looks[type].plugs ? `|${type}` : '');
   if (!loads[key]) {
-    loads[key] = raw(file).then((scene) => {
+    loads[key] = rawOf(type, size).then((scene) => {
       const copy = scene.clone();
       copy.traverse((o) => { if (o.isMesh) o.material = o.material.clone(); });
       return addGear(paintLivery(copy, file, patchFacing, stretch, livery, type), scene, file, size, patchFacing, type);
@@ -66,7 +206,7 @@ export function loadModel(type, livery = FG.livery()) {
 export function paintFresh(type, livery) {
   const size = modelSize(type);
   if (!size) return Promise.reject(new Error(`no model for ${type}`));
-  return raw(size.file).then((scene) => {
+  return rawOf(type, size).then((scene) => {
     const copy = scene.clone();
     copy.traverse((o) => { if (o.isMesh) o.material = o.material.clone(); });
     return addGear(paintLivery(copy, size.file, patchFacing, size.stretch, livery, type), scene, size.file, size, patchFacing, type);

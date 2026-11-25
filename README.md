@@ -184,10 +184,12 @@ upgrades any more: you build terminals and stands yourself.
    from 50% to 200% of the standard fare. Cheaper tickets fill more seats, dearer ones fewer –
    lower the price while seats stay empty, raise it once the plane is full.
 
-6. More aircraft: the **Market** tab opens the hangar marketplace with 122 types, from the Ju 52 and
+6. More aircraft: the **Market** tab opens the hangar marketplace with 124 types, from the Ju 52 and
    Twin Otter to the A380 and Concorde, each shown in the hangar. Buy new, lease (deposit + weekly
    rate) or buy pre-owned (new offers every Monday; older planes are cheaper but cost more to run).
    New planes fly a delivery flight from their factory (🏭 on the map) to your airport, e.g. Boeings from Everett or Renton in the US.
+   Two made-up A350s: the A350-2000 (82 m, bigger engines) and the A350-20000 (140 m, 920 seats, 16-wheel
+   main legs), which Airbus sells only to an airline that owns 20 A350s (bought, not leased).
    Each plane gets its own crew. Big jets need a big enough airport, and away from your home base a slot
    of their class to stand in. Sell owned planes or return
    leased ones from the **Fleet** tab, and give a plane its own name with ✏️ next to its registration.

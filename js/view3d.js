@@ -108,7 +108,9 @@ function attitude(p, st, t) {
   const pf = G.perf(p.type);
   const vLift = pf.vLof; // the type's lift-off speed
   const agl = st.aglM != null ? st.aglM / 0.3048 : (st.altFt || 0) - (st.fieldFt || 0); // above the runways (ft)
-  const touch = TOUCH_DEG[(D.aircraft[p.type] || {}).category] ?? 5;
+  // (a very long fuselage rotates and lands flatter, or its tail would strike the runway: looks.js `rotate`)
+  const rotate = (D.looks[p.type] && D.looks[p.type].rotate) || ROTATE_DEG;
+  const touch = Math.min(rotate, TOUCH_DEG[(D.aircraft[p.type] || {}).category] ?? 5);
   let bank = 0;
   let pitch = 0;
   if (AIRBORNE[st.phase] || (st.phase === 'takeoff' && !st.ground)) {
@@ -128,12 +130,12 @@ function attitude(p, st, t) {
       bank += k * 4 * (0.6 * Math.sin(s * 1.9 + ph) + 0.4 * Math.sin(s * 4.3 + ph * 2));
       pitch += k * 1.2 * Math.sin(s * 2.7 + ph);
     }
-    if (st.phase === 'climb' && agl < 300) pitch = Math.max(pitch, ROTATE_DEG); // (just off the runway: still rotated)
+    if (st.phase === 'climb' && agl < 300) pitch = Math.max(pitch, rotate); // (just off the runway: still rotated)
   } else if (st.phase === 'takeoff') {
     // Rotation: the nose comes up over the last tenth of the run (3-4 s at its usual pace, about 2.5° a second),
     // and the plane leaves the runway at ROTATE_DEG. (It used to start at three quarters of the lift-off speed,
     // half way down the runway, and the tail dragged along the ground.)
-    pitch = ROTATE_DEG * Math.max(0, Math.min(1, ((st.rollT ?? 0) - 0.9) / 0.1));
+    pitch = rotate * Math.max(0, Math.min(1, ((st.rollT ?? 0) - 0.9) / 0.1));
   } else if (st.phase === 'landing') {
     // On the main wheels with the nose held up for the first 7% of the run (3 s or so in real time), then the nose
     // wheel comes down over the next 10%. (It used to follow the speed, which is averaged over half a minute, so

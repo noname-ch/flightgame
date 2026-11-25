@@ -13,7 +13,7 @@ FG.data.models = {
   'B737-700': 'b737', 'B737-800': 'b738', 'B737-8': 'b738', 'B737-9': 'b739', 'B757-200': 'b752', 'MD-82': 'crj900',
   'B767-300ER': 'b763', 'A330-200': 'a332', 'A330-300': 'a333', 'A330-900': 'a333',
   'B787-8': 'b788', 'B787-9': 'b789', 'B787-10': 'b789', 'A340-600': 'a346', 'A350-900': 'a359', 'A350-1000': 'a359',
-  'A350-900ULR': 'a359', 'A350-1000ULR': 'a359',
+  'A350-900ULR': 'a359', 'A350-1000ULR': 'a359', 'A350-2000': 'a359', 'A350-20000': 'a359',
   'B777-200ER': 'b772', 'B777-300ER': 'b773', 'B777-9': 'b773', 'B747-400': 'b744', 'B747-8': 'b748', 'A380-800': 'a380',
   'JU52': 'ju52', 'DC-3': 'dc3', 'CONCORDE': 'concorde',
   // flown by hand only (js/pilot.js), not an airline type: the Global 7500 is drawn as its Bombardier relative
@@ -45,6 +45,16 @@ FG.data.modelSize = {
   a332: [58.36, 5.6], a333: [63.05, 5.6], a346: [77.12, 5.6], a359: [67.02, 6.1], a380: [72.68, 8.4],
   b788: [56.68, 5.9], b789: [65.9, 5.9], b772: [64.43, 6.2], b773: [74.38, 6.2], b744: [70.94, 6.5], b748: [76.55, 6.5],
   ju52: [19.01, 2.2], dc3: [19.68, 2.4], concorde: [61.77, 3.3],
+};
+
+// Where a model's fuselage is lengthened for a longer type (FG.data.looks `plugs`, js/models3d.js reshape), in model
+// units (y along the nose): `front` and `back` are barrel sections (y from, to: rings of the fuselage that no
+// triangle crosses, cabin windows included), ahead of the wing and behind it, repeated as plugs; `ahead` = about the
+// share of the new length put in ahead of the wing; `body` = |x| within which a triangle is fuselage. `engine`: a box
+// round one engine (|x|, y, z) and the point it grows from (|x|, y, z: the back of the nacelle's top, under the pylon).
+FG.data.plugs = {
+  a359: { front: [0.2856, 0.3649], back: [-0.2687, -0.2016], ahead: 0.55, body: 0.06,
+    engine: { x: [0.115, 0.195], y: [0.05, 0.18], z: [-0.13, -0.062], at: [0.155, 0.06, -0.064] } },
 };
 
 // File name of a type's hangar picture and map icon: 'B737-8' -> 'b737-8'.
@@ -112,6 +122,9 @@ FG.data.gear = {
   // the A350-1000 stands on six-wheel bogies, the -900 it is drawn with on four
   'A350-1000': { main: 'wing', track: 0.89, wheels: '3x2', tyre: 1.4, tilt: 9 },
   'A350-1000ULR': { main: 'wing', track: 0.89, wheels: '3x2', tyre: 1.4, tilt: 9 },
+  'A350-2000': { main: 'wing', track: 0.89, wheels: '3x2', tyre: 1.45, tilt: 9 },
+  // twice as long: four main legs of four axles each, the middle pair under the fuselage as on an A380
+  'A350-20000': { main: 'wing', track: 0.9, wheels: '4x2', tyre: 1.5, nose: 0.07, body: { track: 0.35, wheels: '4x2', aft: 0.035 }, tilt: 8 },
 };
 
 // Propellers of the models that have them, for their colours (js/livery.js): hub x (either side) and z, the y

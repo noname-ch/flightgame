@@ -57,6 +57,9 @@ FG.data.looks = {
   'A350-1000': { len: 73.8, span: 64.8, dia: 6.1, eng: 'uw2', winglet: true, gear: 3, bigFan: true },
   'A350-900ULR': { len: 66.8, span: 64.8, dia: 6.1, eng: 'uw2', winglet: true, gear: 2, bigFan: true },
   'A350-1000ULR': { len: 73.8, span: 64.8, dia: 6.1, eng: 'uw2', winglet: true, gear: 3, bigFan: true },
+  // (plugs: the fuselage is lengthened ahead of and behind the wing, not the whole model; engines: × the model's)
+  'A350-2000': { len: 82.2, span: 64.8, dia: 6.1, eng: 'uw2', winglet: true, gear: 3, bigFan: true, plugs: true, engines: 1.3, rotate: 6.5 },
+  'A350-20000': { len: 140.3, span: 72.2, dia: 6.8, eng: 'uw2', winglet: true, gear: 4, bigFan: true, plugs: true, engines: 1.4, rotate: 3.5 },
   'B777-200ER': { len: 63.7, span: 60.9, dia: 6.2, eng: 'uw2', gear: 3, bigFan: true },
   'B777-300ER': { len: 73.9, span: 64.8, dia: 6.2, eng: 'uw2', gear: 3, bigFan: true },
   'B777-9': { len: 76.7, span: 64.9, dia: 6.2, eng: 'uw2', gear: 3, bigFan: true },

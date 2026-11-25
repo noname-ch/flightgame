@@ -163,8 +163,10 @@ function mask(key, width, height, draw) {
 // The cockpit glass of a model (MASKS): its triangles, [[x, y, z] x 3], once per model.
 const glassOf = {};
 function cockpitGlass(scene, file) {
-  if (glassOf[file]) return glassOf[file];
-  const { region } = MASKS[file];
+  const shape = scene.userData.shape;   // (a model lengthened by plugs: js/models3d.js reshape)
+  const key = shape ? `${file}|${shape.key}` : file;
+  if (glassOf[key]) return glassOf[key];
+  const region = shape ? { ...MASKS[file].region, y: shapedY(shape, MASKS[file].region.y) } : MASKS[file].region;
   const tris = [];
   const pixels = new Map();   // a texture's pixels, to tell its dark parts
   const texel = (tex) => {
@@ -201,8 +203,11 @@ function cockpitGlass(scene, file) {
       tris.push(p.map((v) => [v.x, v.y, v.z]));
     }
   });
-  return (glassOf[file] = tris);
+  return (glassOf[key] = tris);
 }
+
+// Where a spot of a model (y in its own 1 unit length) is once it was lengthened by plugs (js/models3d.js reshape).
+const shapedY = (s, y) => ((y >= s.front ? y + s.add[1] : y <= s.back ? y - s.add[0] : y) - s.c) * s.k;
 
 // The cockpit mask of a model as two pictures, its glass grown by the border: seen from the side (y, z) and seen from
 // the front (x, z, the windscreen), with where they lie: box y0, z0, 1 / length, 1 / height (front: x0, z0, ...).
@@ -1343,6 +1348,9 @@ function cutFlaps(meshes, wingH, x0, xw, x1, split) {
 // the shader sees them (the models have no node transforms).
 export function measure(scene, file, stretch = 1, title = { aspect: 4.3 }, finMark = { aspect: 3 }) {
   const box = CLEAN[file];
+  // (spots of the model's own length; one lengthened by plugs has them elsewhere: shapedY)
+  const shape = scene.userData.shape;
+  const Y = shape ? (y) => shapedY(shape, y) : (y) => y;
   const meshes = [];
   scene.traverse((o) => { if (o.isMesh && o.geometry.attributes.position) meshes.push(o); });
   const v = new THREE.Vector3();
@@ -1358,7 +1366,7 @@ export function measure(scene, file, stretch = 1, title = { aspect: 4.3 }, finMa
   let span = 0;
   eachVertex((p) => {
     span = Math.max(span, Math.abs(p.x));
-    if (p.y < 0.27 || p.y > 0.36) return;
+    if (p.y < Y(0.27) || p.y > Y(0.36)) return;
     hw = Math.max(hw, Math.abs(p.x));
     top = Math.max(top, p.z);
   });
@@ -1368,20 +1376,20 @@ export function measure(scene, file, stretch = 1, title = { aspect: 4.3 }, finMa
   const expect = real ? real[1] / real[0] / 2 : 0;
   if (expect && hw > 1.6 * expect) {
     hw = 0;
-    eachVertex((p) => { if (p.y >= 0.27 && p.y <= 0.36 && Math.abs(p.x) < 1.4 * expect) hw = Math.max(hw, Math.abs(p.x)); });
+    eachVertex((p) => { if (p.y >= Y(0.27) && p.y <= Y(0.36) && Math.abs(p.x) < 1.4 * expect) hw = Math.max(hw, Math.abs(p.x)); });
   }
   const d = 2 * hw;
   // Crown of the rear fuselage, ahead of the fin.
   let crown = -Infinity;
   eachVertex((p) => {
-    if (p.y > 0.05 || p.y < -0.3 || Math.abs(p.x) > 0.35 * hw) return;
+    if (p.y > Y(0.05) || p.y < Y(-0.3) || Math.abs(p.x) > 0.35 * hw) return;
     crown = Math.max(crown, p.z);
   });
   // Usually the same height as in front (a 747's hump is higher); coarse models may have no vertex there.
   crown = crown < top - 0.5 * d ? top : Math.min(top, crown);
   // The fin: everything upright above the crown near the centre line of the rear fuselage. Its foot stays
   // in the fuselage's colour, the fin's colour starts a little higher with a level lower edge.
-  const fin = { y: -0.15, z: crown + 0.015 * d, x: 0.3 * hw };
+  const fin = { y: Y(-0.15), z: crown + 0.015 * d, x: 0.3 * hw };
   let finTop = fin.z;
   eachVertex((p) => { if (p.y < fin.y && p.z > fin.z && Math.abs(p.x) < fin.x) finTop = Math.max(finTop, p.z); });
   fin.z += 0.15 * (finTop - fin.z);
@@ -1410,7 +1418,7 @@ export function measure(scene, file, stretch = 1, title = { aspect: 4.3 }, finMa
   // Title: from behind the first door, usually large across the window row and at most a third of the
   // aircraft's length; a livery can have it smaller above the windows, low on the belly, or longer.
   const [below, high] = TITLE_AT[title.at] || TITLE_AT.window;
-  const titleY = 0.5 - (TITLE_FROM[file] || 1.4 * d);
+  const titleY = Y(0.5 - (TITLE_FROM[file] || 1.4 * d));
   const titleLen = Math.max(0.6 * d, Math.min((title.length || 1.8) * d, titleY - (title.length ? 0.04 : 0.18)));
   const titleH = Math.min((title.height || high) * d, titleLen / title.aspect);
   // A text or logo on the fin: across the middle of its chord at the height of the mark, or up along the fin.
