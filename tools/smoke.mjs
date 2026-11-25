@@ -1374,9 +1374,9 @@ try {
   if (bg.hidden && bg.t1 - bg.t0 < 3) errors.push(`background tab: the game slowed down (${(bg.t1 - bg.t0).toFixed(1)} game minutes in 4 s at 60×)`);
 
   step('save and reload');
-  await evaluate(() => G.save());
+  await evaluate(() => { G.save(); window.fgOldPage = true; }); // (marks this page: the wait below is for the new one)
   await cmd('Page.reload');
-  await waitFor(() => window.FG && FG.ui && FG.game && G.state.planes.length >= 1, 60000, 'the game after a reload');
+  await waitFor(() => !window.fgOldPage && window.FG && FG.ui && FG.game && G.state.planes.length >= 1, 60000, 'the game after a reload');
   await evaluate(() => document.querySelector('[data-st=continue]') && document.querySelector('[data-st=continue]').click());
   await sleep(2000);
 
