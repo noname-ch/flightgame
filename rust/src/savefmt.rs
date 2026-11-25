@@ -3,8 +3,9 @@
 //! The browser game saves its `G.state` as JSON (camelCase, crews in a list of their own, stats with `year`/`last`).
 //! This app keeps its own `State` (snake_case). A save file can come from either: [`read`] takes both, and
 //! [`to_browser`] writes the browser game's format, which Menu → Save to file uses so the file loads in both games.
-//! What only the browser game has (its airline livery and designs, placed winds, airports built from scratch) is kept
-//! in `State::browser` and written back on export, so a game can go back and forth without losing it.
+//! Airports the player built from scratch come along (`State::built`, see game.rs `register_built`). What only the
+//! browser game has (its airline livery and designs, placed winds) is kept in `State::browser` and written back on
+//! export, so a game can go back and forth without losing it.
 
 use crate::data::data;
 use crate::game::*;
@@ -12,10 +13,10 @@ use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, HashMap};
 
 /// The browser game's top-level keys this module reads or writes; any other key is carried over in `State::browser`.
-const KNOWN: [&str; 30] = [
+const KNOWN: &[&str] = &[
     "version", "mode", "difficulty", "story", "home", "localCurfew", "company", "time", "money", "slots", "planes",
     "crews", "fares", "carriedToday", "today", "history", "log", "market", "effects", "news", "infra", "projects",
-    "fees", "rep", "slotBuys", "offers", "gameOver", "airportOps", "rivals", "devUsed",
+    "fees", "rep", "slotBuys", "offers", "gameOver", "airportOps", "rivals", "devUsed", "built",
 ];
 
 /// A browser game save (rather than one of this app's)?
@@ -31,6 +32,8 @@ pub fn read(text: &str) -> Result<(State, Vec<String>), String> {
             return Err("That is not a Flightgame save file.".into());
         }
         let mut s = from_browser(&v);
+        // (the airports the player built are airports of the world from here on)
+        register_built(&s.built);
         let mut notes = sanitize(&mut s);
         let dropped = arr(&v["planes"]).len() - s.planes.len();
         if dropped > 0 {
@@ -282,6 +285,7 @@ fn from_browser(v: &Value) -> State {
         dev_used: b(&v["devUsed"]),
         story: v["story"].is_object().then(|| StoryYears { start: i(&v["story"]["start"]) as i32, year: i(&v["story"]["year"]) as i32 }),
         browser: (!extra.is_empty()).then_some(Value::Object(extra)),
+        built: arr(&v["built"]).iter().filter(|a| a["code"].is_string()).cloned().collect(),
     }
 }
 
@@ -408,8 +412,8 @@ fn effect_from(e: &Value) -> Effect {
     }
 }
 
-/// What this app's world doesn't know (airports built from scratch in the browser game, aircraft types newer than
-/// this build) is left out or sent home. Returns what was changed, for the log.
+/// What this app's world doesn't know (airports or aircraft types newer than this build) is left out or sent
+/// home. Returns what was changed, for the log.
 fn sanitize(st: &mut State) -> Vec<String> {
     let d = data();
     let known = |c: &str| d.try_airport(c).is_some();
@@ -585,6 +589,7 @@ pub fn to_browser(st: &State) -> Value {
         "gameOver": st.game_over,
         "devUsed": st.dev_used,
         "airportOps": st.airport_ops,
+        "built": st.built,
         "rivals": st.rivals.iter().map(|r| json!({ "id": r.id, "name": r.name, "kind": r.kind, "hubs": r.hubs,
             "color": r.color, "since": r.since, "routes": r.routes.iter().map(|x| json!({ "a": x.a, "b": x.b,
             "type": x.kind, "seats": x.seats, "perDay": x.per_day, "fare": x.fare, "since": x.since, "weak": x.weak,
@@ -594,7 +599,7 @@ pub fn to_browser(st: &State) -> Value {
         out.insert(k.clone(), x.clone());
     }
     // the browser game expects these even when empty
-    for k in ["built", "winds"] {
+    for k in ["winds"] {
         out.entry(k).or_insert_with(|| json!([]));
     }
     Value::Object(out)

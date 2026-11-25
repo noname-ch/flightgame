@@ -783,12 +783,12 @@ impl App {
 
     fn select_airport(&mut self, code: &str, center: bool) {
         let d = data();
-        if let Some(&k) = d.by_code.get(code) {
+        if let Some(k) = d.index_of(code) {
             self.selected = Some(Pick::Airport(k));
             self.offer = 0.0;
             self.slot_code = code.to_string();
             if center {
-                let a = &d.airports[k];
+                let a = &d.airport_at(k);
                 self.map.center_at(lat_lon(a.lat, a.lon));
             }
         }
@@ -2294,7 +2294,7 @@ impl App {
         let Some(Pick::Airport(k)) = self.selected else { return };
         let Some(g) = &mut self.game else { return };
         let d = data();
-        let a = &d.airports[k];
+        let a = &d.airport_at(k);
         let code = a.code.clone();
         let mut open = true;
         // (kind, class, holder or plane id or route)
@@ -2539,6 +2539,18 @@ impl App {
                 });
                 ui.weak(format!("{BOARD_STAKE}%: order runways and terminals · {MAJORITY_STAKE}%: no weekly slot fee here."));
                 ui.strong("Construction");
+                if a.built && !a.open {
+                    ui.label("Your new airport opens once it has:");
+                    let list = g.site_checklist(&code);
+                    for (what, done) in &list {
+                        ui.label(format!("{} {what}", if *done { "✅" } else { "⬜" }));
+                    }
+                    let ready = list.iter().all(|x| x.1);
+                    let r = ui.add_enabled(ready, egui::Button::new("✈ Open the airport"));
+                    if r.on_disabled_hover_text("Build what is missing first (Build mode)").clicked() {
+                        action = Some((20, 0, String::new()));
+                    }
+                }
                 for p in g.state.projects.iter().filter(|p| p.code == code) {
                     let frac = (g.state.time - p.start) as f32 / (p.done - p.start).max(1) as f32;
                     ui.add(egui::ProgressBar::new(frac).text(format!("{} – ready {}", p.label, fmt_time(p.done))));
@@ -2584,6 +2596,7 @@ impl App {
                 Ok(false) => Err("The airport turned your offer down. Try again tomorrow, with more money or a better reputation.".into()),
                 Err(e) => Err(e),
             },
+            20 => g.open_airport(&code),
             3 => match g.plane_idx(&s) {
                 Some(i) => g.send_plane(i, &code),
                 None => Ok(()),
@@ -2604,7 +2617,7 @@ impl App {
             }
             _ => {
                 // zoom in: close enough for its gates, as the browser game's showAirport
-                let a = &data().airports[k];
+                let a = &data().airport_at(k);
                 self.map.center_at(lat_lon(a.lat, a.lon));
                 let _ = self.map.set_zoom(13.0);
                 Ok(())
@@ -2752,7 +2765,7 @@ impl eframe::App for App {
                 self.info(&ctx, "The airport editor is a developer tool: enter the password, then press F3 again.");
             } else {
                 let code = match self.selected {
-                    Some(Pick::Airport(k)) => data().airports[k].code.clone(),
+                    Some(Pick::Airport(k)) => data().airport_at(k).code.clone(),
                     _ => self.game.as_ref().map(|g| g.home().to_string()).unwrap_or_default(),
                 };
                 self.open_editor(&code, false);
@@ -4067,7 +4080,7 @@ impl App {
                 ui.horizontal(|ui| {
                     ui.label("Slot at the selected airport");
                     if let Some(Pick::Airport(k)) = self.selected {
-                        let code = d.airports[k].code.clone();
+                        let code = d.airport_at(k).code.clone();
                         if ui.button(format!("+1 at {code}")).clicked() {
                             g.dev_slot(&code);
                         }
@@ -4273,7 +4286,7 @@ impl App {
                     };
                     lines.push(format!("Selected plane: #{} {}, {:?}{at}", p.id, p.kind, p.status));
                 }
-                Some(Pick::Airport(k)) => lines.push(format!("Selected airport: {}", data().airports[k].code)),
+                Some(Pick::Airport(k)) => lines.push(format!("Selected airport: {}", data().airport_at(k).code)),
                 _ => {}
             }
         }

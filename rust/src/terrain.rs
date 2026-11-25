@@ -368,7 +368,7 @@ fn build(sh: &Arc<(Mutex<Shared>, Condvar)>, k: Key) -> Option<TileData> {
     let pad = 0.08;
     // (only on the finer tiles: from far off a levelled airport can't be told apart, and a coarse tile holds hundreds)
     let mut ports = Vec::new();
-    for a in flightgame::data::data().airports.iter().filter(|_| z >= LEVEL_Z) {
+    for (_, a) in flightgame::data::data().all_airports().filter(|_| z >= LEVEL_Z) {
         if a.lat < s_lat - pad || a.lat > n_lat + pad || a.lon < w_lon - pad / 0.5 || a.lon > e_lon + pad / 0.5 || a.runway <= 0.0 {
             continue;
         }

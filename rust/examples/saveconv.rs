@@ -24,8 +24,19 @@ fn main() {
             s.company, s.time, s.money, s.planes.len(), s.slots.len(), s.rivals.len(), s.log.len());
     };
     show(&g, "loaded");
+    // OPEN=<code>: open that site first (its checklist must be done)
+    if let Ok(code) = std::env::var("OPEN") {
+        println!("before opening: fits A350-900: {:?}; checklist {:?}", fits_reason("A350-900", &code), g.site_checklist(&code));
+        println!("open {code}: {:?}", g.open_airport(&code));
+    }
     g.advance(days * 1440);
     show(&g, "played");
+    // the airports the player built: in the world, their stands and size, the flights there
+    for (code, open) in data().built_airports().iter().map(|a| (a.code.clone(), a.open)) {
+        let to_there: u32 = g.state.planes.iter().flat_map(|p| &p.stats.recent).filter(|r| r.to == code).count() as u32;
+        println!("built airports: {code} open {open} size {} stands {:?} runway {:.0} m · recent flights there {to_there} · fits A350-900: {:?}",
+            airport_size(&code), stands_of(&code), longest_runway(&code, true), fits_reason("A350-900", &code));
+    }
     std::fs::write(&args[out], g.export_json()).expect("write");
     // the export reads back the same
     let back = Game::load_json(&g.export_json()).expect("read back");

@@ -363,6 +363,25 @@ pub struct State {
     /// an imported browser save: written back when the game is saved to a file (see savefmt.rs)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub browser: Option<serde_json::Value>,
+    /// airports the player built from scratch (the browser game's `state.built`: code, name, city, country, lat,
+    /// lon, open, as it keeps them); `register_built` makes them airports of the world while this game is on
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub built: Vec<serde_json::Value>,
+}
+
+/// Makes a game's own airports (State::built) airports of the world, replacing the last game's.
+pub fn register_built(list: &[serde_json::Value]) {
+    let d = data();
+    let airports = list
+        .iter()
+        .filter_map(|a| {
+            let code = a["code"].as_str()?;
+            let s = |k: &str| a[k].as_str().unwrap_or("").to_string();
+            let open = a["open"].as_bool().unwrap_or(true);
+            Some(d.new_built(code, &s("name"), &s("city"), &s("country"), a["lat"].as_f64()?, a["lon"].as_f64()?, open))
+        })
+        .collect();
+    d.set_built(airports);
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -536,14 +555,95 @@ pub fn longest_runway(code: &str, paved: bool) -> f64 {
     }
 }
 
-/// The data's size plus the terminal expansions built there (at most 5).
+/// The data's size plus the terminal expansions built there (at most 5). An airport the player built from scratch
+/// is as big as what is built there, as in the browser game: its stands by class and its longest paved runway.
 pub fn airport_size(code: &str) -> usize {
-    (data().airport(code).size + infra_of(code).terminal as usize).min(5)
+    let a = data().airport(code);
+    if a.built {
+        const SIZE_SCORE: [f64; 6] = [0.0, 1.0, 8.0, 20.0, 45.0, 90.0];
+        const SIZE_RUNWAY: [f64; 6] = [0.0, 500.0, 1200.0, 1800.0, 2400.0, 3000.0];
+        const CLASS_SCORE: [f64; 6] = [0.25, 0.5, 1.0, 2.0, 3.0, 4.0];
+        if !a.open {
+            return 1;
+        }
+        let n = stands_of(code);
+        let score: f64 = (0..6).map(|c| n[c] as f64 * CLASS_SCORE[c]).sum();
+        let runway = longest_runway(code, true);
+        return (1..6).filter(|&i| score >= SIZE_SCORE[i] && runway >= SIZE_RUNWAY[i]).max().unwrap_or(1);
+    }
+    (a.size + infra_of(code).terminal as usize).min(5)
+}
+
+/// The class of each stand at an airport the player built, by its room as the browser game's classifyStands
+/// measures it: how far the stands beside it are (facing the same way, within 30 m ahead or behind, 8 m or more to
+/// the side) and twice how far a building beside it is just behind its nose; the biggest class whose span and
+/// clearance fit into that room.
+fn built_stand_classes(code: &str) -> [u32; 6] {
+    const CLASS_CLEAR: [f64; 6] = [3.0, 3.0, 4.5, 7.5, 7.5, 7.5];
+    thread_local! {
+        static CACHE: RefCell<HashMap<String, (usize, [u32; 6])>> = RefCell::new(HashMap::new());
+    }
+    let mut n = [0u32; 6];
+    let Some(lay) = crate::layouts::layout(code) else { return n };
+    let key = std::rc::Rc::as_ptr(&lay) as usize;
+    if let Some(hit) = CACHE.with(|c| c.borrow().get(code).filter(|e| e.0 == key).map(|e| e.1)) {
+        return hit;
+    }
+    let st = &lay.stands;
+    if let Some(o) = st.first() {
+        let kx = 111320.0 * o.0.to_radians().cos();
+        let xy = |lat: f64, lon: f64| ((lon - o.1) * kx, (lat - o.0) * 111320.0);
+        let pts: Vec<(f64, f64)> = st.iter().map(|s| xy(s.0, s.1)).collect();
+        // the buildings' walls as points every 6 m
+        let mut wall = Vec::new();
+        for ring in lay.terminals.iter().chain(&lay.hangars).chain(&lay.others) {
+            let q: Vec<(f64, f64)> = ring.iter().map(|p| xy(p.0, p.1)).collect();
+            for i in 0..q.len() {
+                let (a, b) = (q[i], q[(i + 1) % q.len()]);
+                let k = ((b.0 - a.0).hypot(b.1 - a.1) / 6.0).ceil().max(1.0) as usize;
+                for j in 0..k {
+                    let f = j as f64 / k as f64;
+                    wall.push((a.0 + (b.0 - a.0) * f, a.1 + (b.1 - a.1) * f));
+                }
+            }
+        }
+        let wrap = |a: f64| (a + 180.0).rem_euclid(360.0) - 180.0;
+        for (i, s) in st.iter().enumerate() {
+            let (ux, uy) = (s.2.to_radians().sin(), s.2.to_radians().cos());
+            let near = |q: (f64, f64)| {
+                let (dx, dy) = (q.0 - pts[i].0, q.1 - pts[i].1);
+                (dx * ux + dy * uy, (dx * uy - dy * ux).abs())
+            };
+            let mut room: f64 = 200.0;
+            for (j, o) in st.iter().enumerate() {
+                if j == i || wrap(o.2 - s.2).abs() > 60.0 {
+                    continue;
+                }
+                let (ahead, beside) = near(pts[j]);
+                if ahead.abs() < 30.0 && beside >= 8.0 {
+                    room = room.min(beside);
+                }
+            }
+            for q in &wall {
+                let (ahead, beside) = near(*q);
+                if ahead < -5.0 && ahead > -40.0 {
+                    room = room.min(2.0 * beside);
+                }
+            }
+            let cls = (0..6).rev().find(|&c| CLASS_SPAN[c] + CLASS_CLEAR[c] <= room).unwrap_or(0);
+            n[cls] += 1;
+        }
+    }
+    CACHE.with(|c| c.borrow_mut().insert(code.to_string(), (key, n)));
+    n
 }
 
 /// An airport's stands by class: its real ones, or the made-up apron of its size (which grows with terminals).
 pub fn stands_of(code: &str) -> [u32; 6] {
     let a = data().airport(code);
+    if a.built {
+        return built_stand_classes(code);
+    }
     let mut n = if a.real_stands { a.stands } else { crate::data::DEFAULT_STANDS[airport_size(code)] };
     // and the stands the player built there (build mode), by the class they were built for
     for op in crate::fixes::player_ops(code) {
@@ -644,7 +744,8 @@ pub fn max_class(code: &str) -> usize {
         return 5;
     }
     if a.real_stands {
-        return (0..6).rev().find(|&c| a.stands[c] > 0).unwrap_or(0);
+        let n = stands_of(code);
+        return (0..6).rev().find(|&c| n[c] > 0).unwrap_or(0);
     }
     CLASS_BY_SIZE[airport_size(code)]
 }
@@ -812,6 +913,9 @@ pub fn fits_reason(kind: &str, code: &str) -> Option<String> {
     let a = d.airport(code);
     if a.factory {
         return None;
+    }
+    if a.built && !a.open {
+        return Some(format!("{code} is still under construction."));
     }
     let ac = d.ac(kind);
     let pc = type_class(kind);
@@ -988,6 +1092,7 @@ pub struct Game {
 
 impl Game {
     pub fn from_state(state: State) -> Self {
+        register_built(&state.built);
         set_story_start(state.story.as_ref().map(|s| s.start));
         crate::fixes::set_player(&state.airport_ops);
         set_infra(&state.infra);
@@ -1070,6 +1175,7 @@ impl Game {
             dev_used: false,
             story: opts.story.map(|y| StoryYears { start: y, year: y }),
             browser: None,
+            built: Vec::new(),
         };
         let mut g = Game::from_state(state);
         g.setup_rivals();
@@ -1705,6 +1811,11 @@ impl Game {
                     let ops = p.geo.as_ref().and_then(|g| g.as_array()).cloned().unwrap_or_default();
                     self.add_airport_ops(&p.code, ops);
                 }
+                // (a browser game from before sites: a ready airfield with a runway of 1200 m)
+                "airport" => {
+                    self.infra_mut(&p.code).runways = Some(vec![new_runway(&p.code, &[], 1200.0)]);
+                    self.set_built_open(&p.code);
+                }
                 _ => self.infra_mut(&p.code).terminal += 1,
             }
             self.infra_mut(&p.code).invested += p.full;
@@ -1712,6 +1823,50 @@ impl Game {
             let name = data().airport(&p.code).name.clone();
             self.log(format!("{name}: {} completed.", p.label), LogKind::Good);
         }
+    }
+
+    // ---------- airports the player built from scratch ----------
+
+    /// What a new airport site still needs before it can open: (what, done), as the browser game's checklist (which
+    /// also follows the taxiways from a stand to the runway; here a taxiway is enough).
+    pub fn site_checklist(&self, code: &str) -> Vec<(&'static str, bool)> {
+        let lay = crate::layouts::layout(code);
+        let n = |f: fn(&crate::layouts::Layout) -> usize| lay.as_deref().map_or(0, f);
+        vec![
+            ("A runway of 800 m or more", airport_runways(code).iter().any(|r| runway_length(r) >= 800.0)),
+            ("An apron", n(|l| l.aprons.len() + l.pads.len()) > 0),
+            ("A stand on it", n(|l| l.stands.len()) > 0),
+            ("A terminal", n(|l| l.terminals.len()) > 0),
+            ("Taxiways from the stands to the runway", n(|l| l.taxiways.len()) > 0),
+        ]
+    }
+
+    /// Opens a new airport whose checklist is done: planes may fly there from now on.
+    pub fn open_airport(&mut self, code: &str) -> Result<(), String> {
+        let a = data().try_airport(code).ok_or("No such airport.")?;
+        if !a.built {
+            return Err("Not one of your sites.".into());
+        }
+        if a.open {
+            return Err(format!("{} is open already.", a.name));
+        }
+        let left: Vec<String> = self.site_checklist(code).into_iter().filter(|x| !x.1).map(|x| x.0.to_lowercase()).collect();
+        if !left.is_empty() {
+            return Err(format!("Still missing: {}.", left.join(", ")));
+        }
+        let name = a.name.clone();
+        self.set_built_open(code);
+        self.log(format!("{name} ({code}) is open!"), LogKind::Good);
+        Ok(())
+    }
+
+    fn set_built_open(&mut self, code: &str) {
+        for a in &mut self.state.built {
+            if a["code"] == code {
+                a["open"] = serde_json::Value::Bool(true);
+            }
+        }
+        register_built(&self.state.built);
     }
 
     pub fn difficulty(&self) -> &'static Difficulty {
@@ -2530,8 +2685,8 @@ impl Game {
         for h in &r.hubs {
             let hub = d.airport(h);
             let mut pre: Vec<(&str, f64)> = Vec::new();
-            for a in &d.airports {
-                if a.code == *h || a.minor || a.factory || a.size < min_size || have.contains(&route_key(h, &a.code)) {
+            for (_, a) in d.all_airports() {
+                if a.code == *h || a.minor || a.factory || (a.built && !a.open) || a.size < min_size || have.contains(&route_key(h, &a.code)) {
                     continue;
                 }
                 let dd = distance_km(hub.lat, hub.lon, a.lat, a.lon);

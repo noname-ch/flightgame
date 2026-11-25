@@ -14,9 +14,12 @@ cache folder.
 
 **Save files work in both games.** Menu → Save to file writes the browser game's format (`src/savefmt.rs`), so the
 file loads in the browser game (⋯ → Load game → from a file), and Load from file (also on the start screen under
-Load game) reads saves from either game. What only one game has comes along anyway: the browser game's airline
-livery, placed winds and airports built from scratch wait in the save until it goes back there. Planes at an airport
-only the browser game has (one you built there) come home, and their slots there are left out.
+Load game) reads saves from either game. Airports you built from scratch in the browser game come along as airports
+of their own: on the map, with the stands you built (their classes measured as the browser game does, by the room
+beside each), a size from those stands and the runway, slots and timetables. A site not open yet takes no flights:
+its airport window lists what it still needs, and ✈ Open the airport opens it once that is built (build mode works
+there as at any airport you own). The browser game's airline livery and placed winds wait in the save until it goes
+back there.
 `cargo run --release --example saveconv -- <in.json> <out.json> [days]` converts a save on the command line.
 
 ## What it takes over from the browser game

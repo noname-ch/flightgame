@@ -19,7 +19,7 @@ rand = "0.10.3"
 rfd = "0.18.0"
 rodio = { version = "0.23.0", default-features = false, features = ["playback", "wav"] }
 serde = { version = "1.0.229", features = ["derive"] }
-serde_json = { version = "1.0.154", features = ["preserve_order"] }
+serde_json = { version = "1.0.154", features = ["preserve_order", "float_roundtrip"] }
 sha2 = "0.11.1"
 ureq = "3.5.2"
 walkers = "0.65.0"

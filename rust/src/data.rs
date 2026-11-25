@@ -50,6 +50,10 @@ pub struct Airport {
     pub stands: [u32; 6],
     /// true where the stands come from a real layout
     pub real_stands: bool,
+    /// an airport the player built from scratch (in the browser game: its `state.built`), and whether it is open
+    /// yet (a site under construction takes no flights)
+    pub built: bool,
+    pub open: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -149,6 +153,9 @@ pub struct Data {
 
 static DATA: OnceLock<Data> = OnceLock::new();
 
+/// The airports the player built in this game (see `Data::set_built`): after the data's, by index.
+static BUILT: std::sync::RwLock<Vec<&'static Airport>> = std::sync::RwLock::new(Vec::new());
+
 pub fn data() -> &'static Data {
     DATA.get_or_init(|| Data::load().unwrap_or_else(|e| panic!("game data: {e}")))
 }
@@ -202,6 +209,8 @@ impl Data {
             zone: Vec::new(),
             stands: [0; 6],
             real_stands: false,
+            built: false,
+            open: true,
         };
         if let Value::Array(list) = jsdata::assigned(AIRPORTS_JS, "airports")? {
             for a in &list {
@@ -486,10 +495,73 @@ impl Data {
     }
 
     pub fn airport(&self, code: &str) -> &Airport {
-        &self.airports[self.by_code[code]]
+        self.try_airport(code).unwrap_or_else(|| panic!("unknown airport {code}"))
     }
     pub fn try_airport(&self, code: &str) -> Option<&Airport> {
-        self.by_code.get(code).map(|&i| &self.airports[i])
+        match self.by_code.get(code) {
+            Some(&i) => Some(&self.airports[i]),
+            None => BUILT.read().unwrap().iter().find(|a| a.code == code).copied(),
+        }
+    }
+
+    // ---------- airports the player built ----------
+    // They come and go with the game (a loaded save brings its own), so they are kept apart from the data's: index k
+    // past `airports.len()` is one of them. Each is leaked (a handful per loaded game), so `&Airport` stays valid.
+
+    /// The data's airports and the player's: (index for `airport_at`, airport).
+    pub fn all_airports(&self) -> impl Iterator<Item = (usize, &Airport)> {
+        let built: Vec<&'static Airport> = BUILT.read().unwrap().clone();
+        self.airports.iter().chain(built).enumerate()
+    }
+    /// An airport's index for `airport_at` (the data's or one the player built).
+    pub fn index_of(&self, code: &str) -> Option<usize> {
+        self.by_code.get(code).copied().or_else(|| {
+            BUILT.read().unwrap().iter().position(|a| a.code == code).map(|k| self.airports.len() + k)
+        })
+    }
+    pub fn airport_count(&self) -> usize {
+        self.airports.len() + BUILT.read().unwrap().len()
+    }
+    pub fn airport_at(&self, k: usize) -> &Airport {
+        if k < self.airports.len() { &self.airports[k] } else { BUILT.read().unwrap()[k - self.airports.len()] }
+    }
+    pub fn built_airports(&self) -> Vec<&'static Airport> {
+        BUILT.read().unwrap().clone()
+    }
+    /// The player's own airports for this game (replacing the last game's).
+    pub fn set_built(&self, list: Vec<Airport>) {
+        let leaked = list.into_iter().map(|a| &*Box::leak(Box::new(a))).collect();
+        *BUILT.write().unwrap() = leaked;
+    }
+    /// An airport the player built at lat/lon: its catchment and time zone (its nearest neighbour's) worked out here.
+    pub fn new_built(&self, code: &str, name: &str, city: &str, country: &str, lat: f64, lon: f64, open: bool) -> Airport {
+        let zone = self
+            .airports
+            .iter()
+            .filter(|a| !a.zone.is_empty())
+            .min_by(|a, b| distance_km(a.lat, a.lon, lat, lon).total_cmp(&distance_km(b.lat, b.lon, lat, lon)))
+            .map(|a| a.zone.clone())
+            .unwrap_or_default();
+        Airport {
+            code: code.into(),
+            name: name.into(),
+            city: city.into(),
+            country: country.into(),
+            lat,
+            lon,
+            size: 1,
+            minor: false,
+            factory: false,
+            catchment: self.catchment_of(lat, lon),
+            runway: 0.0,
+            runway_paved: 0.0,
+            runways: Vec::new(),
+            zone,
+            stands: [0; 6],
+            real_stands: true,
+            built: true,
+            open,
+        }
     }
     pub fn ac(&self, code: &str) -> &Aircraft {
         &self.aircraft[self.aircraft_by_code[code]]

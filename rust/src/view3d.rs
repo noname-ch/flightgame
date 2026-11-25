@@ -2426,7 +2426,7 @@ impl View3d {
         };
         // the buildings of the airports within 25 km (those with a layout of their own)
         let mut buildings = Vec::new();
-        for a in &d.airports {
+        for (_, a) in d.all_airports() {
             if (a.lat - lat0).abs() > 0.25 || distance_km(lat0, lon0, a.lat, a.lon) > 25.0 {
                 continue;
             }
@@ -2441,7 +2441,7 @@ impl View3d {
         }
         // the ground of the airports within 40 km: runways, taxiways, aprons and their paint (as the browser's map)
         let mut airfields = Vec::new();
-        for a in &d.airports {
+        for (_, a) in d.all_airports() {
             if a.factory || (a.lat - lat0).abs() > 0.4 || distance_km(lat0, lon0, a.lat, a.lon) > 40.0 {
                 continue;
             }

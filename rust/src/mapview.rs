@@ -202,7 +202,7 @@ pub fn draw(
         0
     };
     let expanded = rect.expand(20.0);
-    for (k, a) in d.airports.iter().enumerate() {
+    for (k, a) in d.all_airports() {
         let own = game.owns_slot(&a.code);
         let sel = selected == Some(Pick::Airport(k));
         if a.factory || (!own && !sel && (a.size < min_size || (a.minor && zoom < 7.0 && !layers.all_airports))) {
@@ -273,7 +273,7 @@ pub fn draw(
     if let Some(h) = hovered {
         response.clone().on_hover_ui_at_pointer(|ui| match h {
             Pick::Airport(k) => {
-                let a = &d.airports[k];
+                let a = d.airport_at(k);
                 ui.strong(format!("{} {}", a.code, a.name));
                 ui.label(format!("{}, {} · {} (size {})", a.city, a.country, flightgame::game::airport_category(&a.code), airport_size(&a.code)));
             }
@@ -412,7 +412,7 @@ fn ground(painter: &egui::Painter, projector: &Projector, rect: egui::Rect, zoom
     let d = data();
     let pos = |lat: f64, lon: f64| -> Pos2 { projector.project(lat_lon(lat, lon)).to_pos2() };
     let near = rect.expand(rect.width().max(rect.height()) * 0.5);
-    for a in &d.airports {
+    for (_, a) in d.all_airports() {
         let at = pos(a.lat, a.lon);
         if a.factory || !near.contains(at) {
             continue;
