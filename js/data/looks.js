@@ -67,6 +67,7 @@ FG.data.looks = {
   'JU52': { len: 18.9, span: 29.3, dia: 2.2, eng: 'prop3', wing: 'low', tailwheel: true, fixed: true, corrugated: true },
   'DC-3': { len: 19.7, span: 29.0, dia: 2.4, eng: 'radial2', wing: 'low', tailwheel: true },
   'CONCORDE': { len: 61.7, span: 25.6, dia: 3.3, eng: 'concorde', gear: 2 },
+  'GLOBAL7500': { len: 33.8, span: 31.7, dia: 2.7, eng: 'tail2', ttail: true, winglet: true },
   // story-mode types (most borrow a relative's 3D model, js/data/models.js)
   'VC-700': { len: 24.9, span: 28.6, dia: 2.9, eng: 'prop2', wing: 'low' },
   'BRIT-310': { len: 37.9, span: 43.4, dia: 3.7, eng: 'prop2', wing: 'low' },

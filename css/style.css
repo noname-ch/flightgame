@@ -1447,6 +1447,7 @@ body { height: 100dvh; } /* the visible height, also while the phone's address b
 #pilot-hud .pl-bar { position: absolute; top: 64px; right: 12px; display: flex; gap: 6px; pointer-events: auto; }
 #pilot-hud .pl-bar button { padding: 6px 10px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.25); background: rgba(8, 10, 14, 0.75); color: #e8eef8; font-size: 13px; cursor: pointer; }
 #pilot-hud .pl-bar button:hover { background: rgba(40, 46, 60, 0.9); }
+#pilot-hud .pl-bar button.off { border-color: #ffb000; color: #ffb000; }
 body.piloting .view3d-controls { display: none; }
 #pilot-start, #pilot-menu {
   position: fixed; inset: 0; z-index: 3700; display: flex; align-items: center; justify-content: center;
