@@ -51,7 +51,12 @@ const chrome = spawn(findChrome(), [
   '--autoplay-policy=no-user-gesture-required', // (the aircraft sounds start without a real click)
   '--mute-audio', // (... and are measured, not heard: the meter and spectrum still work)
   'about:blank',
-], { stdio: ['ignore', 'ignore', 'pipe'] });
+], {
+  stdio: ['ignore', 'ignore', 'pipe'],
+  // (not the user's ~/.config/chromium-flags.conf, which Arch's chromium reads: Omarchy's extensions and Wayland flags
+  // there made the page hidden after the start, so the game drew nothing and half the steps failed)
+  env: { ...process.env, XDG_CONFIG_HOME: profile },
+});
 const wsUrl = await new Promise((resolve, reject) => {
   let buf = '';
   chrome.stderr.on('data', (d) => {
