@@ -1121,7 +1121,7 @@ try {
     if (!side1 || side2 !== -side1) errors.push(`3D wing camera (N, N again for the other wing) went wrong: ${side1} then ${side2}`);
     if (!back.on || !back.follow || back.cam !== 'chase' || back.pitch > 80.01) errors.push(`V did not bring back the chase camera: ${JSON.stringify(back)}`);
 
-    step('fly it yourself (P): an A350 lined up at Zurich, TOGA spools the engines, the keys are the plane\'s, a checkpoint goes back, Esc opens its menu, Q leaves');
+    step('fly it yourself (P): an A350 lined up at Zurich, TOGA spools the engines, the keys are the plane\'s, its 3D cockpit, a checkpoint goes back, Esc opens its menu, Q leaves');
     await key('p');
     const dlg = await evaluate(() => {
       const el = document.getElementById('pilot-start');
@@ -1142,6 +1142,20 @@ try {
       const fl = await evaluate(() => ({ n1: FG.pilot.state.n1[0], lever: FG.pilot.state.lever, follow: FG.view3d.follow, drawn: !!FG.view3d.pilotE, speed: FG.ui.speed, hud: !document.getElementById('pilot-hud').hidden }));
       if (!(fl.n1 > 30) || fl.lever !== 1 || !fl.follow || !fl.drawn || !fl.hud) errors.push(`fly it yourself: ${JSON.stringify(fl)}`);
       if (fl.speed !== speed0) errors.push('fly it yourself: → changed the game speed while flying');
+      // the A350's 3D flight deck round the cockpit camera (js/cockpit3d.js): built, its screens painted, the head turns
+      await evaluate(() => { FG.pilot.state.cam = 'cockpit'; FG.view3d.pilotCam('cockpit'); });
+      const deck = await waitFor(() => FG.cockpit3d && FG.cockpit3d.pit && FG.cockpit3d.pit.screens.length >= 7, 20000);
+      if (!deck) errors.push('fly it yourself: the A350\'s 3D cockpit was not drawn in the cockpit camera');
+      else {
+        const pit = await evaluate(() => {
+          const sc = FG.cockpit3d.pit.screens.find((x) => x.kind === 'pfdnd-c');
+          const px = sc.ctx.getImageData(sc.cv.width * 0.25, sc.cv.height * 0.45, 1, 1).data; // (the PFD's sky or ground)
+          FG.view3d.look.yaw = -60; // (a drag turns the head)
+          return { lit: px[0] + px[1] + px[2] > 60, eye: FG.pilot.LOOK_DOWN };
+        });
+        if (!pit.lit) errors.push(`fly it yourself: the cockpit's PFD screen stayed blank: ${JSON.stringify(pit)}`);
+        await evaluate(() => { FG.view3d.look.yaw = 0; FG.pilot.state.cam = 'chase'; FG.view3d.pilotCam('chase'); });
+      }
       // checkpoint: Z keeps the flight, Backspace puts it back there (paused), even after a crash
       await key('z');
       await evaluate(() => { const s = FG.pilot.state; s.lever = 0; s.crashed = 'test'; s.lat += 0.01; });

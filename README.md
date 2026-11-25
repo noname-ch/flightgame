@@ -406,6 +406,10 @@ you fly, the keyboard is the plane's (the game's keys come back when you leave):
   X speed brakes, Shift+X arms the ground spoilers, Space or B wheel brakes, K parking brake.
 - C cycles the cameras (chase, cockpit with a head-up display, wing, fly-by), V chase, N wing. P pauses, H lists the
   keys, Esc opens a menu (the flight waits): resume, start this flight again, or leave the cockpit.
+- The A350s have a 3D flight deck in the cockpit camera: the six screens show the PFD and navigation display, the engine
+  and warning display, the wheel page and the information system; the thrust levers, side-sticks, gear lever, flap and
+  speed brake levers move, the sun shines in and the panels light up at night. Drag to look round (double click: ahead
+  again); I puts the big PFD and engine display over the view as well.
 - Checkpoints: Z (or ⚑ Checkpoint) keeps the flight as it is now; Backspace (or ⟲ Retry, or from the menu or after
   a crash) puts it back there, paused until P, as often as it takes: practise a landing until it works. The
   checkpoint stays when the flight starts again and goes with a new flight.

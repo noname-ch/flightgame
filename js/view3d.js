@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import { loadModel, modelSize, facing, patchFacing } from './models3d.js';
 import { setGear, setBogies, setOleo } from './gear3d.js';
 import { waterLayer } from './water3d.js';
+import * as cockpit3d from './cockpit3d.js';
 
 const G = FG.game;
 const D = FG.data;
@@ -2343,6 +2344,20 @@ const planeLayer = {
   },
 };
 const pilotOn = () => !!(FG.pilot && FG.pilot.active);
+// The 3D flight deck round the cockpit camera (js/cockpit3d.js), drawn last over the whole map with planeLayer's
+// renderer. Its own depth: the world's is cleared under it (a layer after it would draw into the windows).
+const cockpitLayer = {
+  id: 'fg-cockpit',
+  type: 'custom',
+  renderingMode: '3d',
+  render(gl) {
+    if (!v.on || !cockpitShown() || !planeLayer.renderer) return;
+    const r = planeLayer.renderer;
+    r.resetState();
+    drawCockpit(r, gl, smoothTime(frameNow()));
+    restoreGl(r, v.map);
+  },
+};
 // Height the hand-flown plane's middle is drawn at: its wheels at its height above sea level (the physics take the
 // ground from the drawn terrain), the middle `lift` above them.
 function pilotAlt(pose, e) {
@@ -2709,6 +2724,28 @@ function pilotTick() {
 // Cockpit camera: the captain's eyes (about 4.6 m behind the nose, 7.6 m above the wheels on an A350), looking
 // FG.pilot.LOOK_DOWN° under the nose; it pitches and rolls with the plane. The plane itself is not drawn.
 const EYE = { back: 4.6, up: 7.6 };
+// The 3D flight deck (js/cockpit3d.js) is drawn round the camera for the types it has (the A350s): then the eye
+// sits in the captain's seat, and a drag turns the head (v.look; a double click looks ahead again).
+const cockpitShown = () => !v.noPit && pilotOn() && v.follow && v.cam === 'cockpit' && cockpit3d.has(FG.pilot.type);
+v.look = { yaw: 0, pitch: 0 };
+// The sun in the cockpit's frame (x right, y ahead, z up), from the plane's attitude.
+function drawCockpit(renderer, gl, t) {
+  const pose = FG.pilot.pose();
+  const sp = G.sunAt(pose.lat, pose.lon, t);
+  const day = G.daylight ? G.daylight(pose.lat, pose.lon, t) : 1;
+  const el = sp.elev * DEG, az = sp.az * DEG;
+  const sun = [Math.cos(el) * Math.sin(az), Math.cos(el) * Math.cos(az), Math.sin(el)]; // east, north, up
+  const h = pose.heading * DEG, th = (pose.pitch || 0) * DEG, ph = (pose.bank || 0) * DEG;
+  const fwd = [Math.sin(h), Math.cos(h), 0], right = [Math.cos(h), -Math.sin(h), 0], up = [0, 0, 1];
+  const comb = (a, ka, b, kb) => [a[0] * ka + b[0] * kb, a[1] * ka + b[1] * kb, a[2] * ka + b[2] * kb];
+  const nose = comb(fwd, Math.cos(th), up, Math.sin(th));
+  const lift = comb(up, Math.cos(th), fwd, -Math.sin(th));
+  const top = comb(lift, Math.cos(ph), right, Math.sin(ph));
+  const rgt = comb(right, Math.cos(ph), lift, -Math.sin(ph));
+  const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const fov = v.map.getVerticalFieldOfView ? v.map.getVerticalFieldOfView() : 55;
+  cockpit3d.draw(renderer, gl, { sunB: sp.elev > -2 ? [dot(sun, rgt), dot(sun, nose), dot(sun, top)] : null, day, fov, look: v.look, lookDown: FG.pilot.LOOK_DOWN });
+}
 function cockpitTick(map, e, pose) {
   const len = e.obj.userData.len;
   const ud = e.obj.userData;
@@ -2721,9 +2758,15 @@ function cockpitTick(map, e, pose) {
   // pitched about the main wheels (as placeModel does): from where they touch the ground
   const mainY = ud.mainY != null ? ud.mainY : -0.05 * len;
   const ahead = 0.5 * len - EYE.back - mainY;
-  const eye = [0, 1, 2].map((i) => fwd[i] * mainY + nose[i] * ahead + top[i] * EYE.up);
-  const ld = (FG.pilot.LOOK_DOWN || 4) * DEG;
-  const dir = comb(nose, Math.cos(ld), top, -Math.sin(ld));
+  const pit = cockpit3d.has(FG.pilot.type);
+  const rgt = comb(right, Math.cos(ph), comb(up, Math.cos(th), fwd, -Math.sin(th)), -Math.sin(ph));
+  const side = pit ? -cockpit3d.EYE_X : 0; // (in the captain's seat)
+  const eye = [0, 1, 2].map((i) => fwd[i] * mainY + nose[i] * ahead + top[i] * EYE.up + rgt[i] * side);
+  // looking down the nose, the head turned by v.look (only where there is a cockpit to look round)
+  const yaw = pit ? v.look.yaw * DEG : 0, lp = pit ? v.look.pitch * DEG : 0;
+  const ld = (FG.pilot.LOOK_DOWN || 4) * DEG - lp;
+  const ahead2 = comb(nose, Math.cos(yaw), rgt, Math.sin(yaw));
+  const dir = comb(ahead2, Math.cos(ld), top, -Math.sin(ld));
   const aim = [0, 1, 2].map((i) => eye[i] + dir[i] * 2000);
   const base = pose.altMSL * TERRAIN_EXAG;
   const [cLat, cLon] = offsetLL(pose.lat, pose.lon, eye[0], eye[1]);
@@ -2751,6 +2794,7 @@ function pilotCam(mode) {
   if (mode === 'wing2') { v.wingSide = -v.wingSide; mode = 'wing'; }
   if (v.follow && v.cam === mode) { if (mode === 'flyby') v.flyby = null; } else setFollow(true, mode);
   wideFov(mode === 'cockpit');
+  if (mode === 'cockpit') { v.look.yaw = 0; v.look.pitch = 0; }
   if (v.map) v.map.triggerRepaint();
 }
 
@@ -2940,6 +2984,7 @@ function createMap(fit) {
     map.addLayer(planeLayer, 'fg-airport-labels');
     map.addLayer(airportLights, 'fg-planes');
     map.addLayer(water, 'fg-lights');
+    map.addLayer(cockpitLayer); // (on top of everything: the windows show the world with its labels and lights)
     v.ready = true;
     refreshData();
     if (!at) fitNetwork();
@@ -2965,6 +3010,12 @@ function createMap(fit) {
     drag.moved = true;
     drag.x = ev.clientX;
     drag.y = ev.clientY;
+    if (cockpitShown()) { // (in the 3D cockpit: the head turns)
+      v.look.yaw = Math.max(-150, Math.min(150, v.look.yaw - dx * 0.25));
+      v.look.pitch = Math.max(-60, Math.min(70, v.look.pitch + dy * 0.2));
+      map.triggerRepaint();
+      return;
+    }
     if (v.cam !== 'chase') setFollow(true, 'chase');
     v.orbit.yaw = wrap180(v.orbit.yaw + dx * 0.35);
     v.orbit.pitch = Math.max(5, Math.min(v.orbit.maxPitch || 80, (v.orbit.pitch != null ? v.orbit.pitch : map.getPitch()) - dy * 0.25));
@@ -2977,6 +3028,7 @@ function createMap(fit) {
   };
   window.addEventListener('pointerup', up);
   window.addEventListener('pointercancel', up);
+  map.getCanvasContainer().addEventListener('dblclick', () => { v.look.yaw = 0; v.look.pitch = 0; map.triggerRepaint(); });
   map.on('moveend', () => { v.gatesDirty = true; });
   map.on('render', () => { if (v.ready && v.on) { refreshData(); followTick(); updateTrackRing(); if (v.hoverId) updateHover(); } });
   // Keep mouse events away from the Leaflet map underneath.

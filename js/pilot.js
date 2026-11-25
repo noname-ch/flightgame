@@ -208,7 +208,9 @@
     DETENTS = [0, 0.86, 0.93, 1].map((at, i) => ({ at, name: sp.detents[i] }));
   }
   useType(TYPES['A350-900']);
-  const LOOK_DOWN = 4; // cockpit camera: looks this far below the nose (°)
+  // cockpit camera: looks this far below the nose (°); more in a 3D flight deck (js/cockpit3d.js), so the screens show
+  const pit3d = () => /^A350/i.test(s.type || '');
+  const lookDownOf = () => (pit3d() ? 10 : 4);
   // airbus(): Airbus normal law with its protections. With the limiter off (L) an Airbus flies in direct law: as
   // the conventional types, it can stall, overbank and pull as hard as the stick asks.
   const isFbw = () => s.spec.law === 'airbus'; // (the Airbuses and the Global 7500: normal law with hard protections)
@@ -515,6 +517,7 @@
       case 'Backspace': toCheckpoint(); break;
       case 'p': s.paused = !s.paused; say(s.paused ? 'Paused (P)' : 'Resumed', 'info', 1500); break;
       case 'h': s.help = !s.help; break;
+      case 'i': s.inst = !s.inst; break;
       case 'l': toggleLimiter(); break;
       case 'g':
         if (s.spec.gear === 'fixed') { say(`The ${s.spec.name}'s gear is fixed: always down`, 'info', 2000); break; }
@@ -1037,6 +1040,7 @@
     ['X  /  Shift+X', 'speed brakes · arm ground spoilers'],
     ['Space  B', 'wheel brakes (hold)    K: parking brake'],
     ['C  V  N', 'camera: next · chase · wing'],
+    ['I   drag', () => (pit3d() ? 'cockpit: big PFD and engine display on / off · drag to look round (double click: ahead)' : '(the A350s\' 3D cockpit only)')],
     ['Z   Backspace', 'save a checkpoint · back to it (try again until it works)'],
     ['L', () => (!s.spec.prot ? 'limiter: this one has no protections at all' : s.limiter ? 'limiter off: no protections (it can stall and be overstressed)' : 'limiter back on')],
     ['P   Esc', 'pause · menu (resume, checkpoint, start again, leave)'],
@@ -1051,10 +1055,26 @@
     ctx.clearRect(0, 0, W, H);
     if (s.loading) { banner(W / 2, H / 2, 'Loading the ground…', '#fff', 22); return; }
     const k = Math.min(1, W / 900, H / 620);
-    if (s.cam === 'cockpit') headUp(W, H);
-    // PFD bottom left, engines and config bottom right
-    ctx.save(); ctx.translate(12, H - 12 - 270 * k); ctx.scale(k, k); pfd(); ctx.restore();
-    ctx.save(); ctx.translate(W - 12 - 250 * k, H - 12 - 270 * k); ctx.scale(k, k); ecam(); ctx.restore();
+    // (in a 3D flight deck the head-up display only while looking ahead, and the screens are in the panel: the big
+    // PFD and engine display over the view only with I)
+    const deck = s.cam === 'cockpit' && pit3d();
+    const look = (FG.view3d && FG.view3d.look) || { yaw: 0, pitch: 0 };
+    if (s.cam === 'cockpit' && !deck) headUp(W, H);
+    else if (deck && Math.abs(look.yaw) < 4 && Math.abs(look.pitch) < 4) {
+      // the head-up display only in its combiner glass in front of the captain
+      const cx = W * 0.27, cy = H * 0.07, cw = W * 0.46, ch = H * 0.50;
+      ctx.save();
+      ctx.fillStyle = 'rgba(120,200,160,0.035)'; ctx.fillRect(cx, cy, cw, ch);
+      ctx.strokeStyle = 'rgba(20,22,24,0.3)'; ctx.lineWidth = 2; ctx.strokeRect(cx, cy, cw, ch);
+      ctx.beginPath(); ctx.rect(cx, cy, cw, ch); ctx.clip();
+      headUp(W, H);
+      ctx.restore();
+    }
+    if (!deck || s.inst) {
+      // PFD bottom left, engines and config bottom right
+      ctx.save(); ctx.translate(12, H - 12 - 270 * k); ctx.scale(k, k); pfd(); ctx.restore();
+      ctx.save(); ctx.translate(W - 12 - 250 * k, H - 12 - 270 * k); ctx.scale(k, k); ecam(); ctx.restore();
+    }
     // warnings, messages
     const now = performance.now();
     s.msgs = s.msgs.filter((m) => m.until > now);
@@ -1306,12 +1326,144 @@
     c.fillText(`${s.type}   C camera · H keys · Esc menu`, 14, 256);
   }
 
+  // ---------- the 3D cockpit's screens (js/cockpit3d.js draws them onto its display units) ----------
+  // Navigation display: the compass rose round the plane, the runways near it to scale, the wind, speeds and the ILS.
+  function nd(W, H) {
+    const c = ctx;
+    c.fillStyle = '#05070a'; c.fillRect(0, 0, W, H);
+    c.textBaseline = 'middle'; c.textAlign = 'center';
+    const cx = W / 2, cy = H * 0.74, r = H * 0.60;
+    const rangeNm = s.onGround ? 2 : (s.h - s.groundH) / FT < 4000 ? 10 : 40;
+    const ppm = r / (rangeNm * 1852); // pixels per metre
+    // runways and airports in range, turned so the heading points up
+    c.save(); c.beginPath(); c.arc(cx, cy, r, 0, Math.PI * 2); c.clip();
+    const cosL = Math.cos(s.lat * DEG);
+    const toXY = (lat, lon) => {
+      const e = (lon - s.lon) * 111320 * cosL, n = (lat - s.lat) * 111320, a = -s.psi * DEG;
+      return [cx + (e * Math.cos(a) - n * Math.sin(a)) * ppm, cy - (e * Math.sin(a) + n * Math.cos(a)) * ppm];
+    };
+    c.lineCap = 'round';
+    const done = new Set();
+    for (const e of nearbyEnds()) {
+      const k = [e.lat, e.lon, ...e.far].map((x) => x.toFixed(4)).sort().join();
+      if (done.has(k)) continue;
+      done.add(k);
+      const [x1, y1] = toXY(e.lat, e.lon), [x2, y2] = toXY(e.far[0], e.far[1]);
+      c.strokeStyle = '#e8eef8'; c.lineWidth = Math.max(2.5, e.width * ppm);
+      c.beginPath(); c.moveTo(x1, y1); c.lineTo(x2, y2); c.stroke();
+    }
+    const il = ils();
+    if (il) { // the localizer course (magenta dashes out from the threshold)
+      const [x1, y1] = toXY(il.e.lat, il.e.lon);
+      const [la, lo] = offset(il.e.lat, il.e.lon, il.e.course + 180, 18520);
+      const [x2, y2] = toXY(la, lo);
+      c.setLineDash([10, 8]); c.strokeStyle = '#ff4fd8'; c.lineWidth = 2.5;
+      c.beginPath(); c.moveTo(x1, y1); c.lineTo(x2, y2); c.stroke(); c.setLineDash([]);
+    }
+    c.restore();
+    // the rose: ticks every 5°, numbers every 30°
+    c.strokeStyle = '#e8eef8'; c.fillStyle = '#e8eef8'; c.lineWidth = 2.5;
+    c.beginPath(); c.arc(cx, cy, r, Math.PI * 1.05, Math.PI * 1.95); c.stroke();
+    c.font = `600 ${Math.round(H * 0.045)}px system-ui, sans-serif`;
+    for (let d = 0; d < 360; d += 5) {
+      const a = (d - s.psi) * DEG;
+      if (Math.abs(wrap180(d - s.psi)) > 80) continue;
+      const sx = Math.sin(a), sy = -Math.cos(a), l = d % 10 === 0 ? H * 0.03 : H * 0.017;
+      c.beginPath(); c.moveTo(cx + sx * r, cy + sy * r); c.lineTo(cx + sx * (r - l), cy + sy * (r - l)); c.stroke();
+      if (d % 30 === 0) c.fillText(String(d / 10), cx + sx * (r - H * 0.065), cy + sy * (r - H * 0.065));
+    }
+    // half range ring (dashed)
+    c.setLineDash([4, 6]); c.lineWidth = 1.2; c.strokeStyle = '#9aa4b2';
+    c.beginPath(); c.arc(cx, cy, r / 2, Math.PI * 1.05, Math.PI * 1.95); c.stroke(); c.setLineDash([]);
+    c.fillStyle = '#4fd6ff'; c.font = `${Math.round(H * 0.035)}px system-ui, sans-serif`;
+    c.fillText(String(rangeNm / 2), cx - r / 2 * 0.72, cy - r / 2 * 0.72);
+    // lubber line and the plane
+    c.strokeStyle = '#ffd60a'; c.lineWidth = 4;
+    c.beginPath(); c.moveTo(cx, cy - r - H * 0.035); c.lineTo(cx, cy - r + H * 0.02); c.stroke();
+    c.beginPath(); c.moveTo(cx, cy - H * 0.05); c.lineTo(cx, cy + H * 0.06); c.moveTo(cx - H * 0.06, cy); c.lineTo(cx + H * 0.06, cy);
+    c.moveTo(cx - H * 0.025, cy + H * 0.045); c.lineTo(cx + H * 0.025, cy + H * 0.045); c.stroke();
+    // the track (green diamond on the rose)
+    const vn = s.V * Math.cos(s.gamma);
+    const trk = s.track != null ? s.track : s.psi;
+    const ta = (trk - s.psi) * DEG;
+    c.fillStyle = '#30d158';
+    c.save(); c.translate(cx + Math.sin(ta) * (r - H * 0.012), cy - Math.cos(ta) * (r - H * 0.012)); c.rotate(Math.PI / 4);
+    c.fillRect(-H * 0.012, -H * 0.012, H * 0.024, H * 0.024); c.restore();
+    // corners: GS / TAS, wind, ILS
+    c.textAlign = 'left'; c.font = `600 ${Math.round(H * 0.045)}px system-ui, sans-serif`;
+    c.fillStyle = '#e8eef8'; c.fillText('GS', W * 0.03, H * 0.06);
+    c.fillStyle = '#30d158'; c.fillText(String(Math.round(vn / KT)), W * 0.10, H * 0.06);
+    c.fillStyle = '#e8eef8'; c.fillText('TAS', W * 0.22, H * 0.06);
+    c.fillStyle = '#30d158'; c.fillText(String(Math.round(s.V / KT)), W * 0.31, H * 0.06);
+    c.textAlign = 'right';
+    if (il) {
+      c.fillStyle = '#ff4fd8'; c.fillText(`ILS ${il.e.code} ${il.e.name}`, W * 0.97, H * 0.06);
+      c.fillStyle = '#e8eef8'; c.fillText(`${(il.d / 1852).toFixed(1)} NM`, W * 0.97, H * 0.12);
+    } else { c.fillStyle = '#9aa4b2'; c.fillText(s.onGround ? 'TAXI / TO' : 'NAV', W * 0.97, H * 0.06); }
+    c.textAlign = 'center'; c.fillStyle = '#4fd6ff'; c.font = `${Math.round(H * 0.038)}px system-ui, sans-serif`;
+    c.fillText(`${rangeNm} NM`, W * 0.9, H * 0.94);
+  }
+  // Systems display: the WHEEL page (gear, brakes, spoilers, flaps) as the A350's lower centre screen shows it.
+  function sd(W, H) {
+    const c = ctx;
+    c.fillStyle = '#05070a'; c.fillRect(0, 0, W, H);
+    c.textBaseline = 'middle'; c.textAlign = 'center';
+    const f = Math.round(H * 0.05);
+    c.font = `600 ${f}px system-ui, sans-serif`; c.fillStyle = '#e8eef8';
+    c.fillText('WHEEL', W / 2, H * 0.07);
+    c.strokeStyle = '#e8eef8'; c.lineWidth = 1.5; c.beginPath(); c.moveTo(W * 0.43, H * 0.1); c.lineTo(W * 0.57, H * 0.1); c.stroke();
+    // gear: three triangles, green down and locked, red in transit
+    const tri = (x, y) => {
+      const z = H * 0.06;
+      c.beginPath(); c.moveTo(x - z, y - z * 0.6); c.lineTo(x + z, y - z * 0.6); c.lineTo(x, y + z * 0.8); c.closePath();
+      if (s.spec.gear === 'fixed' || s.gear > 0.99) { c.fillStyle = '#30d158'; c.fill(); }
+      else if (s.gear > 0.01) { c.strokeStyle = '#ff3b30'; c.lineWidth = 3; c.stroke(); }
+      else { c.strokeStyle = '#4a5260'; c.lineWidth = 2; c.stroke(); }
+    };
+    tri(W / 2, H * 0.24); tri(W * 0.27, H * 0.42); tri(W * 0.73, H * 0.42);
+    // brakes (temperatures go up with braking at speed)
+    s.brakeT = (s.brakeT ?? 60) + ((s.brake * s.V * 0.8 + 60 - (s.brakeT ?? 60) * 0.98) * 0.02);
+    c.font = `${Math.round(H * 0.04)}px system-ui, sans-serif`;
+    for (const [x, side] of [[W * 0.27, 'L'], [W * 0.73, 'R']]) {
+      c.strokeStyle = '#e8eef8'; c.lineWidth = 1.5;
+      c.strokeRect(x - W * 0.11, H * 0.52, W * 0.22, H * 0.14);
+      c.fillStyle = s.brakeT > 300 ? '#ffb000' : '#30d158';
+      c.fillText(`${Math.round(s.brakeT)} °C`, x, H * 0.59);
+      c.fillStyle = '#9aa4b2'; c.fillText(`BRK ${side}`, x, H * 0.70);
+    }
+    c.fillStyle = s.parking ? '#ffb000' : '#30d158';
+    c.fillText(s.parking ? 'PARK BRK ON' : s.brake > 0.05 ? 'BRAKES' : 'AUTO BRK', W / 2, H * 0.59);
+    // spoilers and flaps
+    c.fillStyle = '#e8eef8'; c.fillText('SPLRS', W * 0.16, H * 0.82);
+    for (let i = 0; i < 6; i++) {
+      const x = W * 0.27 + i * W * 0.045, up = Math.max(s.sb, s.gs);
+      c.fillStyle = up > 0.05 ? '#30d158' : '#4a5260';
+      c.fillRect(x, H * 0.84 - up * H * 0.06, W * 0.03, H * 0.012 + up * H * 0.06);
+    }
+    c.fillStyle = '#e8eef8'; c.fillText(CONF.length > 1 ? `FLAPS ${CONF[s.conf].name}` : 'NO FLAPS', W * 0.75, H * 0.82);
+    c.fillStyle = '#4fd6ff'; c.fillText(`GW ${Math.round(s.mass / 1000)} t`, W * 0.75, H * 0.92);
+  }
+  // FG.pilot.panel(ctx, which, W, H): one screen ('pfd', 'nd', 'ecam', 'sd') drawn into another canvas.
+  function panel(into, which, W, H) {
+    if (!s.active || !s.spec) return;
+    const old = ctx;
+    ctx = into;
+    try {
+      ctx.save();
+      if (which === 'pfd') { ctx.fillStyle = '#05070a'; ctx.fillRect(0, 0, W, H); const k = Math.min(W / 400, H / 270); ctx.translate((W - 400 * k) / 2, (H - 270 * k) / 2); ctx.scale(k, k); pfd(); }
+      else if (which === 'ecam') { ctx.fillStyle = '#05070a'; ctx.fillRect(0, 0, W, H); const k = Math.min(W / 250, H / 270); ctx.translate((W - 250 * k) / 2, (H - 270 * k) / 2); ctx.scale(k, k); ecam(); }
+      else if (which === 'nd') nd(W, H);
+      else if (which === 'sd') sd(W, H);
+      ctx.restore();
+    } finally { ctx = old; }
+  }
+
   // Cockpit view: a head-up display in green, lined up with the camera (which looks LOOK_DOWN° under the nose).
   function headUp(W, H) {
     const c = ctx;
     const fov = FG.view3d && FG.view3d.fov ? FG.view3d.fov() : 36.87;
     const ppd = H / fov;
-    const bx = W / 2, by = H / 2 - LOOK_DOWN * ppd; // where the nose points
+    const bx = W / 2, by = H / 2 - lookDownOf() * ppd; // where the nose points
     c.save();
     c.strokeStyle = 'rgba(70,255,120,0.9)'; c.fillStyle = 'rgba(70,255,120,0.95)'; c.lineWidth = 1.6;
     c.font = '600 14px ui-monospace, monospace'; c.textBaseline = 'middle';
@@ -1485,7 +1637,8 @@
     get cam() { return s.cam; },
     get hideId() { return s.hideId; },
     get ready() { return s.active && !s.loading; },
-    LOOK_DOWN,
+    get LOOK_DOWN() { return lookDownOf(); },
+    panel,
     types: TYPES,
     open: openDialog, start, stop, step, pose,
     state: s, // (for debugging)
