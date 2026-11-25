@@ -75,10 +75,37 @@
       { id: 'deep', name: 'Deep', url: 'sounds/roar-deep.wav', rms: 0.3 },
     ],
   };
+  // The engines themselves, recorded (ElevenLabs Sound Effects v3, 20 s seamless loops; the user: "it is just the
+  // same every time and it like rotates, it sounds awful, use elevenlabs"): a layer for each power setting, the
+  // layers crossfaded with the fan speed (jets: idle, mid, full; turboprops: idle, full). Each plane plays a take of
+  // each at random from a random place, and every RESEEK seconds crossfades to another place in it, so the loops
+  // never come round the same. Under them the made-up whines, screech, roar and propellers play softer (UNDER).
+  // A layer with no takes yet is left out (the others crossfade without it); a kind with none stays made up.
+  // 22 kHz mono WAV, 19.5 s, the end crossfaded into the start. rms: as loud as each plays (idle well under full).
+  const BED = {
+    jet: {
+      idle: [
+        { id: 'idle1', url: 'sounds/jet-idle-1.wav', rms: 0.12 }, // (low hum, a soft whine)
+        { id: 'idle2', url: 'sounds/jet-idle-2.wav', rms: 0.12 },
+      ],
+      mid: [],
+      full: [
+        { id: 'full1', url: 'sounds/jet-full-1.wav', rms: 0.7 }, // (take-off thrust: the deep roar)
+        { id: 'full2', url: 'sounds/jet-full-2.wav', rms: 0.7 }, // (a run-up at full power: roar and rasp)
+      ],
+    },
+    turboprop: { idle: [], full: [] },
+  };
+  const BED_LEVEL = 1;      // the layers × the plane's size × the style's bed × the mixer's 'rec'
+  const RESEEK = [14, 30];  // s: another place in the take after this long (at random in between)
+  const BED_FADE = 2;       // s the jump to it crossfades
+  // (measured: with the recordings ×1 the take-off was 1 dB over the made-up parts alone, so they are well under)
+  const UNDER = { fan: 0.25, core: 0.3, screech: 0.25, roar: 0.3, rumble: 0.7, drone: 0, prop: 0.3, chop: 0.25, wh: 0.3 };
+  const NONE = { fan: 1, core: 1, screech: 1, roar: 1, rumble: 1, drone: 1, prop: 1, chop: 1, wh: 1 };
   const SCREECH = 5;        // the screech's level (× size, power, style)
   // The screech's grains (js/grains.js): 70 ms, each from up to 30 ms either side of the playhead and up to 1.5 %
   // sharp or flat, the pitch wandering 2 % (a take may have its own spread and wander).
-  const GRAIN = { grain: 0.07, jitter: 0.03, spread: 0.015, wander: 0.02 };
+  const GRAIN = { grain: 0.07, jitter: 0.03, spread: 0.004, wander: 0 }; // (a wandering pitch swept like a siren: "it rotates")
   const START_LEVEL = 0.3;  // the start recording × the plane's size × the style's whine
   const FAR = [800, 4000]; // metres: from here the made-up voice gives way to the far recording, all of it by there
   const FAR_LEVEL = 2.5;   // the far recording × the engines' power: about as loud as the made-up voice it takes over from
@@ -104,25 +131,25 @@
       name: 'Standard', about: 'The full roar and rumble, the air rushing past.',
       shelf: 9, shelfHz: 220, roar: 1, roarLo: 200, roarHi: 1900, roarPow: 1.6, roarSpread: 2, rumble: 1.3, rumbleHz: 180,
       crackle: 0, drone: 0, fan: 0.35, core: 0.3, tone: 1, saw: 0, screech: 1, air: 2.4, airHz: 1, airHp: 0, gust: 0.3, top: 16000, spool: 1,
-      level: 1, prop: 1, bright: 1,
+      level: 1, prop: 1, bright: 1, bed: 1,
     },
     deep: {
       name: 'Deep', about: 'Heavier and darker, cinematic: more rumble and low drone, a dark roar, hardly any whine.',
       shelf: 10, shelfHz: 180, roar: 1.05, roarLo: 150, roarHi: 1000, roarPow: 1.6, roarSpread: 1.5, rumble: 2, rumbleHz: 150,
       crackle: 0, drone: 0.6, fan: 0.2, core: 0.15, tone: 0.68, saw: 0, screech: 0.3, air: 1.4, airHz: 0.65, airHp: 0, gust: 0.3, top: 5000, spool: 1,
-      level: 1, prop: 1.1, bright: 0.7,
+      level: 1, prop: 1.1, bright: 0.7, bed: 0.9,
     },
     open: {
       name: 'Open', about: 'Brighter and more open at full power, a strong rush of air, the bass kept.',
       shelf: 6, shelfHz: 220, roar: 1.15, roarLo: 260, roarHi: 2900, roarPow: 2, roarSpread: 2.6, rumble: 1, rumbleHz: 180,
       crackle: 0, drone: 0, fan: 0.25, core: 0.4, tone: 0.68, saw: 0, screech: 1, air: 3.6, airHz: 1.25, airHp: 350, gust: 0.45, top: 16000, spool: 1,
-      level: 1, prop: 1, bright: 1.3,
+      level: 1, prop: 1, bright: 1.3, bed: 1.1,
     },
     soft: {
       name: 'Soft', about: 'Smooth and relaxed for long sessions: muffled, as from further away or inside, gentle air, almost no whine.',
       shelf: 4, shelfHz: 200, roar: 0.9, roarLo: 180, roarHi: 1200, roarPow: 1.6, roarSpread: 1.6, rumble: 0.75, rumbleHz: 160,
       crackle: 0, drone: 0, fan: 0.12, core: 0.08, tone: 0.68, saw: 0, screech: 0.2, air: 0.7, airHz: 0.7, airHp: 0, gust: 0.15, top: 1300, spool: 1.5,
-      level: 0.7, prop: 0.8, bright: 0.6,
+      level: 0.7, prop: 0.8, bright: 0.6, bed: 0.7,
     },
   };
 
@@ -136,7 +163,7 @@
   // 'piston') or one type ('A320neo'): prefs.mix[target][part]. A plane takes its type's, else its kind's, else all
   // planes' (else 1). Not levels but × the same way: the screech's pitch and speed (RANGES).
   const PARTS = {
-    bassSound: 'Bass sound', roarSound: 'Roar sound', screechSound: 'Screech sound',
+    rec: 'Engines (recorded)', bassSound: 'Bass sound', roarSound: 'Roar sound', screechSound: 'Screech sound',
     bass: 'Bass and rumble', roar: 'Roar', screech: 'Screech', screechPitch: 'Screech pitch', screechSpeed: 'Screech speed',
     whine: 'Whine', prop: 'Propellers', engine: 'Engine (pistons)', air: 'Air rushing past', start: 'Engine start',
     far: 'Far away', apu: 'APU',
@@ -146,8 +173,8 @@
   // Parts that pick a take (BANKS) instead of a level: 'auto' (each type its own) or a take's id.
   const PICKS = { bassSound: 'rumble', roarSound: 'roar', screechSound: 'screech' };
   const KIND_PARTS = {
-    jet: ['bassSound', 'roarSound', 'screechSound', 'bass', 'roar', 'screech', 'screechPitch', 'screechSpeed', 'whine', 'air', 'start', 'far', 'apu'],
-    turboprop: ['bass', 'prop', 'roar', 'whine', 'air', 'far', 'apu'],
+    jet: ['rec', 'bassSound', 'roarSound', 'screechSound', 'bass', 'roar', 'screech', 'screechPitch', 'screechSpeed', 'whine', 'air', 'start', 'far', 'apu'],
+    turboprop: ['rec', 'bass', 'prop', 'roar', 'whine', 'air', 'far', 'apu'],
     piston: ['bass', 'engine', 'prop', 'roar', 'air', 'far'],
   };
   const mixOf = (type, kind) => {
@@ -158,17 +185,19 @@
     }
     return m;
   };
-  // The take a plane of profile pr plays from a bank, with mix M: the one picked, else (auto) one by its type's
-  // name, from the takes for old or new jets where the bank has those (all recorded ones else).
+  // The take a plane of profile pr plays from a bank, with mix M: the one picked, else (auto) one at random (the
+  // user: "it is just the same every time"; it was one per type), from the takes for old or new jets where the bank
+  // has those (all recorded ones else); keep: the one it had, kept while it is still one to pick from.
   const PICK_OF = Object.fromEntries(Object.entries(PICKS).map(([part, bank]) => [bank, part]));
-  function takeOf(pr, M, bank) {
+  function takeOf(pr, M, bank, keep) {
     const all = BANKS[bank];
     const picked = all.find((t) => t.id === M[PICK_OF[bank]]);
     if (picked) return picked;
     const rec = all.filter((t) => t.url);
     const mine = rec.filter((t) => t.for === (pr.old ? 'old' : 'new'));
     const pool = mine.length ? mine : rec;
-    return pool[Math.floor(hashStr(`${pr.type}:${bank}`) * pool.length) % pool.length];
+    if (keep && pool.includes(keep)) return keep;
+    return pool[Math.floor(Math.random() * pool.length)];
   }
   const savePrefs = () => { try { localStorage.setItem(KEY, JSON.stringify(prefs)); } catch (e) { /* private mode */ } };
 
@@ -399,7 +428,7 @@
     // Noise: white (the short bursts), pink and brown (the roar and the rumble: their weight is low down, white
     // noise filtered sounds like static), and a slow random wobble (the uneven beat of a piston engine, the crackle
     // of a jet at full power).
-    const n = ctx.sampleRate * 3;
+    const n = ctx.sampleRate * 12; // (12 s: a shorter loop of the same noise is heard coming round again)
     s.noise = ctx.createBuffer(1, n, ctx.sampleRate);
     const nd = s.noise.getChannelData(0);
     for (let i = 0; i < n; i++) nd[i] = Math.random() * 2 - 1;
@@ -503,7 +532,8 @@
       .catch((e) => console.warn(`sound: no recording ${name}, made up instead`, e)); // (offline, file://)
   }
 
-  function makeVoice(pr) {
+  // keep: the takes of the voice it is built again from (BANKS, BED), kept where they still may play.
+  function makeVoice(pr, keep = {}) {
     const ctx = s.ctx;
     const S = STYLES[prefs.style];
     const v = { pr, S, M: mixOf(pr.type, pr.kind), srcs: [], L: {}, sm: null, last: {}, nextClick: 0, kill: 0 };
@@ -537,7 +567,21 @@
     const L = v.L;
     L.noise = src(s.pink); // (roar, APU, wind)
     // The jets' takes (BANKS, the mixer's picks): rumble, roar, screech.
-    v.takes = pr.kind === 'jet' ? { rumble: takeOf(pr, v.M, 'rumble'), roar: takeOf(pr, v.M, 'roar'), screech: takeOf(pr, v.M, 'screech') } : {};
+    v.takes = pr.kind === 'jet' ? Object.fromEntries(['rumble', 'roar', 'screech'].map((b) => [b, takeOf(pr, v.M, b, keep[b])])) : {};
+    // The recorded engines (BED): a take of each layer at random (or the one it had), once they have loaded.
+    v.bed = {};
+    v.bedTakes = {};
+    const layers = BED[pr.kind] || {};
+    for (const layer in layers) {
+      const all = layers[layer];
+      if (!all.length) continue;
+      const k = `bed-${pr.kind}-${layer}`;
+      const t = all.includes(keep[k]) ? keep[k] : all[Math.floor(Math.random() * all.length)];
+      v.bedTakes[k] = t;
+      const buf = takeBuf(k, t);
+      if (buf) { v.bed[layer] = { g: gain(), buf, rate: 1, src: null, sg: null, next: 0 }; bedSeek(v, v.bed[layer], ctx.currentTime); }
+    }
+    v.bedOn = Object.keys(v.bed).length > 0 && Object.keys(v.bed).length === Object.keys(layers).filter((l) => layers[l].length).length;
     const rumbleBuf = takeBuf('rumble', v.takes.rumble);
     L.deep = src(rumbleBuf || s.brown); // (rumble)
     const lp2 = (f, q = 0.7) => { const a = filter('lowpass', f, q); const b = filter('lowpass', f, q); a.connect(b); return [a, b]; };
@@ -606,7 +650,8 @@
         L.scrOther = ctx.createGain(); // (the other engine)
         L.scrOther.gain.value = 0.7;
         L.scrOther.connect(L.screech);
-        [L.scr1, L.scr2] = [L.screech, L.scrOther].map((to) => screechPlayer(v, to));
+        const at0 = Math.random(); // (the other engine half the take further on: they don't comb or beat)
+        [L.scr1, L.scr2] = [L.screech, L.scrOther].map((to, i) => screechPlayer(v, to, (at0 + 0.5 * i) % 1));
       } else {
         L.scrSrc = src(s.noise);
         L.scrF1 = filter('bandpass', 2000, 5);
@@ -677,12 +722,78 @@
     return v;
   }
 
+  // Layer B of voice v's recorded engines (BED) from another place in its take, crossfaded (equal power: the
+  // places don't match) over BED_FADE; the first time straight in.
+  const FADE_IN = Float32Array.from({ length: 32 }, (_, i) => Math.sin(0.5 * Math.PI * i / 31));
+  const FADE_OUT = Float32Array.from({ length: 32 }, (_, i) => Math.cos(0.5 * Math.PI * i / 31));
+  function bedSeek(v, B, at) {
+    const ctx = s.ctx;
+    const b = ctx.createBufferSource();
+    b.buffer = B.buf;
+    b.loop = true;
+    b.playbackRate.value = B.rate;
+    const g = ctx.createGain();
+    b.connect(g).connect(B.g);
+    if (B.src) {
+      g.gain.value = 0;
+      g.gain.setValueCurveAtTime(FADE_IN, at, BED_FADE);
+      B.sg.gain.cancelScheduledValues(at);
+      B.sg.gain.setValueCurveAtTime(FADE_OUT, at, BED_FADE);
+      const old = B.src;
+      old.stop(at + BED_FADE + 0.05);
+      old.onended = () => { const i = v.srcs.indexOf(old); if (i >= 0) v.srcs.splice(i, 1); };
+    }
+    b.start(at, Math.random() * B.buf.duration);
+    v.srcs.push(b);
+    B.src = b;
+    B.sg = g;
+    B.next = at + RESEEK[0] + Math.random() * (RESEEK[1] - RESEEK[0]);
+  }
+  // The recorded engines' layers: how loud each is and how fast it plays, with the power (sm: the engines as they
+  // are spooled).
+  function bedSound(v, sm, at, dop, behind) {
+    const pr = v.pr;
+    const B = v.bed;
+    let x, spin, rate;
+    const w = {};
+    if (pr.kind === 'jet') {
+      const n1 = sm.pw;
+      x = clamp01((n1 - IDLE) / (1 - IDLE));
+      spin = smooth(0.02, IDLE, n1); // (starting up and running down)
+      rate = n1 < IDLE ? 0.6 + 0.4 * n1 / IDLE : 0.96 + 0.08 * x;
+      if (B.mid) {
+        w.idle = 1 - smooth(0.05, 0.5, x);
+        w.full = smooth(0.5, 0.88, x);
+        w.mid = Math.max(0, 1 - w.idle - w.full);
+      } else {
+        w.full = smooth(0.1, 0.85, x); // (approach and descent power: some of both)
+        w.idle = 1 - w.full;
+      }
+    } else {
+      x = sm.pw;
+      spin = smooth(0.05, 0.6, sm.np);
+      rate = sm.np < 0.7 ? 0.6 + 0.4 * sm.np / 0.7 : 1 + 0.08 * (sm.np - 0.7) / 0.3;
+      w.full = smooth(0.15, 0.65, x);
+      w.idle = 1 - w.full;
+    }
+    const lv = v.M.rec * pr.size * BED_LEVEL * v.S.bed * spin;
+    for (const layer in B) {
+      const L = B[layer];
+      const g = lv * Math.sqrt(w[layer] || 0) * (layer === 'full' ? (1 + 0.3 * behind) * (pr.old ? 1.2 : 1) : 1);
+      L.g.gain.setTargetAtTime(Number.isFinite(g) ? g : 0, at, 0.08);
+      L.rate = Math.max(0.3, rate * dop);
+      L.src.playbackRate.setTargetAtTime(L.rate, at, 0.08);
+      if (at > L.next) bedSeek(v, L, at);
+    }
+  }
+
   // A player of voice v's screech take into node `to`: the grain player (pitch and speed apart; each engine its own,
   // from another place in the take, so they don't beat), or until it has loaded or without one, the take looping
   // (its playbackRate is the pitch and the speed both). Set by screechRate().
-  function screechPlayer(v, to) {
+  // Grains only when the mixer sets the speed apart from the pitch: grains blur and swirl, the plain take doesn't.
+  function screechPlayer(v, to, offset) {
     const t = v.takes.screech;
-    if (s.grains) {
+    if (s.grains && v.M.screechSpeed !== 1) {
       const d = v.scrBuf.getChannelData(0);
       const g = new AudioWorkletNode(s.ctx, 'fg-grains', {
         numberOfInputs: 0, outputChannelCount: [1],
@@ -696,7 +807,7 @@
     b.buffer = v.scrBuf;
     b.loop = true;
     b.connect(to);
-    b.start(0, Math.random() * v.scrBuf.duration);
+    b.start(0, offset * v.scrBuf.duration);
     v.srcs.push(b);
     return b;
   }
@@ -847,33 +958,36 @@
     L2.noise.playbackRate.setTargetAtTime(dop, at, 0.06);
     L2.deep.playbackRate.setTargetAtTime(dop, at, 0.06); // (not with the power: it revved like a tractor)
     if (L2.roarSrc) L2.roarSrc.playbackRate.setTargetAtTime(dop, at, 0.06);
+    // The recorded engines; the made-up parts softer under them.
+    if (v.bedOn) bedSound(v, sm, at, dop, behind);
+    const U = v.bedOn ? UNDER : NONE;
     if (pr.kind === 'jet') {
       const n1 = sm.pw;
       const n2 = sm.n2;
       const old = pr.old ? 1.5 : 1;
       // The roar: low and full (pink noise through two low-passes), brighter with power and from behind.
-      T(L2.roar.gain, M.roar * run * sz * S.roar * (0.1 + 1.6 * n1 ** 3) * (1 + 0.6 * behind) * (1 - 0.2 * front) * old * (1 + 0.5 * sm.rev));
+      T(L2.roar.gain, U.roar * M.roar * run * sz * S.roar * (0.1 + 1.6 * n1 ** 3) * (1 + 0.6 * behind) * (1 - 0.2 * front) * old * (1 + 0.5 * sm.rev));
       const fc = (S.roarLo + S.roarHi * n1 ** S.roarPow) * (1 + 0.25 * behind + 0.4 * sm.rev) * (pr.old ? 1.2 : 1);
       T(L2.roarF.frequency, fc);
       T(L2.roarF2.frequency, fc * S.roarSpread);
-      const rumble = M.bass * run * sz * S.rumble * (0.08 + 1.2 * n1 ** 3) * (0.5 + 1.0 * behind) * (pr.afterburner && e.phase === 'takeoff' ? 2 : 1);
+      const rumble = U.rumble * M.bass * run * sz * S.rumble * (0.08 + 1.2 * n1 ** 3) * (0.5 + 1.0 * behind) * (pr.afterburner && e.phase === 'takeoff' ? 2 : 1);
       T(L2.rumble.gain, rumble);
       T(L2.crackle.gain, rumble * 0.5 * S.crackle * behind * smooth(0.85, 0.92, n1));
-      T(L2.drone.gain, M.bass * run * sz * 0.16 * S.drone * smooth(0.25, 0.9, n1));
+      T(L2.drone.gain, U.drone * M.bass * run * sz * 0.16 * S.drone * smooth(0.25, 0.9, n1));
       T(L2.drone1.frequency, Math.max(5, pr.shaft * n1 * dop));
-      T(L2.drone2.frequency, Math.max(5, pr.shaft * n1 * dop * 1.001));
+      T(L2.drone2.frequency, Math.max(5, pr.shaft * n1 * dop)); // (in tune: a little apart they beat, "it rotates")
       T(L2.droneF.frequency, 150 + 350 * n1);
       // The whine: clear at idle, it fades under the roar as the power comes up.
       const fanHz = n1 < IDLE ? pr.fanLo * n1 / IDLE : pr.fanLo + (pr.fanHi - pr.fanLo) * (n1 - IDLE) / (1 - IDLE);
-      T(L2.fan.gain, M.whine * sz * 0.16 * S.fan * smooth(0.04, 0.18, n1) * (0.6 + 0.9 * front) * (pr.old ? 0.35 : 1) * (1 - 0.75 * smooth(0.3, 0.9, n1)));
+      T(L2.fan.gain, U.fan * M.whine * sz * 0.16 * S.fan * smooth(0.04, 0.18, n1) * (0.6 + 0.9 * front) * (pr.old ? 0.35 : 1) * (1 - 0.75 * smooth(0.3, 0.9, n1)));
       T(L2.fan1.frequency, Math.max(20, fanHz * dop));
-      T(L2.fan2.frequency, Math.max(20, fanHz * dop * 1.0012));
-      T(L2.core.gain, M.whine * sz * 0.035 * S.core * smooth(0.02, 0.12, n2) * (pr.old ? 2 : 1) * (1 - 0.8 * n1));
+      T(L2.fan2.frequency, Math.max(20, fanHz * dop)); // (in tune: 0.12 % apart they swelled about once a second, "it rotates")
+      T(L2.core.gain, U.core * M.whine * sz * 0.035 * S.core * smooth(0.02, 0.12, n2) * (pr.old ? 2 : 1) * (1 - 0.8 * n1));
       T(L2.core1.frequency, Math.max(20, pr.core * S.tone * n2 * dop));
       T(L2.saw.gain, pr.old ? 0 : sz * 1.2 * S.saw * smooth(0.82, 0.92, n1) * front ** 1.5);
       // The screech: up with the power, from all round (a little more ahead), old jets more.
       const scrHz = Math.min(1550, 1.15 * pr.fan * (0.55 + 0.45 * n1)) * dop * M.screechPitch; // (higher: a hiss, small fans)
-      T(L2.screech.gain, M.screech * run * sz * SCREECH * S.screech * (0.04 + 0.96 * smooth(0.25, 0.9, n1)) * (0.8 + 0.4 * front) * (pr.old ? 1.3 : 1));
+      T(L2.screech.gain, U.screech * M.screech * run * sz * SCREECH * S.screech * (0.04 + 0.96 * smooth(0.25, 0.9, n1)) * (0.8 + 0.4 * front) * (pr.old ? 1.3 : 1));
       if (L2.scr1) {
         // (pitch: the fan's, × the mixer's; speed: as fast as the fan's pitch would play it, × the mixer's speed)
         const pitch = scrHz / v.takes.screech.hz;
@@ -888,18 +1002,18 @@
       const np = sm.np;
       const blades = pr.prop * np * dop;
       const turning = smooth(0.05, 0.4, np);
-      T(L2.prop.gain, M.prop * sz * S.prop * 0.6 * (0.05 + 0.5 * pw ** 1.3) * turning * (1 + 0.3 * front));
+      T(L2.prop.gain, U.prop * M.prop * sz * S.prop * 0.6 * (0.05 + 0.5 * pw ** 1.3) * turning * (1 + 0.3 * front));
       T(L2.prop1.frequency, Math.max(5, blades));
-      T(L2.prop2.frequency, Math.max(5, blades * 1.004));
+      T(L2.prop2.frequency, Math.max(5, blades)); // (synchrophased: apart they swelled and fell, "it rotates")
       T(L2.propF.frequency, (250 + 900 * pw + 200 * np) * dop * S.bright);
       // The chopped air: louder and brighter with power and propeller speed, most of all beside and behind the discs.
-      T(L2.chop.gain, M.prop * sz * S.prop * 7 * (0.04 + 0.6 * pw ** 1.5) * turning * (1 + 0.3 * behind));
+      T(L2.chop.gain, U.chop * M.prop * sz * S.prop * 7 * (0.04 + 0.6 * pw ** 1.5) * turning * (1 + 0.3 * behind));
       T(L2.chop1.frequency, Math.max(5, blades));
       T(L2.chopF.frequency, (350 + 1300 * pw) * dop * S.bright);
       T(L2.rumble.gain, M.bass * run * sz * S.rumble * 0.9 * (0.1 + 0.9 * pw ** 2) * (0.6 + 0.6 * behind));
-      T(L2.roar.gain, M.roar * run * sz * S.roar * (0.04 + 0.5 * pw * pw) * (1 + 0.6 * behind) * (1 + 0.5 * sm.rev));
+      T(L2.roar.gain, U.roar * M.roar * run * sz * S.roar * (0.04 + 0.5 * pw * pw) * (1 + 0.6 * behind) * (1 + 0.5 * sm.rev));
       T(L2.roarF.frequency, (300 + 900 * pw) * S.bright);
-      const whine = M.whine * sz * S.core * pr.whineGain * smooth(0.03, 0.15, sm.n2) * (1 - 0.5 * pw);
+      const whine = U.wh * M.whine * sz * S.core * pr.whineGain * smooth(0.03, 0.15, sm.n2) * (1 - 0.5 * pw);
       const whHz = Math.max(20, pr.whine * S.tone * sm.n2 * dop);
       T(L2.core.gain, whine * 0.012);
       T(L2.core1.frequency, whHz);
@@ -968,7 +1082,8 @@
   // other takes is built again.
   function remix() {
     savePrefs();
-    const other = (v) => v.pr.kind === 'jet' && Object.keys(v.takes).some((bank) => takeOf(v.pr, v.M, bank) !== v.takes[bank]);
+    const other = (v) => v.pr.kind === 'jet' && (Object.keys(v.takes).some((bank) => takeOf(v.pr, v.M, bank, v.takes[bank]) !== v.takes[bank])
+      || (v.L.scr1 && !!v.L.scr1.parameters !== (s.grains && v.M.screechSpeed !== 1))); // (grains only for a speed of its own)
     for (const [key, v] of s.voices) {
       v.M = mixOf(v.pr.type, v.pr.kind);
       if (!v.kill && s.ctx && other(v)) s.voices.set(key, again(v));
@@ -980,7 +1095,7 @@
   }
   // Voice v built again (keeping where its engines are), the old one fading out.
   function again(v) {
-    const nv = makeVoice(v.pr);
+    const nv = makeVoice(v.pr, { ...v.takes, ...v.bedTakes });
     Object.assign(nv, { id: v.id, sm: v.sm, last: v.last, nextClick: v.nextClick });
     fadeDrop(v, 0.03);
     return nv;
@@ -1172,13 +1287,24 @@
     profile,
     get state() { return s.ctx ? s.ctx.state : 'off'; },
     // (what has loaded: the RECORDINGS 'far', 'start', and the BANKS 'rumble', 'roar', 'screech' once a take of each is in)
-    get recorded() { return [...Object.keys(s.rec), ...Object.keys(BANKS).filter((b) => Object.keys(s.takes).some((k) => k.startsWith(`${b}:`)))]; },
+    get recorded() {
+      const bed = Object.entries(BED).flatMap(([kind, ls]) => Object.keys(ls).map((l) => `bed-${kind}-${l}`)).filter((b) => Object.keys(s.takes).some((k) => k.startsWith(`${b}:`)));
+      return [...Object.keys(s.rec), ...Object.keys(BANKS).filter((b) => Object.keys(s.takes).some((k) => k.startsWith(`${b}:`))), ...bed];
+    },
+    // (whether the preview's voice plays the recorded engines: BED)
+    get previewRecorded() { return !!(s.demo && s.demo.v.bedOn); },
     get grains() { return !!s.grains; }, // (the screech's grain player, js/grains.js, has loaded)
     get takesLoaded() { return Object.keys(s.takes); }, // ('screech:rasp', …)
     // The takes a pick part (PICKS: 'bassSound', 'roarSound', 'screechSound') offers: [{ id, name }] ('auto' not listed);
     // takeFor(type, bank) the one a plane of that type plays now.
     takes(part) { return PICKS[part] ? BANKS[PICKS[part]].map((t) => ({ id: t.id, name: t.name, old: t.for === 'old' })) : null; },
-    takeFor(type, bank) { const pr = profile(type); const t = takeOf(pr, mixOf(type, pr.kind), bank); return t && t.id; },
+    takeFor(type, bank) {
+      const pr = profile(type);
+      const picked = BANKS[bank] && BANKS[bank].find((t) => t.id === mixOf(type, pr.kind)[PICK_OF[bank]]);
+      if (picked) return picked.id;
+      const v = [...s.voices.values()].find((x) => x.pr.type === type && !x.kill && x.takes[bank]); // (auto: at random, each plane)
+      return v ? v.takes[bank].id : null;
+    },
     get pickMs() { return s.pickMs || 0; }, // (time to find the loudest planes, 4 times a second)
     // The planes playing now: [{ id, kind, gain }] (smoke test).
     get playing() { return [...s.voices.values()].filter((v) => !v.kill).map((v) => ({ id: v.id, kind: v.pr.kind, gain: v.out.gain.value })); },

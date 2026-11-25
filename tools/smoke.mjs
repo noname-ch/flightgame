@@ -144,6 +144,8 @@ handlers.push((msg) => {
 await cmd('Runtime.enable');
 await cmd('Network.enable');
 await cmd('Page.enable');
+// (headless Chrome here marks the page hidden after a while: the game then stops its sound, and the sound steps hung)
+await cmd('Emulation.setFocusEmulationEnabled', { enabled: true });
 
 async function evaluate(fn, ...args) {
   const r = await cmd('Runtime.evaluate', {

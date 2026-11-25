@@ -46,9 +46,9 @@
       const note = own ? '' : from ? `from ${esc(nameOf(from))}` : '';
       const takes = FG.sound.takes(part);
       if (takes) {
-        // (auto: each type its own; for a type, which one that is)
+        // (auto: each plane one at random; for a type, the one a plane of it plays now)
         const now = isType && x === 'auto' ? takes.find((k) => k.id === FG.sound.takeFor(t, BANK_OF[part])) : null;
-        const opts = [['auto', `Auto${now ? ` (${now.name})` : ': each type its own'}`], ...takes.map((k) => [k.id, k.name])];
+        const opts = [['auto', `Auto${now ? ` (${now.name})` : ': a different one each plane'}`], ...takes.map((k) => [k.id, k.name])];
         return `<div class="mix-row mix-pick-row${own ? ' own' : ''}">
         <label for="mix-${part}">${esc(FG.sound.parts[part])}</label>
         <select id="mix-${part}" data-pick="${part}">${opts.map(([id, label]) => `<option value="${esc(id)}"${id === x ? ' selected' : ''}>${esc(label)}</option>`).join('')}</select>
@@ -66,7 +66,7 @@
     mx.win.body.innerHTML = `
       <div class="mix-pick"><select data-target>${options()}</select>
         <button class="mini${FG.sound.previewing ? ' on' : ''}" data-play title="Play a whole flight of ${esc(nameOf(type || (KINDS[t] ? t : 'jet')))}">${FG.sound.previewing ? '■' : '▶'}</button></div>
-      <p class="muted mix-help">Pick a recorded bass, roar and screech, or leave them on Auto (each type sounds a little different). Each part ×0 to ×3, the screech's pitch ×0.5 to ×2 and speed ×0.25 to ×2. A type follows its kind and all planes until you change it here.${FG.sound.on ? '' : ' Sound is off: ▶ turns it on.'}</p>
+      <p class="muted mix-help">Pick a recorded bass, roar and screech, or leave them on Auto (each plane a different one). Each part ×0 to ×3, the screech's pitch ×0.5 to ×2 and speed ×0.25 to ×2. A type follows its kind and all planes until you change it here.${FG.sound.on ? '' : ' Sound is off: ▶ turns it on.'}</p>
       ${rows}
       <div class="mix-foot"><button class="mini" data-resetall${Object.keys(FG.sound.mix(t)).length ? '' : ' disabled'}>Reset ${esc(nameOf(t))}</button></div>`;
   }

@@ -450,7 +450,7 @@ const MODEL_SHAPES = {
 const modelCache = {};
 
 function placeholderModel(type) {
-  const cat = D.aircraft[type].category;
+  const cat = (D.aircraft[type] || {}).category || 'narrowbody'; // (the Global 7500 is flown, not sold: no D.aircraft entry)
   const sh = MODEL_SHAPES[cat] || MODEL_SHAPES.narrowbody;
   if (!modelCache[cat]) {
     const white = new THREE.MeshLambertMaterial({ color: 0xf4f4f6, side: THREE.DoubleSide });
