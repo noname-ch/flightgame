@@ -806,11 +806,13 @@ function markSurfaces(scene, m) {
   if (meshes.length) findSurfaces(meshes, m);
   scene.userData.surfaces = { 1: 0, 2: 0, 3: 0, 4: 0 };
   scene.userData.flapFaces = 0; // faces of the flaps cut out of the wing
+  scene.userData.breaks = null; // where the fuselage breaks (bodyBreaks)
   const seen = new Set();
   scene.traverse((o) => {
     const c = o.isMesh && o.geometry.userData.livSurfaces;
     if (c) for (const k in c) scene.userData.surfaces[k] += c[k];
     if (o.isMesh && !seen.has(o.geometry)) scene.userData.flapFaces += o.geometry.userData.livFlapFaces || 0;
+    if (o.isMesh && o.geometry.userData.livBreak && !scene.userData.breaks) scene.userData.breaks = o.geometry.userData.livBreak;
     if (o.isMesh) seen.add(o.geometry);
   });
 }
@@ -835,11 +837,11 @@ function findSurfaces(meshes, m) {
   // forwards or backwards, but the faces between them are flat)
   const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), n = new THREE.Vector3();
   const faces = new Map(); // mesh -> per vertex: 1 on a flat face, 2 on an upright one (both: 3)
-  let engZ0 = Infinity, engZ1 = -Infinity; // height of engines on the rear fuselage (not to be taken for the tailplane;
+  let engZ0 = Infinity, engZ1 = -Infinity, engY1 = -Infinity; // height of engines on the rear fuselage (not to be taken for the tailplane;
   // beside it: the A350's wing engines reach back behind -0.1 too, and their height is the tailplane's)
   for (const o of meshes) {
     const pos = o.geometry.attributes.position, part = o.geometry.attributes.livPart;
-    if (part) for (let i = 0; i < pos.count; i++) if (part.getX(i) > 0.5 && pos.getY(i) < -0.1 && Math.abs(pos.getX(i)) < 2.5 * hw) { engZ0 = Math.min(engZ0, pos.getZ(i)); engZ1 = Math.max(engZ1, pos.getZ(i)); }
+    if (part) for (let i = 0; i < pos.count; i++) if (part.getX(i) > 0.5 && pos.getY(i) < -0.1 && Math.abs(pos.getX(i)) < 2.5 * hw) { engZ0 = Math.min(engZ0, pos.getZ(i)); engZ1 = Math.max(engZ1, pos.getZ(i)); engY1 = Math.max(engY1, pos.getY(i)); }
   }
   // (`strips`: also gather the wing's and the fin's vertices; again after the flaps are cut out, only the faces)
   const readFaces = (strips) => {
@@ -984,6 +986,8 @@ function findSurfaces(meshes, m) {
   // (a coarse fin's long faces reach down into the fuselage)
   const finFace = (ps, n) => n[0] > 0.5 && ps.every((p) => Math.abs(p[0]) < finX && p[1] < -0.15) && Math.max(...ps.map((p) => p[2])) > finZ0;
   const finL = finOn ? edgeLines(meshes, finFace, (p) => p[2], finZ0, finZ1, 0.3, 0.85) : null;
+  const brk = bodyBreaks(wingE, tail, tipX, x0, xw, span, delta, engY1);
+  for (const o of meshes) o.geometry.userData.livBreak = brk;
   // (the elevators start a little out from the middle, beside the tail cone)
   const elevX0 = 0.6 * hw;
   const elevAt = (ax, y, z) => {
@@ -1037,6 +1041,36 @@ function findSurfaces(meshes, m) {
     o.geometry.setAttribute('livSurf', new THREE.BufferAttribute(a, 4));
     o.geometry.userData.livSurfaced = true;
   }
+}
+
+// Where the fuselage breaks in a crash (PARTS body; the shader: livBreak): across it a little ahead of the wing's
+// root (the nose section: inside 1.25 half widths, so the engines stay on the wing), and between the wing's trailing
+// edge and the tailplane, swept back with them out to the tailplane's tips (the tail section, with a tail's engines).
+// [nose y, tail y at 1.25 half widths, how far back the tail line runs per unit out, the tail section's reach in |x|];
+// y is along the model (its length 1). A delta (Concorde) has no tail section; no wing found: no breaks.
+function bodyBreaks(wingE, tail, tipX, x0, xw, span, delta, engY1) {
+  const strip = (ax) => Math.max(0, Math.min(wingE.length - 1, Math.floor((ax - x0) / xw)));
+  const wingAt = (ax) => {
+    const s = strip(ax);
+    for (let d = 0; d < wingE.length; d++) for (const k of [s - d, s + d]) if (wingE[k]) return wingE[k];
+    return null;
+  };
+  const root = wingAt(x0);
+  if (!root) return [9, -9, 0, 0];
+  const nose = Math.min(0.42, root.le + 0.05);
+  if (delta) return [nose, -9, 0, 0];
+  let y0, k = 0.3, reach = 0.42 * span;
+  if (tail && tipX > x0) {
+    const a = Math.min(x0, 0.5 * tipX), te0 = root.te, le0 = tail.le(a);
+    const teT = (wingAt(tipX) || root).te, leT = tail.le(0.95 * tipX);
+    y0 = te0 - 0.4 * Math.max(0.02, te0 - le0);
+    const yT = teT - 0.4 * Math.max(0.02, teT - leT);
+    k = Math.max(0, Math.min(1.2, (y0 - yT) / Math.max(1e-3, 0.95 * tipX - x0)));
+    reach = 1.08 * tipX;
+  } else y0 = root.te - 0.1;
+  // (engines on the tail go with it: the line ahead of them, but behind the wing)
+  if (engY1 > -1) y0 = Math.min(Math.max(y0, engY1 + 0.01), root.te - 0.005);
+  return [nose, y0, k, reach];
 }
 
 // Every face of these meshes but engines' and propellers': fn([a, b, c] as [x, y, z], unit normal [x, y, z]
@@ -1472,9 +1506,14 @@ uniform float livHalfW;    // half width of the fuselage
 // The parts that can break off (PARTS): the wing beyond a break across the span (left x < 0, right x > 0), the
 // elevators and the rudder (livSurf kinds 3 and 4).
 uniform vec4 livCut;       // broken off and not drawn: wing beyond livCut.x (left) / .y (right) half spans (0: whole),
-                           // elevators .z (1 left, 2 right, 3 both), rudder .w (1)
-uniform vec4 livKeep;      // a broken-off part drawn on its own: kind (0 none, 1 wing, 2 elevators, 3 rudder), side
-                           // (-1 left, 1 right, 0 both), the break (half spans) for a wing
+                           // elevators .z (1 left, 2 right, 3 both), .w the rudder and fuselage sections
+                           // (bits: 1 rudder, 2 nose section, 4 tail section: bodyBreaks)
+uniform vec4 livKeep;      // a broken-off part drawn on its own: kind (0 none, 1 wing, 2 elevators, 3 rudder, 4 a
+                           // fuselage section), side (-1 left, 1 right, 0 both; a section: 1 nose, -1 tail), the
+                           // break (half spans) for a wing; .w a wing's tip broken before, a section's parts gone
+                           // before it broke off (bits: 1 elevators, 2 rudder)
+uniform vec4 livBreak;     // where the fuselage breaks (bodyBreaks): nose y, tail y, its sweep back, its reach in |x|
+varying float vLivBody;    // into a broken-off fuselage section (> 0: not drawn), in model units
 varying float vLivWing;    // past the break (> 0: not drawn), in model units
 varying float vLivGone;    // 1 on a part that is not drawn, -1 on one that is
 varying float vLivOut;     // a broken-off wing part whose tip had broken off before (livKeep.w): past that (> 0) not drawn`;
@@ -1565,18 +1604,29 @@ if (livSurf.x > 0.5) {
   vLivWing = -1e4;
   vLivGone = -1.0;
   vLivOut = -1e4;
+  vLivBody = -1e4;
+  // (how far into the nose section and into the tail section: > 0 in it)
+  float livAX = abs(position.x), livX0 = 1.25 * livHalfW;
+  float livNoseD = livAX < livX0 ? position.y - livBreak.x : -1.0;
+  float livTailD = livAX < livBreak.w ? livBreak.y - livBreak.z * max(livAX - livX0, 0.0) - position.y : -1.0;
   if (livKeep.x > 0.5) {
     bool livMine = livKeep.y == 0.0 || livKeep.y == livSideX;
     if (livKeep.x < 1.5) {
       vLivWing = livMine ? livKeep.z * livSpan - abs(position.x) : 1e4;
       if (livKeep.w > 0.0) vLivOut = abs(position.x) - livKeep.w * livSpan; // (its own tip came off before)
-    } else vLivGone = livMine && (livKeep.x < 2.5 ? livEl : livRu) ? -1.0 : 1.0;
+    } else if (livKeep.x < 3.5) vLivGone = livMine && (livKeep.x < 2.5 ? livEl : livRu) ? -1.0 : 1.0;
+    else {
+      vLivBody = livKeep.y > 0.0 ? -livNoseD : -livTailD;
+      if ((livEl && mod(livKeep.w, 2.0) > 0.5) || (livRu && livKeep.w > 1.5)) vLivGone = 1.0;
+    }
   } else {
     float livAt = livSideX < 0.0 ? livCut.x : livCut.y;
     if (livAt > 0.0) vLivWing = abs(position.x) - livAt * livSpan;
     float livE = livCut.z;
     if (livEl && (livE > 2.5 || (livSideX < 0.0 ? (livE > 0.5 && livE < 1.5) : (livE > 1.5 && livE < 2.5)))) vLivGone = 1.0;
-    if (livRu && livCut.w > 0.5) vLivGone = 1.0;
+    float livB = livCut.w;
+    if (livRu && mod(livB, 2.0) > 0.5) vLivGone = 1.0;
+    vLivBody = max(mod(floor(livB / 2.0), 2.0) > 0.5 ? livNoseD : -1e4, livB > 3.5 ? livTailD : -1e4);
   }
 }`;
 const FRAG_HEAD = `
@@ -1635,6 +1685,12 @@ uniform float livSpan;
 varying float vLivWing;
 varying float vLivGone;
 varying float vLivOut;
+varying float vLivBody;
+// A break across the fuselage is torn round it, the same on both sides of it.
+float livTearB(vec3 p) {
+  float a = sin(p.x * 53.0 / livSpan + p.z * 71.0 / livSpan + 0.4) * 0.5 + sin(p.z * 167.0 / livSpan + 0.7) * 0.3 + sin(p.x * 389.0 / livSpan - p.z * 211.0 / livSpan) * 0.2;
+  return a * 0.02 * livSpan;
+}
 // A break across the wing is torn, not cut: a jagged line along the chord and up through the skin, the same on the
 // wing and on the part that came off, so they would fit together.
 float livTear(vec3 p) {
@@ -1648,6 +1704,8 @@ const FRAG_BODY = `
 float livTorn = vLivWing + (livKeep.x > 0.5 ? -1.0 : 1.0) * livTear(vLivPos);
 if (livTorn > 0.0 || vLivOut + livTear(vLivPos) > 0.0) discard;
 if (livKeep.x > 1.5 ? vLivGone > 0.98 : vLivGone > -0.98) discard;
+float livTornB = vLivBody + (livKeep.x > 3.5 ? -1.0 : 1.0) * livTearB(vLivPos);
+if (livTornB > 0.0) discard;
 {
   vec3 own = diffuseColor.rgb;
   float lum = dot(own, vec3(0.2126, 0.7152, 0.0722));
@@ -1763,9 +1821,9 @@ if (livKeep.x > 1.5 ? vLivGone > 0.98 : vLivGone > -0.98) discard;
   if (vLivPos.y > livClean.x && vLivPos.y < livClean.y && vLivPos.z > livClean.z && vLivPos.z < livClean.w) detail = 0.0;
   diffuseColor.rgb = mix(paint, own, detail);
   // along a tear: bare torn metal and soot, the inside of the wing dark
-  float livEdge = 1.0 - smoothstep(0.0, 0.03 * livSpan, -livTorn);
+  float livEdge = 1.0 - smoothstep(0.0, 0.03 * livSpan, -max(livTorn, livTornB));
   if (livEdge > 0.0) diffuseColor.rgb = mix(diffuseColor.rgb, mix(vec3(0.05, 0.045, 0.04), vec3(0.42, 0.42, 0.4), step(0.6, fract(vLivPos.z * 300.0 / livSpan + vLivPos.y * 40.0 / livSpan))), livEdge);
-  if (!gl_FrontFacing && vLivWing > -1e3) diffuseColor.rgb *= 0.25;
+  if (!gl_FrontFacing && (vLivWing > -1e3 || vLivBody > -1e3)) diffuseColor.rgb *= 0.25;
   diffuseColor.rgb *= livLight;
 }`;
 
@@ -1785,11 +1843,18 @@ const OWN_VEC4 = { livCut: 1, livKeep: 1 };
 export const PARTS = {
   tip: { cut: 0.8 },
   wing: { cut: 0.5 },
+  body: { nose: 1, tail: -1 }, // (the fuselage: across it ahead of the wing and behind it, bodyBreaks)
 };
 // Which vertices a part has, as the shader decides (for the part's middle, which it turns about as it falls):
-// part { kind: 'wing' | 'elev' | 'rud', side: -1 | 1 | 0, cut, out (a wing part: where its tip broke off before, 0: none) };
-// x, the vertex's livSurf kind, the model's half span.
-export function inPart(part, x, kind, span) {
+// part { kind: 'wing' | 'elev' | 'rud' | 'body', side: -1 | 1 | 0 (a body section: 1 nose, -1 tail), cut, out (a wing
+// part: where its tip broke off before, 0: none) }; x, the vertex's livSurf kind, the model's half span; y, where the
+// fuselage breaks (bodyBreaks) and its half width, for a body section.
+export function inPart(part, x, kind, span, y = 0, brk = null, hw = 0) {
+  if (part.kind === 'body') {
+    if (!brk) return false;
+    const ax = Math.abs(x), x0 = 1.25 * hw;
+    return part.side > 0 ? ax < x0 && y > brk[0] : ax < brk[3] && y < brk[1] - brk[2] * Math.max(ax - x0, 0);
+  }
   const mine = !part.side || Math.sign(x || 1) === part.side;
   if (!mine) return false;
   if (part.kind === 'wing') return Math.abs(x) > part.cut * span && !(part.out > 0 && Math.abs(x) > part.out * span);
@@ -1885,6 +1950,7 @@ export function paintLivery(scene, file, extra, stretch = 1, livery = FG.livery(
     livNoisy: { value: NOISY[file] ? 1 : 0 },
     livHalfWidth: { value: m.halfWidth },
     livHalfW: { value: m.halfWidth },
+    livBreak: { value: new THREE.Vector4(...(scene.userData.breaks || [9, -9, 0, 0])) },
     livSpan: { value: m.span },
     livFlapSpan: { value: new THREE.Vector3(1.25 * m.halfWidth, FLAP_END * m.span, 1.25 * m.halfWidth + FLAP_BREAK * (FLAP_END * m.span - 1.25 * m.halfWidth)) },
   };
@@ -1899,6 +1965,8 @@ export function paintLivery(scene, file, extra, stretch = 1, livery = FG.livery(
     // js/view3d.js ownMaterials)
     for (const k of OWN_UNIFORMS) o.material.userData[k] = { value: OWN_VEC4[k] ? new THREE.Vector4() : k === 'livLight' ? 1 : 0 };
     o.material.userData.livSpanOf = m.span; // (the half span the shader breaks parts off at: js/view3d.js partMiddle)
+    o.material.userData.livBreakOf = scene.userData.breaks; // (and where the fuselage breaks, with its half width)
+    o.material.userData.livHalfOf = m.halfWidth;
     o.material.onBeforeCompile = function (shader) {
       Object.assign(shader.uniforms, uniforms);
       for (const k of OWN_UNIFORMS) shader.uniforms[k] = this.userData[k];

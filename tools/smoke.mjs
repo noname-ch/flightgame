@@ -1185,7 +1185,7 @@ try {
           }
         });
         // (the parts that break off, as the shader cuts them: js/livery.js PARTS, inPart)
-        const pieces = { tip: 0, wing: 0, elev: 0, rud: 0 };
+        const pieces = { tip: 0, wing: 0, elev: 0, rud: 0, nose: 0, tail: 0, both: 0, surfOff: 0, wingInTail: 0 };
         s.traverse((o) => {
           const span = o.isMesh && o.material.userData && o.material.userData.livSpanOf, a = span && o.geometry.attributes.livSurf, p = a && o.geometry.attributes.position;
           if (p) for (let i = 0; i < p.count; i++) {
@@ -1194,6 +1194,14 @@ try {
             if (inPart({ kind: 'wing', side: -1, cut: PARTS.wing.cut }, x, k, span)) pieces.wing++;
             if (inPart({ kind: 'elev', side: 0 }, x, k, span)) pieces.elev++;
             if (inPart({ kind: 'rud', side: 0 }, x, k, span)) pieces.rud++;
+            // (the fuselage's sections: the nose and the tail apart, the tail with all of the elevators and rudder, no wing in it)
+            const brk = o.material.userData.livBreakOf, hw = o.material.userData.livHalfOf, y = p.getY(i);
+            const nose = inPart({ kind: 'body', side: 1 }, x, k, span, y, brk, hw), tail = inPart({ kind: 'body', side: -1 }, x, k, span, y, brk, hw);
+            if (nose) pieces.nose++;
+            if (tail) pieces.tail++;
+            if (nose && tail) pieces.both++;
+            if (k > 2.5 && !tail) pieces.surfOff++;
+            if (tail && (k === 1 || k === 2)) pieces.wingInTail++;
           }
         });
         out[file] = { props: s.userData.props, surfaces: s.userData.surfaces, flapFaces: s.userData.flapFaces, hollow: Object.values(hubs).filter(([a, b]) => a > 0.5 * b).length, elevIn: e[0] / e[1], rudShare: (r[1] - r[0]) / (top - r[0]), pieces };
@@ -1209,6 +1217,7 @@ try {
     for (const file of ['q400', 'atr42', 'a320', 'a359', 'a333', 'dc3', 'b738']) {
       const q = parts[file].pieces;
       if (!(q.tip > 0 && q.wing > q.tip && q.elev > 0 && q.rud > 0)) errors.push(`3D broken-off parts: ${file} ${JSON.stringify(q)}`);
+      if (!(q.nose > 0 && q.tail > 0) || q.both || q.surfOff || q.wingInTail) errors.push(`3D fuselage sections (js/livery.js bodyBreaks): ${file} ${JSON.stringify(q)}`);
     }
     for (const file of ['atr42', 'a320']) {
       const missing = ['aileron', 'flap', 'elevator', 'rudder'].filter((_, i) => !(parts[file].surfaces && parts[file].surfaces[i + 1] > 0));

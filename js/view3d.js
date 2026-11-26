@@ -1546,6 +1546,8 @@ function smokeTick(e, dt) {
 // A crash site is a fireball, a column of smoke, flares (sparks) and a flash: one batch of sprites in the planes'
 // layer, positioned in metres from the crash. Each sprite has a least size in pixels (BLAST_PX), so the blast still
 // shows when the whole world is in view. It burns for BLAST_SECS real seconds and stands still while the game is paused.
+// A blast may say how big it is (scale: 1 a small airliner's fuel; the fireball rises as it burns), and be a fire
+// that goes on burning where wreckage lies (kind 'pool': flames and a column of black smoke for `secs` seconds).
 const BLAST_SECS = 24;
 const BLAST_MAX = 8;               // blasts drawn at once (the newest)
 const BLAST_N = 110;               // sprites per blast: 40 fire, 44 smoke, 24 flares, 1 flash
@@ -1573,24 +1575,43 @@ void main() {
 }`;
 const blastState = new WeakMap(); // G blast -> { parts, age, last }
 
-function blastParts() {
+function blastParts(b) {
   const parts = [];
   const rnd = Math.random;
+  const S = Math.max(0.3, Math.min(3, b.scale || 1)), sq = Math.sqrt(S);
+  if (b.kind === 'pool') return poolParts(S);
   for (let i = 0; i < BLAST_N; i++) {
     const kind = i < 40 ? 0 : i < 84 ? 1 : i < 108 ? 2 : 3;
     const a = rnd() * Math.PI * 2;
-    const q = { kind, rnd: rnd(), t0: 0, life: 1, drag: 0.001, vx: 0, vy: 0, vz: 0, s0: 0, grow: 0 };
-    if (kind === 0) {        // fireball: bursts out in the first seconds, then cools into smoke
-      const r = 14 + rnd() * 26;
-      Object.assign(q, { life: 5 + rnd() * 4, drag: 1.5, vx: Math.cos(a) * r, vy: Math.sin(a) * r, vz: 3 + rnd() * 6, s0: 22 + rnd() * 18, grow: 14 });
+    const q = { kind, rnd: rnd(), t0: 0, life: 1, drag: 0.001, vx: 0, vy: 0, vz: 0, s0: 0, grow: 0, rise: 0 };
+    if (kind === 0) {        // fireball: bursts out in the first seconds, rises as it burns, then cools into smoke
+      const r = (14 + rnd() * 26) * S;
+      Object.assign(q, { life: (5 + rnd() * 4) * sq, drag: 1.5, vx: Math.cos(a) * r, vy: Math.sin(a) * r, vz: (3 + rnd() * 6) * S, s0: (22 + rnd() * 18) * S, grow: 14 * S, rise: 1.6 * sq * (0.6 + 0.4 * rnd()) });
     } else if (kind === 1) { // smoke: rises out of the fire, slow, spreading and drifting
-      Object.assign(q, { t0: 1 + rnd() * 2, life: 14 + rnd() * 8, drag: 0.25, vx: Math.cos(a) * 4 * rnd(), vy: Math.sin(a) * 4 * rnd(), vz: 7 + rnd() * 5, s0: 40 + rnd() * 30, grow: 10 });
+      Object.assign(q, { t0: 1 + rnd() * 2, life: (14 + rnd() * 8) * sq, drag: 0.25, vx: Math.cos(a) * 4 * rnd() * S, vy: Math.sin(a) * 4 * rnd() * S, vz: (7 + rnd() * 5) * sq, s0: (40 + rnd() * 30) * S, grow: 10 * S });
     } else if (kind === 2) { // flares: sparks thrown out fast, falling, flickering
-      const r = 40 + rnd() * 70;
-      Object.assign(q, { life: 1.2 + rnd() * 2.2, drag: 1.2, vx: Math.cos(a) * r, vy: Math.sin(a) * r, vz: 10 + rnd() * 30, s0: 3 });
+      const r = (40 + rnd() * 70) * sq;
+      Object.assign(q, { life: 1.2 + rnd() * 2.2, drag: 1.2, vx: Math.cos(a) * r, vy: Math.sin(a) * r, vz: (10 + rnd() * 30) * sq, s0: 3 * sq });
     } else {                 // the flash
-      Object.assign(q, { life: 0.9, s0: 110 });
+      Object.assign(q, { life: 0.9, s0: 110 * S });
     }
+    parts.push(q);
+  }
+  return parts;
+}
+// A fire where the wreckage lies: flames licking up over a patch of burning fuel, embers, and black smoke rising
+// in a column, each sprite coming back as it burns out (loop), for as long as the blast's `secs`.
+function poolParts(S) {
+  const parts = [];
+  const rnd = Math.random;
+  for (let i = 0; i < BLAST_N; i++) {
+    const kind = i < 46 ? 0 : i < 100 ? 1 : 2;
+    const a = rnd() * Math.PI * 2, r = 7 * S * Math.sqrt(rnd());
+    const q = { kind, rnd: rnd(), loop: true, x0: Math.cos(a) * r, y0: Math.sin(a) * r, drag: 0.6, vx: 0, vy: 0, vz: 0, grow: 0, rise: 0 };
+    if (kind === 0) Object.assign(q, { life: 1.1 + rnd() * 1.5, vx: (rnd() - 0.5) * 2, vy: (rnd() - 0.5) * 2, vz: (4 + rnd() * 4) * Math.sqrt(S), s0: (5 + rnd() * 7) * S, grow: 6 * S, rise: 1.5, px: 7 });
+    else if (kind === 1) Object.assign(q, { life: 12 + rnd() * 10, drag: 0.15, vx: (rnd() - 0.5) * 3, vy: (rnd() - 0.5) * 3, vz: (6 + rnd() * 4) * Math.sqrt(S), s0: (4 + rnd() * 5) * S, grow: 2 * S, px: 5, black: true });
+    else Object.assign(q, { life: 1 + rnd() * 1.5, drag: 0.8, vx: (rnd() - 0.5) * 8, vy: (rnd() - 0.5) * 8, vz: 6 + rnd() * 10, s0: 1.5, px: 3 });
+    q.t0 = -rnd() * q.life; // (each already part way through its life: the fire is going from the start)
     parts.push(q);
   }
   return parts;
@@ -1609,20 +1630,23 @@ function blastRamp(stops, f) {
 }
 const FIRE_COL = [[0, 1, 0.96, 0.75], [0.15, 1, 0.92, 0.55], [0.5, 1, 0.42, 0.08], [1, 0.22, 0.18, 0.16]];
 const SMOKE_COL = [[0, 0.16, 0.16, 0.18], [1, 0.46, 0.46, 0.48]];
+const BLACK_COL = [[0, 0.05, 0.045, 0.04], [0.5, 0.12, 0.115, 0.11], [1, 0.3, 0.3, 0.31]]; // (burning fuel: black)
 // Where a sprite is `age` seconds into the blast, in metres from the crash (east, north, up): null when it is gone.
 function blastPart(q, age) {
-  const a = age - q.t0;
+  let a = age - q.t0;
+  if (q.loop) a %= q.life;
   if (a < 0 || a > q.life) return null;
   const f = a / q.life;
   const k = (1 - Math.exp(-q.drag * a)) / q.drag;    // (air slows it: the distance covered by the speed so far)
-  let x = q.vx * k;
-  let y = q.vy * k;
-  let z = q.vz * k;
+  let x = q.vx * k + (q.x0 || 0);
+  let y = q.vy * k + (q.y0 || 0);
+  let z = q.vz * k + 0.5 * q.rise * a * a;           // (rise: hot gas goes on rising)
   if (q.kind === 0) {
-    return { x, y, z, size: q.s0 + q.grow * f, alpha: 0.95 * (f < 0.6 ? 1 : (1 - f) / 0.4), col: blastRamp(FIRE_COL, f) };
+    return { x, y, z, size: q.s0 + q.grow * f, alpha: 0.95 * (f < 0.6 ? 1 : (1 - f) / 0.4), col: blastRamp(FIRE_COL, q.loop ? 0.3 + 0.7 * f : f) };
   }
   if (q.kind === 1) {
     x += 3 * a;                                          // the wind carries it east
+    if (q.black) return { x, y, z, size: q.s0 + q.grow * a, alpha: 0.6 * Math.min(1, a / 1.2) * (1 - f), col: blastRamp(BLACK_COL, f) };
     return { x, y, z, size: q.s0 + q.grow * a, alpha: 0.6 * Math.min(1, a / 1.5) * (1 - f), col: blastRamp(SMOKE_COL, f) };
   }
   if (q.kind === 2) {
@@ -1670,12 +1694,15 @@ function updateBlasts(layer, map, globe, mpp, centerW, now) {
   let alive = false;
   list.forEach((b, k) => {
     let st = blastState.get(b);
-    if (!st) { st = { parts: blastParts(), age: 0, last: now }; blastState.set(b, st); }
+    if (!st) { st = { parts: blastParts(b), age: 0, last: now }; blastState.set(b, st); }
     const dt = Math.min(0.1, Math.max(0, (now - st.last) / 1000));
     st.last = now;
     if ((FG.ui && FG.ui.speed > 0) || b.real) st.age += dt; // (real: the hand-flown plane's, in real time)
-    const burning = st.age <= BLAST_SECS;
+    const secs = b.secs || BLAST_SECS;
+    const burning = st.age <= secs;
     if (burning) alive = true;
+    // (a lasting fire flares up over two seconds and dies down over its last fifteen)
+    const fade = b.kind === 'pool' ? Math.min(1, st.age / 2, (secs - st.age) / 15) : 1;
     const cosLat = Math.cos(b.lat * DEG);
     st.parts.forEach((q, j) => {
       const i = k * BLAST_N + j;
@@ -1686,8 +1713,8 @@ function updateBlasts(layer, map, globe, mpp, centerW, now) {
       P[3 * i] = tmp.pos.x; P[3 * i + 1] = tmp.pos.y; P[3 * i + 2] = tmp.pos.z;
       C[3 * i] = s.col[0]; C[3 * i + 1] = s.col[1]; C[3 * i + 2] = s.col[2];
       S[i] = s.size;
-      M[i] = BLAST_PX[q.kind] * (q.kind === 2 ? 1 + 0.5 * q.rnd : 1);
-      A[i] = s.alpha;
+      M[i] = q.px || BLAST_PX[q.kind] * (q.kind === 2 ? 1 + 0.5 * q.rnd : 1);
+      A[i] = s.alpha * fade;
     });
   });
   for (const a of Object.values(g.attributes)) a.needsUpdate = true;
@@ -2368,8 +2395,17 @@ const planeLayer = {
     // what broke off it (pose.dmg) and the parts falling away or lying on the ground (pose.pieces): pilotPieces
     const d = pose.dmg;
     if (!e.cut) e.cut = new THREE.Vector4();
-    e.cut.set(d ? d.cut[0] || 0 : 0, d ? d.cut[1] || 0 : 0, d ? d.elev || 0 : 0, d ? d.rud || 0 : 0);
+    const body = (d && d.body) || [0, 0]; // (the nose, the tail section broken off: livCut.w bits 2, 4)
+    e.cut.set(d ? d.cut[0] || 0 : 0, d ? d.cut[1] || 0 : 0, d ? d.elev || 0 : 0, (d ? d.rud || 0 : 0) + (body[0] ? 2 : 0) + (body[1] ? 4 : 0));
     if (e.obj.userData.nav && e.obj.userData.nav.uCut) { e.obj.userData.nav.uCut.value.x = e.cut.x; e.obj.userData.nav.uCut.value.y = e.cut.y; }
+    // broken across the fuselage: what isn't cut with it (the window strips, glass) goes
+    const broken = !!(body[0] || body[1]);
+    if (e.broken !== broken && e.obj.userData.liv) {
+      e.broken = broken;
+      e.obj.traverse((o) => { if (o.isMesh && !(o.material.userData && o.material.userData.livFlex)) o.visible = !broken; });
+    }
+    // a wreck is charred as it burns (pose.burn 0…1)
+    if (pose.burn && e.obj.userData.liv) for (const u of e.obj.userData.liv) if (u.livLight) u.livLight.value *= 1 - 0.8 * pose.burn;
     pilotPieces(this, e, pose, globe, now, liv);
   },
 };
@@ -2392,7 +2428,8 @@ function pilotPieces(layer, e, pose, globe, now, liv) {
     let pc = e.pieces.get(q.id);
     if (!pc) {
       // where the plane is now: the part broke off here (same frame: the pose came with it)
-      pc = { obj: planeModel(e.type, liv), keep: new THREE.Vector4(q.part.kind === 'wing' ? 1 : q.part.kind === 'elev' ? 2 : 3, q.part.side || 0, q.part.cut || 0, q.part.out || 0),
+      const kind = { wing: 1, elev: 2, rud: 3, body: 4 }[q.part.kind] || 3;
+      pc = { obj: planeModel(e.type, liv), keep: new THREE.Vector4(kind, q.part.side || 0, q.part.cut || 0, q.part.out || 0),
         at: { lat: pose.lat, lon: pose.lon, alt: e.altM, heading: e.att.heading, pitch: e.att.pitch, bank: e.att.bank, lift: e.obj.userData.lift || 0 }, mid: null };
       pc.obj.matrixAutoUpdate = false;
       pc.obj.visible = false;
@@ -2413,7 +2450,7 @@ function pilotPieces(layer, e, pose, globe, now, liv) {
       u.livKeep.value.copy(pc.keep);
       u.livCut.value.set(0, 0, 0, 0);
       u.livFlex.value = 0;
-      if (u.livLight && e.obj.userData.liv && e.obj.userData.liv[0].livLight) u.livLight.value = e.obj.userData.liv[0].livLight.value;
+      if (u.livLight && e.obj.userData.liv && e.obj.userData.liv[0].livLight) u.livLight.value = e.obj.userData.liv[0].livLight.value / (1 - 0.8 * (pose.burn || 0)) * (1 - 0.8 * (q.burn || 0));
     }
     // the plane's basis where the part broke off, then turned by rot, the part's middle moved by d
     const unit = frameAt(pc.at.lat, pc.at.lon, pc.at.alt, globe);
@@ -2435,11 +2472,13 @@ function pilotPieces(layer, e, pose, globe, now, liv) {
     let [dE, dN, dU] = q.d || [0, 0, 0];
     // d up is from the wheels' height where it broke off: on the ground (down) it lies flat on it, its middle a little
     // above it rather than as high as it was on the aircraft (brought down over a second, so it doesn't jump)
+    // (a fuselage section lies on its belly: its middle about its own radius up)
+    const rest = q.part.kind === 'body' ? 0.8 * (bellyOf(e.obj, pc.at.lift) || 2) : 0.3;
     if (q.down) {
-      const above = pc.at.lift + pc.mid.clone().applyMatrix4(m0).dot(up) / unit - 0.3;
+      const above = pc.at.lift + pc.mid.clone().applyMatrix4(m0).dot(up) / unit - rest;
       pc.sink = Math.min(1, (pc.sink || 0) + 0.02);
       dU -= above * pc.sink;
-    } else if (pc.sink) dU -= (pc.at.lift + pc.mid.clone().applyMatrix4(m0).dot(up) / unit - 0.3) * pc.sink;
+    } else if (pc.sink) dU -= (pc.at.lift + pc.mid.clone().applyMatrix4(m0).dot(up) / unit - rest) * pc.sink;
     midW.addScaledVector(east, dE * unit).addScaledVector(north, dN * unit).addScaledVector(up, dU * unit * TERRAIN_EXAG);
     m.setPosition(midW.sub(pc.mid.clone().applyMatrix4(new THREE.Matrix4().extractRotation(m)).multiplyScalar(unit)));
     pc.obj.matrix.copy(m);
@@ -2457,12 +2496,12 @@ function partMiddle(obj, part) {
   obj.traverse((o) => {
     if (!o.isMesh || !o.material.userData || !o.material.userData.livFlex) return;
     const g = o.geometry, pos = g.attributes.position, surf = g.attributes.livSurf;
-    const span = o.material.userData.livSpanOf;
+    const span = o.material.userData.livSpanOf, brk = o.material.userData.livBreakOf, hw = o.material.userData.livHalfOf || 0;
     if (!pos || !span) return;
     const m = new THREE.Matrix4();
     for (let k = o; k && k !== obj; k = k.parent) { k.updateMatrix(); m.premultiply(k.matrix); }
     for (let i = 0; i < pos.count; i += 1) {
-      if (!inPart(part, pos.getX(i), surf ? surf.getX(i) : 0, span)) continue;
+      if (!inPart(part, pos.getX(i), surf ? surf.getX(i) : 0, span, pos.getY(i), brk, hw)) continue;
       sum.add(p.fromBufferAttribute(pos, i).applyMatrix4(m)); n++;
     }
   });
@@ -2486,7 +2525,24 @@ const cockpitLayer = {
 // ground from the drawn terrain), the middle `lift` above them.
 function pilotAlt(pose, e) {
   const lift = e.obj.userData.lift ?? 0.12 * e.obj.userData.len;
-  return pose.altMSL * TERRAIN_EXAG + lift;
+  // (a wreck with its gear gone lies on its belly: the model's lowest point without the gear)
+  return pose.altMSL * TERRAIN_EXAG + (pose.belly ? bellyOf(e.obj, lift) : lift);
+}
+function bellyOf(obj, lift) {
+  const ud = obj.userData;
+  if (ud.belly == null && ud.liv) {
+    const box = new THREE.Box3(), b = new THREE.Box3();
+    obj.updateMatrixWorld(true);
+    const inv = new THREE.Matrix4().copy(obj.matrixWorld).invert();
+    obj.traverse((o) => {
+      if (!o.isMesh || !o.geometry.attributes.position) return;
+      for (let k = o; k && k !== obj; k = k.parent) if (k.name === 'gear') return;
+      if (!o.geometry.boundingBox) o.geometry.computeBoundingBox();
+      box.union(b.copy(o.geometry.boundingBox).applyMatrix4(new THREE.Matrix4().multiplyMatrices(inv, o.matrixWorld)));
+    });
+    ud.belly = box.isEmpty() ? lift : Math.max(0, -box.min.z);
+  }
+  return ud.belly ?? lift;
 }
 
 // Draw again in `ms`, or sooner when a plane or airport is selected or the camera starts following one.
