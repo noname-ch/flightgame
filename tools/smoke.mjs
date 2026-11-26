@@ -1121,84 +1121,15 @@ try {
     if (!side1 || side2 !== -side1) errors.push(`3D wing camera (N, N again for the other wing) went wrong: ${side1} then ${side2}`);
     if (!back.on || !back.follow || back.cam !== 'chase' || back.pitch > 80.01) errors.push(`V did not bring back the chase camera: ${JSON.stringify(back)}`);
 
-    step('fly it yourself (P): an A350 lined up at Zurich, TOGA spools the engines, the keys are the plane\'s, its 3D cockpit, a checkpoint goes back, Esc opens its menu, Q leaves');
-    await key('p');
-    const dlg = await evaluate(() => {
-      const el = document.getElementById('pilot-start');
-      if (!el) return { err: 'P did not open the dialog' };
-      el.querySelector('#ps-ap').value = 'ZRH';
-      el.querySelector('#ps-ap').dispatchEvent(new Event('input'));
-      const n = el.querySelectorAll('#ps-rw option').length;
-      el.querySelector('[data-ps=go]').click();
-      return { n };
+    step('fly it yourself (✈ Fly, P): the link to the flying page (github.com/noname-ch/flightgame-fly) carries the plane and airport');
+    const fl = await evaluate(() => {
+      if (!FG.flyLink) return { err: 'js/flylink.js not loaded' };
+      FG.ui.selectPlane(G.state.planes[0].id);
+      const u = new URL(FG.flyLink.url());
+      const p = G.state.planes[0];
+      return { type: u.searchParams.get('type'), want: p.type, from: u.searchParams.get('from'), back: u.searchParams.get('back'), btn: !!document.querySelector('.view3d-controls .fly'), pilot: !!FG.pilot };
     });
-    if (dlg.err || !dlg.n) errors.push(`fly it yourself: ${dlg.err || 'no runways listed for ZRH'}`);
-    else {
-      await waitFor(() => FG.pilot.active && !FG.pilot.state.loading, 20000, 'the hand-flown A350 to be ready');
-      const speed0 = await evaluate(() => FG.ui.speed);
-      await key('4');
-      await key('ArrowRight'); // (the plane's now: not the game's speed key)
-      await waitFor(() => FG.pilot.state.n1[0] > 30, 30000);
-      const fl = await evaluate(() => ({ n1: FG.pilot.state.n1[0], lever: FG.pilot.state.lever, follow: FG.view3d.follow, drawn: !!FG.view3d.pilotE, speed: FG.ui.speed, hud: !document.getElementById('pilot-hud').hidden }));
-      if (!(fl.n1 > 30) || fl.lever !== 1 || !fl.follow || !fl.drawn || !fl.hud) errors.push(`fly it yourself: ${JSON.stringify(fl)}`);
-      if (fl.speed !== speed0) errors.push('fly it yourself: → changed the game speed while flying');
-      // the A350's 3D flight deck round the cockpit camera (js/cockpit3d.js): built, its screens painted, the head turns
-      await evaluate(() => { FG.pilot.state.cam = 'cockpit'; FG.view3d.pilotCam('cockpit'); });
-      const deck = await waitFor(() => FG.cockpit3d && FG.cockpit3d.pit && FG.cockpit3d.pit.screens.length >= 7, 20000);
-      if (!deck) errors.push('fly it yourself: the A350\'s 3D cockpit was not drawn in the cockpit camera');
-      else {
-        const pit = await evaluate(() => {
-          const sc = FG.cockpit3d.pit.screens.find((x) => x.kind === 'pfdnd-c');
-          const px = sc.ctx.getImageData(sc.cv.width * 0.25, sc.cv.height * 0.45, 1, 1).data; // (the PFD's sky or ground)
-          FG.view3d.look.yaw = -60; // (a drag turns the head)
-          return { lit: px[0] + px[1] + px[2] > 60, eye: FG.pilot.LOOK_DOWN };
-        });
-        if (!pit.lit) errors.push(`fly it yourself: the cockpit's PFD screen stayed blank: ${JSON.stringify(pit)}`);
-        await evaluate(() => { FG.view3d.look.yaw = 0; FG.pilot.state.cam = 'chase'; FG.view3d.pilotCam('chase'); });
-      }
-      // checkpoint: Z keeps the flight, Backspace puts it back there (paused), even after a crash
-      await key('z');
-      await evaluate(() => { const s = FG.pilot.state; s.lever = 0; s.crashed = 'test'; s.lat += 0.01; });
-      await key('Backspace');
-      const ck = await evaluate(() => { const s = FG.pilot.state; return { lever: s.lever, crashed: s.crashed, paused: s.paused, moved: !!s.ck && s.lat === s.ck.state.lat }; });
-      if (ck.lever !== 1 || ck.crashed || !ck.paused || !ck.moved) errors.push(`fly it yourself: Backspace did not go back to the checkpoint: ${JSON.stringify(ck)}`);
-      await key('p');
-      // Esc: the flight's own menu (the flight waits), Esc again resumes, Q from the menu leaves
-      await key('Escape');
-      const pm = await evaluate(() => ({ active: FG.pilot.active, menu: !!document.getElementById('pilot-menu'), paused: FG.pilot.state.menu, game: !document.getElementById('menu').hidden }));
-      if (!pm.active || !pm.menu || !pm.paused || pm.game) errors.push(`fly it yourself: Esc did not open the flight's menu: ${JSON.stringify(pm)}`);
-      await key('Escape');
-      if (await evaluate(() => !!document.getElementById('pilot-menu') || !FG.pilot.active)) errors.push('fly it yourself: Esc did not resume the flight');
-      await key('Escape'); await key('q');
-      const off = await evaluate(() => ({ active: FG.pilot.active, drawn: !!FG.view3d.pilotE, menu: !document.getElementById('menu').hidden, pm: !!document.getElementById('pilot-menu') }));
-      if (off.active || off.menu || off.pm) errors.push(`fly it yourself: Esc, Q did not just leave the plane: ${JSON.stringify(off)}`);
-      // every other type: starts on the runway with its own engines and spools up at take-off thrust
-      step('fly it yourself: each of the sixteen aircraft starts, is drawn and spools up');
-      const types = await evaluate(() => Object.keys(FG.pilot.types));
-      if (types.length < 16) errors.push(`fly it yourself: only ${types.length} aircraft`);
-      for (const type of types) {
-        await evaluate((type) => {
-          const r = G.airportRunways('ZRH')[0];
-          const course = G.bearing({ lat: r[0], lon: r[1] }, { lat: r[2], lon: r[3] });
-          FG.pilot.start({ type, mode: 'runway', end: { code: 'ZRH', lat: r[0], lon: r[1], far: [r[2], r[3]], course, len: G.runwayLength(r), width: 45, name: 'T' } });
-        }, type);
-        await waitFor(() => FG.pilot.active && !FG.pilot.state.loading, 20000, `the hand-flown ${type} to be ready`);
-        await evaluate(() => { FG.pilot.state.lever = 1; });
-        await waitFor(() => FG.pilot.state.n1.every((n) => n > FG.pilot.state.spec.idle + 10) || FG.pilot.state.crashed, 30000, `the ${type}'s engines to spool up`);
-        const st = await evaluate(() => { const s = FG.pilot.state; return { type: FG.pilot.type, engines: s.n1.length, want: s.spec.engines, crashed: s.crashed, drawn: !!FG.view3d.pilotE && FG.view3d.pilotE.type === FG.pilot.type }; });
-        if (st.type !== type || st.engines !== st.want || st.crashed || !st.drawn) errors.push(`fly it yourself, ${type}: ${JSON.stringify(st)}`);
-        if (type === 'A350-900') {
-          // the limiter: L turns the protections off (direct law) and back on, the 🛡 button says which
-          await key('l');
-          const off = await evaluate(() => ({ lim: FG.pilot.state.limiter, btn: document.querySelector('#pilot-hud [data-pl=limiter]').textContent }));
-          await key('l');
-          const on = await evaluate(() => FG.pilot.state.limiter);
-          if (off.lim !== false || !/off/.test(off.btn) || on !== true) errors.push(`fly it yourself: the limiter did not toggle: ${JSON.stringify({ off, on })}`);
-        }
-        await evaluate(() => FG.pilot.stop());
-      }
-      await evaluate(() => FG.ui.follow && FG.ui.follow(G.state.planes[0].id));
-    }
+    if (fl.err || fl.type !== fl.want || !fl.from || !fl.back || !fl.btn || fl.pilot) errors.push(`fly it yourself link: ${JSON.stringify(fl)}`);
 
     step('3D wing bending and propellers: every drawn aircraft has its own livFlex, up in the air and drooping on the ground; propellers and control surfaces found');
     const flex = await evaluate(() => {

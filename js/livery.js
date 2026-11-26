@@ -1816,7 +1816,7 @@ export function paintLivery(scene, file, extra, stretch = 1, livery = FG.livery(
     livSpan: { value: m.span },
     livFlapSpan: { value: new THREE.Vector3(1.25 * m.halfWidth, FLAP_END * m.span, 1.25 * m.halfWidth + FLAP_BREAK * (FLAP_END * m.span - 1.25 * m.halfWidth)) },
   };
-  // (kept for tools/export_models.mjs: the uniforms the models are painted with)
+  // (kept for the Rust app's model export, tools/export_models.mjs in lianhirter-arch/flightgame-rust: the uniforms the models are painted with)
   scene.userData.liv = uniforms;
   const seen = new Set();
   scene.traverse((o) => {

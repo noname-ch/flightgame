@@ -2,7 +2,7 @@
 // 'openmaptiles', layer 'water'), drawn over the satellite picture as moving water lit by the sun: waves, the sun's
 // glint, the sky mirrored in it (more the flatter it is looked at) and the colour of the water body, each kind its
 // own look (the sea's long swell and chop, a lake's small ripples, a river's choppy ripples, a swimming pool's
-// turquoise calm). The Rust app draws the same water (rust/src/water.rs, rust/src/shaders/ground.wesl).
+// turquoise calm). The Rust app draws the same water (lianhirter-arch/flightgame-rust: src/water.rs, src/shaders/ground.wesl).
 //
 // Per vector tile in view (zoom 10 to 14, the nearest TILES_MAX): a mask picture of its water (red the sea, green
 // lakes, blue rivers, green and blue a swimming pool; nonzero fill, so holes are islands), and a grid over the tile

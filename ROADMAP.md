@@ -113,7 +113,7 @@ Recent milestones, newest first (see `git log` for the rest):
 
 - Liveries (F7, js/liverywin.js): the airline's livery and one for each plane, 32 built in (cheatlines, new fin logos),
   a designer with a live 3D preview, share codes and files, and a community list (community/liveries.json).
-- Fly it yourself (P, ✈ Fly): an A350-900/-1000 flown by hand in 3D (js/pilot.js): Airbus normal law, engines that
+- Fly it yourself (P, ✈ Fly): an A350-900/-1000 flown by hand in 3D (now in github.com/noname-ch/flightgame-fly): Airbus normal law, engines that
   spool, flaps, gear, spoilers, brakes, reversers; PFD, engine and config displays, ILS, GPWS warnings and callouts;
   touchdowns rated; chase, cockpit (HUD), wing and fly-by cameras; start on a runway, on final or take over your A350.
 - Fly it yourself with ten aircraft, each flying in its own way: A350-900/-1000 and A320 (Airbus law), 737-800 and

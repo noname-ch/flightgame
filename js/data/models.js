@@ -16,7 +16,7 @@ FG.data.models = {
   'A350-900ULR': 'a359', 'A350-1000ULR': 'a359', 'A350-2000': 'a359', 'A350-20000': 'a359',
   'B777-200ER': 'b772', 'B777-300ER': 'b773', 'B777-9': 'b773', 'B747-400': 'b744', 'B747-8': 'b748', 'A380-800': 'a380',
   'JU52': 'ju52', 'DC-3': 'dc3', 'CONCORDE': 'concorde',
-  // flown by hand only (js/pilot.js), not an airline type: the Global 7500 is drawn as its Bombardier relative
+  // flown by hand only (Fly it yourself, flightgame-fly), not an airline type: the Global 7500 is drawn as its Bombardier relative
   'GLOBAL7500': 'crj700',
   // story-mode types: none has its own model yet, each borrows a relative's
   'DC-4': 'dc3', 'CV-340': 'dc3', 'DC-6B': 'dc3', 'L-1049G': 'dc3', 'DC-7C': 'dc3', 'VC-700': 'saab2000',

@@ -14,6 +14,15 @@ Play online: https://noname-ch.github.io/flightgame/ (GitHub Pages, deployed fro
   worktree (`git worktree add -b <topic> ../Flightgame-<topic>`) and push from it.
 - Commit and push only when the user asks.
 
+## Other repos
+
+- Fly it yourself is github.com/noname-ch/flightgame-fly (this game as its `flightgame/` submodule, its own
+  src/pilot.js, src/cockpit3d.js, autopilot and start screen). Here only js/flylink.js opens it (✈ Fly, P) and
+  view3d.js keeps the hooks it uses (`FG.pilot`, `FG.cockpit3d`, `pilotCam`, the hand-flown plane's drawing): keep
+  them working, and check the fly page after changing them.
+- The desktop version in Rust is github.com/lianhirter-arch/flightgame-rust (this game as its `flightgame/`
+  submodule). It builds in js/data, sounds/, models/ and community/liveries.json: keep their formats.
+
 ## Every push
 
 - Run the smoke test first: `node tools/smoke.mjs`. Push only when it ends with `✓ smoke test passed`.
@@ -195,7 +204,7 @@ Play online: https://noname-ch.github.io/flightgame/ (GitHub Pages, deployed fro
   with `FG.livery(p)`, never the airline's livery alone: view3d `planeModel(type, livery)`, `FG.planeShots.get(type,
   livery)`, `FG.planeIcons.get(type, livery)`. js/liverywin.js is the window (F7); `models3d.js paintFresh` paints
   the designer's draft without caching. The Rust app reads `FG.data.liveries` from this file when it builds
-  (rust/src/view3d.rs): keep it a plain literal.
+  (github.com/lianhirter-arch/flightgame-rust, src/view3d.rs): keep it a plain literal.
 - Landing gear (js/gear3d.js, view3d.js `gearFor`/`oleo`): `setGear` folds it, `setBogies` tilts the bogies, `setOleo`
   slides each leg's piston and wheels (the 'slider' group; the torque link 'link' is posed from its pins, `poseLink`).
   `scene.userData.oleo` (metres: strokes, bogie, nose arm, main wheel spots) drives view3d's `oleo()`: damped springs

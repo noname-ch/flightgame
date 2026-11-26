@@ -6,7 +6,13 @@ import * as THREE from 'three';
 import { loadModel, modelSize, facing, patchFacing } from './models3d.js';
 import { setGear, setBogies, setOleo } from './gear3d.js';
 import { waterLayer } from './water3d.js';
-import * as cockpit3d from './cockpit3d.js';
+// The A350s' 3D flight deck lives with Fly it yourself (github.com/noname-ch/flightgame-fly, src/cockpit3d.js): that
+// page sets FG.cockpit3d. The game itself draws no cockpit.
+const cockpit3d = {
+  has: (type) => !!(FG.cockpit3d && FG.cockpit3d.has && FG.cockpit3d.has(type)),
+  draw: (...a) => FG.cockpit3d.draw(...a),
+  get EYE_X() { return FG.cockpit3d ? FG.cockpit3d.EYE_X : 0; },
+};
 
 const G = FG.game;
 const D = FG.data;
@@ -82,7 +88,7 @@ function gearFor(e, pose) {
   const gear = e.obj.userData.gear;
   const st = pose.st;
   if (!gear) return;
-  if (pose.pilot) { setGear(gear, pose.pilot.gear); return; } // (flown by hand: js/pilot.js)
+  if (pose.pilot) { setGear(gear, pose.pilot.gear); return; } // (flown by hand: Fly it yourself, flightgame-fly)
   const agl = st ? (st.altFt || 0) - (st.fieldFt || 0) : 0;
   let f = 1;
   if (pose.flying && (!st || AIRBORNE[st.phase])) {
@@ -419,7 +425,7 @@ function wingFlex(type, pose, ph) {
   const look = D.looks && D.looks[type];
   const soft = 0.6 + 0.4 * Math.min(1, (look ? look.len : 40) / 60);
   if (!st) return -0.012 * soft;
-  // flown by hand (js/pilot.js): the real load on the wings, nz (on the wheels: the share of the weight they carry
+  // flown by hand (Fly it yourself, flightgame-fly): the real load on the wings, nz (on the wheels: the share of the weight they carry
   // already). They bow up pulling out of a dive or in a hard turn, unload in a stall or pushing over, and droop below 0 g.
   if (pose.pilot && Number.isFinite(pose.pilot.nz)) {
     const nz = Math.max(-1, Math.min(3, pose.pilot.nz));
@@ -2314,7 +2320,7 @@ const planeLayer = {
     if (v.follow || pilotOn() || moving > 30 || (animating && FG.ui && FG.ui.speed > 0)) map.triggerRepaint();
     else repaintIn(moving > 0 ? Math.min(250, 1000 / moving) : 1000);
   },
-  // The plane the player flies by hand (js/pilot.js): real size, posed from its own physics, hidden from the cockpit.
+  // The plane the player flies by hand (Fly it yourself, flightgame-fly): real size, posed from its own physics, hidden from the cockpit.
   drawPilot(globe, now, livery) {
     let e = v.pilotE;
     if (!pilotOn()) {
@@ -2344,7 +2350,7 @@ const planeLayer = {
   },
 };
 const pilotOn = () => !!(FG.pilot && FG.pilot.active);
-// The 3D flight deck round the cockpit camera (js/cockpit3d.js), drawn last over the whole map with planeLayer's
+// The 3D flight deck round the cockpit camera (flightgame-fly src/cockpit3d.js), drawn last over the whole map with planeLayer's
 // renderer. Its own depth: the world's is cleared under it (a layer after it would draw into the windows).
 const cockpitLayer = {
   id: 'fg-cockpit',
@@ -2704,7 +2710,7 @@ function pilotAhead(pose, km) {
   return { ...pose, lat, lon, altMSL: pose.altMSL + up, altM: Math.max(0, pose.altM + up) };
 }
 
-// ---------- flying by hand (js/pilot.js) ----------
+// ---------- flying by hand (Fly it yourself: flightgame-fly's src/pilot.js sets FG.pilot) ----------
 // Every frame: the physics step on by the frame's time, then the camera goes where the plane now is (it is drawn
 // there in the next frame). Cameras: chase, cockpit, wing and fly-by.
 function pilotTick() {
@@ -2724,7 +2730,7 @@ function pilotTick() {
 // Cockpit camera: the captain's eyes (about 4.6 m behind the nose, 7.6 m above the wheels on an A350), looking
 // FG.pilot.LOOK_DOWN° under the nose; it pitches and rolls with the plane. The plane itself is not drawn.
 const EYE = { back: 4.6, up: 7.6 };
-// The 3D flight deck (js/cockpit3d.js) is drawn round the camera for the types it has (the A350s): then the eye
+// The 3D flight deck (flightgame-fly src/cockpit3d.js) is drawn round the camera for the types it has (the A350s): then the eye
 // sits in the captain's seat, and a drag turns the head (v.look; a double click looks ahead again).
 const cockpitShown = () => !v.noPit && pilotOn() && v.follow && v.cam === 'cockpit' && cockpit3d.has(FG.pilot.type);
 v.look = { yaw: 0, pitch: 0 };
@@ -2926,8 +2932,9 @@ function controls() {
     <button class="flyby" title="Fly-by: the camera waits ahead and watches the plane pass (B)">🎬<span> Fly-by</span></button>
     <button class="wing" title="Wing camera, on the plane's wing; again for the other wing (N)">🪽<span> Wing</span></button>
     <button class="sat" title="Satellite imagery">🛰<span> Satellite</span></button>
-    <button class="fly" title="Fly an A350 yourself (P)">✈<span> Fly</span></button>`;
-  box.querySelector('.fly').onclick = () => FG.pilot && FG.pilot.open();
+    <button class="fly" title="Fly it yourself (P): opens the flying page with the selected plane">✈<span> Fly</span></button>`;
+  // (on the fly page FG.pilot is there and opens its start screen; in the game, FG.flyLink opens that page)
+  box.querySelector('.fly').onclick = () => (FG.pilot ? FG.pilot.open() : FG.flyLink && FG.flyLink.open());
   box.querySelector('.home').onclick = () => { setFollow(false); fitNetwork(); };
   box.querySelector('.follow').onclick = () => {
     if (!FG.ui.selectedPlane) { FG.ui.selectPlane(G.state.planes[0] && G.state.planes[0].id); }
@@ -3285,6 +3292,6 @@ v.setSatellite = (on) => setSatellite(on); // Settings → Map style
 v.from2d = () => from2d(); // the 2D map moved while 3D is open (a new game, a loaded save)
 v.lights = airportLights;
 v.water = water;
-v.pilotCam = (mode) => pilotCam(mode); // js/pilot.js
+v.pilotCam = (mode) => pilotCam(mode); // (flightgame-fly src/pilot.js)
 v.fov = () => (v.map && v.map.getVerticalFieldOfView ? v.map.getVerticalFieldOfView() : 36.87);
 FG.view3d = v; // for debugging

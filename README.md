@@ -105,7 +105,7 @@ a chase camera, also while paused, so you can compare them (a style picked durin
 
 **Main menu**: the very first start asks for a style, then the main menu offers *Continue*, *New game*,
 *Load game* (the last save in this browser, or a `.json` save file; ⋯ → *Save to file* makes one, and the desktop
-version in `rust/` reads and writes the same files) and
+version, [flightgame-rust](https://github.com/lianhirter-arch/flightgame-rust), reads and writes the same files) and
 *Quick start*. A loading screen stays up until the map has its tiles. The 3D view asks once whether the device
 is strong enough (it needs a fast graphics chip) and names the graphics chip the browser reports.
 
@@ -347,79 +347,11 @@ Cameras, as in DCS (on phones the buttons show only their icons):
 - 🪽 Wing (N, DCS's F4): a camera on the wing, out towards the tip, looking ahead; it pitches and rolls with the
   plane. N again: the other wing.
 
-**Fly it yourself** (P, or ✈ Fly among the 3D buttons): an aircraft you fly by hand, lined up on any
-runway, on final on the ILS, or taking over one of your own planes of that type in the air (it carries on with its
-timetable when you leave). Sixteen aircraft, each flying in its own way:
-- **A350-900, A350-1000, A320, A330-300, A340-300, A340-600, A380-800, Global 7500**: fly-by-wire with full
-  protections (below; the Global's is Bombardier's "normal mode"). The A320 is light and nimble, the A350-1000
-  heavy, with a tail that strikes at under 10°. The A340-300's four small CFM56s spool up slowly and climb the
-  slowest of all; the 75 m A340-600 strikes its tail past 9°; the 560 t A380 rolls slowly and only its inner engines
-  reverse. The Global 7500 is a light business jet with plenty of thrust: quick to roll, Mach 0.90.
-- **Boeing 737-800, 747-400, 777-300ER**: conventional controls, as a real aircraft. The stick moves the elevator;
-  let go and it springs back to where the aircraft is trimmed. Hold it and the trim follows within a couple of
-  seconds (you trim the force away), or trim yourself with Home / End (U / J). Trimmed, the aircraft is speed
-  stable: it goes back to its trimmed speed by itself, nose rising and falling in the slow, lightly damped swing
-  every aircraft has (the phugoid: about a minute a cycle, a quarter smaller each time), so more thrust makes it
-  climb and less makes it sink. No protections on the 737 and the 747: they stall (stick shaker first), and there's
-  no g limit: past 1.5 × the limit load (3.75 g) the wings fail; far past the dive speed it breaks up. Stalled,
-  the lift breaks away, the airframe shakes, the nose drops even with the stick held back and a wing drops (25°);
-  it stays stalled until the stick comes forward; trimmed into the stall it stays there hands off. Far past the
-  stall the wing is an air brake: it sinks steeply at a low speed. The bank holds where you leave it. The 747 has
-  four slow engines and a lot of mass: slow to pitch, to roll and to speed up. The 777 flies the same way (its
-  fly-by-wire feels conventional) with soft protections you can pull through: it won't trim into the stall and lets
-  the nose down there unless you hold the stick back, banks past 35° roll back to 30°, it pitches up past VMO.
-  Its tail strikes past 8.5°.
-- **Concorde**: no flaps: the delta wing lands at about 13-15° nose up and 160 kt, with a lot of drag. It has no
-  stall break: past 20° the vortices over the wing go on lifting, less and less, while the drag grows until it sinks
-  like a brick (stick shaker at 17°); its high-incidence protection keeps it under 20° (limiter). Reheat at the
-  take-off detent (4) for the take-off and through Mach 1, then Mach 2 at 50,000 ft. Hands off after take-off with
-  reheat it pitches up and swings, as the real one would: fly the attitude and take the reheat out. No spoilers.
-- **Dash 8-400, ATR 72-600**: turboprops. The propellers answer the levers at once (torque, TQ %) and pull hardest
-  when slow; reverse is the propellers' beta. No autothrust. The ATR has no spoilers and only 250 kt at most.
-- Every type has its weight: the roll and the pitch take a moment to get going and to stop (about a second on the
-  A350 and the 747, a third of one on the classics). The wings bend with the real load: up pulling out of a dive or
-  in a hard turn, less in a stall or pushing over, and they bounce a little after a sharp pull.
-- **DC-3, Ju 52/3m**: classics on cables: no autothrust, no reversers, no spoilers; the wings level by themselves,
-  they roll slowly, and in a stall a wing drops. The Ju 52 has three engines and fixed gear, lifts off at about
-  60 kt and stops in a few hundred metres.
-
-**Limiter** (L, or 🛡 Limiter in the cockpit's buttons): the protections off. The fly-by-wire types then fly in
-direct law (direct mode on the Global): conventional controls as above, no alpha protection, no alpha floor, no bank
-or g limit: hold the stick back with the power at idle and they stall and fall like any other, and can be
-overstressed. The Global's T-tail can then sink into a deep stall: the wing's wake blankets the tail, the elevator
-hardly answers and the nose doesn't drop by itself; it comes down at 10,000 ft/min or more, and only the stick held
-full forward (with power) gets it out, slowly. The 777 and Concorde lose their protections; the 737, 747,
-turboprops and classics have none to lose. The choice is kept for the next flight.
-
-The dialog says how each one flies and marks the runways too short for it. Thrust detents, flaps, speed limits,
-crash limits (sink rate, bank, tyre speed) are each type's own. It flies in real time whatever the game speed and earns nothing: it's for flying. While
-you fly, the keyboard is the plane's (the game's keys come back when you leave):
-- ↑ ↓ (W S): stick, nose down / up. In an Airbus (normal law) it asks for a pitch rate; let go and it holds the
-  flight path (the others: see above). ← → (A D): roll; let go and the bank stays (up to 33°). On the ground they steer, Q E = rudder.
-- PgUp / PgDn or + / −: thrust levers (Shift with them: fine steps; Ctrl with + / −: fast); 1 2 3 4 = the IDLE, CL, FLX/MCT and TOGA detents. The engines spool up
-  slowly from idle (about 8 s to take-off thrust). On the ground − past idle (or R) is reverse thrust.
-- Autothrust (A/THR): in the air with the levers in CL (2) it holds a speed, the magenta mark on the speed tape:
-  250 kt below 10,000 ft, then 300 kt / M 0.85, with flaps out a flap speed, on the approach VLS + 5. [ ] pick a
-  speed yourself (cyan), \ goes back to the managed one, T switches the autothrust off (the levers set the thrust).
-  Take off at TOGA, then at about 1,500 ft "LVR CLB" asks for the levers back to CL; left at TOGA it overspeeds.
-- G gear (about 10 s to move), F / Shift+F flaps one notch down / up (0, 1, 1+F, 2, 3, FULL; about 7 s a notch),
-  X speed brakes, Shift+X arms the ground spoilers, Space or B wheel brakes, K parking brake.
-- C cycles the cameras (chase, cockpit with a head-up display, wing, fly-by), V chase, N wing. P pauses, H lists the
-  keys, Esc opens a menu (the flight waits): resume, start this flight again, or leave the cockpit.
-- The A350s have a 3D flight deck in the cockpit camera: the six screens show the PFD and navigation display, the engine
-  and warning display, the wheel page and the information system; the thrust levers, side-sticks, gear lever, flap and
-  speed brake levers move, the sun shines in and the panels light up at night. Drag to look round (double click: ahead
-  again); I puts the big PFD and engine display over the view as well.
-- Checkpoints: Z (or ⚑ Checkpoint) keeps the flight as it is now; Backspace (or ⟲ Retry, or from the menu or after
-  a crash) puts it back there, paused until P, as often as it takes: practise a landing until it works. The
-  checkpoint stays when the flight starts again and goes with a new flight.
-The physics: lift and drag from the flap setting, gear and spoilers; the thrust falls off with height and speed; the
-angle of attack is protected (the wing never stalls; near it A.FLOOR gives TOGA by itself), pitch stays within
-30° up / 15° down. The instruments show a PFD (speed tape with the max speed and the alpha-protection band, altitude,
-vertical speed, heading, radio height, ILS diamonds for the runway ahead) and the engines, flaps, gear, spoilers and
-brakes. Warnings: CONFIG at take-off, OVERSPEED, FLAP/GEAR SPEED, SINK RATE, PULL UP, TOO LOW GEAR/FLAPS, TAIL
-STRIKE, OFF THE RUNWAY; with sound on, the radio height callouts and RETARD. Touchdowns are rated by their sink
-rate; over 1,100 ft/min, gear up, a wing down or nose first is a crash (Enter tries again).
+**Fly it yourself** (P, or ✈ Fly among the 3D buttons) opens the flying page,
+[Flightgame · Fly](https://noname-ch.github.io/flightgame-fly/) ([its repo](https://github.com/noname-ch/flightgame-fly)):
+sixteen aircraft flown by hand in the same world, with an A320-style autopilot, FCU and MCDU, and the A350s' 3D
+flight deck. It opens with the selected plane's type and airport, and a plane of yours in the air to take over;
+your airline's save is read there but never written. ← Back to Flightgame comes back.
 
 V goes back to the chase camera from the fly-by or wing camera; otherwise it switches between 2D and 3D. B and N
 open the 3D view if needed and take the selected plane (or the first one in the air). The camera buttons and
