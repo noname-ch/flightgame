@@ -225,6 +225,7 @@ function planeModel(type, livery = FG.livery()) {
     g.userData.oleo = scene.userData.oleo;   // (the shock absorbers' strokes, metres: oleo())
     const lights = navLights(type, model);
     g.userData.nav = lights.material.uniforms;
+    if (REHEAT.has(type) && scene.userData.revEngines && scene.userData.revEngines.length) g.userData.reheat = reheatFlames(model, scene.userData.revEngines, size);
     g.clear();
     g.add(model, lights);
   }, () => {});
@@ -1331,6 +1332,7 @@ function placeModel(e, pose, altM, exag, globe, now, lineUp) {
     const rev = e.obj.userData.rev;
     e.rev = (e.rev || 0) + (revTarget(pose) - (e.rev || 0)) * (1 - Math.exp(-dt / 0.4));
     if (e.rev < 0.002) e.rev = 0;
+    if (e.obj.userData.reheat) reheatTick(e.obj.userData.reheat, pose, dt, now, light);
     const rate = propRate(pose) * (rev && rev.prop ? 1 + 0.5 * e.rev : 1);
     e.spinRate = (e.spinRate || 0) + (rate - (e.spinRate || 0)) * (1 - Math.exp(-dt / 1.5));
     e.spin = ((e.spin || 0) + e.spinRate * dt) % (2 * Math.PI);
@@ -1542,6 +1544,206 @@ function smokeTick(e, dt) {
   sm.matrixWorldNeedsUpdate = true;
 }
 
+// ---------- afterburners (reheat) ----------
+// Concorde's Olympus 593s light their reheat for take-off and for the climb through Mach 1: a flame out of each
+// round nozzle (js/livery.js markEngines: scene.userData.revEngines), a bright core with its shock diamonds inside a
+// longer orange plume going violet at its tip, flickering. Added onto what is behind it: strong at night, faint by
+// day. Hand-flown: each engine at full thrust with the levers at the take-off detent (pose.pilot.reheat, one per
+// engine, left outer first); the airline's: on the take-off roll and climb-out below 1500 ft, and from FL280 to
+// FL430 on the way up (the transonic acceleration).
+const REHEAT = new Set(['CONCORDE']);
+const FLAME_VS = `
+varying vec2 vUv; varying vec3 vN; varying vec3 vV;
+void main() {
+  vUv = uv;
+  vec4 mv = modelViewMatrix * vec4(position, 1.0);
+  vV = -mv.xyz; vN = normalMatrix * normal;
+  gl_Position = projectionMatrix * mv;
+}`;
+const FLAME_FS = `
+uniform float uOn; uniform float uTime; uniform float uLight; uniform float uCore; uniform float uSeed;
+varying vec2 vUv; varying vec3 vN; varying vec3 vV;
+void main() {
+  float t = 1.0 - vUv.y;                                       // 0 at the nozzle, 1 at the flame's tip
+  float rim = abs(dot(normalize(vN), normalize(vV)));          // (seen through its middle: thicker, brighter)
+  float flick = 0.82 + 0.18 * sin(uTime * 47.0 + uSeed + t * 17.0 + vUv.x * 18.85) * sin(uTime * 29.0 + uSeed * 2.0);
+  vec3 col; float a;
+  if (uCore > 1.5) {                                           // the nozzle's glowing disc, seen from behind
+    float d = length(vUv - 0.5) * 2.0;
+    col = mix(vec3(1.0, 0.97, 0.85), vec3(1.0, 0.55, 0.15), d);
+    a = (1.0 - d * d) * 0.9;
+  } else if (uCore > 0.5) {
+    float diamonds = 0.45 + 0.55 * pow(abs(cos(t * 3.14159 * 4.5)), 8.0) * (1.0 - t);
+    col = mix(vec3(1.0, 0.96, 0.82), vec3(1.0, 0.6, 0.2), t);
+    a = min(1.0, 1.3 * pow(1.0 - t, 1.1) * diamonds * pow(rim, 0.7));
+  } else {
+    col = mix(vec3(1.0, 0.55, 0.18), vec3(0.55, 0.25, 0.6), smoothstep(0.3, 1.0, t));
+    a = 0.8 * pow(1.0 - t, 1.6) * pow(rim, 1.2);
+  }
+  a *= flick * uOn * mix(1.0, 0.45, uLight);
+  if (a < 0.003) discard;
+  gl_FragColor = vec4(col, a);
+}`;
+function reheatFlames(model, nozzles, size) {
+  const time = { value: 0 }, light = { value: 1 };
+  const list = [...nozzles].sort((a, b) => a.x - b.x); // (left outer first: engine 1)
+  return list.map((n, i) => {
+    const on = { value: 0 };
+    const meshes = [[1, 0.82, 0.3, 6], [0, 1.0, 0.65, 15]].map(([core, top, bottom, lenM]) => {
+      const h = lenM / size.len;
+      const geo = new THREE.CylinderGeometry(top * n.r, bottom * n.r, h, 20, 1, true).translate(0, -h / 2, 0);
+      const mat = new THREE.ShaderMaterial({
+        uniforms: { uOn: on, uTime: time, uLight: light, uCore: { value: core }, uSeed: { value: i * 1.7 + core } },
+        vertexShader: FLAME_VS, fragmentShader: FLAME_FS, transparent: true, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending,
+      });
+      const m = new THREE.Mesh(geo, mat);
+      m.position.set(n.x, n.y - n.len / 2 + 0.002, n.z);
+      m.renderOrder = 10;
+      m.visible = false;
+      m.frustumCulled = false;
+      model.add(m);
+      return m;
+    });
+    // (a flame seen end on is all edges: from behind, the nozzle's hot disc and the core seen through it)
+    const disc = new THREE.Mesh(new THREE.CircleGeometry(0.85 * n.r, 24).rotateX(Math.PI / 2), new THREE.ShaderMaterial({
+      uniforms: { uOn: on, uTime: time, uLight: light, uCore: { value: 2 }, uSeed: { value: i } },
+      vertexShader: FLAME_VS, fragmentShader: FLAME_FS, transparent: true, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending,
+    }));
+    disc.position.set(n.x, n.y - n.len / 2 - 0.001, n.z);
+    disc.renderOrder = 10;
+    disc.visible = false;
+    model.add(disc);
+    meshes.push(disc);
+    return { eng: i, on: 0, u: on, time, light, meshes };
+  });
+}
+function reheatTarget(pose) {
+  if (pose.pilot) return pose.pilot.reheat || 0;
+  const st = pose.st;
+  if (!st) return 0;
+  const agl = (st.altFt || 0) - (st.fieldFt || 0);
+  if (st.phase === 'takeoff') return st.ground && st.speedKmh < 20 ? 0 : 1;
+  return st.phase === 'climb' && (agl < 1500 || (st.altFt > 28000 && st.altFt < 43000)) ? 1 : 0;
+}
+function reheatTick(flames, pose, dt, now, light) {
+  const tg = reheatTarget(pose);
+  for (const f of flames) {
+    const want = Array.isArray(tg) ? tg[f.eng] || 0 : tg;
+    // (it lights in a moment, with a flicker, and goes out quicker)
+    f.on += (want - f.on) * (1 - Math.exp(-dt / (want > f.on ? 0.3 : 0.15)));
+    if (f.on < 0.005) f.on = 0;
+    f.u.value = f.on * (want > 0 && f.on < 0.9 ? 0.7 + 0.3 * Math.random() : 1);
+    f.time.value = (now / 1000) % 1000;
+    f.light.value = light;
+    for (const m of f.meshes) m.visible = f.on > 0;
+  }
+}
+
+// ---------- fire trails (the hand-flown plane's pose.fire and its pieces' fire) ----------
+// Fuel pouring out of a torn wing burns as it streams away: each frame the burning places on the drawn model (the
+// stump's broken end, a burning piece's middle, the wing roots of a wreck sliding along) let out flames and black
+// smoke where they are, at least one every couple of metres they moved, so a trail of fire stays behind them in the
+// air or along the ground. The flames keep a little of the speed they were let out at and burn out in a second or
+// two; the smoke rises and drifts for longer. One batch of sprites (the crash blasts' shader) near the aircraft.
+const TRAIL_MAX = 3000;
+const trail = { parts: [], next: 0, globe: null, src: new Map(), pts: null };
+v.trail = trail; // (for tests)
+function trailEmit(id, P, up, east, unit, f, scale, dt, now) {
+  let src = trail.src.get(id);
+  if (!src) { src = { p: P.clone(), acc: 0, n: 0 }; trail.src.set(id, src); }
+  src.seen = now;
+  const moved = src.p.distanceTo(P) / unit;
+  const vel = dt > 0 && moved < 400 * dt ? P.clone().sub(src.p).divideScalar(dt) : new THREE.Vector3();
+  src.acc += Math.min(120, moved / 1.6 + dt * 35 * f);
+  const n = Math.floor(src.acc);
+  src.acc -= n;
+  const rnd = Math.random, S = scale * (0.6 + 0.4 * f);
+  for (let j = 0; j < n; j++) {
+    const k = (j + 1) / n;
+    const at = src.p.clone().lerp(P, k);
+    const smoke = ++src.n % 2 === 0;
+    const q = { p: [at.x, at.y, at.z], up: up.clone().multiplyScalar(unit), east: east.clone().multiplyScalar(unit), t0: now / 1000 - (1 - k) * dt,
+      v: vel.clone().multiplyScalar(smoke ? 0.08 : 0.2).add(new THREE.Vector3(rnd() - 0.5, rnd() - 0.5, rnd() - 0.5).multiplyScalar(3 * unit)),
+      smoke, rnd: rnd() };
+    if (smoke) Object.assign(q, { life: 6 + 6 * rnd(), s0: (1 + rnd()) * S, grow: 1.2 * S, rise: 2.5 + 2 * rnd(), drag: 0.8 });
+    else Object.assign(q, { life: 0.6 + 1.1 * rnd() * (0.6 + 0.4 * f), s0: (0.6 + 0.9 * rnd()) * S, grow: 2.2 * S, rise: 3 + 3 * rnd(), drag: 2.5 });
+    if (trail.parts.length < TRAIL_MAX) trail.parts.push(q); else { trail.parts[trail.next] = q; trail.next = (trail.next + 1) % TRAIL_MAX; }
+  }
+  src.p.copy(P);
+}
+// The broken end of a wing (its last few hundredths of a half span still on), or the middle of a stretch of it, in
+// the model's own frame (metres), from its vertices: once per model.
+function wingSpot(e, side, from, to) {
+  const key = `${side}:${from}:${to}`;
+  if (!e.spots) e.spots = new Map();
+  if (!e.spots.has(key)) e.spots.set(key, partMiddle(e.obj, { kind: 'wing', side, cut: from, out: to }));
+  return e.spots.get(key);
+}
+function updateTrails(layer, globe, mpp, centerW, now) {
+  if (!trail.pts) trail.pts = blastPoints(TRAIL_MAX);
+  if (trail.pts.parent !== layer.world) layer.world.add(trail.pts); // (the layer made afresh: a new map style)
+  const pts = trail.pts;
+  if (trail.globe !== globe) { trail.parts = []; trail.next = 0; trail.src.clear(); trail.globe = globe; }
+  const e = v.pilotE, pose = e && e.pose;
+  // (real seconds since the last frame, up to one: a slow frame lets out the trail it left behind, aged as it should be)
+  const dt = trail.last == null ? 0 : Math.min(1, Math.max(0, (now - trail.last) / 1000));
+  trail.last = now;
+  if (e && pose && e.obj.userData.liv && pilotOn()) {
+    const fire = pose.fire;
+    if (e.obj.matrixAutoUpdate) e.obj.updateMatrix();
+    const unit = frameAt(pose.lat, pose.lon, e.altM || 0, globe);
+    const up = tmp.up.clone(), east = tmp.east.clone();
+    const emit = (id, local, f, scale) => { if (local && f > 0) trailEmit(id, local.clone().applyMatrix4(e.obj.matrix), up, east, unit, f, scale, dt, now); };
+    if (fire && !pose.gone) {
+      for (const k of [0, 1]) {
+        const side = k ? 1 : -1, c = (fire.cut && fire.cut[k]) || 0;
+        // (torn off: out of its broken end; worn through, still whole: out of its outer half)
+        if (fire.wing[k]) emit(`w${k}`, c ? wingSpot(e, side, c - 0.06, c) : wingSpot(e, side, 0.55, 0.8), fire.wing[k], 1);
+        if (fire.slide) emit(`s${k}`, wingSpot(e, side, 0.38, 0.5), fire.slide, 1.4);
+      }
+    }
+    for (const q of pose.pieces || []) {
+      const pc = e.pieces && e.pieces.get(q.id);
+      if (q.fire > 0 && pc && pc.mid) {
+        if (pc.obj.matrixAutoUpdate) pc.obj.updateMatrix();
+        trailEmit(q.id, pc.mid.clone().applyMatrix4(pc.obj.matrix), up, east, unit, q.fire, q.part.kind === 'wing' ? 0.8 : 0.5, dt, now);
+      }
+    }
+  }
+  for (const [id, src] of trail.src) if (src.seen !== now) trail.src.delete(id); // (a fire gone out starts afresh)
+  if (!trail.parts.length) { pts.visible = false; return false; }
+  // the sprites, from the aircraft (32-bit floats: whole-world positions would put them metres off)
+  const origin = e ? e.world : new THREE.Vector3(...trail.parts[0].p);
+  pts.position.copy(origin);
+  const dpr = window.devicePixelRatio || 1;
+  const u = pts.material.uniforms;
+  u.uScale.value = (centerW / mpp) * dpr;
+  u.uDpr.value = dpr;
+  u.uClipOn.value = 0;
+  const g = pts.geometry, P = g.attributes.position.array, C = g.attributes.col.array, Sz = g.attributes.size.array, M = g.attributes.minPx.array, A = g.attributes.alpha.array;
+  const ts = now / 1000;
+  let i = 0, alive = 0;
+  for (const q of trail.parts) {
+    const a = ts - q.t0, f = a / q.life;
+    if (a < 0 || f >= 1) { A[i] = 0; i++; continue; }
+    alive++;
+    const kd = (1 - Math.exp(-q.drag * a)) / q.drag, rise = q.rise * a + 0.4 * a * a * (q.smoke ? 0.3 : 1);
+    const drift = q.smoke ? 3 * a : 0; // (the wind takes the smoke east)
+    for (let c = 0; c < 3; c++) P[3 * i + c] = q.p[c] - origin.getComponent(c) + q.v.getComponent(c) * kd + q.up.getComponent(c) * rise + q.east.getComponent(c) * drift;
+    const col = q.smoke ? blastRamp(BLACK_COL, f) : blastRamp(FIRE_COL, Math.min(1, 0.15 + f));
+    C[3 * i] = col[0]; C[3 * i + 1] = col[1]; C[3 * i + 2] = col[2];
+    Sz[i] = q.s0 + q.grow * (q.smoke ? a : f);
+    M[i] = q.smoke ? 2.5 : 3.5;
+    A[i] = q.smoke ? 0.45 * Math.min(1, a / 0.8) * (1 - f) : 0.85 * (f < 0.5 ? 1 : (1 - f) / 0.5) * (0.75 + 0.25 * Math.sin(a * 41 + q.rnd * 6.28));
+    i++;
+  }
+  if (!alive) { trail.parts = []; trail.next = 0; pts.visible = false; return false; }
+  for (const at of Object.values(g.attributes)) at.needsUpdate = true;
+  g.setDrawRange(0, trail.parts.length);
+  pts.visible = true;
+  return true;
+}
+
 // ---------- crashes (G.blasts, js/game.js) ----------
 // A crash site is a fireball, a column of smoke, flares (sparks) and a flash: one batch of sprites in the planes'
 // layer, positioned in metres from the crash. Each sprite has a least size in pixels (BLAST_PX), so the blast still
@@ -1597,6 +1799,9 @@ function blastParts(b) {
     } else {                 // the flash
       Object.assign(q, { life: 0.9, s0: 110 * S });
     }
+    // (b.v, m/s east, north: the aircraft's way on, which the burning fuel keeps: the fireball rolls on a little the
+    // way it was going, its smoke and sparks a little less and more)
+    if (b.v && kind < 3) { const f = [1, 0.25, 0.9][kind] * (0.8 + 0.4 * rnd()); q.vx += b.v[0] * f; q.vy += b.v[1] * f; }
     parts.push(q);
   }
   return parts;
@@ -1659,9 +1864,8 @@ function blastPart(q, age) {
   return { x: 0, y: 0, z: 0, size: q.s0 * (1 + 0.5 * f), alpha: (1 - f) * (1 - f), col: [1, 0.97, 0.88] };
 }
 
-function blastPoints() {
+function blastPoints(N = BLAST_MAX * BLAST_N) {
   const g = new THREE.BufferGeometry();
-  const N = BLAST_MAX * BLAST_N;
   const attr = (n) => new THREE.BufferAttribute(new Float32Array(N * n), n).setUsage(THREE.DynamicDrawUsage);
   g.setAttribute('position', attr(3));
   g.setAttribute('col', attr(3));
@@ -1759,7 +1963,8 @@ function debrisParts(b, liv) {
     // where on the airframe it was: along the fuselage, or out along a wing
     const along = sym(0.5) * b.len, out = rnd() < 0.35 ? sym(0.5) * b.span : sym(2);
     const x = along * Math.sin(h) + out * Math.cos(h), y = along * Math.cos(h) - out * Math.sin(h);
-    const keep = b.slide ? Math.max(0, b.vh - (0.4 + 1.1 * rnd()) * b.vn) * (0.6 + 0.5 * rnd()) : b.V * (0.05 + 0.45 * rnd());
+    // (however steep it went in, some of its speed along the ground carries on)
+    const keep = Math.max(b.vh * (0.08 + 0.25 * rnd()), b.slide ? Math.max(0, b.vh - (0.4 + 1.1 * rnd()) * b.vn) * (0.6 + 0.5 * rnd()) : b.V * (0.05 + 0.45 * rnd()));
     const dir = h + sym(spread), side = sym(2 + 1.5 * S);
     const vx = keep * Math.sin(dir) + side * Math.cos(dir), vy = keep * Math.cos(dir) - side * Math.sin(dir);
     const vz = Math.min(45, b.vn * (0.05 + 0.4 * rnd()) + rnd() * (2 + 2 * S));
@@ -2462,6 +2667,7 @@ const planeLayer = {
     if (this.track && (cine || !(sel && v.planes[sel] && G.plane(sel) && G.plane(sel).status === 'flying'))) this.track.visible = false;
     if (updateBlasts(this, map, globe, mpp, centerW, now)) animating = true;
     if (updateDebris(this, globe, now)) animating = true;
+    if (updateTrails(this, globe, mpp, centerW, now)) animating = true;
     updateClouds(this, map, globe, mpp, centerW, now);
 
     this.renderer.resetState();

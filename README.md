@@ -87,9 +87,12 @@ model is cut into the parts that can break off in a crash (`js/livery.js` PARTS:
 elevators and the rudder, and the fuselage ahead of the wing and behind it, measured on each model: bodyBreaks): flown by hand ([Flightgame · Fly](https://github.com/noname-ch/flightgame-fly)) a plane
 that loses one is drawn without it, the break torn and sooty, its wing-tip light gone, and the part falls away
 tumbling and lies where it lands (`js/view3d.js` pilotPieces); a wreck lies on its belly and chars as it burns. A crash
-is a fireball as big as the fuel (it rises as it burns), and wreckage can go on burning with black smoke (G.blasts
-`scale`, `kind: 'pool'`, `secs`); the impact throws out a shower of fragments that keep its momentum, bounce and skid
-to a stop (G.debris, updateDebris). The weather is for looks: flights don't wait for it (storm events still close airports). It is light on
+is a fireball as big as the fuel (it rises as it burns, and rolls on a little the way the plane was going: G.blasts
+`v`), and wreckage can go on burning with black smoke (G.blasts `scale`, `kind: 'pool'`, `secs`); the impact throws out
+a shower of fragments that keep its momentum, bounce and skid to a stop (G.debris, updateDebris). Fuel burning out of
+a torn wing, a burning piece and a wreck sliding with its tanks torn open leave a trail of fire and black smoke
+behind them (the fly page's pose `fire` and pieces' `fire`: updateTrails). Concorde lights its reheat for take-off and
+for the climb through Mach 1: a flame with shock diamonds out of each nozzle (reheatFlames). The weather is for looks: flights don't wait for it (storm events still close airports). It is light on
 the computer (one half-resolution canvas in 2D, one batch of sprites in 3D, CSS for rain and snow);
 Settings → On the map → *Clouds and weather* turns it all off.
 
