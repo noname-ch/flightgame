@@ -5,6 +5,7 @@
 //      prop2 = turboprops, radial2 / prop3 = piston radials (prop3 adds one in the nose), concorde
 // wing: low | high · ttail · winglet · hump = 747 upper deck length (share of len) · double = full double deck
 // gear: wheels per main gear in side view · tailwheel · fixed (no gear doors) · corrugated skin
+// sharklets: Airbus's tall wing tips, built onto the 3D model (js/models3d.js addSharklets)
 FG.data.looks = {
   'DHC6-400': { len: 15.8, span: 19.8, dia: 1.8, eng: 'prop2', wing: 'high', fixed: true },
   'DO228NG': { len: 16.6, span: 17.0, dia: 1.8, eng: 'prop2', wing: 'high' },
@@ -33,10 +34,10 @@ FG.data.looks = {
   'A318': { len: 31.4, span: 34.1, dia: 4.1, eng: 'uw2' },
   'A319': { len: 33.8, span: 35.8, dia: 4.1, eng: 'uw2', winglet: true },
   'A320': { len: 37.6, span: 35.8, dia: 4.1, eng: 'uw2', winglet: true },
-  'A320neo': { len: 37.6, span: 35.8, dia: 4.1, eng: 'uw2', winglet: true, bigFan: true },
+  'A320neo': { len: 37.6, span: 35.8, dia: 4.1, eng: 'uw2', winglet: true, bigFan: true, sharklets: true },
   'A321': { len: 44.5, span: 35.8, dia: 4.1, eng: 'uw2', winglet: true, gear: 1 },
-  'A321neo': { len: 44.5, span: 35.8, dia: 4.1, eng: 'uw2', winglet: true, bigFan: true },
-  'A321XLR': { len: 44.5, span: 35.8, dia: 4.1, eng: 'uw2', winglet: true, bigFan: true },
+  'A321neo': { len: 44.5, span: 35.8, dia: 4.1, eng: 'uw2', winglet: true, bigFan: true, sharklets: true },
+  'A321XLR': { len: 44.5, span: 35.8, dia: 4.1, eng: 'uw2', winglet: true, bigFan: true, sharklets: true },
   'B737-700': { len: 33.6, span: 35.8, dia: 4.0, eng: 'uw2', winglet: true },
   'B737-800': { len: 39.5, span: 35.8, dia: 4.0, eng: 'uw2', winglet: true },
   'B737-8': { len: 39.5, span: 35.9, dia: 4.0, eng: 'uw2', winglet: true, bigFan: true },

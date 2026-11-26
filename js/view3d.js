@@ -285,9 +285,15 @@ function navSpotsOf(type, model) {
   const inGear = (o) => { for (; o; o = o.parent) if (o.name === 'gear') return true; return false; };
   const p = new THREE.Vector3();
   let L = null, R = null, aft = null, top = -Infinity, bottom = Infinity, nose = Infinity;
+  const tips = [];
   model.updateMatrixWorld(true);
   model.traverse((o) => {
     if (!o.isMesh || inGear(o)) return;
+    if (o.userData.nav) {
+      // (sharklets, js/models3d.js addSharklets: the wing tip lights sit at their foot, not on their tops)
+      for (const s of o.userData.nav) tips.push(new THREE.Vector3(s[0], s[1], s[2]).applyMatrix4(o.matrixWorld));
+      return;
+    }
     const pos = o.geometry.attributes.position;
     for (let i = 0; i < pos.count; i++) {
       p.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld);
@@ -301,6 +307,7 @@ function navSpotsOf(type, model) {
     }
   });
   if (!L) return (navSpots[type] = []);
+  for (const t of tips) if (t.x < 0) L = t; else R = t;
   if (!Number.isFinite(top)) { top = dia / 2; bottom = -dia / 2; }
   if (!Number.isFinite(nose)) nose = bottom;
   const red = [1, 0.12, 0.08], green = [0.15, 1, 0.35], white = [1, 1, 1];

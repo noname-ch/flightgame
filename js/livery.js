@@ -1386,7 +1386,8 @@ export function measure(scene, file, stretch = 1, title = { aspect: 4.3 }, finMa
   const shape = scene.userData.shape;
   const Y = shape ? (y) => shapedY(shape, y) : (y) => y;
   const meshes = [];
-  scene.traverse((o) => { if (o.isMesh && o.geometry.attributes.position) meshes.push(o); });
+  // (not what was built onto the model: the A320neo's and A321neo's sharklets, js/models3d.js addSharklets)
+  scene.traverse((o) => { if (o.isMesh && o.geometry.attributes.position && !o.userData.addOn) meshes.push(o); });
   const v = new THREE.Vector3();
   const eachVertex = (fn) => {
     for (const m of meshes) {
@@ -1946,7 +1947,8 @@ export function paintLivery(scene, file, extra, stretch = 1, livery = FG.livery(
     livFinBox: { value: m.finBox },
     livFinAngle: { value: m.finAngle },
     livWinglet: { value: color(livery.winglet == null ? livery.body : livery.winglet) },
-    livWingletX: { value: livery.winglet == null ? 99 : 0.955 * m.span },
+    // (sharklets: from the wing's tip, where they leave it; js/models3d.js addSharklets)
+    livWingletX: { value: livery.winglet == null ? 99 : scene.userData.wingletX || 0.955 * m.span },
     livClean: { value: m.clean },
     livStretch: { value: stretch },
     livNoisy: { value: NOISY[file] ? 1 : 0 },

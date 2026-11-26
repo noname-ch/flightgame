@@ -49,13 +49,209 @@ function raw(file) {
 // the nose, the wing, the tail and the engines keep their shape (a type without plugs is stretched all over, wing
 // chord too). `engines` (× the model's) makes the engines bigger, grown forward and down from where they hang. The
 // unpainted scene, 1 unit long and centred like every model.
+// A type with sharklets (FG.data.looks `sharklets`) gets them built onto a copy of its model of its own (addSharklets).
 const shapedRaws = {};   // type -> Promise of the reshaped unpainted scene
 function rawOf(type, size) {
   const look = FG.data.looks[type];
-  const cut = FG.data.plugs && FG.data.plugs[size.file];
-  if (!look.plugs || !cut) return raw(size.file);
-  if (!shapedRaws[type]) shapedRaws[type] = raw(size.file).then((scene) => reshape(scene, cut, size.stretch - 1, look.engines || 1, type));
+  const cut = look.plugs && FG.data.plugs && FG.data.plugs[size.file];
+  if (!cut && !look.sharklets) return raw(size.file);
+  if (!shapedRaws[type]) {
+    // (sharklets on geometry of their own: js/livery.js marks each geometry once, and the plain model's are shared
+    // with the types without them)
+    const base = look.sharklets
+      ? new GLTFLoader().loadAsync(new URL(`${size.file}.glb`, MODELS).href).then((gltf) => addSharklets(gltf.scene, size))
+      : raw(size.file);
+    shapedRaws[type] = cut ? base.then((scene) => reshape(scene, cut, size.stretch - 1, look.engines || 1, type)) : base;
+  }
   return shapedRaws[type];
+}
+
+// Airbus's sharklets, the A320neo family's wing tips: blended up out of the wing in a curve and on as a tall blade,
+// leaning out a little, its leading edge swept far back and its chord narrowing to the top. The models are the older
+// A320s', whose wings end flat. Metres: 2.43 m tall (Airbus), `cant` from upright, `r` the radius of the curve, the
+// leading edge `le` and the trailing edge `te` further back at the top than at the foot (photographs); the span comes
+// out 0.85 m longer each side, as Airbus's 35.80 m instead of 34.10 m. `in`: the foot starts this far inboard of the
+// model's wing tip, round the wing there (a little bigger, so the wing never shows through), and covers its rounded end.
+const SHARKLET = { h: 2.43, cant: 12, r: 0.45, le: 1.7, te: 0.6, in: 0.8 };
+const SHARK_C = Array.from({ length: 11 }, (_, k) => (1 - Math.cos(Math.PI * k / 10)) / 2);  // chord stations, LE 0 .. TE 1
+
+// Where the plane x = `x` cuts the model's wing: leading and trailing edge [y, z], chord, and the skin above and below
+// the chord line at each SHARK_C station (as shares of the chord).
+function wingSection(meshes, x) {
+  const pts = [];
+  const tri = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];
+  for (const o of meshes) {
+    const pos = o.geometry.attributes.position, idx = o.geometry.index;
+    const n = idx ? idx.count : pos.count;
+    for (let t = 0; t < n; t += 3) {
+      for (let k = 0; k < 3; k++) tri[k].fromBufferAttribute(pos, idx ? idx.getX(t + k) : t + k).applyMatrix4(o.matrixWorld);
+      for (let k = 0; k < 3; k++) {
+        const p = tri[k], q = tri[(k + 1) % 3];
+        if ((p.x - x) * (q.x - x) >= 0) continue;
+        const f = (x - p.x) / (q.x - p.x);
+        pts.push([p.y + (q.y - p.y) * f, p.z + (q.z - p.z) * f]);
+      }
+    }
+  }
+  if (pts.length < 4) return null;
+  let le = pts[0], te = pts[0];
+  for (const p of pts) { if (p[0] > le[0]) le = p; if (p[0] < te[0]) te = p; }
+  const chord = le[0] - te[0];
+  if (!(chord > 0)) return null;
+  const sides = [[[0, 0], [1, 0]], [[0, 0], [1, 0]]];   // [c, offset / chord] above, below
+  for (const [y, z] of pts) {
+    const c = (le[0] - y) / chord;
+    const off = (z - (le[1] + (te[1] - le[1]) * c)) / chord;
+    sides[off >= 0 ? 0 : 1].push([c, Math.abs(off)]);
+  }
+  // (each side as a line through its points, the highest where several are at the same place along the chord)
+  const [up, lo] = sides.map((s) => {
+    s.sort((a, b) => a[0] - b[0] || b[1] - a[1]);
+    const line = s.filter((p, i) => i === 0 || p[0] - s[i - 1][0] > 1e-4);
+    return SHARK_C.map((c) => {
+      const i = line.findIndex((p) => p[0] >= c);
+      if (i < 0) return line[line.length - 1][1];
+      if (i === 0) return line[0][1];
+      const a = line[i - 1], b = line[i];
+      return a[1] + (b[1] - a[1]) * (c - a[0]) / (b[0] - a[0]);
+    });
+  });
+  return { le, te, chord, up, lo };
+}
+
+// Builds sharklets onto both wing tips of an unpainted model (1 unit long, x = right wing, y = nose, z = up): one mesh
+// 'sharklets' of its own, white (js/livery.js paints it: in the wing tips' colour where it stands upright, and it
+// bends with the wing, livFlex). `size`: modelSize, for the metres. Its userData.nav are the spots of the wing tip
+// lights (at the foot of each sharklet's leading edge: js/view3d.js navSpotsOf).
+function addSharklets(scene, size) {
+  scene.updateMatrixWorld(true);
+  const meshes = [];
+  let wingMat = null, tip = 0;
+  const v = new THREE.Vector3();
+  scene.traverse((o) => {
+    if (!o.isMesh || !o.geometry.attributes.position || o.material.transparent) return;
+    meshes.push(o);
+    const pos = o.geometry.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      v.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld);
+      if (v.x > tip) { tip = v.x; wingMat = o.material; }
+    }
+  });
+  const S = SHARKLET;
+  const ux = 1 / size.wide, uy = 1 / size.len;   // model units per metre: across and up, along
+  const x0 = tip - S.in * ux, xb = x0 - 0.6 * ux;
+  const root = wingSection(meshes, x0);
+  if (!root || !wingMat) return scene;
+  const back = wingSection(meshes, xb);
+  // the wing's lines out to the tip: leading and trailing edge, and the chord line's height (dihedral) at 30 % chord
+  const mid = (s) => s.le[1] + (s.te[1] - s.le[1]) * 0.3;
+  const slope = (f, lo, hi) => (back ? Math.max(lo, Math.min(hi, (f(root) - f(back)) / (x0 - xb))) : 0);
+  const sL = slope((s) => s.le[0], -1.5, 0.5), sT = slope((s) => s.te[0], -1.5, 0.5), k = slope(mid, -0.3, 0.3);
+  // (a little bigger than the wing all round)
+  const grow = 0.012 * root.chord;
+  const yL0 = root.le[0] + grow, yT0 = root.te[0] - grow, chord0 = yL0 - yT0;
+  const dL0 = root.le[1] - mid(root), dT0 = root.te[1] - mid(root);
+  const up0 = root.up.map((u) => u * root.chord / chord0 * 1.06 + 0.004), lo0 = root.lo.map((u) => u * root.chord / chord0 * 1.06 + 0.004);
+  const naca = (c) => 0.45 * (0.2969 * Math.sqrt(c) - 0.126 * c - 0.3516 * c * c + 0.2843 * c ** 3 - 0.1036 * c ** 4) + 0.001;   // 9 % thick
+  // the path of the chord line's middle across x, z: along the wing to its tip, round the curve, up the blade
+  const phi0 = Math.atan(k), phi1 = (90 - S.cant) * Math.PI / 180, r = S.r * ux;
+  const A = [tip, mid(root) + k * (tip - x0)];
+  const C = [A[0] - r * Math.sin(phi0), A[1] + r * Math.cos(phi0)];   // the curve's centre
+  const arc = r * (phi1 - phi0);
+  const rise = r * (Math.cos(phi0) - Math.cos(phi1));
+  const blade = Math.max(0.2 * S.h * ux, (S.h * ux - rise) / Math.sin(phi1));
+  const total = arc + blade, cap = 0.15 * ux;
+  const tipChord = chord0 + sL * (tip - x0) - sT * (tip - x0);
+  // the sections: path distance from the wing tip (below 0: along the wing, from the foot at x0)
+  const along = (tip - x0) * Math.hypot(1, k);
+  const ss = [-along, -along / 2, 0];
+  for (let i = 1; i <= 10; i++) ss.push(arc * i / 10);
+  for (let i = 1; i <= 8; i++) ss.push(arc + (blade - cap) * i / 8);
+  for (let i = 1; i <= 4; i++) ss.push(total - cap + cap * Math.sin(Math.PI / 2 * i / 4));
+  const ring = 2 * SHARK_C.length - 1;   // points round each section: above LE .. TE, below TE .. after the LE
+  const posR = [];
+  let nav = null;
+  for (const s of ss) {
+    let ox, oz, phi, yL, yT;
+    let up = up0, lo = lo0, dL = dL0, dT = dT0, thick = 1;
+    if (s <= 0) {
+      const x = tip + s / Math.hypot(1, k);
+      ox = x; oz = A[1] + k * (x - tip); phi = phi0;
+      yL = yL0 + sL * (x - x0); yT = yT0 + sT * (x - x0);
+    } else {
+      if (s <= arc) {
+        phi = phi0 + s / r;
+        ox = C[0] + r * Math.sin(phi); oz = C[1] - r * Math.cos(phi);
+      } else {
+        phi = phi1;
+        const e = [C[0] + r * Math.sin(phi1), C[1] - r * Math.cos(phi1)];
+        ox = e[0] + (s - arc) * Math.cos(phi1); oz = e[1] + (s - arc) * Math.sin(phi1);
+      }
+      const u = s / total;
+      const yLt = yL0 + sL * (tip - x0);
+      yL = yLt - S.le * uy * u ** 1.15;
+      yT = yLt - tipChord - S.te * uy * u ** 1.6;
+      // (the wing's own section turns into a plain thin one in the curve; rounded off at the top)
+      const f = Math.min(1, u / 0.35), blend = f * f * (3 - 2 * f);
+      const ch = (yL - yT) / uy * ux;   // the chord in model units across
+      up = up0.map((a, i) => a + (naca(SHARK_C[i]) * ch / (yL - yT) - a) * blend);
+      lo = lo0.map((a, i) => a + (naca(SHARK_C[i]) * ch / (yL - yT) - a) * blend);
+      dL = dL0 * (1 - blend); dT = dT0 * (1 - blend);
+      const w = (s - (total - cap)) / cap;
+      if (w > 0) { thick = Math.sqrt(Math.max(0, 1 - w * w)); yL -= 0.3 * (yL - yT) * w * w; }
+    }
+    const n = [-Math.sin(phi), Math.cos(phi)];   // across the section (up at the foot, inboard on the blade)
+    const chord = yL - yT;
+    const point = (c, off) => {
+      const d = dL + (dT - dL) * c + off * chord * thick;
+      posR.push(ox + n[0] * d, yL - chord * c, oz + n[1] * d);
+    };
+    SHARK_C.forEach((c, i) => point(c, up[i]));
+    for (let i = SHARK_C.length - 1; i >= 1; i--) point(SHARK_C[i], -lo[i]);
+    if (s === 0) nav = [ox + n[0] * dL, yL + 0.05 * uy, oz + n[1] * dL];
+  }
+  // faces between the sections, and a lid on the foot (inside the wing)
+  const idx = [];
+  for (let j = 0; j + 1 < ss.length; j++) {
+    for (let i = 0; i < ring; i++) {
+      const a = j * ring + i, b = j * ring + (i + 1) % ring, c = a + ring, d = b + ring;
+      idx.push(a, c, b, b, c, d);
+    }
+  }
+  const lid = posR.length / 3;
+  let cx = 0, cy = 0, cz = 0;
+  for (let i = 0; i < ring; i++) { cx += posR[3 * i]; cy += posR[3 * i + 1]; cz += posR[3 * i + 2]; }
+  posR.push(cx / ring, cy / ring, cz / ring);
+  for (let i = 0; i < ring; i++) idx.push(lid, i, (i + 1) % ring);
+  // both sides: the left one mirrored (and its faces turned, to face out as well)
+  const count = posR.length / 3;
+  const pos = new Float32Array(posR.length * 2);
+  pos.set(posR);
+  for (let i = 0; i < count; i++) pos.set([-posR[3 * i], posR[3 * i + 1], posR[3 * i + 2]], (count + i) * 3);
+  const all = idx.concat(idx.map((_, i) => count + idx[i - (i % 3) + [0, 2, 1][i % 3]]));
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setIndex(all);
+  g.computeVertexNormals();
+  // (no engine, propeller or control surface in it: js/livery.js leaves it unsearched)
+  g.setAttribute('livPart', new THREE.BufferAttribute(new Float32Array(pos.length / 3), 1));
+  g.setAttribute('livSurf', new THREE.BufferAttribute(new Float32Array(pos.length / 3 * 4), 4));
+  g.userData.livSearched = true;
+  g.userData.livSurfaced = true;
+  // (facing out: the skin above the foot's middle faces up)
+  if (g.attributes.normal.getZ(5) < 0) {
+    for (let i = 0; i < all.length; i += 3) [all[i + 1], all[i + 2]] = [all[i + 2], all[i + 1]];
+    g.setIndex(all);
+    g.computeVertexNormals();
+  }
+  const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: wingMat.roughness ?? 0.65, metalness: wingMat.metalness ?? 0, side: wingMat.side });
+  const mesh = new THREE.Mesh(g, mat);
+  mesh.name = 'sharklets';
+  mesh.userData.addOn = true;   // (not the model's own: js/livery.js measures the wing without it)
+  mesh.userData.nav = [nav, [-nav[0], nav[1], nav[2]]];
+  scene.add(mesh);
+  scene.userData.wingletX = tip;   // (the wing tips' colour on them only: js/livery.js)
+  return scene;
 }
 
 // How many barrel sections go in ahead of and behind the wing to add `extra` (model lengths): as near as can be,
@@ -226,7 +422,7 @@ export function loadModel(type, livery = FG.livery()) {
   const size = modelSize(type);
   const { file, stretch } = size;
   const key = `${file}|${stretch}|${FG.liveries ? FG.liveries.key(livery) : livery.id}|${gearKey(type, file)}|${maskOf(file, type) ? 'mask' : ''}` +
-    (FG.data.looks[type].plugs ? `|${type}` : '');
+    (FG.data.looks[type].plugs || FG.data.looks[type].sharklets ? `|${type}` : '');
   if (!loads[key]) {
     loads[key] = rawOf(type, size).then((scene) => {
       const copy = scene.clone();
