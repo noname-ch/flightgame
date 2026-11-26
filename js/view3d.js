@@ -1584,11 +1584,13 @@ function blastParts(b) {
     const kind = i < 40 ? 0 : i < 84 ? 1 : i < 108 ? 2 : 3;
     const a = rnd() * Math.PI * 2;
     const q = { kind, rnd: rnd(), t0: 0, life: 1, drag: 0.001, vx: 0, vy: 0, vz: 0, s0: 0, grow: 0, rise: 0 };
-    if (kind === 0) {        // fireball: bursts out in the first seconds, rises as it burns, then cools into smoke
-      const r = (14 + rnd() * 26) * S;
-      Object.assign(q, { life: (5 + rnd() * 4) * sq, drag: 1.5, vx: Math.cos(a) * r, vy: Math.sin(a) * r, vz: (3 + rnd() * 6) * S, s0: (22 + rnd() * 18) * S, grow: 14 * S, rise: 1.6 * sq * (0.6 + 0.4 * rnd()) });
-    } else if (kind === 1) { // smoke: rises out of the fire, slow, spreading and drifting
-      Object.assign(q, { t0: 1 + rnd() * 2, life: (14 + rnd() * 8) * sq, drag: 0.25, vx: Math.cos(a) * 4 * rnd() * S, vy: Math.sin(a) * 4 * rnd() * S, vz: (7 + rnd() * 5) * sq, s0: (40 + rnd() * 30) * S, grow: 10 * S });
+    if (kind === 0) {        // fireball: bursts out every way (most up) into a ball, rises as it burns, then cools into smoke
+      const el = Math.asin(0.15 + 0.85 * rnd()), r = (20 + rnd() * 25) * S;
+      Object.assign(q, { life: (4 + rnd() * 4) * sq, drag: 1.6, vx: Math.cos(a) * Math.cos(el) * r, vy: Math.sin(a) * Math.cos(el) * r, vz: Math.sin(el) * r + 4 * S,
+        s0: (16 + rnd() * 16) * S, grow: 18 * S, rise: 3.5 * sq * (0.6 + 0.4 * rnd()) });
+    } else if (kind === 1) { // smoke: rises out of the fire, slow, spreading and drifting (burning fuel: black)
+      Object.assign(q, { t0: 0.8 + rnd() * 2.5, life: (14 + rnd() * 8) * sq, drag: 0.25, vx: Math.cos(a) * 4 * rnd() * S, vy: Math.sin(a) * 4 * rnd() * S, vz: (9 + rnd() * 6) * sq, s0: (30 + rnd() * 25) * S, grow: 9 * S,
+        rise: 0.6 * sq, black: S >= 0.8 });
     } else if (kind === 2) { // flares: sparks thrown out fast, falling, flickering
       const r = (40 + rnd() * 70) * sq;
       Object.assign(q, { life: 1.2 + rnd() * 2.2, drag: 1.2, vx: Math.cos(a) * r, vy: Math.sin(a) * r, vz: (10 + rnd() * 30) * sq, s0: 3 * sq });
@@ -1628,7 +1630,7 @@ function blastRamp(stops, f) {
   }
   return stops[stops.length - 1].slice(1);
 }
-const FIRE_COL = [[0, 1, 0.96, 0.75], [0.15, 1, 0.92, 0.55], [0.5, 1, 0.42, 0.08], [1, 0.22, 0.18, 0.16]];
+const FIRE_COL = [[0, 1, 0.93, 0.65], [0.1, 1, 0.72, 0.25], [0.35, 1, 0.42, 0.06], [0.65, 0.75, 0.2, 0.04], [1, 0.16, 0.13, 0.12]];
 const SMOKE_COL = [[0, 0.16, 0.16, 0.18], [1, 0.46, 0.46, 0.48]];
 const BLACK_COL = [[0, 0.05, 0.045, 0.04], [0.5, 0.12, 0.115, 0.11], [1, 0.3, 0.3, 0.31]]; // (burning fuel: black)
 // Where a sprite is `age` seconds into the blast, in metres from the crash (east, north, up): null when it is gone.
