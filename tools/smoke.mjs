@@ -12,8 +12,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
-const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'); // (a URL's pathname is /C:/… on Windows)
 const MAX_RUN_MS = 6 * 60 * 1000;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const errors = [];
@@ -27,7 +28,7 @@ const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
   let file = path.join(ROOT, decodeURIComponent(url.pathname));
   if (!file.startsWith(ROOT)) { res.writeHead(403).end(); return; }
-  if (file.endsWith('/')) file += 'index.html';
+  if (url.pathname.endsWith('/')) file = path.join(file, 'index.html'); // (path.join ends it with \ on Windows)
   fs.readFile(file, (err, data) => {
     if (err) { res.writeHead(404).end(); return; }
     res.writeHead(200, { 'Content-Type': TYPES[path.extname(file)] || 'application/octet-stream' }).end(data);
@@ -42,6 +43,11 @@ function findChrome() {
   for (const name of ['google-chrome', 'google-chrome-stable', 'chromium', 'chromium-browser']) {
     try { return execFileSync('which', [name], { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim(); } catch { /* next */ }
   }
+  // (Windows: Chrome, else Edge, which is Chromium too)
+  const win = [process.env.PROGRAMFILES, process.env['PROGRAMFILES(X86)'], process.env.LOCALAPPDATA].filter(Boolean)
+    .flatMap((d) => [path.join(d, 'Google', 'Chrome', 'Application', 'chrome.exe'), path.join(d, 'Microsoft', 'Edge', 'Application', 'msedge.exe')]);
+  const found = win.find((f) => fs.existsSync(f));
+  if (found) return found;
   throw new Error('No Chrome or Chromium found (set CHROME=/path/to/chrome)');
 }
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'fg-smoke-'));
@@ -304,6 +310,42 @@ try {
   step(`day ${result.day}: ${result.flights} flights, money ${result.money.toLocaleString('en')}`);
   if (!result.flights) errors.push('no flight landed in 30 game days');
   if (result.gameOver) warnings.push('the airline went bankrupt during the test');
+
+  // (no relay is reached: another player's airline is handed to the game as js/multiplayer.js would)
+  step('multiplayer: another player on our route takes passengers, holds a slot, flies on the map, shows in Rivals; the 👥 window opens');
+  const mpt = await evaluate(async () => {
+    const me = G.mpAirline();
+    const rt = me.routes[0];
+    if (!rt) return { err: 'G.mpAirline() lists no route' };
+    const before = G.marketShare(rt.a, rt.b);
+    const utc = G.utcOf(G.state.time);
+    G.setPeers([{ id: 'mp-test', name: 'Test Player Air', color: '#2563eb', home: rt.a,
+      routes: [{ a: rt.a, b: rt.b, type: rt.type, perDay: 4, seats: rt.seats, fare: 0.9 }],
+      slots: { [rt.a]: 1 }, flights: [{ type: rt.type, from: rt.a, to: rt.b, dep: utc - 10, arr: utc + 30 }] }]);
+    const after = G.marketShare(rt.a, rt.b);
+    const holder = G.slotHolders(rt.a).find((h) => h.id === 'mp-test');
+    const offer = holder ? G.makeSlotOffer(rt.a, 'mp-test', 1e6) : null;
+    const flying = G.rivalFlights(G.state.time).filter((f) => f.r.human).length;
+    document.querySelector('#rail [data-tab="rivals"]').click();
+    await new Promise((r) => setTimeout(r, 600));
+    const listed = document.getElementById('tab-content').innerText.includes('Test Player Air');
+    document.getElementById('mp-toggle').click();
+    const win = !document.getElementById('mp').hidden && document.getElementById('mp').innerText.includes('Open a room');
+    FG.mp.show(false);
+    G.setPeers([]);
+    return { route: `${rt.a}–${rt.b}`, before, after, holder: !!holder, offer, flying, listed, win, back: G.marketShare(rt.a, rt.b) };
+  });
+  if (mpt.err) errors.push(`multiplayer: ${mpt.err}`);
+  else {
+    if (!(mpt.after < mpt.before)) errors.push(`multiplayer: another player on ${mpt.route} took no passengers (${mpt.before} → ${mpt.after})`);
+    if (!mpt.holder) errors.push('multiplayer: the other player\'s slot is not among the slot holders');
+    if (typeof mpt.offer !== 'string') errors.push('multiplayer: a slot offer to another player was not refused');
+    if (!mpt.flying) errors.push('multiplayer: the other player\'s plane in the air is not on the map');
+    if (!mpt.listed) errors.push('multiplayer: the other player is not in the Rivals section');
+    if (!mpt.win) errors.push('multiplayer: the 👥 Multiplayer window did not open');
+    if (Math.abs(mpt.back - mpt.before) > 1e-9) errors.push('multiplayer: the market share did not come back without the other player');
+    step(`multiplayer: on ${mpt.route} our share ${Math.round(mpt.before * 100)}% → ${Math.round(mpt.after * 100)}% with another player, ${mpt.flying} of their planes in the air`);
+  }
 
   step('emergency: a mayday makes the news, a crash is set before it lands, else it lands and is grounded');
   const em = await evaluate(() => {

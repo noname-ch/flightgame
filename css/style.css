@@ -1238,6 +1238,7 @@ body { height: 100dvh; } /* the visible height, also while the phone's address b
   #toast { bottom: auto; top: calc(56px + env(safe-area-inset-top)); max-width: calc(100vw - 24px); text-align: center; }
   #devtools { top: calc(52px + env(safe-area-inset-top)); left: 8px; max-height: calc(100dvh - 150px); }
   #bugreport { top: calc(52px + env(safe-area-inset-top)); right: 8px; width: calc(100vw - 16px); max-height: calc(100dvh - 150px); }
+  #mp { top: calc(52px + env(safe-area-inset-top)); right: 8px; width: calc(100vw - 16px); max-height: calc(100dvh - 150px); }
   .mk-top { gap: 10px; padding: 10px 12px 4px; }
   .mk-top h1 { font-size: 16px; }
   .mk-next { display: none; }
@@ -1305,6 +1306,40 @@ body { height: 100dvh; } /* the visible height, also while the phone's address b
   font-size: 13px;
 }
 #bugreport[hidden] { display: none; }
+/* Multiplayer window (js/multiplayer.js) */
+#mp {
+  position: fixed;
+  top: 56px;
+  right: 12px;
+  z-index: 2050;
+  width: min(360px, calc(100vw - 24px));
+  max-height: calc(100vh - 70px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  background: var(--panel);
+  border: 2px solid var(--accent);
+  border-radius: 10px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+  font-size: 13px;
+}
+#mp[hidden] { display: none; }
+#mp .dev-head { display: flex; justify-content: space-between; align-items: center; cursor: move; }
+#mp .dev-row { display: flex; flex-wrap: wrap; gap: 5px; }
+#mp input { font: inherit; padding: 4px 7px; border: 1px solid var(--input-border); border-radius: 6px; flex: 1; min-width: 0; }
+#mp .muted { color: var(--muted); }
+#mp .small { font-size: 12px; }
+#mp p { margin: 0; }
+#mp .mp-code { display: flex; align-items: center; gap: 8px; }
+#mp .mp-code b { font-size: 20px; letter-spacing: 2px; font-family: ui-monospace, Consolas, monospace; }
+#mp .mp-players { width: 100%; }
+#mp .mp-players td.num { text-align: right; }
+#mp .mp-chat { max-height: 160px; min-height: 40px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; display: flex; flex-direction: column; gap: 2px; }
+.mp-join { display: flex; gap: 8px; }
+.mp-join input { font: inherit; font-size: 18px; letter-spacing: 2px; text-transform: uppercase; width: 9em; padding: 6px 10px; border: 1px solid var(--input-border); border-radius: 8px; }
 #bugreport .dev-head { display: flex; justify-content: space-between; align-items: center; }
 #bugreport .dev-row { display: flex; flex-wrap: wrap; gap: 5px; }
 #bugreport input:not([type]), #bugreport textarea { font: inherit; padding: 4px 7px; border: 1px solid var(--input-border); border-radius: 6px; flex: 1; min-width: 0; width: 100%; box-sizing: border-box; resize: vertical; }

@@ -907,9 +907,24 @@
   // Game time at the moment `at` (performance.now() scale; a frame's timestamp may lie just before the last tick).
   const nowMinutes = (at = performance.now()) => {
     const t = G.state.time + ui.pendingMinutes;
-    if (ui.paused || st.open) return t;
-    return t + Math.min(at - ui.lastTick, MAX_STEP_MS) * ui.speed / 60000;
+    const speed = runSpeed();
+    if (!speed) return t;
+    return t + Math.min(at - ui.lastTick, MAX_STEP_MS) * speed / 60000;
   };
+  // How fast the game runs now (a multiple of real time, 0 = stands still). A guest in a multiplayer room runs
+  // at the host's speed (js/multiplayer.js keeps its clock with the host's).
+  const mpGuest = () => !!(FG.mp && FG.mp.guest);
+  function runSpeed() {
+    if (st.open) return 0;
+    if (mpGuest()) return FG.mp.clockSpeed();
+    return ui.paused ? 0 : ui.speed;
+  }
+  // A guest's speed controls only say who sets the speed.
+  function hostSetsSpeed() {
+    if (!mpGuest()) return false;
+    toast('In a multiplayer game the host sets the speed and pauses.');
+    return true;
+  }
 
   // Flying planes follow their track (runway, climb, cruise, approach); parked ones sit at the airport.
   function planePosition(p, t = nowMinutes()) {
@@ -1124,9 +1139,12 @@
       ui.clockHour = Math.floor(s.time / 60);
       $('clock-time').parentElement.title = `The time at ${home.code} (${G.fmtZone(home.code, s.time)}), your home base: every airport has its own local time. ${sunText(home.code, s.time)}`;
     }
-    $('pause').classList.toggle('active', ui.paused);
-    $('speed-btn').classList.toggle('paused', ui.paused);
-    $('speed-label').textContent = ui.paused ? 'Paused' : ui.speed === 1 ? 'Real time' : fmtSpeed(ui.speed);
+    const guest = mpGuest();
+    const paused = guest ? !FG.mp.hostSpeed() : ui.paused;
+    const speed = guest ? FG.mp.hostSpeed() : ui.speed;
+    $('pause').classList.toggle('active', paused);
+    $('speed-btn').classList.toggle('paused', paused);
+    $('speed-label').textContent = (guest ? 'Host: ' : '') + (paused ? 'Paused' : speed === 1 ? 'Real time' : fmtSpeed(speed));
     $('gameover').hidden = !s.gameOver;
     if (day !== ui.shownDay) { ui.shownDay = day; G.dirty = true; } // the day plan's "now" line
   }
@@ -1624,7 +1642,7 @@
   }
 
   // ---------- rival airlines ----------
-  const RIVAL_KIND = { flag: 'flag carrier', low: 'low-cost', regional: 'regional' };
+  const RIVAL_KIND = { flag: 'flag carrier', low: 'low-cost', regional: 'regional', human: 'player' };
   const rvDot = (r, big) => `<span class="rv-dot${big ? ' big' : ''}" style="background:${r.color}"></span>`;
   const pct = (x) => `${Math.round(x * 100)}%`;
   // Routes the player doesn't fly yet are judged as if it flew them once a day with a typical plane.
@@ -1640,7 +1658,7 @@
 
   // Rival airlines with a hub or routes at an airport.
   function rivalsAt(code) {
-    const list = (G.state.rivals || [])
+    const list = G.rivalList()
       .map((r) => ({ r, n: r.routes.filter((rt) => rt.a === code || rt.b === code).length, hub: r.hubs.includes(code) }))
       .filter((x) => x.n || x.hub);
     if (!list.length) return '';
@@ -1650,12 +1668,12 @@
 
   // Their routes as thin lines in their colour (redrawn when a network changes).
   function drawRivalRoutes() {
-    const sig = (G.state.rivals || []).map((r) => r.id + r.routes.map((rt) => rt.a + rt.b + rt.perDay + rt.fare).join('')).join('|') +
+    const sig = G.rivalList().map((r) => r.id + r.routes.map((rt) => rt.a + rt.b + rt.perDay + rt.fare).join('')).join('|') +
       `|${ui.selectedRival || ''}`;
     if (sig === ui.rivalSig) return;
     ui.rivalSig = sig;
     ui.rivalRoutes.clearLayers();
-    for (const r of G.state.rivals || []) {
+    for (const r of G.rivalList()) {
       const sel = ui.selectedRival === r.id;
       const dim = ui.selectedRival && !sel;
       for (const rt of r.routes) {
@@ -1698,7 +1716,7 @@
   }
 
   function rivalsTab() {
-    const rivals = G.state.rivals || [];
+    const rivals = G.rivalList();
     let h = `<div class="panel"><h3>Rival airlines</h3>
       <div class="muted">${rivals.length} airlines compete with you. On a route you share, passengers split by the seats each
       airline offers and its ticket price – add flights or cut your fare to win them. Every Monday they react: more flights
@@ -2225,7 +2243,13 @@
   const SPEEDS = [1, 10, 60, 300, 1200, 3600, MAX_SPEED];
   function bindTopbar() {
     $('menu-btn').addEventListener('click', (e) => { e.stopPropagation(); const open = $('menu').hidden; closePops(); $('menu').hidden = !open; });
-    $('speed-btn').addEventListener('click', (e) => { e.stopPropagation(); const open = $('speed-pop').hidden; closePops(); $('speed-pop').hidden = !open; });
+    $('speed-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (hostSetsSpeed()) return;
+      const open = $('speed-pop').hidden;
+      closePops();
+      $('speed-pop').hidden = !open;
+    });
     $('speed-pop').querySelector('.speed-presets').innerHTML = SPEEDS.map((x) =>
       `<button data-speed="${x}">${x === 1 ? 'Real' : fmtSpeed(x)}</button>`).join('');
     $('speed-pop').addEventListener('click', (e) => {
@@ -2371,7 +2395,7 @@
     if (!n || !el.hidden || mk.open) return;
     if (!ui.newsPaused) ui.wasPaused = ui.paused;
     ui.newsPaused = true;
-    ui.paused = true;
+    if (!(FG.mp && FG.mp.inRoom)) ui.paused = true; // (in a multiplayer room the world doesn't wait for one reader)
     const tilt = (Math.random() * 4 - 2).toFixed(1);
     const more = G.state.news.length - 1;
     const price = (1.5 + Math.floor(G.state.time / 1440 / 60) * 0.1).toFixed(2);
@@ -2429,7 +2453,8 @@
         `<option value="${y}"${String(y) === st.year ? ' selected' : ''}>${y}</option>`).join('')}</select>` : ''}`;
   }
 
-  const startTypes = () => G.starterTypes(st.story ? Number(st.story) : null);
+  // (joining a room: the types of the host's year)
+  const startTypes = () => G.starterTypes(st.page === 'mp' && st.mpRoom ? st.mpRoom.year : st.story ? Number(st.story) : null);
 
   function startPlanes() {
     return startTypes().map((t) => {
@@ -2452,7 +2477,7 @@
   // The start screen has pages: 'style' (first start: pick a look), 'menu' (the main menu), 'new' (a new
   // airline), 'load' (a saved game or a save file) and 'quick' (ready-made airlines).
   function renderStart() {
-    const pages = { style: startStyle, menu: startMenu, new: startNew, load: startLoad, quick: startQuick };
+    const pages = { style: startStyle, menu: startMenu, new: startNew, load: startLoad, quick: startQuick, mp: startMp };
     $('start-screen').innerHTML = (pages[st.page] || startMenu)();
     $('start-screen').dataset.page = st.page;
   }
@@ -2483,6 +2508,7 @@
           <button class="mm-btn" data-st="page" data-id="new"><b>New game</b><span>Found a new airline – today or in the past</span></button>
           <button class="mm-btn" data-st="page" data-id="load"><b>Load game</b><span>The last save, or a save file</span></button>
           <button class="mm-btn" data-st="page" data-id="quick"><b>Quick start</b><span>Ready-made airlines, already flying</span></button>
+          ${FG.mp ? '<button class="mm-btn" data-st="page" data-id="mp"><b>Multiplayer</b><span>Play in one world with friends, live</span></button>' : ''}
         </div>
         <div class="mm-small">
           <button data-st="page" data-id="style">🎨 Style</button>
@@ -2513,14 +2539,99 @@
       ${startPresets()}</div>`;
   }
 
-  function startNew() {
-    // Keep the chosen plane valid for the chosen airport and year.
+  // Keep the chosen plane valid for the chosen airport and year.
+  function validStartPlane() {
+    if (!G.airportByCode[st.airport]) st.airport = C.startAirport;
     const types = startTypes();
     if (!types.includes(st.aircraft) || G.fitsReason(st.aircraft, st.airport)) {
-      const year = st.story ? Number(st.story) : undefined; // (rather one that is still built)
+      const y = st.page === 'mp' && st.mpRoom ? st.mpRoom.year : st.story ? Number(st.story) : null;
+      const year = y || undefined; // (rather one that is still built)
       st.aircraft = types.find((t) => G.onSale(t, year) && !G.fitsReason(t, st.airport))
         || types.find((t) => !G.fitsReason(t, st.airport)) || types[0];
     }
+  }
+
+  // Multiplayer (js/multiplayer.js): open a room for this game, or join one with its code (then found an airline
+  // in the host's world, or go on with the one saved for that room).
+  function startMp() {
+    const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+    const room = st.mpRoom;
+    let h = `<div class="st-card mm-page">${back}<h2>Multiplayer</h2>
+      <p class="muted">Play in one world with friends, live. One of you opens a room for their game and sends the others its
+      code; they join with an airline of their own. You compete for the same passengers and slots, see each other's planes,
+      and the host's clock sets the time and the speed for everyone. Browser and desktop players can share a room.</p>`;
+    if (!room) {
+      h += `<div class="st-label">Join a room</div>
+        <div class="mp-join"><input id="st-mp-code" maxlength="7" placeholder="ABC-234" value="${esc(st.mpCode || '')}" autocomplete="off" spellcheck="false">
+        <button class="primary" data-st="mpFind"${st.mpBusy ? ' disabled' : ''}>${st.mpBusy ? 'Looking…' : 'Find the room'}</button></div>
+        ${st.mpError ? `<p class="neg">${esc(st.mpError)}</p>` : ''}
+        <div class="st-label">Open a room</div>
+        ${st.hasGame && !G.state.gameOver ? `<p class="muted">For your game: ${esc(gameLine(G.state))}. You are the host: keep the game open while you play together.</p>
+          <button data-st="mpHost">Open a room for ${esc(G.state.company)} ▶</button>`
+        : '<p class="muted">Start or load a game first, then open a room for it here or with 👥 Multiplayer in the ⋯ menu.</p>'}`;
+      return `${h}</div>`;
+    }
+    const kinds = `${C.modes[room.mode] ? C.modes[room.mode].name : room.mode} · ${C.difficulties[room.difficulty] ? C.difficulties[room.difficulty].name : room.difficulty}` +
+      `${room.story ? ` · story mode, now ${room.year}` : ' · free play'}`;
+    h += `<div class="st-continue"><div><b>Room ${FG.mp.showCode(room.code)}</b><span>${esc(room.host)}'s game · ${kinds} · ` +
+      `${room.players} player${room.players === 1 ? '' : 's'}</span></div><button data-st="mpCancel">Another code</button></div>`;
+    const saved = st.mpSaved;
+    if (saved) {
+      h += `<div class="st-label">Your airline in this room</div>
+        <div class="st-continue"><div><b>${esc(saved.company)}</b><span>${esc(gameLine(saved))}</span></div>
+        <button class="primary big" data-st="mpContinue">Join ▶</button></div>
+        <div class="st-label">Or found a new one</div>`;
+    }
+    validStartPlane();
+    const ap = G.airportByCode[st.airport];
+    h += `<label class="st-label" for="st-name">Airline name</label>
+      <input id="st-name" maxlength="40" value="${esc(st.name ?? C.companyName)}">
+      <label class="st-label" for="st-airport">Home airport <span class="muted">${ap.name}, ${ap.city} · size ${G.airportSize(ap.code)}</span></label>
+      <select id="st-airport">${startAirportOptions()}</select>
+      <div class="st-label">First aircraft <span class="muted">leased, with crew</span></div>
+      <div class="st-planes">${startPlanes()}</div>
+      <div class="st-actions"><button class="primary big" data-st="mpJoin">Join with a new airline ✈</button></div>
+      ${saved ? '<p class="muted st-warn">A new airline replaces the one saved for this room.</p>' : ''}
+      <p class="muted">Your own saved game stays as it is: the airline you play in a room is saved apart.</p>`;
+    return `${h}</div>`;
+  }
+
+  async function findRoom() {
+    st.mpBusy = true;
+    st.mpError = '';
+    renderStart();
+    try {
+      st.mpRoom = await FG.mp.find(st.mpCode);
+      // (the airline this browser saved for that room, if any)
+      G.saveSlot = 'mp';
+      const s = G.savedSummary();
+      G.saveSlot = '';
+      st.mpSaved = s && s.mp && s.mp.room === FG.mp.normCode(st.mpCode) ? s : null;
+    } catch (e) {
+      st.mpError = e.message;
+    }
+    st.mpBusy = false;
+    if (st.page === 'mp') renderStart();
+  }
+
+  // A guest goes into the room: the new airline (or the saved one) at the host's time.
+  function joinRoom(fresh) {
+    const room = st.mpRoom;
+    enterGame('Joining the room…', () => {
+      G.saveSlot = 'mp'; // (the game saved in this browser stays as it is)
+      if (fresh || !G.load()) {
+        G.newGame({ mode: room.mode, difficulty: room.difficulty, airport: st.airport, aircraft: st.aircraft,
+          company: st.name ?? C.companyName, story: room.story });
+        G.mpStartAt(FG.mp.hostUtc());
+      }
+      FG.mp.joined(); // (a saved airline flies on up to the host's time)
+      st.mpRoom = null;
+      afterNewGame();
+    });
+  }
+
+  function startNew() {
+    validStartPlane();
     const ap = G.airportByCode[st.airport];
     return `<div class="st-card mm-page">${back}
       <h2>New airline</h2>
@@ -2543,6 +2654,12 @@
 
   // page: which page to open; by default the main menu, or the style picker on the very first start.
   function openStart(hasGame, page) {
+    // Back to the title screen leaves a multiplayer room (a guest's own game comes back).
+    if (FG.mp && FG.mp.active) {
+      const loaded = FG.mp.leave();
+      hasGame = loaded && !G.state.gameOver;
+      resetView();
+    }
     st.open = true;
     st.hasGame = hasGame;
     st.page = page || (set.theme ? 'menu' : 'style');
@@ -2567,8 +2684,19 @@
       return;
     }
     if (what === 'export') { downloadSave(); return; }
+    if (what === 'mpFind') { findRoom(); return; }
+    if (what === 'mpCancel') { FG.mp.leave(); st.mpRoom = null; renderStart(); return; }
+    if (what === 'mpJoin') { joinRoom(true); return; }
+    if (what === 'mpContinue') { joinRoom(false); return; }
+    if (what === 'mpHost') { enterGame('Opening the room…', () => { FG.mp.host().catch((err) => toast(err.message, true)); }); return; }
     if (what === 'settings') { renderSettings(); $('settings').hidden = false; return; }
-    if (what === 'page') { st.page = id; renderStart(); $('start-screen').scrollTop = 0; return; }
+    if (what === 'page') {
+      if (st.page === 'mp' && id !== 'mp' && st.mpRoom) { FG.mp.leave(); st.mpRoom = null; } // (found a room, then went back)
+      st.page = id;
+      renderStart();
+      $('start-screen').scrollTop = 0;
+      return;
+    }
     if (what === 'styleDone') { setTheme(FG.themes.current()); st.page = 'menu'; renderStart(); return; }
     if (what === 'theme') { setTheme(id); renderStart(); return; }
     st[what] = id; // mode, difficulty, aircraft or story ('' = free play, else the start year)
@@ -2578,6 +2706,7 @@
   function onStartInput(e) {
     const t = e.target;
     if (t.id === 'st-name') st.name = t.value;
+    if (t.id === 'st-mp-code') st.mpCode = t.value;
     if (t.id === 'st-airport') { st.airport = t.value; refreshStartAirport(); }
     if (t.id === 'st-year') { st.year = st.story = t.value; renderStart(); $('st-year').focus(); }
     if (t.id === 'st-file' && e.type === 'change' && t.files[0]) {
@@ -2819,10 +2948,11 @@
       // A second click on the open section closes the sidebar.
       setTab(ui.tab === b.dataset.tab ? null : b.dataset.tab);
     }));
-    $('pause').addEventListener('click', () => { ui.paused = !ui.paused; });
+    $('pause').addEventListener('click', () => { if (!hostSetsSpeed()) ui.paused = !ui.paused; });
     $('speed').addEventListener('input', (e) => { ui.speed = sliderToSpeed(Number(e.target.value)); });
     // Click the speed label to go back to real time.
     $('speed-label').addEventListener('click', () => {
+      if (hostSetsSpeed()) return;
       ui.speed = 1;
       $('speed').value = speedToSlider(1);
     });
@@ -2870,10 +3000,16 @@
       }
       if (st.open) {
         if (e.key === 'Escape' && st.hasGame) closeStart();
+        if (st.page === 'mp') {
+          if (e.key === 'Enter' && e.target.id === 'st-mp-code' && !st.mpBusy) findRoom();
+          if (e.key === 'Enter' && e.target.id === 'st-name' && st.mpRoom) joinRoom(true);
+          return;
+        }
         if (e.key === 'Enter' && e.target.id === 'st-name') startNewGame();
         return;
       }
       if (e.target.matches('input, select, textarea')) return;
+      if ((e.key === ' ' || e.key === 'ArrowLeft' || e.key === 'ArrowRight') && hostSetsSpeed()) { e.preventDefault(); return; }
       if (e.key === ' ') { ui.paused = !ui.paused; e.preventDefault(); }
       if (e.key === 'Escape' && !ui.buildMode && $('newspaper').hidden) { $('menu').hidden = false; }
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
@@ -2903,8 +3039,9 @@
     const now = performance.now();
     const elapsed = Math.min(now - ui.lastTick, MAX_STEP_MS);
     ui.lastTick = now;
-    if (!ui.paused && !st.open) {
-      ui.pendingMinutes += (ui.speed * elapsed) / 60000;
+    const speed = runSpeed();
+    if (speed) {
+      ui.pendingMinutes += (speed * elapsed) / 60000;
       const whole = Math.floor(ui.pendingMinutes);
       ui.pendingMinutes -= whole;
       if (whole > 0) G.advance(whole);
@@ -2965,7 +3102,10 @@
     const preset = new URLSearchParams(location.search).get('preset');
     if (preset && D.presets && D.presets[preset]) enterGame('Getting the planes ready…', () => startPreset(preset));
     else {
-      openStart(saved && !G.state.gameOver);
+      // index.html?join=<room code> (the link a multiplayer host copies) opens the Multiplayer page with the code.
+      const join = new URLSearchParams(location.search).get('join');
+      if (join && FG.mp) st.mpCode = FG.mp.showCode(FG.mp.normCode(join));
+      openStart(saved && !G.state.gameOver, join && FG.mp && set.theme ? 'mp' : undefined);
       hideLoading();
     }
     startTicks();
@@ -2991,6 +3131,7 @@
         G.dirty = true;
       },
       clearSelection() { ui.selectedAirport = null; ui.selectedPlane = null; G.dirty = true; },
+      exitToTitle() { G.save(); openStart(true, 'menu'); }, // (js/multiplayer.js: a guest leaves the room)
       follow,
       chart, // (the plane stats window draws its weekly profit with the Finance charts)
       chartHover,

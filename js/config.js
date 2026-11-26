@@ -117,6 +117,17 @@ FG.config = {
 
   // AI competitor airlines (js/data/rivals.js). On a route several airlines fly, passengers split
   // by attractiveness = seats offered per day ^ capacityExp × fare factor ^ -ticket.elasticity.
+  // Multiplayer (js/multiplayer.js, MULTIPLAYER.md): players meet in a room on public MQTT brokers (over
+  // WebSocket); every message is encrypted with a key made from the room code. A client joins all of these
+  // and sends on each it reached (so one broker being down doesn't split a room).
+  multiplayer: {
+    brokers: ['wss://broker.emqx.io:8084/mqtt', 'wss://broker.hivemq.com:8884/mqtt'],
+    roomEvery: 1000,          // ms: the host sends the room (players, clock) this often
+    airlineEvery: 3000,       // ms: every player sends its airline this often
+    timeoutMs: 15000,         // a player not heard from for this long has left
+    joinWaitMs: 10000,        // a guest waits this long for the host's answer
+    colors: ['#e11d48', '#2563eb', '#16a34a', '#9333ea', '#d97706', '#0891b2', '#be185d', '#4d7c0f'],
+  },
   rivals: {
     near: 5,                  // rivals with hubs closest to the player's home
     far: 5,                   // and this many from elsewhere in the world

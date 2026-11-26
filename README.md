@@ -283,6 +283,19 @@ routes – sometimes one of yours (low-cost carriers even open a base for it). T
 routes with your share and every rival's network; route tables show competitors as coloured dots and your share.
 A rival can also go bust (newspaper), and its routes are gone.
 
+**Multiplayer** (title screen → Multiplayer, or 👥 Multiplayer in the ⋯ menu): play in one world with friends, live.
+One player opens a room for their game and gets a code like `ABC-234` (🔗 Copy link gives a link that opens the game
+with it); the others enter the code, see the host's game (mode, difficulty, story year) and found an airline of their
+own at a home airport of their choice, at the host's time. Every player's airline is a rival of the others: on shared
+routes passengers split by seats and fares as with the AI rivals, slots one player holds are taken for the others
+(and not for sale), and their planes fly on the map in their colour (Rivals tab: kind "player"). The host's clock sets
+the time and the speed for everyone (a guest's speed buttons only say so; newspapers don't pause a room). The
+👥 window shows the room code, the players with their planes and cash, and a chat. A guest's airline is saved apart from
+the game saved in the browser: leaving the room (or Exit to title) brings that game back, and joining the same room
+again offers to go on with the airline. When the host closes the room, the guests' airlines go on alone. Rooms meet on
+public MQTT relays; every message is encrypted with a key made from the room code (MULTIPLAYER.md has the protocol,
+which the desktop game speaks too). Each player keeps their own AI rivals, market and events.
+
 Buildings in 3D have windows, glass fronts, entrance doors on the landside, hangar doors facing the apron and
 open car park decks, in a few styles that differ from building to building; their roofs take the colour of the
 satellite photo, and the walls are picked to go with it (js/facades.js).

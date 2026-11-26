@@ -100,8 +100,8 @@ realistic flight tracks in 2D and 3D, AI rival airlines, random events and a dev
 
 ## Someday
 
-- [ ] **Play together** (L). A shared world on a small server: several players' airlines compete for the
-  same slots and passengers, at a slow pace (one game day per real hour).
+- [ ] **A world that never stops** (L). Multiplayer rooms run while their host plays. A small server could keep a
+  shared world running at a slow pace (one game day per real hour), with players coming and going.
 - [ ] **Real traffic layer** (M). Live aircraft from OpenSky (or from an own ADS-B receiver) as background
   traffic on the map, to compare your network with the real one.
 - [ ] **Airport manager mode** (L). Run an airport instead of an airline: build, set fees, attract airlines.
@@ -110,6 +110,11 @@ realistic flight tracks in 2D and 3D, AI rival airlines, random events and a dev
 ## Done
 
 Recent milestones, newest first (see `git log` for the rest):
+
+- Play together: multiplayer rooms (js/multiplayer.js, MULTIPLAYER.md). A host opens a room for their game, friends
+  join with its code and an airline of their own; all compete for the same passengers and slots, see each other's
+  planes and chat, on the host's clock. No server: encrypted messages over public MQTT relays; the desktop game
+  speaks the same protocol.
 
 - Liveries (F7, js/liverywin.js): the airline's livery and one for each plane, 32 built in (cheatlines, new fin logos),
   a designer with a live 3D preview, share codes and files, and a community list (community/liveries.json).

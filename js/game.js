@@ -2967,6 +2967,9 @@
   // ---------- game ----------
   const Game = {
     state: null,
+    // Other players' airlines in a multiplayer room (js/multiplayer.js, setPeers): rivals that are never saved.
+    peers: [],
+    saveSlot: '', // '' = the save game; 'mp' = a guest's airline in a multiplayer room (its own save)
     dirty: true, // UI needs a full re-render
     blasts: [], // crash sites, for the views to draw (looks only: not saved, see crash())
 
@@ -3202,9 +3205,13 @@
       return errors;
     },
 
+    // Where the game is saved: a guest's multiplayer airline has its own save, so it never replaces the game
+    // saved in this browser.
+    saveKey() { return this.saveSlot ? `${SAVE_KEY}.${this.saveSlot}` : SAVE_KEY; },
+
     load() {
       try {
-        const raw = localStorage.getItem(SAVE_KEY);
+        const raw = localStorage.getItem(this.saveKey());
         if (!raw) return false;
         this.state = JSON.parse(raw);
         this.migrate();
@@ -3218,8 +3225,8 @@
     // The saved game in this browser, without loading it: { company, time, money, planes } or null.
     savedSummary() {
       try {
-        const s = JSON.parse(localStorage.getItem(SAVE_KEY));
-        return s && s.planes ? { company: s.company, time: s.time, money: s.money, planes: s.planes.length, story: s.story } : null;
+        const s = JSON.parse(localStorage.getItem(this.saveKey()));
+        return s && s.planes ? { company: s.company, time: s.time, money: s.money, planes: s.planes.length, story: s.story, mp: s.mp } : null;
       } catch (e) {
         return null;
       }
@@ -3370,7 +3377,7 @@
 
     save() {
       try {
-        localStorage.setItem(SAVE_KEY, JSON.stringify(this.state));
+        localStorage.setItem(this.saveKey(), JSON.stringify(this.state));
         return true;
       } catch (e) {
         return false;
@@ -3515,7 +3522,7 @@
     // routeKey -> [{ r: rival, rt: its route }]
     indexRivals() {
       const idx = new Map();
-      for (const r of this.state.rivals || []) {
+      for (const r of this.rivalList()) {
         for (const rt of r.routes) {
           const k = routeKey(rt.a, rt.b);
           if (!idx.has(k)) idx.set(k, []);
@@ -3525,7 +3532,55 @@
       this.rivalIdx = idx;
     },
     rivalsOn(a, b) { return (this.rivalIdx && this.rivalIdx.get(routeKey(a, b))) || []; },
-    rival(id) { return this.state.rivals.find((r) => r.id === id); },
+    rival(id) { return this.rivalList().find((r) => r.id === id); },
+    // The AI rivals and the other players of a multiplayer room (`human`), as the map and the sections show them.
+    rivalList() { return this.peers.length ? (this.state.rivals || []).concat(this.peers) : (this.state.rivals || []); },
+
+    // ---------- multiplayer (js/multiplayer.js) ----------
+    // The other players' airlines, from their messages: rivals with `human` set, never saved. Their routes compete
+    // for passengers as the AI rivals' do, their slots are held (`slots`: code -> n), and their planes in the air
+    // (`flights`: { type, from, to, dep, arr } in UTC game minutes) are drawn.
+    setPeers(list) {
+      this.peers = list.map((x) => ({ ...x, human: true, kind: 'human', hubs: x.home ? [x.home] : [] }));
+      this.indexRivals();
+      this.dirty = true;
+    },
+    // This airline as the other players see it: { name, color, home, money, planes, routes, slots, flights }.
+    // Times are UTC game minutes, so players with home bases in other time zones agree on them.
+    mpAirline() {
+      const s = this.state;
+      const routes = [];
+      for (const x of this.playerRoutes()) {
+        const per = x.seats / 2; // (both directions together: seats each way a day)
+        const types = s.planes.filter((p) => p.schedule.active && p.schedule.stops.includes(x.a) && p.schedule.stops.includes(x.b)).map((p) => p.type);
+        const type = types.sort((a, b) => types.filter((t) => t === b).length - types.filter((t) => t === a).length)[0];
+        if (!type || per <= 0) continue;
+        const perDay = Math.max(1, Math.round(per / D.aircraft[type].seats));
+        routes.push({ a: x.a, b: x.b, type, perDay, seats: Math.round(per / perDay), fare: this.fareFactor(x.a, x.b) });
+      }
+      const slots = {};
+      for (const code of Object.keys(s.slots)) if (this.slotCount(code) > 0) slots[code] = this.slotCount(code);
+      const flights = s.planes.filter((p) => p.status === 'flying' && p.flight)
+        .map((p) => ({ id: p.id, type: p.type, from: p.flight.from, to: p.flight.to, dep: utcOf(p.flight.dep), arr: utcOf(p.flight.arr) }));
+      return { name: s.company, home: s.home, money: Math.round(s.money), planes: s.planes.length, routes, slots, flights };
+    },
+    // A guest's new airline joins the host's world at the host's time (UTC game minutes): the clock jumps there
+    // and what the new game stamped with its start time moves along.
+    mpStartAt(utc) {
+      const s = this.state;
+      const t = Math.max(s.time, Math.floor(utc + utcOffset(s.home, utc)));
+      const dt = t - s.time;
+      if (dt <= 0) return;
+      s.time = t;
+      for (const p of s.planes) { p.acquiredAt += dt; p.readyAt = t; p.stats = newStats(); }
+      for (const sl of Object.values(s.slots)) sl.since = t;
+      for (const r of s.rivals || []) { r.since = t; for (const rt of r.routes) rt.since = t; }
+      for (const e of s.log) e.t = t;
+      if (s.story) s.story.year = this.year();
+      s.market = { listings: [], nextId: 1 };
+      this.refreshMarket();
+      this.dirty = true;
+    },
 
     // Seats per day the player's active schedules offer from a to b (a rough daily plan).
     playerSeats(a, b) {
@@ -3740,6 +3795,22 @@
                   heading: bearing({ lat, lon }, { lat: ahead[0], lon: ahead[1] }) });
               }
             }
+          }
+        }
+      }
+      // The other players' planes where they really are (their flights come in UTC game minutes).
+      if (this.peers.length) {
+        const utc = utcOf(t);
+        for (const r of this.peers) {
+          for (const f of r.flights || []) {
+            const A = airportByCode[f.from];
+            const B = airportByCode[f.to];
+            if (!A || !B || !D.aircraft[f.type] || utc < f.dep || utc >= f.arr) continue;
+            const x = (utc - f.dep) / (f.arr - f.dep);
+            const [lat, lon] = interpolate(A, B, x);
+            const ahead = interpolate(A, B, Math.min(1, x + 0.01));
+            out.push({ r, rt: { a: f.from, b: f.to, type: f.type }, from: f.from, to: f.to, frac: x, lat, lon,
+              heading: bearing({ lat, lon }, { lat: ahead[0], lon: ahead[1] }) });
           }
         }
       }
@@ -4164,6 +4235,12 @@
         left -= n;
         out.push({ id: r.id, name: r.name, color: r.color, n, hub });
       }
+      for (const r of this.peers) { // the other players of a multiplayer room hold what they really hold
+        const n = Math.min(left, (r.slots && r.slots[code]) || 0);
+        if (n <= 0) continue;
+        left -= n;
+        out.push({ id: r.id, name: r.name, color: r.color, n, hub: r.home === code, human: true });
+      }
       if (a && !a.built) {
         const n = Math.min(left, Math.max(0, Math.round(cap * A.otherAirlines[airportSize(code)]) - (bought.others || 0)));
         if (n > 0) out.push({ id: 'others', name: 'Other airlines', color: '#64748b', n, hub: false });
@@ -4224,6 +4301,7 @@
       const a = airportByCode[code];
       const h = this.slotHolders(code).find((x) => x.id === holder);
       if (!h) return 'They hold no slot there any more.';
+      if (h.human) return `${h.name} is another player: their slots are not for sale.`;
       if (this.freeSlots(code)) return 'A slot is free there: lease that one.';
       amount = Math.round(amount);
       if (amount <= 0) return 'Offer something.';

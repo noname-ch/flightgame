@@ -306,6 +306,7 @@
     for (const x of holders) {
       h += `<tr><td><span class="rv-dot" style="background:${x.color}"></span>${x.name}${x.hub ? ' <span class="muted">(hub)</span>' : ''}</td><td class="num">${x.n}</td>`;
       if (free) { h += '<td></td><td></td></tr>'; continue; }
+      if (x.human) { h += '<td colspan="2" class="muted" title="Another player in your multiplayer room: their slots are not for sale">player</td></tr>'; continue; }
       const key = `${code}|${x.id}`;
       const fair = G.slotOfferPrice(code, x.id);
       const amount = pl.offer[key] || Math.round(fair);
