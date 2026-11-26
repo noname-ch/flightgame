@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import { loadModel, modelSize, facing, patchFacing } from './models3d.js';
 import { setGear, setBogies, setOleo } from './gear3d.js';
 import { waterLayer } from './water3d.js';
+import { inPart } from './livery.js';
 // The A350s' 3D flight deck lives with Fly it yourself (github.com/noname-ch/flightgame-fly, src/cockpit3d.js): that
 // page sets FG.cockpit3d. The game itself draws no cockpit.
 const cockpit3d = {
@@ -238,6 +239,7 @@ function planeModel(type, livery = FG.livery()) {
 // Where they go is read off the model once per type (navSpotsOf).
 const NAV_VS = `
 uniform float uPx; uniform float uTime; uniform float uPhase; uniform vec4 uOn;
+uniform vec3 uCut; // a wing broken off beyond these half spans (left, right; 0: whole), the half span in metres
 attribute float kind; attribute vec3 tint;
 varying vec3 vCol; varying float vA;
 void main() {
@@ -248,6 +250,8 @@ void main() {
   else if (kind < 1.5) { a = uOn.y * step(fract(t), 0.12); size = 7.0; }
   else if (kind < 2.5) { float f = fract(t / 1.3); a = uOn.z * (step(f, 0.04) + step(0.11, f) * step(f, 0.15)); size = 10.0; }
   else { a = uOn.w; size = 12.0; }
+  float cut = position.x < 0.0 ? uCut.x : uCut.y;
+  if (cut > 0.0 && abs(position.x) > cut * uCut.z) a = 0.0; // (its light went with the wing tip)
   gl_PointSize = a > 0.0 ? size * uPx : 0.0;
   vCol = tint; vA = a;
 }`;
@@ -314,7 +318,8 @@ function navLights(type, model) {
   g.setAttribute('kind', new THREE.BufferAttribute(kind, 1));
   g.setAttribute('tint', new THREE.BufferAttribute(tint, 3));
   const m = new THREE.ShaderMaterial({
-    uniforms: { uPx: { value: window.devicePixelRatio || 1 }, uTime: { value: 0 }, uPhase: { value: Math.random() * 10 }, uOn: { value: new THREE.Vector4() } },
+    uniforms: { uPx: { value: window.devicePixelRatio || 1 }, uTime: { value: 0 }, uPhase: { value: Math.random() * 10 }, uOn: { value: new THREE.Vector4() },
+      uCut: { value: new THREE.Vector3(0, 0, Math.max(1, ...Array.from({ length: n }, (_, i) => Math.abs(spots[i * 7])))) } },
     vertexShader: NAV_VS, fragmentShader: NAV_FS, transparent: true, depthWrite: false, depthTest: true, blending: THREE.AdditiveBlending,
   });
   const pts = new THREE.Points(g, m);
@@ -360,6 +365,8 @@ function ownMaterials(model) {
       const m = o.material.clone();
       m.onBeforeCompile = o.material.onBeforeCompile;
       m.customProgramCacheKey = o.material.customProgramCacheKey;
+      // (the clone's userData is a JSON copy: the vectors become their own again)
+      for (const k of ['livCut', 'livKeep']) if (m.userData[k]) m.userData[k] = { value: new THREE.Vector4() };
       copies.set(o.material, m);
     }
     o.material = copies.get(o.material);
@@ -1344,6 +1351,9 @@ function placeModel(e, pose, altM, exag, globe, now, lineUp) {
       u.livRev.value = rev ? e.rev : 0;
       u.livRevKind.value = rev ? rev.kind : 0;
       u.livRevX.value = rev ? rev.x : 0;
+      // the parts broken off it (drawPilot), or the one part it is (pilotPieces)
+      if (u.livCut) u.livCut.value.copy(e.cut || NO_PARTS);
+      if (u.livKeep) u.livKeep.value.copy(e.keep || NO_PARTS);
     }
   }
   e.lastFrame = now;
@@ -1663,7 +1673,7 @@ function updateBlasts(layer, map, globe, mpp, centerW, now) {
     if (!st) { st = { parts: blastParts(), age: 0, last: now }; blastState.set(b, st); }
     const dt = Math.min(0.1, Math.max(0, (now - st.last) / 1000));
     st.last = now;
-    if (FG.ui && FG.ui.speed > 0) st.age += dt;
+    if ((FG.ui && FG.ui.speed > 0) || b.real) st.age += dt; // (real: the hand-flown plane's, in real time)
     const burning = st.age <= BLAST_SECS;
     if (burning) alive = true;
     const cosLat = Math.cos(b.lat * DEG);
@@ -2354,10 +2364,110 @@ const planeLayer = {
     e.exag = 1;
     e.pose = pose;
     const { pos } = tmp;
-    e.obj.visible = !(v.follow && v.cam === 'cockpit') && (!v.clip || pos.x * v.clip[0] + pos.y * v.clip[1] + pos.z * v.clip[2] + v.clip[3] > -0.002);
+    e.obj.visible = !pose.gone && !(v.follow && v.cam === 'cockpit') && (!v.clip || pos.x * v.clip[0] + pos.y * v.clip[1] + pos.z * v.clip[2] + v.clip[3] > -0.002);
+    // what broke off it (pose.dmg) and the parts falling away or lying on the ground (pose.pieces): pilotPieces
+    const d = pose.dmg;
+    if (!e.cut) e.cut = new THREE.Vector4();
+    e.cut.set(d ? d.cut[0] || 0 : 0, d ? d.cut[1] || 0 : 0, d ? d.elev || 0 : 0, d ? d.rud || 0 : 0);
+    if (e.obj.userData.nav && e.obj.userData.nav.uCut) { e.obj.userData.nav.uCut.value.x = e.cut.x; e.obj.userData.nav.uCut.value.y = e.cut.y; }
+    pilotPieces(this, e, pose, globe, now, liv);
   },
 };
 const pilotOn = () => !!(FG.pilot && FG.pilot.active);
+const NO_PARTS = new THREE.Vector4();
+
+// ---------- parts broken off the hand-flown plane ----------
+// The fly page's pose has `pieces`: [{ id, part: { kind: 'wing' | 'elev' | 'rud', side: -1 left | 1 right | 0 both,
+// cut: half spans, for a wing, out: where its own tip broke off before }, d: [east, north, up] metres moved since it
+// broke off (up from the wheels' height there), rot: [yaw, roll, pitch] radians turned since then (about up, the nose
+// and the wing as they were), down: lying on the ground }]. Each is the plane's own model with
+// only that part drawn (livKeep, js/livery.js PARTS), placed where the plane was when the part broke off, then moved
+// by `d` and turned about the part's own middle. Pieces gone from the pose are taken away.
+function pilotPieces(layer, e, pose, globe, now, liv) {
+  const list = pose.pieces || [];
+  if (!e.pieces) e.pieces = new Map();
+  const seen = new Set();
+  for (const q of list) {
+    seen.add(q.id);
+    let pc = e.pieces.get(q.id);
+    if (!pc) {
+      // where the plane is now: the part broke off here (same frame: the pose came with it)
+      pc = { obj: planeModel(e.type, liv), keep: new THREE.Vector4(q.part.kind === 'wing' ? 1 : q.part.kind === 'elev' ? 2 : 3, q.part.side || 0, q.part.cut || 0, q.part.out || 0),
+        at: { lat: pose.lat, lon: pose.lon, alt: e.altM, heading: e.att.heading, pitch: e.att.pitch, bank: e.att.bank, lift: e.obj.userData.lift || 0 }, mid: null };
+      pc.obj.matrixAutoUpdate = false;
+      pc.obj.visible = false;
+      e.pieces.set(q.id, pc);
+      layer.world.add(pc.obj);
+    }
+    const ud = pc.obj.userData;
+    if (!ud.liv) continue; // (still loading: its placeholder is not drawn)
+    if (!pc.mid) {
+      // the part's middle in the model, which it turns about; the rest of the model (glass, gear, lights) goes
+      pc.mid = partMiddle(pc.obj, q.part);
+      pc.obj.traverse((o) => {
+        if ((o.isMesh && !(o.material.userData && o.material.userData.livFlex)) || o.isPoints || o.name === 'gear') o.visible = false;
+      });
+      if (!pc.mid) { pc.obj.visible = false; continue; }
+    }
+    for (const u of ud.liv) {
+      u.livKeep.value.copy(pc.keep);
+      u.livCut.value.set(0, 0, 0, 0);
+      u.livFlex.value = 0;
+      if (u.livLight && e.obj.userData.liv && e.obj.userData.liv[0].livLight) u.livLight.value = e.obj.userData.liv[0].livLight.value;
+    }
+    // the plane's basis where the part broke off, then turned by rot, the part's middle moved by d
+    const unit = frameAt(pc.at.lat, pc.at.lon, pc.at.alt, globe);
+    const { east, north, up, pos } = tmp;
+    const h = pc.at.heading * DEG, pitch = pc.at.pitch * DEG, bank = pc.at.bank * DEG;
+    const fwd = north.clone().multiplyScalar(Math.cos(h)).addScaledVector(east, Math.sin(h));
+    const right = east.clone().multiplyScalar(Math.cos(h)).addScaledVector(north, -Math.sin(h));
+    const nose = fwd.clone().multiplyScalar(Math.cos(pitch)).addScaledVector(up, Math.sin(pitch));
+    const lift = up.clone().multiplyScalar(Math.cos(pitch)).addScaledVector(fwd, -Math.sin(pitch));
+    const wing = right.clone().multiplyScalar(Math.cos(bank)).addScaledVector(lift, -Math.sin(bank));
+    const top = lift.clone().multiplyScalar(Math.cos(bank)).addScaledVector(right, Math.sin(bank));
+    const m0 = new THREE.Matrix4().makeBasis(wing.multiplyScalar(unit), nose.clone().multiplyScalar(unit), top.multiplyScalar(unit));
+    const midW = pc.mid.clone().applyMatrix4(m0).add(pos); // (the middle where it broke off)
+    const [yaw, roll, pt] = q.rot || [0, 0, 0];
+    const turn = new THREE.Quaternion().setFromAxisAngle(up.clone().normalize(), -yaw)
+      .multiply(new THREE.Quaternion().setFromAxisAngle(nose.clone().normalize(), roll))
+      .multiply(new THREE.Quaternion().setFromAxisAngle(wing.clone().normalize(), pt));
+    const m = new THREE.Matrix4().makeRotationFromQuaternion(turn).multiply(m0);
+    let [dE, dN, dU] = q.d || [0, 0, 0];
+    // d up is from the wheels' height where it broke off: on the ground (down) it lies flat on it, its middle a little
+    // above it rather than as high as it was on the aircraft (brought down over a second, so it doesn't jump)
+    if (q.down) {
+      const above = pc.at.lift + pc.mid.clone().applyMatrix4(m0).dot(up) / unit - 0.3;
+      pc.sink = Math.min(1, (pc.sink || 0) + 0.02);
+      dU -= above * pc.sink;
+    } else if (pc.sink) dU -= (pc.at.lift + pc.mid.clone().applyMatrix4(m0).dot(up) / unit - 0.3) * pc.sink;
+    midW.addScaledVector(east, dE * unit).addScaledVector(north, dN * unit).addScaledVector(up, dU * unit * TERRAIN_EXAG);
+    m.setPosition(midW.sub(pc.mid.clone().applyMatrix4(new THREE.Matrix4().extractRotation(m)).multiplyScalar(unit)));
+    pc.obj.matrix.copy(m);
+    pc.obj.matrixWorldNeedsUpdate = true;
+    pc.obj.visible = !v.clip || midW.x * v.clip[0] + midW.y * v.clip[1] + midW.z * v.clip[2] + v.clip[3] > -0.002;
+  }
+  for (const [id, pc] of e.pieces) if (!seen.has(id)) { layer.world.remove(pc.obj); e.pieces.delete(id); }
+}
+// The middle of a part of a loaded model, in the model's own frame (metres along its wing, nose and up), from the
+// vertices the shader draws for it (js/livery.js inPart).
+function partMiddle(obj, part) {
+  const sum = new THREE.Vector3();
+  let n = 0;
+  const p = new THREE.Vector3();
+  obj.traverse((o) => {
+    if (!o.isMesh || !o.material.userData || !o.material.userData.livFlex) return;
+    const g = o.geometry, pos = g.attributes.position, surf = g.attributes.livSurf;
+    const span = o.material.userData.livSpanOf;
+    if (!pos || !span) return;
+    const m = new THREE.Matrix4();
+    for (let k = o; k && k !== obj; k = k.parent) { k.updateMatrix(); m.premultiply(k.matrix); }
+    for (let i = 0; i < pos.count; i += 1) {
+      if (!inPart(part, pos.getX(i), surf ? surf.getX(i) : 0, span)) continue;
+      sum.add(p.fromBufferAttribute(pos, i).applyMatrix4(m)); n++;
+    }
+  });
+  return n ? sum.divideScalar(n) : null;
+}
 // The 3D flight deck round the cockpit camera (flightgame-fly src/cockpit3d.js), drawn last over the whole map with planeLayer's
 // renderer. Its own depth: the world's is cleared under it (a layer after it would draw into the windows).
 const cockpitLayer = {

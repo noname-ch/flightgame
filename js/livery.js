@@ -1468,7 +1468,16 @@ varying float vLivPart;
 varying vec2 vLivFlap;     // on a flap: 1, how far back across its chord (0 at its leading edge, 1 at the trailing edge)
 uniform float livFlex;     // how far the wing tips are bent up (down: below 0), in half spans
 uniform float livSpan;     // half span
-uniform float livHalfW;    // half width of the fuselage`;
+uniform float livHalfW;    // half width of the fuselage
+// The parts that can break off (PARTS): the wing beyond a break across the span (left x < 0, right x > 0), the
+// elevators and the rudder (livSurf kinds 3 and 4).
+uniform vec4 livCut;       // broken off and not drawn: wing beyond livCut.x (left) / .y (right) half spans (0: whole),
+                           // elevators .z (1 left, 2 right, 3 both), rudder .w (1)
+uniform vec4 livKeep;      // a broken-off part drawn on its own: kind (0 none, 1 wing, 2 elevators, 3 rudder), side
+                           // (-1 left, 1 right, 0 both), the break (half spans) for a wing
+varying float vLivWing;    // past the break (> 0: not drawn), in model units
+varying float vLivGone;    // 1 on a part that is not drawn, -1 on one that is
+varying float vLivOut;     // a broken-off wing part whose tip had broken off before (livKeep.w): past that (> 0) not drawn`;
 // The propellers turn about their hubs, the control surfaces about their hinges, and the wings bend from the fuselage side out, most at the tips (the
 // paint stays where it was: vLivPos). The tailplanes bend too, but being short hardly at all.
 const VERT_BODY = `vLivPos = position;
@@ -1546,6 +1555,29 @@ if (livSurf.x > 0.5) {
 {
   float livOut = max(abs(position.x) - 1.1 * livHalfW, 0.0) / max(livSpan - 1.1 * livHalfW, 0.001);
   transformed.z += livFlex * livSpan * livOut * livOut;
+}
+{
+  // broken-off parts (livCut, livKeep): the fragment shader drops what isn't drawn, so a wing ends at a clean (then
+  // torn: FRAG_BODY) line wherever the break runs through its triangles
+  float livSideX = position.x < 0.0 ? -1.0 : 1.0;
+  bool livEl = livSurf.x > 2.5 && livSurf.x < 3.5;
+  bool livRu = livSurf.x > 3.5;
+  vLivWing = -1e4;
+  vLivGone = -1.0;
+  vLivOut = -1e4;
+  if (livKeep.x > 0.5) {
+    bool livMine = livKeep.y == 0.0 || livKeep.y == livSideX;
+    if (livKeep.x < 1.5) {
+      vLivWing = livMine ? livKeep.z * livSpan - abs(position.x) : 1e4;
+      if (livKeep.w > 0.0) vLivOut = abs(position.x) - livKeep.w * livSpan; // (its own tip came off before)
+    } else vLivGone = livMine && (livKeep.x < 2.5 ? livEl : livRu) ? -1.0 : 1.0;
+  } else {
+    float livAt = livSideX < 0.0 ? livCut.x : livCut.y;
+    if (livAt > 0.0) vLivWing = abs(position.x) - livAt * livSpan;
+    float livE = livCut.z;
+    if (livEl && (livE > 2.5 || (livSideX < 0.0 ? (livE > 0.5 && livE < 1.5) : (livE > 1.5 && livE < 2.5)))) vLivGone = 1.0;
+    if (livRu && livCut.w > 0.5) vLivGone = 1.0;
+  }
 }`;
 const FRAG_HEAD = `
 uniform float livLight;   // how light it is where the aircraft is (OWN_UNIFORMS)
@@ -1598,9 +1630,24 @@ varying float vLivPart;
 varying vec2 vLivFlap;
 varying float vLivRev;
 uniform float livRevKind;
+uniform vec4 livKeep;      // (VERT_HEAD)
+uniform float livSpan;
+varying float vLivWing;
+varying float vLivGone;
+varying float vLivOut;
+// A break across the wing is torn, not cut: a jagged line along the chord and up through the skin, the same on the
+// wing and on the part that came off, so they would fit together.
+float livTear(vec3 p) {
+  float a = sin(p.y * 61.0 / livSpan + 1.3) * 0.5 + sin(p.y * 157.0 / livSpan + p.z * 90.0 / livSpan) * 0.35 + sin(p.y * 409.0 / livSpan + 2.1) * 0.15;
+  return a * 0.018 * livSpan;
+}
 uniform vec3 livFlapSpan; // the flaps are between these |x|, in two parts split FLAP_BREAK of the way out
 `;
 const FRAG_BODY = `
+// (broken-off parts: VERT_BODY)
+float livTorn = vLivWing + (livKeep.x > 0.5 ? -1.0 : 1.0) * livTear(vLivPos);
+if (livTorn > 0.0 || vLivOut + livTear(vLivPos) > 0.0) discard;
+if (livKeep.x > 1.5 ? vLivGone > 0.98 : vLivGone > -0.98) discard;
 {
   vec3 own = diffuseColor.rgb;
   float lum = dot(own, vec3(0.2126, 0.7152, 0.0722));
@@ -1714,7 +1761,12 @@ const FRAG_BODY = `
   paint = mix(paint, livColor, ink * upright);
   // lettering of the model's own livery goes
   if (vLivPos.y > livClean.x && vLivPos.y < livClean.y && vLivPos.z > livClean.z && vLivPos.z < livClean.w) detail = 0.0;
-  diffuseColor.rgb = mix(paint, own, detail) * livLight;
+  diffuseColor.rgb = mix(paint, own, detail);
+  // along a tear: bare torn metal and soot, the inside of the wing dark
+  float livEdge = 1.0 - smoothstep(0.0, 0.03 * livSpan, -livTorn);
+  if (livEdge > 0.0) diffuseColor.rgb = mix(diffuseColor.rgb, mix(vec3(0.05, 0.045, 0.04), vec3(0.42, 0.42, 0.4), step(0.6, fract(vLivPos.z * 300.0 / livSpan + vLivPos.y * 40.0 / livSpan))), livEdge);
+  if (!gl_FrontFacing && vLivWing > -1e3) diffuseColor.rgb *= 0.25;
+  diffuseColor.rgb *= livLight;
 }`;
 
 // Models whose texture has dark noise baked into its shading (see FRAG_BODY).
@@ -1722,7 +1774,27 @@ const NOISY = { cs100: 1, cs300: 1 };
 
 // Uniforms each material has its own of (in its userData), for the aircraft drawn with it.
 // livLight: how light it is where the aircraft is (1 day … dark at night, js/view3d.js placeModel).
-export const OWN_UNIFORMS = ['livFlex', 'livSpin', 'livAil', 'livFlap', 'livElev', 'livRud', 'livRev', 'livRevKind', 'livRevX', 'livLight'];
+// livCut, livKeep: the parts broken off it, or the part it is (PARTS).
+export const OWN_UNIFORMS = ['livFlex', 'livSpin', 'livAil', 'livFlap', 'livElev', 'livRud', 'livRev', 'livRevKind', 'livRevX', 'livLight', 'livCut', 'livKeep'];
+const OWN_VEC4 = { livCut: 1, livKeep: 1 };
+
+// The parts of every model that can break off in a crash, read off the same geometry as the control surfaces
+// (markSurfaces): the shader draws the aircraft without them (livCut) or one of them on its own (livKeep).
+// `cut`: where across the half span a wing breaks (the tip beyond it goes: past the ailerons' outer half; the
+// outer wing: outboard of the inner engines, always outside the tailplanes, which reach at most 0.42 half spans).
+export const PARTS = {
+  tip: { cut: 0.8 },
+  wing: { cut: 0.5 },
+};
+// Which vertices a part has, as the shader decides (for the part's middle, which it turns about as it falls):
+// part { kind: 'wing' | 'elev' | 'rud', side: -1 | 1 | 0, cut, out (a wing part: where its tip broke off before, 0: none) };
+// x, the vertex's livSurf kind, the model's half span.
+export function inPart(part, x, kind, span) {
+  const mine = !part.side || Math.sign(x || 1) === part.side;
+  if (!mine) return false;
+  if (part.kind === 'wing') return Math.abs(x) > part.cut * span && !(part.out > 0 && Math.abs(x) > part.out * span);
+  return part.kind === 'elev' ? kind > 2.5 && kind < 3.5 : kind > 3.5;
+}
 
 // Paints a loaded model in a livery (its materials are changed in place; clones of the model share them).
 // `extra(shader)` can patch the shader further.
@@ -1825,7 +1897,8 @@ export function paintLivery(scene, file, extra, stretch = 1, livery = FG.livery(
     // (each material has its own OWN_UNIFORMS, so an aircraft drawn with copies of them bends, turns its
     // propellers and moves its control surfaces on its own:
     // js/view3d.js ownMaterials)
-    for (const k of OWN_UNIFORMS) o.material.userData[k] = { value: k === 'livLight' ? 1 : 0 };
+    for (const k of OWN_UNIFORMS) o.material.userData[k] = { value: OWN_VEC4[k] ? new THREE.Vector4() : k === 'livLight' ? 1 : 0 };
+    o.material.userData.livSpanOf = m.span; // (the half span the shader breaks parts off at: js/view3d.js partMiddle)
     o.material.onBeforeCompile = function (shader) {
       Object.assign(shader.uniforms, uniforms);
       for (const k of OWN_UNIFORMS) shader.uniforms[k] = this.userData[k];

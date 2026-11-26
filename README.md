@@ -82,7 +82,11 @@ angle. In 3D the wings bend a little: they droop on the ground, come up as the l
 in turns and climbs, less in descents) and flutter in the wind. Propellers and jet fans turn while the engines run.
 The control surfaces move too: flaps out for take-off and further for landing (panels in two parts in the wing's livery,
 cut out of the wing, that slide back and down so a slot opens behind it; the Concorde has none), ailerons when rolling into or out
-of a turn, elevators when pitching (rotation, flare) and the rudder when turning, also steering on the ground. The weather is for looks: flights don't wait for it (storm events still close airports). It is light on
+of a turn, elevators when pitching (rotation, flare) and the rudder when turning, also steering on the ground. Every
+model is cut into the parts that can break off in a crash (`js/livery.js` PARTS: the wing tips, the outer wings, the
+elevators and the rudder): flown by hand ([Flightgame · Fly](https://github.com/noname-ch/flightgame-fly)) a plane
+that loses one is drawn without it, the break torn and sooty, its wing-tip light gone, and the part falls away
+tumbling and lies where it lands (`js/view3d.js` pilotPieces). The weather is for looks: flights don't wait for it (storm events still close airports). It is light on
 the computer (one half-resolution canvas in 2D, one batch of sprites in 3D, CSS for rain and snow);
 Settings → On the map → *Clouds and weather* turns it all off.
 

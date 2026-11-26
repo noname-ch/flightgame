@@ -1131,14 +1131,16 @@ try {
     });
     if (fl.err || fl.type !== fl.want || !fl.from || !fl.back || !fl.btn || fl.pilot) errors.push(`fly it yourself link: ${JSON.stringify(fl)}`);
 
-    step('3D wing bending and propellers: every drawn aircraft has its own livFlex, up in the air and drooping on the ground; propellers and control surfaces found');
+    step('3D wing bending and propellers: every drawn aircraft has its own livFlex, up in the air and drooping on the ground; propellers, control surfaces and the parts that can break off found');
     const flex = await evaluate(() => {
-      const out = { air: [], ground: [], shared: 0 };
+      const out = { air: [], ground: [], shared: 0, noParts: 0 };
       const seen = new Set();
       for (const [id, e] of Object.entries(FG.view3d.planes)) {
         const u = e.obj.userData.liv;
         if (!u || e.flex == null) continue; // (no model yet, or not drawn)
-        for (const x of u) { if (seen.has(x)) out.shared++; seen.add(x); }
+        for (const x of u) { if (seen.has(x) || seen.has(x.livCut && x.livCut.value)) out.shared++; seen.add(x); seen.add(x.livCut && x.livCut.value); }
+        // (the parts that can break off: their own livCut / livKeep, nothing broken on the airline's planes)
+        for (const x of u) if (!(x.livCut && x.livCut.value.isVector4 && x.livKeep && x.livKeep.value.isVector4 && x.livCut.value.length() === 0)) out.noParts++;
         const p = G.state.planes.find((q) => q.id === id);
         const st = p && p.status === 'flying' && G.flightState(p, FG.ui.time);
         if (st && ['climb', 'cruise', 'descent', 'approach'].includes(st.phase)) out.air.push(e.flex);
@@ -1146,7 +1148,8 @@ try {
       }
       return out;
     });
-    if (flex.shared) errors.push(`3D wing bending: ${flex.shared} livFlex uniforms shared between aircraft`);
+    if (flex.shared) errors.push(`3D wing bending: ${flex.shared} livFlex or livCut uniforms shared between aircraft`);
+    if (flex.noParts) errors.push(`3D broken-off parts: ${flex.noParts} aircraft materials without their own livCut / livKeep, or with parts broken off`);
     if (flex.air.some((f) => !(f > 0.01 && f < 0.1))) errors.push(`3D wing bending: wings in the air not bent up a little: ${flex.air.join(', ')}`);
     if (flex.ground.some((f) => !(f < 0 && f > -0.03))) errors.push(`3D wing bending: parked wings not drooping a little: ${flex.ground.join(', ')}`);
     if (!flex.air.length && !flex.ground.length) warnings.push('3D wing bending: no aircraft model drawn to check');
@@ -1154,6 +1157,7 @@ try {
     // the A320's and the ATR's ailerons, flaps, elevators and rudder are found: livSurf, js/livery.js)
     const parts = await evaluate(async () => {
       const m = await import('/js/models3d.js');
+      const { inPart, PARTS } = await import('/js/livery.js');
       const out = {};
       for (const file of ['q400', 'atr42', 'a320', 'a359', 'a333', 'dc3', 'b738']) {
         const type = Object.keys(FG.data.models).find((t) => FG.data.models[t] === file);
@@ -1180,7 +1184,19 @@ try {
             if (a.getX(i) === 4) { r[0] = Math.min(r[0], p.getZ(i)); r[1] = Math.max(r[1], p.getZ(i)); }
           }
         });
-        out[file] = { props: s.userData.props, surfaces: s.userData.surfaces, flapFaces: s.userData.flapFaces, hollow: Object.values(hubs).filter(([a, b]) => a > 0.5 * b).length, elevIn: e[0] / e[1], rudShare: (r[1] - r[0]) / (top - r[0]) };
+        // (the parts that break off, as the shader cuts them: js/livery.js PARTS, inPart)
+        const pieces = { tip: 0, wing: 0, elev: 0, rud: 0 };
+        s.traverse((o) => {
+          const span = o.isMesh && o.material.userData && o.material.userData.livSpanOf, a = span && o.geometry.attributes.livSurf, p = a && o.geometry.attributes.position;
+          if (p) for (let i = 0; i < p.count; i++) {
+            const x = p.getX(i), k = a.getX(i);
+            if (inPart({ kind: 'wing', side: -1, cut: PARTS.tip.cut }, x, k, span)) pieces.tip++;
+            if (inPart({ kind: 'wing', side: -1, cut: PARTS.wing.cut }, x, k, span)) pieces.wing++;
+            if (inPart({ kind: 'elev', side: 0 }, x, k, span)) pieces.elev++;
+            if (inPart({ kind: 'rud', side: 0 }, x, k, span)) pieces.rud++;
+          }
+        });
+        out[file] = { props: s.userData.props, surfaces: s.userData.surfaces, flapFaces: s.userData.flapFaces, hollow: Object.values(hubs).filter(([a, b]) => a > 0.5 * b).length, elevIn: e[0] / e[1], rudShare: (r[1] - r[0]) / (top - r[0]), pieces };
       }
       return out;
     });
@@ -1188,6 +1204,11 @@ try {
     for (const file of ['q400', 'atr42', 'a320', 'a359', 'a333', 'dc3', 'b738']) {
       if (parts[file].props !== 2) errors.push(`3D propellers and fans: ${file} has ${parts[file].props} found, not 2`);
       if (parts[file].hollow) errors.push(`3D propellers and fans: ${file} turns ${parts[file].hollow} ring(s) that do not reach their hub (a cowling?)`);
+    }
+    // (every model can lose a wing tip, a wing, its elevators and its rudder: the tip a part of the outer wing)
+    for (const file of ['q400', 'atr42', 'a320', 'a359', 'a333', 'dc3', 'b738']) {
+      const q = parts[file].pieces;
+      if (!(q.tip > 0 && q.wing > q.tip && q.elev > 0 && q.rud > 0)) errors.push(`3D broken-off parts: ${file} ${JSON.stringify(q)}`);
     }
     for (const file of ['atr42', 'a320']) {
       const missing = ['aileron', 'flap', 'elevator', 'rudder'].filter((_, i) => !(parts[file].surfaces && parts[file].surfaces[i + 1] > 0));
