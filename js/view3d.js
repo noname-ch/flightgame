@@ -290,7 +290,7 @@ function navSpotsOf(type, model) {
   model.traverse((o) => {
     if (!o.isMesh || inGear(o)) return;
     if (o.userData.nav) {
-      // (sharklets, js/models3d.js addSharklets: the wing tip lights sit at their foot, not on their tops)
+      // (sharklets and fences, js/models3d.js addWingTips: the wing tip lights sit where the wing ends, not on their tops)
       for (const s of o.userData.nav) tips.push(new THREE.Vector3(s[0], s[1], s[2]).applyMatrix4(o.matrixWorld));
       return;
     }

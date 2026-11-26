@@ -38,10 +38,46 @@ export function modelSize(type) {
 }
 
 function raw(file) {
-  if (!raws[file]) {
-    raws[file] = new GLTFLoader().loadAsync(new URL(`${file}.glb`, MODELS).href).then((gltf) => gltf.scene);
-  }
+  if (!raws[file]) raws[file] = load(file);
   return raws[file];
+}
+function load(file) {
+  return new GLTFLoader().loadAsync(new URL(`${file}.glb`, MODELS).href).then((gltf) => smoothNormals(gltf.scene, SMOOTH[file]));
+}
+
+// Models shaded in flat facets where the real aircraft is round (the A320's engine cowlings, wing and fuselage
+// fairings: nearly every edge has its faces' own normals): their normals are smoothed across every edge whose faces
+// meet at less than this angle (degrees). Sharper edges (trailing edges, the wing's root) stay sharp.
+const SMOOTH = { a320: 38 };
+function smoothNormals(scene, deg) {
+  if (!deg) return scene;
+  const cos = Math.cos(deg * Math.PI / 180);
+  scene.traverse((o) => {
+    const g = o.isMesh && !o.material.transparent && o.geometry;
+    if (!g || !g.attributes.normal) return;
+    const pos = g.attributes.position, nor = g.attributes.normal;
+    // (the vertices at each place, with the normals they have now: the faces' own, where the model is faceted)
+    const at = new Map();
+    for (let i = 0; i < pos.count; i++) {
+      const k = `${Math.round(pos.getX(i) * 2e5)},${Math.round(pos.getY(i) * 2e5)},${Math.round(pos.getZ(i) * 2e5)}`;
+      if (!at.has(k)) at.set(k, []);
+      at.get(k).push(i);
+    }
+    const out = new Float32Array(nor.count * 3);
+    for (const list of at.values()) {
+      for (const i of list) {
+        let x = 0, y = 0, z = 0;
+        for (const j of list) {
+          const d = nor.getX(i) * nor.getX(j) + nor.getY(i) * nor.getY(j) + nor.getZ(i) * nor.getZ(j);
+          if (d >= cos) { x += nor.getX(j); y += nor.getY(j); z += nor.getZ(j); }
+        }
+        const l = Math.hypot(x, y, z) || 1;
+        out.set([x / l, y / l, z / l], i * 3);
+      }
+    }
+    g.setAttribute('normal', new THREE.BufferAttribute(out, 3));
+  });
+  return scene;
 }
 
 // A type drawn with plugs (FG.data.looks `plugs`, cut where FG.data.plugs says for its model) is stretched the way
@@ -49,17 +85,19 @@ function raw(file) {
 // the nose, the wing, the tail and the engines keep their shape (a type without plugs is stretched all over, wing
 // chord too). `engines` (× the model's) makes the engines bigger, grown forward and down from where they hang. The
 // unpainted scene, 1 unit long and centred like every model.
-// A type with sharklets (FG.data.looks `sharklets`) gets them built onto a copy of its model of its own (addSharklets).
+// A type with sharklets or wing tip fences (FG.data.looks `sharklets`, `fences`) gets them built onto a copy of its model
+// of its own (addWingTips).
 const shapedRaws = {};   // type -> Promise of the reshaped unpainted scene
 function rawOf(type, size) {
   const look = FG.data.looks[type];
   const cut = look.plugs && FG.data.plugs && FG.data.plugs[size.file];
-  if (!cut && !look.sharklets) return raw(size.file);
+  const tips = look.sharklets ? 'sharklets' : look.fences ? 'fences' : null;
+  if (!cut && !tips) return raw(size.file);
   if (!shapedRaws[type]) {
-    // (sharklets on geometry of their own: js/livery.js marks each geometry once, and the plain model's are shared
+    // (wing tips on geometry of their own: js/livery.js marks each geometry once, and the plain model's are shared
     // with the types without them)
-    const base = look.sharklets
-      ? new GLTFLoader().loadAsync(new URL(`${size.file}.glb`, MODELS).href).then((gltf) => addSharklets(gltf.scene, size))
+    const base = tips
+      ? load(size.file).then((scene) => addWingTips(scene, size, tips))
       : raw(size.file);
     shapedRaws[type] = cut ? base.then((scene) => reshape(scene, cut, size.stretch - 1, look.engines || 1, type)) : base;
   }
@@ -73,6 +111,10 @@ function rawOf(type, size) {
 // out 0.85 m longer each side, as Airbus's 35.80 m instead of 34.10 m. `in`: the foot starts this far inboard of the
 // model's wing tip, round the wing there (a little bigger, so the wing never shows through), and covers its rounded end.
 const SHARKLET = { h: 2.43, cant: 12, r: 0.45, le: 1.7, te: 0.6, in: 0.8 };
+// The A320's wing tip fences (before sharklets): a flat plate upright across the tip, pointed forward of the leading
+// edge (`ahead`), reaching `up` above the wing and `down` below it, its upper and lower edges `topChord` and
+// `bottomChord` long, its back edge `behind` the trailing edge, `thick` (metres, photographs).
+const WINGTIP_FENCE = { ahead: 0.35, up: 0.8, down: 0.62, topChord: 0.16, bottomChord: 0.14, behind: 0.05, thick: 0.06 };
 const SHARK_C = Array.from({ length: 11 }, (_, k) => (1 - Math.cos(Math.PI * k / 10)) / 2);  // chord stations, LE 0 .. TE 1
 
 // Where the plane x = `x` cuts the model's wing: leading and trailing edge [y, z], chord, and the skin above and below
@@ -119,11 +161,12 @@ function wingSection(meshes, x) {
   return { le, te, chord, up, lo };
 }
 
-// Builds sharklets onto both wing tips of an unpainted model (1 unit long, x = right wing, y = nose, z = up): one mesh
-// 'sharklets' of its own, white (js/livery.js paints it: in the wing tips' colour where it stands upright, and it
-// bends with the wing, livFlex). `size`: modelSize, for the metres. Its userData.nav are the spots of the wing tip
-// lights (at the foot of each sharklet's leading edge: js/view3d.js navSpotsOf).
-function addSharklets(scene, size) {
+// Builds sharklets (`kind` 'sharklets') or wing tip fences ('fences') onto both wing tips of an unpainted model (1 unit
+// long, x = right wing, y = nose, z = up): one mesh of its own, white (js/livery.js paints it: in the wing tips' colour
+// where it stands upright, and it bends with the wing, livFlex). `size`: modelSize, for the metres. Its userData.nav
+// are the spots of the wing tip lights (at the leading edge where the wing ends: js/view3d.js navSpotsOf).
+function addWingTips(scene, size, kind) {
+  const fence = kind === 'fences';
   scene.updateMatrixWorld(true);
   const meshes = [];
   let wingMat = null, tip = 0;
@@ -165,9 +208,9 @@ function addSharklets(scene, size) {
   // the sections: path distance from the wing tip (below 0: along the wing, from the foot at x0)
   const along = (tip - x0) * Math.hypot(1, k);
   const ss = [-along, -along / 2, 0];
-  for (let i = 1; i <= 10; i++) ss.push(arc * i / 10);
-  for (let i = 1; i <= 8; i++) ss.push(arc + (blade - cap) * i / 8);
-  for (let i = 1; i <= 4; i++) ss.push(total - cap + cap * Math.sin(Math.PI / 2 * i / 4));
+  if (!fence) for (let i = 1; i <= 10; i++) ss.push(arc * i / 10);
+  if (!fence) for (let i = 1; i <= 8; i++) ss.push(arc + (blade - cap) * i / 8);
+  if (!fence) for (let i = 1; i <= 4; i++) ss.push(total - cap + cap * Math.sin(Math.PI / 2 * i / 4));
   const ring = 2 * SHARK_C.length - 1;   // points round each section: above LE .. TE, below TE .. after the LE
   const posR = [];
   let nav = null;
@@ -210,47 +253,83 @@ function addSharklets(scene, size) {
     for (let i = SHARK_C.length - 1; i >= 1; i--) point(SHARK_C[i], -lo[i]);
     if (s === 0) nav = [ox + n[0] * dL, yL + 0.05 * uy, oz + n[1] * dL];
   }
-  // faces between the sections, and a lid on the foot (inside the wing)
+  // faces between the sections, a lid on the foot (inside the wing) and, for a fence, on the end at the tip
+  const P = posR.slice();   // the right one's points, then the left one's (mirrored)
+  const n0 = P.length / 3;
+  for (let i = 0; i < n0; i++) P.push(-posR[3 * i], posR[3 * i + 1], posR[3 * i + 2]);
   const idx = [];
-  for (let j = 0; j + 1 < ss.length; j++) {
-    for (let i = 0; i < ring; i++) {
-      const a = j * ring + i, b = j * ring + (i + 1) % ring, c = a + ring, d = b + ring;
-      idx.push(a, c, b, b, c, d);
+  const pt = (i) => [P[3 * i], P[3 * i + 1], P[3 * i + 2]];
+  // (a face, turned so that it faces `want`)
+  const face = (a, b, c, want) => {
+    const [p, q, r] = [pt(a), pt(b), pt(c)];
+    const u = [q[0] - p[0], q[1] - p[1], q[2] - p[2]], w = [r[0] - p[0], r[1] - p[1], r[2] - p[2]];
+    const nx = u[1] * w[2] - u[2] * w[1], ny = u[2] * w[0] - u[0] * w[2], nz = u[0] * w[1] - u[1] * w[0];
+    if (nx * want[0] + ny * want[1] + nz * want[2] < 0) idx.push(a, c, b); else idx.push(a, b, c);
+  };
+  const lid = (ringAt, side, outX) => {
+    const o = side * n0, ctr = P.length / 3;
+    let cx = 0, cy = 0, cz = 0;
+    for (let i = 0; i < ring; i++) { const q = pt(o + ringAt * ring + i); cx += q[0]; cy += q[1]; cz += q[2]; }
+    P.push(cx / ring, cy / ring, cz / ring);
+    for (let i = 0; i < ring; i++) face(ctr, o + ringAt * ring + i, o + ringAt * ring + (i + 1) % ring, [outX * (side ? -1 : 1), 0, 0]);
+  };
+  for (const side of [0, 1]) {
+    const o = side * n0;
+    // (the skin faces out: away from the chord line, which is where the middle of the section lies)
+    for (let j = 0; j + 1 < ss.length; j++) {
+      const mid0 = pt(o + j * ring + 5), mid1 = pt(o + j * ring + ring - 5);
+      const c = [(mid0[0] + mid1[0]) / 2, (mid0[1] + mid1[1]) / 2, (mid0[2] + mid1[2]) / 2];
+      for (let i = 0; i < ring; i++) {
+        const a = o + j * ring + i, b = o + j * ring + (i + 1) % ring, cc = a + ring, d = b + ring;
+        const q = pt(a);
+        const want = [q[0] - c[0], q[1] - c[1], q[2] - c[2]];
+        face(a, cc, b, want);
+        face(b, cc, d, want);
+      }
+    }
+    lid(0, side, -1);
+    if (fence) lid(ss.length - 1, side, 1);
+  }
+  // a fence: a flat plate upright across the tip, pointed forward, above and below the wing (its own faces, sharp edges)
+  if (fence) {
+    const F = WINGTIP_FENCE;
+    const yLt = yL0 + sL * (tip - x0), yTt = yT0 + sT * (tip - x0), zc = A[1];
+    const outline = [[yLt + F.ahead * uy, 0], [yTt + F.topChord * uy, F.up * ux], [yTt - F.behind * uy, F.up * ux],
+      [yTt - F.behind * uy, -F.down * ux], [yTt + F.bottomChord * uy, -F.down * ux]];
+    const th = F.thick * ux / 2;
+    for (const sx of [1, -1]) {
+      const at = (p, dx) => { P.push(sx * (tip + dx), p[0], zc + p[1]); return P.length / 3 - 1; };
+      for (const dx of [-th, th]) {   // the two sides
+        const ids = outline.map((p) => at(p, dx));
+        for (let i = 1; i + 1 < ids.length; i++) face(ids[0], ids[i], ids[i + 1], [sx * Math.sign(dx), 0, 0]);
+      }
+      outline.forEach((p, i) => {   // round its edge
+        const q = outline[(i + 1) % outline.length];
+        const a = at(p, -th), b = at(q, -th), c = at(p, th), d = at(q, th);
+        const want = [0, q[1] - p[1], -(q[0] - p[0])];   // (the outline runs round anticlockwise, y across, z up)
+        face(a, b, c, want);
+        face(b, d, c, want);
+      });
     }
   }
-  const lid = posR.length / 3;
-  let cx = 0, cy = 0, cz = 0;
-  for (let i = 0; i < ring; i++) { cx += posR[3 * i]; cy += posR[3 * i + 1]; cz += posR[3 * i + 2]; }
-  posR.push(cx / ring, cy / ring, cz / ring);
-  for (let i = 0; i < ring; i++) idx.push(lid, i, (i + 1) % ring);
-  // both sides: the left one mirrored (and its faces turned, to face out as well)
-  const count = posR.length / 3;
-  const pos = new Float32Array(posR.length * 2);
-  pos.set(posR);
-  for (let i = 0; i < count; i++) pos.set([-posR[3 * i], posR[3 * i + 1], posR[3 * i + 2]], (count + i) * 3);
-  const all = idx.concat(idx.map((_, i) => count + idx[i - (i % 3) + [0, 2, 1][i % 3]]));
+  const pos = new Float32Array(P);
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  g.setIndex(all);
+  g.setIndex(idx);
   g.computeVertexNormals();
   // (no engine, propeller or control surface in it: js/livery.js leaves it unsearched)
   g.setAttribute('livPart', new THREE.BufferAttribute(new Float32Array(pos.length / 3), 1));
   g.setAttribute('livSurf', new THREE.BufferAttribute(new Float32Array(pos.length / 3 * 4), 4));
   g.userData.livSearched = true;
   g.userData.livSurfaced = true;
-  // (facing out: the skin above the foot's middle faces up)
-  if (g.attributes.normal.getZ(5) < 0) {
-    for (let i = 0; i < all.length; i += 3) [all[i + 1], all[i + 2]] = [all[i + 2], all[i + 1]];
-    g.setIndex(all);
-    g.computeVertexNormals();
-  }
   const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: wingMat.roughness ?? 0.65, metalness: wingMat.metalness ?? 0, side: wingMat.side });
   const mesh = new THREE.Mesh(g, mat);
-  mesh.name = 'sharklets';
+  mesh.name = fence ? 'wingtipFences' : 'sharklets';
   mesh.userData.addOn = true;   // (not the model's own: js/livery.js measures the wing without it)
   mesh.userData.nav = [nav, [-nav[0], nav[1], nav[2]]];
   scene.add(mesh);
-  scene.userData.wingletX = tip;   // (the wing tips' colour on them only: js/livery.js)
+  // (the wing tips' colour on them only: js/livery.js; on a fence's sides, from just inboard of them)
+  scene.userData.wingletX = fence ? tip - 0.15 * ux : tip;
   return scene;
 }
 
@@ -422,7 +501,7 @@ export function loadModel(type, livery = FG.livery()) {
   const size = modelSize(type);
   const { file, stretch } = size;
   const key = `${file}|${stretch}|${FG.liveries ? FG.liveries.key(livery) : livery.id}|${gearKey(type, file)}|${maskOf(file, type) ? 'mask' : ''}` +
-    (FG.data.looks[type].plugs || FG.data.looks[type].sharklets ? `|${type}` : '');
+    (FG.data.looks[type].plugs || FG.data.looks[type].sharklets || FG.data.looks[type].fences ? `|${type}` : '');
   if (!loads[key]) {
     loads[key] = rawOf(type, size).then((scene) => {
       const copy = scene.clone();

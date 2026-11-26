@@ -41,6 +41,11 @@ export const maskOf = (file, type) => { const k = MASKS[file]; return k && (!k.t
 // the pockets' floors out level with the skin, and they are painted as glass.
 const POCKET_WINDOWS = { atr42: true };
 
+// Models whose window glass (cabin and cockpit) is a see-through light grey part with the light inside of the skin
+// behind it, so the windows looked like grey dents: from outside, real ones look dark, with the sky's highlights
+// on them. Its colour, how glossy.
+const DARK_GLASS = { a320: { color: 0x0b0e12, roughness: 0.14, metalness: 0.35 } };
+
 // The window pockets of a model: patches of the skin inside sharp edges, on the fuselage sides, facing sideways,
 // as big as each other and in a row of at least five at one height. Their floors are moved out to the skin
 // around them; markEngines then marks them as glass (livPart 6). Once per geometry.
@@ -1386,7 +1391,7 @@ export function measure(scene, file, stretch = 1, title = { aspect: 4.3 }, finMa
   const shape = scene.userData.shape;
   const Y = shape ? (y) => shapedY(shape, y) : (y) => y;
   const meshes = [];
-  // (not what was built onto the model: the A320neo's and A321neo's sharklets, js/models3d.js addSharklets)
+  // (not what was built onto the model: sharklets and wing tip fences, js/models3d.js addWingTips)
   scene.traverse((o) => { if (o.isMesh && o.geometry.attributes.position && !o.userData.addOn) meshes.push(o); });
   const v = new THREE.Vector3();
   const eachVertex = (fn) => {
@@ -1879,6 +1884,16 @@ export function paintLivery(scene, file, extra, stretch = 1, livery = FG.livery(
   const prop = FG.data.props && FG.data.props[file];   // its propellers, if it has any
   const belly = livery.belly;
   const color = (c) => new THREE.Color(c);
+  const glass = DARK_GLASS[file];
+  if (glass) {
+    scene.traverse((o) => {
+      if (!o.isMesh || !o.material.transparent) return;
+      o.material.color.setHex(glass.color);
+      o.material.opacity = 1;
+      o.material.roughness = glass.roughness;
+      o.material.metalness = glass.metalness;
+    });
+  }
   // (a livery can leave the mask off with `mask: false`, or paint it in its own colour)
   const cockpit = livery.mask === false || !maskOf(file, type) ? null : cockpitMask(scene, file);
   if (cockpit) {
@@ -1947,7 +1962,7 @@ export function paintLivery(scene, file, extra, stretch = 1, livery = FG.livery(
     livFinBox: { value: m.finBox },
     livFinAngle: { value: m.finAngle },
     livWinglet: { value: color(livery.winglet == null ? livery.body : livery.winglet) },
-    // (sharklets: from the wing's tip, where they leave it; js/models3d.js addSharklets)
+    // (sharklets and fences: on them only, js/models3d.js addWingTips)
     livWingletX: { value: livery.winglet == null ? 99 : scene.userData.wingletX || 0.955 * m.span },
     livClean: { value: m.clean },
     livStretch: { value: stretch },

@@ -57,9 +57,11 @@ nose in front of the engines and the surfaces as the rear of the wing's, tailpla
 in Blender keeps working as long as it stays 1 unit long and centred (export glTF Binary, +Y Up, no Draco); a
 propeller only turns when it is its own piece (Edit Mode, select it, `P` → Selection).
 
-`a320.glb` and `a321.glb` are ceos with plain wing tips. The sharklets of the A320neo, A321neo and A321XLR are not
-in the files: `js/models3d.js` (`addSharklets`) builds them onto the wing tips as the model loads, for the types with
-`sharklets` in `js/data/looks.js`.
+`a320.glb` and `a321.glb` have plain wing tips. The sharklets of the A320neo, A321neo and A321XLR and the A320's wing
+tip fences are not in the files: `js/models3d.js` (`addWingTips`) builds them onto the wing tips as the model loads,
+for the types with `sharklets` or `fences` in `js/data/looks.js`. As it loads, `a320.glb` also gets smooth normals where
+its faces were flat facets (`SMOOTH`: the engine cowlings), and `js/livery.js` paints its light see-through window glass
+dark (`DARK_GLASS`).
 
 ## Making a model from pictures or video (`tools/plane_scan.html`)
 
