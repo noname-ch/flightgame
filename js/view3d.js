@@ -1643,6 +1643,7 @@ function blastPart(q, age) {
   let x = q.vx * k + (q.x0 || 0);
   let y = q.vy * k + (q.y0 || 0);
   let z = q.vz * k + 0.5 * q.rise * a * a;           // (rise: hot gas goes on rising)
+  if (q.kind < 2) z = Math.max(z, 0.4 * (q.s0 + q.grow * Math.min(1, f))); // (fire and smoke above the ground, not cut off by it)
   if (q.kind === 0) {
     return { x, y, z, size: q.s0 + q.grow * f, alpha: 0.95 * (f < 0.6 ? 1 : (1 - f) / 0.4), col: blastRamp(FIRE_COL, q.loop ? 0.3 + 0.7 * f : f) };
   }
@@ -1723,6 +1724,118 @@ function updateBlasts(layer, map, globe, mpp, centerW, now) {
   g.setDrawRange(0, list.length * BLAST_N);
   pts.visible = alive;
   return alive;
+}
+
+// ---------- fragments of a crash (G.debris: flightgame-fly src/pilot.js crash) ----------
+// A crash throws out a shower of fragments: { lat, lon, altM (the ground there), hdg (° it was going), len, span (m),
+// n, vh, vn (m/s along the ground and into it), V, slide (false: into a hillside), S (how hard it hit), grip (2 off a
+// runway), burn (0…1 charred) }. Each fragment starts somewhere on the airframe, keeps the aircraft's momentum less
+// what the impact took from it, is thrown a little up and aside, spinning, slowed by the air (small sheets much more
+// than heavy bits), bounces where it lands and skids to a stop. In the livery's colours, bare metal and soot; one
+// instanced mesh for all of them, the newest showers first.
+const DEBRIS_MAX = 1400;
+const debrisState = new WeakMap();
+function debrisMesh() {
+  // a bent, torn sheet: five points, four triangles, both sides
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array([-0.5, -0.3, 0, 0.5, -0.45, 0.05, 0.35, 0.42, 0, -0.42, 0.33, 0.1, 0.02, 0, 0.16]), 3));
+  g.setIndex([0, 1, 4, 1, 2, 4, 2, 3, 4, 3, 0, 4]);
+  g.computeVertexNormals();
+  const mesh = new THREE.InstancedMesh(g, new THREE.MeshLambertMaterial({ side: THREE.DoubleSide }), DEBRIS_MAX);
+  mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(DEBRIS_MAX * 3), 3);
+  mesh.count = 0;
+  mesh.frustumCulled = false;
+  return mesh;
+}
+function debrisParts(b, liv) {
+  const rnd = Math.random, sym = (a) => (rnd() * 2 - 1) * a;
+  const h = b.hdg * DEG, S = b.S;
+  const body = new THREE.Color(liv && liv.body || '#e9ecef'), fin = new THREE.Color(liv && (liv.fin || liv.wing) || '#c9ced6');
+  const metal = new THREE.Color(0.62, 0.63, 0.65), soot = new THREE.Color(0.07, 0.065, 0.06);
+  const spread = Math.min(0.9, 0.08 + 0.06 * S), spin = Math.min(14, 2 + 1.2 * S);
+  const parts = [];
+  for (let i = 0; i < b.n; i++) {
+    const size = (0.25 + 2.4 * rnd() ** 3) * Math.max(0.5, Math.min(1.6, b.len / 40)); // (many small, a few big)
+    // where on the airframe it was: along the fuselage, or out along a wing
+    const along = sym(0.5) * b.len, out = rnd() < 0.35 ? sym(0.5) * b.span : sym(2);
+    const x = along * Math.sin(h) + out * Math.cos(h), y = along * Math.cos(h) - out * Math.sin(h);
+    const keep = b.slide ? Math.max(0, b.vh - (0.4 + 1.1 * rnd()) * b.vn) * (0.6 + 0.5 * rnd()) : b.V * (0.05 + 0.45 * rnd());
+    const dir = h + sym(spread), side = sym(2 + 1.5 * S);
+    const vx = keep * Math.sin(dir) + side * Math.cos(dir), vy = keep * Math.cos(dir) - side * Math.sin(dir);
+    const vz = Math.min(45, b.vn * (0.05 + 0.4 * rnd()) + rnd() * (2 + 2 * S));
+    const c = rnd(), col = (c < 0.55 ? body : c < 0.7 ? fin : c < 0.88 ? metal : soot).clone();
+    col.lerp(soot, Math.min(1, (b.burn || 0) * (0.4 + rnd())));
+    col.multiplyScalar(0.7 + 0.3 * rnd());
+    parts.push({ p: [x, y, 1 + 3 * rnd()], v: [vx, vy, vz], size, axis: new THREE.Vector3(sym(1), sym(1), sym(1)).normalize(), ang: rnd() * 6.3,
+      w: sym(spin) / Math.sqrt(size), mu: (0.6 + 0.6 * rnd()) * (b.grip || 1), col, rest: false });
+  }
+  return parts;
+}
+function debrisStep(q, dt) {
+  const v = q.v, p = q.p;
+  if (p[2] > 0.02 || v[2] > 0) {
+    // in the air: the drag of a sheet of skin, more for a small one (its weight per area is the same, its area less
+    // edge-on: the small ones flutter down)
+    const V = Math.hypot(v[0], v[1], v[2]), k = 0.012 / (0.3 + q.size);
+    for (let i = 0; i < 3; i++) v[i] -= k * V * v[i] * dt;
+    v[2] -= 9.81 * dt;
+  } else {
+    const vh = Math.hypot(v[0], v[1]);
+    const f = vh > 0 ? Math.max(0, vh - q.mu * 9.81 * dt) / vh : 0;
+    v[0] *= f; v[1] *= f;
+    q.w *= Math.exp(-dt / 0.3);
+    if (vh < 0.2 && Math.abs(q.w) < 0.05) q.rest = true;
+  }
+  for (let i = 0; i < 3; i++) p[i] += v[i] * dt;
+  q.ang += q.w * dt;
+  if (p[2] < 0) {
+    p[2] = 0;
+    if (v[2] < -2.5) { v[2] = -v[2] * 0.3; v[0] *= 0.75; v[1] *= 0.75; q.w *= 0.6; } else v[2] = 0; // (a bounce)
+  }
+}
+function updateDebris(layer, globe, now) {
+  const mesh = layer.debris;
+  const list = (G.debris || []).slice(-3);
+  if (!mesh) return false;
+  if (!list.length) { mesh.count = 0; mesh.visible = false; return false; }
+  const e = v.pilotE;
+  const liv = FG.livery((FG.pilot && FG.pilot.hideId != null && G.plane) ? G.plane(FG.pilot.hideId) : null);
+  const light = e && e.obj.userData.liv && e.obj.userData.liv[0].livLight ? e.obj.userData.liv[0].livLight.value : 1;
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), qb = new THREE.Quaternion(), sc = new THREE.Vector3(), at = new THREE.Vector3(), basis = new THREE.Matrix4();
+  const c = new THREE.Color();
+  let k = 0, moving = false, origin = null;
+  for (const b of list.slice().reverse()) {
+    let st = debrisState.get(b);
+    if (!st) { st = { parts: debrisParts(b, liv), last: now }; debrisState.set(b, st); }
+    const dt = Math.min(0.05, Math.max(0, (now - st.last) / 1000));
+    st.last = now;
+    const unit = frameAt(b.lat, b.lon, b.altM * TERRAIN_EXAG, globe);
+    const { east, north, up, pos } = tmp;
+    basis.makeBasis(east, north, up);
+    qb.setFromRotationMatrix(basis);
+    // (the mesh sits at the newest crash and each fragment is placed from there: whole-world positions in the GPU's
+    // 32-bit floats would put them a metre or more off)
+    if (!origin) { origin = pos.clone(); mesh.position.copy(origin); }
+    for (const part of st.parts) {
+      if (k >= DEBRIS_MAX) break;
+      if (!part.rest) {
+        // (in steps of at most 1/60 s, so a fast one doesn't go through the ground between two frames)
+        for (let left = dt; left > 1e-6; left -= 1 / 60) debrisStep(part, Math.min(left, 1 / 60));
+        moving = true;
+      }
+      at.copy(pos).sub(origin).addScaledVector(east, part.p[0] * unit).addScaledVector(north, part.p[1] * unit).addScaledVector(up, (part.p[2] + 0.05 * part.size) * unit * TERRAIN_EXAG);
+      q.copy(qb).multiply(new THREE.Quaternion().setFromAxisAngle(part.axis, part.ang));
+      sc.setScalar(part.size * unit);
+      mesh.setMatrixAt(k, m.compose(at, q, sc));
+      mesh.setColorAt(k, c.copy(part.col).multiplyScalar(light));
+      k++;
+    }
+  }
+  mesh.count = k;
+  mesh.visible = k > 0;
+  mesh.instanceMatrix.needsUpdate = true;
+  if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+  return moving;
 }
 
 // ---------- the track ring (js/trackring.js) ----------
@@ -2246,6 +2359,8 @@ const planeLayer = {
     if (FG.weather) { this.clouds = cloudPoints(); this.world.add(this.clouds); }
     this.blastPts = blastPoints();
     this.world.add(this.blastPts);
+    this.debris = debrisMesh();
+    this.world.add(this.debris);
     this.v4 = new THREE.Vector4();
     this.renderer = new THREE.WebGLRenderer({ canvas: map.getCanvas(), context: gl, antialias: true });
     this.renderer.autoClear = false;
@@ -2346,6 +2461,7 @@ const planeLayer = {
     this.drawPilot(globe, now, livery);
     if (this.track && (cine || !(sel && v.planes[sel] && G.plane(sel) && G.plane(sel).status === 'flying'))) this.track.visible = false;
     if (updateBlasts(this, map, globe, mpp, centerW, now)) animating = true;
+    if (updateDebris(this, globe, now)) animating = true;
     updateClouds(this, map, globe, mpp, centerW, now);
 
     this.renderer.resetState();

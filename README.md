@@ -88,7 +88,8 @@ elevators and the rudder, and the fuselage ahead of the wing and behind it, meas
 that loses one is drawn without it, the break torn and sooty, its wing-tip light gone, and the part falls away
 tumbling and lies where it lands (`js/view3d.js` pilotPieces); a wreck lies on its belly and chars as it burns. A crash
 is a fireball as big as the fuel (it rises as it burns), and wreckage can go on burning with black smoke (G.blasts
-`scale`, `kind: 'pool'`, `secs`). The weather is for looks: flights don't wait for it (storm events still close airports). It is light on
+`scale`, `kind: 'pool'`, `secs`); the impact throws out a shower of fragments that keep its momentum, bounce and skid
+to a stop (G.debris, updateDebris). The weather is for looks: flights don't wait for it (storm events still close airports). It is light on
 the computer (one half-resolution canvas in 2D, one batch of sprites in 3D, CSS for rain and snow);
 Settings → On the map → *Clouds and weather* turns it all off.
 
