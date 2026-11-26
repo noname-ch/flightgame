@@ -335,6 +335,14 @@ function setNavLights(e, pose, now, light) {
   const agl = st ? (st.altFt || 0) - (st.fieldFt || 0) : 0;
   const land = ph === 'takeoff' || ph === 'landing' || ((ph === 'approach' || ph === 'climb' || ph === 'descent') && agl < 10000);
   const taxi = ph === 'taxi-out' || ph === 'taxi-in';
+  // (flown by hand in flightgame-fly: the overhead's switches say which are on, 0 … 1 each)
+  const sw = pose.pilot && pose.pilot.lights;
+  if (sw) {
+    u.uOn.value.set(sw.nav * (0.3 + 0.7 * night), sw.beacon * (0.45 + 0.55 * night), sw.strobe * (0.75 + 0.25 * night), sw.land * (0.2 + 0.8 * night));
+    u.uTime.value = now / 1000;
+    e.flashing = !!(sw.beacon || sw.strobe);
+    return;
+  }
   u.uOn.value.set(pose.flying ? 0.3 + 0.7 * night : 0, running ? 0.45 + 0.55 * night : 0, air ? 0.75 + 0.25 * night : 0,
     land ? 0.2 + 0.8 * night : taxi ? 0.1 + 0.5 * night : 0);
   u.uTime.value = now / 1000;
@@ -2763,13 +2771,16 @@ function cockpitTick(map, e, pose) {
   const top = comb(lift, Math.cos(ph), right, Math.sin(ph));
   // pitched about the main wheels (as placeModel does): from where they touch the ground
   const mainY = ud.mainY != null ? ud.mainY : -0.05 * len;
-  const ahead = 0.5 * len - EYE.back - mainY;
+  // (flightgame-fly's decks give the eye's place for each type: FG.cockpit3d.eye)
+  const E = (FG.cockpit3d && FG.cockpit3d.eye && FG.cockpit3d.eye(FG.pilot.type)) || EYE;
+  const ahead = 0.5 * len - E.back - mainY;
   const pit = cockpit3d.has(FG.pilot.type);
   const rgt = comb(right, Math.cos(ph), comb(up, Math.cos(th), fwd, -Math.sin(th)), -Math.sin(ph));
   const side = pit ? -cockpit3d.EYE_X : 0; // (in the captain's seat)
-  const eye = [0, 1, 2].map((i) => fwd[i] * mainY + nose[i] * ahead + top[i] * EYE.up + rgt[i] * side);
+  const eye = [0, 1, 2].map((i) => fwd[i] * mainY + nose[i] * ahead + top[i] * E.up + rgt[i] * side);
   // looking down the nose, the head turned by v.look (only where there is a cockpit to look round)
-  const yaw = pit ? v.look.yaw * DEG : 0, lp = pit ? v.look.pitch * DEG : 0;
+  // (the map's own camera no further up than 75° above the nose: the deck draws its own camera beyond that)
+  const yaw = pit ? v.look.yaw * DEG : 0, lp = pit ? Math.min(v.look.pitch, 75) * DEG : 0;
   const ld = (FG.pilot.LOOK_DOWN || 4) * DEG - lp;
   const ahead2 = comb(nose, Math.cos(yaw), rgt, Math.sin(yaw));
   const dir = comb(ahead2, Math.cos(ld), top, -Math.sin(ld));
@@ -3019,7 +3030,7 @@ function createMap(fit) {
     drag.y = ev.clientY;
     if (cockpitShown()) { // (in the 3D cockpit: the head turns)
       v.look.yaw = Math.max(-150, Math.min(150, v.look.yaw - dx * 0.25));
-      v.look.pitch = Math.max(-60, Math.min(70, v.look.pitch + dy * 0.2));
+      v.look.pitch = Math.max(-60, Math.min(100, v.look.pitch + dy * 0.2)); // (up to straight overhead: the overhead panel)
       map.triggerRepaint();
       return;
     }
