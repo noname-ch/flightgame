@@ -266,13 +266,25 @@
     return ((h >>> 0) % 100000) / 100000;
   }
 
-  // Wind direction (where it blows from) for a region and day: mostly westerly, sometimes east.
-  // Neighbouring airports share it, so they use the same runway direction.
+  // The day's wind direction (where it blows from) at a place: the weather's surface wind through the day (at four
+  // times, averaged as arrows), so the runways in use stay the same all day and neighbouring airports share them.
+  // Kept per day: real weather arriving later in the day doesn't turn runways (G.liveArrived clears it once).
+  const dayWind = new Map();
   function windFrom(lat, lon, day) {
-    const cell = [Math.floor(lat / 4), Math.floor(lon / 4), day];
-    const r = hash01(...cell, 1);
-    const easterly = hash01(...cell, 2) < 0.2;
-    return ((easterly ? 70 : 250) + (r - 0.5) * 120 + 360) % 360;
+    const qa = Math.round(lat * 2) / 2, qo = Math.round(lon * 2) / 2;
+    const key = `${qa},${qo},${day}`;
+    let f = dayWind.get(key);
+    if (f != null) return f;
+    let u = 0, v = 0;
+    const ctx = ctxFor();
+    for (const m of [180, 540, 900, 1260]) {
+      const w = WX.sample(qa, qo, day * DAY + m, ctx, false);
+      u += w.u; v += w.v;
+    }
+    f = (Math.atan2(-u, -v) * 180 / Math.PI + 360) % 360;
+    if (dayWind.size > 6000) dayWind.clear();
+    dayWind.set(key, f);
+    return f;
   }
 
   // ---------- winds placed with the developer tools ----------
@@ -299,31 +311,12 @@
   }
 
   // ---------- weather: clouds, rain, snow, thunderstorms, fog and wind ----------
-  // Made up but steady, the same for everyone at the same game time: smooth noise over the globe that drifts
-  // east (WX_DRIFT degrees of longitude a minute, ~30 km/h in the mid-latitudes) and changes shape over a day
-  // or two, drier in the subtropics, wetter at the equator, colder towards the poles, in winter and at night.
-  // It is for looks (js/weather.js draws it) and for the planes' crab angle: flights never wait for it. Storm
-  // events (js/data/events.js) still close airports, and are drawn as storms. Surface wind blows from windFrom
-  // (so the runways in use stay the same); its speed and the winds aloft come from the noise.
-  const WX_DRIFT = 0.0064;
-  const WX_MORPH = 2160; // minutes for the pattern to change shape (1.5 days)
-  // Integer lattice hash -> [0, 1), no allocations (the cloud layers call this thousands of times).
-  function wxHash(x, y, z, s) {
-    let h = Math.imul(x, 374761393) + Math.imul(y, 668265263) + Math.imul(z, 2147483647) + Math.imul(s, 1274126177);
-    h = Math.imul(h ^ (h >>> 13), 1274126177);
-    return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
-  }
-  // Smooth value noise in [0, 1).
-  function wxNoise(x, y, z, s) {
-    const xi = Math.floor(x), yi = Math.floor(y), zi = Math.floor(z);
-    const fx = x - xi, fy = y - yi, fz = z - zi;
-    const u = fx * fx * (3 - 2 * fx), w = fy * fy * (3 - 2 * fy), q = fz * fz * (3 - 2 * fz);
-    const a0 = wxHash(xi, yi, zi, s), b0 = wxHash(xi + 1, yi, zi, s), c0 = wxHash(xi, yi + 1, zi, s), d0 = wxHash(xi + 1, yi + 1, zi, s);
-    const a1 = wxHash(xi, yi, zi + 1, s), b1 = wxHash(xi + 1, yi, zi + 1, s), c1 = wxHash(xi, yi + 1, zi + 1, s), d1 = wxHash(xi + 1, yi + 1, zi + 1, s);
-    const lo = a0 + (b0 - a0) * u + (c0 + (d0 - c0) * u - a0 - (b0 - a0) * u) * w;
-    const hi = a1 + (b1 - a1) * u + (c1 + (d1 - c1) * u - a1 - (b1 - a1) * u) * w;
-    return lo + (hi - lo) * q;
-  }
+  // As in real life: js/wxmodel.js (FG.wxModel) is the model (the real climate with weather systems moving over it,
+  // or the real weather now), the same for everyone at the same game time. It is for looks (js/weather.js draws it)
+  // and the planes' crab angle: flights never wait for it. Storm events (js/data/events.js) still close airports,
+  // and are drawn as storms. The runways in use face the day's wind (windFrom).
+  const WX = FG.wxModel;
+  const WX_DRIFT = WX.WX_DRIFT;
   const smooth = (a, b, x) => { const k = Math.min(1, Math.max(0, (x - a) / (b - a))); return k * k * (3 - 2 * k); };
   // Day of the year (0 = 1 January): the calendar in a story game, else day 0 is 1 January.
   function dayOfYear(t) {
@@ -467,72 +460,41 @@
       .map((e) => ({ lat: e.where.near.lat, lon: e.where.near.lon, km: e.where.radiusKm || 400 }));
     return wxStorms;
   }
-  // The weather at a place and time: cover (0 clear … 1 overcast), rain (0 … 1, snow when cold), storm
-  // (a thunderstorm or a storm event), fog, tempC, surface wind (windFrom °, windKt), name and icon.
-  // `lite`: only cover, rain and storm (the cloud layers draw thousands of these).
-  function weatherAt(lat, lon, t, lite) {
-    const x = lon - WX_DRIFT * t;
-    const z = t / WX_MORPH;
-    const n = 0.62 * wxNoise(x / 9, lat / 7, z, 1) + 0.38 * wxNoise(x / 2.6, lat / 2.2, z * 1.7, 2);
-    const a = Math.abs(lat);
-    const climate = (a < 9 ? 0.07 : 0) - 0.13 * smooth(14, 22, a) * (1 - smooth(30, 38, a)) + (a > 40 ? 0.03 : 0);
-    const wet = n + climate;
-    let cover = smooth(0.36, 0.64, wet);
-    let rain = smooth(0.6, 0.76, wet);
-    let storm = rain > 0.4 && wxNoise(x / 1.1, lat / 1.1, z * 3, 3) > 0.74 && a < 55;
-    let stormKm = 0;
-    for (const st of stormsNow()) {
-      const d = distanceKm({ lat, lon }, st);
-      if (d >= st.km) continue;
-      const k = 1 - d / st.km;
-      cover = Math.max(cover, Math.min(1, 0.4 + 1.2 * k));
-      rain = Math.max(rain, Math.min(1, 1.4 * k));
-      if (k > 0.2) { storm = true; stormKm = Math.max(stormKm, k); }
-    }
-    if (lite) return { cover, rain, storm };
-    // temperature: latitude, season (opposite in the south), time of day; storms cool it down
-    const doy = dayOfYear(t);
-    const season = Math.cos((2 * Math.PI * (doy - 200)) / 365) * (lat >= 0 ? 1 : -1);
-    const hour = ((t % DAY) + DAY) % DAY / 60;
-    const tempC = Math.round(29 - 0.007 * a * a - 0.1 * a + season * 0.25 * Math.min(a, 60) +
-      4 * Math.cos((2 * Math.PI * (hour - 15)) / 24) - 3 * rain);
-    const snow = rain > 0.15 && tempC <= 1;
-    const day = Math.floor(t / DAY);
-    let windKt = Math.round(4 + 16 * wxNoise(x / 5, lat / 5, z * 1.5, 4) + 10 * rain + (storm ? 12 : 0));
-    if (stormKm) windKt = Math.max(windKt, Math.round(30 + 25 * stormKm));
-    const pw = placedWind(lat, lon);
-    if (pw) windKt = Math.round(windKt + (pw.kt - windKt) * pw.k);
-    const gustKt = windKt >= 15 ? Math.round(windKt * 1.45) : 0;
-    const fog = !rain && !storm && windKt < 7 && cover > 0.55 && hour > 3 && hour < 10 && tempC < 14;
-    let name;
-    let icon;
-    if (storm && snow) [name, icon] = ['Blizzard', '🌨'];
-    else if (storm) [name, icon] = ['Thunderstorm', '⛈'];
-    else if (snow) [name, icon] = ['Snow', '🌨'];
-    else if (fog) [name, icon] = ['Fog', '🌫'];
-    else if (rain > 0.55) [name, icon] = ['Rain', '🌧'];
-    else if (rain > 0.15) [name, icon] = ['Showers', '🌦'];
-    else if (cover > 0.85) [name, icon] = ['Overcast', '☁️'];
-    else if (cover > 0.55) [name, icon] = ['Cloudy', '🌥'];
-    else if (cover > 0.2) [name, icon] = ['Some clouds', '⛅'];
-    else [name, icon] = ['Clear', hour > 6 && hour < 20 ? '☀️' : '🌙'];
-    const from = pw ? blendDir(windFrom(lat, lon, day), pw.from, pw.k) : windFrom(lat, lon, day);
-    return { cover, rain, storm, snow, fog, tempC, windFrom: Math.round(from) % 360, windKt, gustKt, name, icon };
+  // What the weather model needs from the game (js/wxmodel.js sample's ctx), kept in one object.
+  const wxCtx = {
+    doy: (t) => dayOfYear(t), utc: (t) => utcOf(t), storms: [], key: '', now: 0, nowMs: 0,
+  };
+  function ctxFor() {
+    const s = Game.state;
+    wxCtx.storms = stormsNow();
+    wxCtx.key = s && s.story ? String(s.story.start) : '';
+    if (s && (s.time !== wxCtx.now || !wxCtx.nowMs)) { wxCtx.now = s.time; wxCtx.nowMs = Date.now(); }
+    return wxCtx;
   }
-  // Wind at a height (ft above sea level): the surface wind (from windFrom) near the ground, turning to the
-  // westerly winds aloft and getting stronger with height. The jet stream of the mid-latitudes only blows up high
-  // (from FL150, all of it by FL330): with all of it from 12,000 ft, planes descending through FL100 met 120 kt
-  // and crabbed 20-25° (GitHub issue #2, "Planes too much wind angle").
+  // The weather at a place and time: cover (0 clear … 1 overcast), rain (0 … 1, snow when cold), storm
+  // (a thunderstorm or a storm event), fog, tempC, dewC, qnh (hPa), visKm, baseFt (cloud base), surface wind
+  // (windFrom °, windKt, gustKt), name, icon, live (real weather). `lite`: only cover, rain and storm (the cloud
+  // layers draw thousands of these). elevM: the ground's height there (for the temperature).
+  function weatherAt(lat, lon, t, lite, elevM = 0) {
+    const w = WX.sample(lat, lon, t, ctxFor(), lite, elevM);
+    if (lite) return w;
+    const pw = placedWind(lat, lon);
+    if (pw) {
+      w.windKt = Math.round(w.windKt + (pw.kt - w.windKt) * pw.k);
+      w.windFrom = Math.round(blendDir(w.windFrom, pw.from, pw.k)) % 360;
+      w.gustKt = w.windKt >= 15 ? Math.round(w.windKt * 1.4) : 0;
+      const r = (w.windFrom + 180) * Math.PI / 180;
+      w.u = w.windKt * Math.sin(r); w.v = w.windKt * Math.cos(r);
+    }
+    return w;
+  }
+  // Wind at a height (ft above sea level): the surface wind near the ground, turning to the winds aloft and getting
+  // stronger with height; the jet streams only blow up high (from FL150, all of it by FL330): with all of it from
+  // 12,000 ft, planes descending through FL100 met 120 kt and crabbed 20-25° (GitHub issue #2).
   function windAt(lat, lon, t, altFt = 0) {
     const w = weatherAt(lat, lon, t);
-    const x = lon - WX_DRIFT * t;
-    const z = t / WX_MORPH;
-    const aloft = (lat >= -25 && lat <= 25 ? 90 : 270) + (wxNoise(x / 12, lat / 10, z, 5) - 0.5) * 100;
-    const k = smooth(2000, 12000, altFt);
-    const kJet = smooth(15000, 33000, altFt);
-    const jet = 60 * Math.exp(-(((Math.abs(lat) - 40) / 12) ** 2)) * (0.6 + 0.8 * wxNoise(x / 8, lat / 8, z, 6));
-    let from = (w.windFrom + k * (((aloft - w.windFrom + 540) % 360) - 180) + 360) % 360;
-    let kt = w.windKt * (1 + 0.6 * k) + kJet * jet;
+    let { from, kt } = WX.aloft(lat, lon, t, wxCtx, altFt, w);
+    if (altFt < 2000) { from = w.windFrom; kt = w.windKt; }
     const pw = placedWind(lat, lon); // (a placed wind blows at every height)
     if (pw) { from = blendDir(from, pw.from, pw.k); kt += (pw.kt - kt) * pw.k; }
     return { from: Math.round(from) % 360, kt: Math.round(kt), gusty: w.gustKt > 0 || w.storm, storm: w.storm };
@@ -4070,7 +4032,15 @@
     // The weather at an airport (weatherAt), now or at game time t.
     airportWeather(code, t = this.state.time) {
       const a = airportByCode[code];
-      return a ? weatherAt(a.lat, a.lon, t) : null;
+      if (!a) return null;
+      const h = FG.ground ? FG.ground.at(a.lat, a.lon) : null;
+      return weatherAt(a.lat, a.lon, t, false, h || 0);
+    },
+    // Real weather has arrived (js/weather.js, Settings → Weather → Live): the days' runway winds are worked out
+    // again from it, once.
+    liveArrived() {
+      dayWind.clear();
+      windRev++;
     },
 
     activeEffects() {

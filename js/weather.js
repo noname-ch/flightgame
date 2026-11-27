@@ -1,4 +1,4 @@
-// Clouds and weather on the maps. The weather itself is game.js weatherAt (made up, steady, drifting east); this
+// Clouds and weather on the maps. The weather itself is js/wxmodel.js (through game.js weatherAt); this
 // draws it, and is made to be light on the computer:
 // - 2D: one canvas at half resolution in its own pane under the airports and planes, drawn again when the map
 //   moves and about once a second while the clouds drift; it fades out when zoomed in on an airport.
@@ -172,7 +172,9 @@
   // One line about the weather: "🌧 Rain · 12 °C · wind 250° 18 kt, gusts 26".
   function text(w) {
     if (!w) return '';
-    return `${w.icon} ${w.name} · ${w.tempC} °C · wind ${w.windKt < 3 ? 'calm' : `${pad3(w.windFrom)}° ${w.windKt} kt${w.gustKt ? `, gusts ${w.gustKt}` : ''}`}`;
+    const vis = w.visKm != null && w.visKm < 8 ? ` · visibility ${w.visKm < 1 ? `${Math.round(w.visKm * 1000)} m` : `${w.visKm} km`}` : '';
+    return `${w.icon} ${w.name} · ${w.tempC} °C · wind ${w.windKt < 3 ? 'calm' : `${pad3(w.windFrom)}° ${w.windKt} kt${w.gustKt ? `, gusts ${w.gustKt}` : ''}`}${vis}` +
+      `${w.qnh ? ` · QNH ${w.qnh}` : ''}${w.live ? ' · real' : ''}`;
   }
   function enabled() {
     return !!(st.layer && FG.ui && FG.ui.map && FG.ui.map.hasLayer(st.layer));
@@ -260,6 +262,122 @@
   }
   setInterval(tick, 1000);
 
+  // ---------- live weather (Settings → Weather → Live) ----------
+  // The real weather from Open-Meteo (free, no key; https://open-meteo.com): a 7.5° grid over the world for the next
+  // day, again every 6 hours, and a 1.5° patch round where the player looks (zoomed in to 5 and closer, at most every
+  // 2 minutes, again after an hour). Handed to the model (FG.wxModel.setLive); kept in IndexedDB so a reload doesn't
+  // fetch it again. About 4,000 of Open-Meteo's 10,000 free calls a day when played all day.
+  const LIVE_KEY = 'flightgame.weather';
+  const LIVE_URL = 'https://api.open-meteo.com/v1/forecast';
+  const LIVE_VARS = 'cloud_cover,precipitation,weather_code,temperature_2m,dew_point_2m,wind_speed_10m,wind_direction_10m,' +
+    'wind_gusts_10m,pressure_msl,visibility,wind_speed_700hPa,wind_direction_700hPa,wind_speed_250hPa,wind_direction_250hPa';
+  const WORLD = { lat0: -82.5, lon0: -180, step: 7.5, rows: 23, cols: 48, wrap: true, every: 6 * 3600000 };
+  const PATCH = { step: 1.5, rows: 13, cols: 13, every: 3600000, gap: 120000 };
+  const lv = { mode: 'sim', status: '', busy: false, worldAt: 0, patchAt: 0, patchTry: 0, patchC: null, first: true };
+  try { lv.mode = JSON.parse(localStorage.getItem(LIVE_KEY) || '{}').mode === 'live' ? 'live' : 'sim'; } catch (e) { /* private mode */ }
+  FG.wxModel.mode = lv.mode;
+
+  async function fetchGrid(g) {
+    const pts = [];
+    for (let r = 0; r < g.rows; r++) for (let c = 0; c < g.cols; c++) pts.push([g.lat0 + r * g.step, ((g.lon0 + c * g.step + 540) % 360) - 180]);
+    const hours = 27;
+    const n = g.rows * g.cols;
+    const v = {};
+    for (const k of ['cc', 'mm', 'code', 't', 'dew', 'u', 'v', 'gust', 'qnh', 'vis', 'u7', 'v7', 'u25', 'v25']) v[k] = new Float32Array(hours * n);
+    let t0 = 0;
+    for (let i = 0; i < pts.length; i += 160) {
+      const part = pts.slice(i, i + 160);
+      const url = `${LIVE_URL}?latitude=${part.map((p) => p[0].toFixed(2)).join(',')}&longitude=${part.map((p) => p[1].toFixed(2)).join(',')}` +
+        `&hourly=${LIVE_VARS}&wind_speed_unit=kn&past_hours=2&forecast_hours=25&timeformat=unixtime`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`weather ${res.status}`);
+      let js = await res.json();
+      if (!Array.isArray(js)) js = [js];
+      js.forEach((d, j) => {
+        const h = d.hourly;
+        const cell = i + j;
+        const el = Math.max(0, d.elevation || 0);
+        t0 = h.time[0] * 1000;
+        const uv = (spd, dir) => [-(spd || 0) * Math.sin((dir || 0) * DEG), -(spd || 0) * Math.cos((dir || 0) * DEG)];
+        for (let k = 0; k < hours; k++) {
+          const o = k * n + cell;
+          const q = Math.min(k, h.time.length - 1);
+          v.cc[o] = (h.cloud_cover[q] ?? 50) / 100;
+          v.mm[o] = h.precipitation[q] ?? 0;
+          v.code[o] = h.weather_code[q] ?? 0;
+          v.t[o] = (h.temperature_2m[q] ?? 15) + 0.0065 * el; // (at sea level: the model takes the height off again)
+          v.dew[o] = (h.dew_point_2m[q] ?? 10) + 0.002 * el;
+          [v.u[o], v.v[o]] = uv(h.wind_speed_10m[q], h.wind_direction_10m[q]);
+          v.gust[o] = h.wind_gusts_10m[q] ?? 0;
+          v.qnh[o] = h.pressure_msl[q] ?? 1013;
+          v.vis[o] = h.visibility[q] ?? 20000;
+          [v.u7[o], v.v7[o]] = uv(h.wind_speed_700hPa[q], h.wind_direction_700hPa[q]);
+          [v.u25[o], v.v25[o]] = uv(h.wind_speed_250hPa[q], h.wind_direction_250hPa[q]);
+        }
+      });
+    }
+    return { t0, hours, lat0: g.lat0, lon0: g.lon0, step: g.step, rows: g.rows, cols: g.cols, wrap: !!g.wrap, v, at: Date.now() };
+  }
+  // A grid kept in IndexedDB (Float32Arrays survive the structured clone).
+  const idbGet = (k) => (FG.idb ? FG.idb.get(k).catch(() => null) : Promise.resolve(null));
+  const idbSet = (k, g) => { if (FG.idb) FG.idb.set(k, g).catch(() => {}); };
+  function arrived(which, grid) {
+    FG.wxModel.setLive(which, grid);
+    if (which === 'world' && lv.first) { lv.first = false; if (G.liveArrived) G.liveArrived(); }
+    lv.status = `real weather from ${new Date(grid.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    if (FG.weather) FG.weather.redraw();
+  }
+  async function liveTick() {
+    if (lv.mode !== 'live' || lv.busy || document.hidden || !navigator.onLine) return;
+    lv.busy = true;
+    try {
+      const now = Date.now();
+      if (!FG.wxModel.live.world) {
+        const kept = await idbGet('flightgame.wx.world');
+        if (kept && now - kept.at < WORLD.every) { lv.worldAt = kept.at; arrived('world', kept); }
+      }
+      if (now - lv.worldAt > WORLD.every) {
+        lv.status = 'fetching the real weather…';
+        const g = await fetchGrid(WORLD);
+        lv.worldAt = now;
+        idbSet('flightgame.wx.world', g);
+        arrived('world', g);
+      }
+      // the patch where the player looks
+      const m3 = FG.view3d && FG.view3d.on && FG.view3d.map;
+      const map2 = FG.ui && FG.ui.map;
+      const c = m3 ? m3.getCenter() : map2 && map2.getCenter();
+      const zoom = m3 ? m3.getZoom() + 1 : map2 ? map2.getZoom() : 0;
+      if (c && zoom >= 5 && now - lv.patchTry > PATCH.gap) {
+        const far = !lv.patchC || Math.abs(c.lat - lv.patchC[0]) > 4.5 || Math.abs(((c.lng - lv.patchC[1] + 540) % 360) - 180) > 4.5;
+        if (far || now - lv.patchAt > PATCH.every) {
+          lv.patchTry = now;
+          const la = Math.max(-80, Math.min(80, Math.round(c.lat / 1.5) * 1.5));
+          const lo = Math.round(c.lng / 1.5) * 1.5;
+          const g = await fetchGrid({ ...PATCH, lat0: la - 9, lon0: lo - 9 });
+          lv.patchAt = now;
+          lv.patchC = [la, lo];
+          arrived('patch', g);
+        }
+      }
+    } catch (e) {
+      lv.status = `no real weather (${e.message || e}): made up until it comes`;
+    } finally {
+      lv.busy = false;
+    }
+  }
+  setInterval(liveTick, 5000);
+  // Settings → Weather: 'sim' (made up from the real climate) or 'live'.
+  function setMode(mode) {
+    lv.mode = mode === 'live' ? 'live' : 'sim';
+    FG.wxModel.mode = lv.mode;
+    try { localStorage.setItem(LIVE_KEY, JSON.stringify({ mode: lv.mode })); } catch (e) { /* private mode */ }
+    if (lv.mode === 'live') liveTick();
+    if (G.liveArrived && FG.wxModel.live.world) G.liveArrived(); // (the runways follow the other weather)
+    if (lv.mode === 'sim') lv.status = '';
+    FG.weather.redraw();
+  }
+
   FG.weather = {
     puffs,
     layer2d,
@@ -269,6 +387,9 @@
     sprite: () => spritesOf()[0][0],
     redraw() { if (st.layer && st.layer._map) draw2d(st.layer); },
     syncWinds,
+    setMode,
+    get mode() { return lv.mode; },
+    get liveStatus() { return lv.status; },
     get stats() { return { puffs2d: st.n2d, puffs3d: st.n3d, overlay: st.fxClass, chip: st.chip }; },
     set n3d(n) { st.n3d = n; },
   };

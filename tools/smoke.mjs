@@ -453,6 +453,37 @@ try {
   else if (wx.lowCrab > 3 || (wx.highCrab != null && wx.highCrab < 5)) errors.push(`crab in a 55 kt crosswind after lift-off: up to ${wx.lowCrab}° under 300 ft (at most 3°), ${wx.highCrab}° at 1500-4000 ft (at least 5°)`);
   else step(`weather at home: ${wx.line}; ${wx.puffs} cloud puffs in view${wx.crab != null ? `; a plane in the air crabs ${wx.crab}° in ${wx.wind} kt` : ''}`);
 
+  step('real-world weather: the climate (Dubai hot, Siberia cold in January), lows in winter, a hurricane in season, Settings → Weather');
+  const rw = await evaluate(() => {
+    const M = FG.wxModel;
+    const ctx = { doy: (t) => Math.floor(t / 1440) % 365, utc: (t) => t, storms: [], key: 'smoke', now: 0, nowMs: 0 };
+    const jan = 10 * 1440 + 720, sep = 250 * 1440 + 720;
+    const temp = (lat, lon, t) => M.sample(lat, lon, t, ctx, false).tempC;
+    // a week of September: hurricanes and typhoons under way at some time
+    let tcs = 0, lows = 0;
+    for (let d = 0; d < 7; d++) {
+      const sy = M.systems(sep + d * 1440, ctx);
+      tcs = Math.max(tcs, sy.filter((x) => x.kind === 1).length);
+      lows = Math.max(lows, sy.filter((x) => x.kind === 0).length);
+    }
+    const hasClimate = !!(FG.data.climate && FG.data.climate.b64.length > 100000);
+    const dubai = temp(25.25, 55.36, sep), yakutsk = temp(62.1, 129.8, jan), bern = temp(46.9, 7.5, jan);
+    // dry Sahara, wet Singapore: cover over a month
+    let sahara = 0, sing = 0;
+    for (let d = 0; d < 30; d++) {
+      sahara += M.sample(23, 10, (180 + d) * 1440 + 900, ctx, true).cover / 30;
+      sing += M.sample(1.35, 103.9, (180 + d) * 1440 + 900, ctx, true).cover / 30;
+    }
+    document.getElementById('settings-btn').click();
+    const ok = document.querySelectorAll('[data-set="weather"]').length;
+    document.getElementById('settings').hidden = true;
+    return { hasClimate, dubai, yakutsk, bern, tcs, lows, sahara: +sahara.toFixed(2), sing: +sing.toFixed(2), buttons: ok, mode: FG.weather.mode,
+      line: FG.weather.text(G.airportWeather(G.home())) };
+  });
+  if (!rw.hasClimate || rw.dubai < 26 || rw.yakutsk > -20 || rw.bern > 10 || rw.tcs < 1 || rw.lows < 8 || rw.sahara > 0.3 || rw.sing < 0.5 || rw.buttons !== 2)
+    errors.push(`real-world weather: ${JSON.stringify(rw)}`);
+  else step(`real-world weather: Dubai ${rw.dubai} °C in September, Yakutsk ${rw.yakutsk} °C and Bern ${rw.bern} °C in January; ${rw.lows} lows, ${rw.tcs} tropical cyclones; cloud Sahara ${rw.sahara}, Singapore ${rw.sing}; mode ${rw.mode}`);
+
   step('day and night: local times and time zones, sunrise at home, the night on the 2D map');
   const dn = await evaluate(() => {
     const out = { jfk: G.utcOffset('JFK', 0), syd: G.utcOffset('SYD', 0), ktm: G.utcOffset('KTM', 0), jfkJul: G.utcOffset('JFK', 190 * 1440) };

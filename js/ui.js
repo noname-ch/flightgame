@@ -1183,7 +1183,7 @@
       <div>Catchment: <b>${fmtPop(G.catchment(code))}</b> people · landing fee ${G.fmtMoney(G.landingFee(code))}</div>
       <div>${runwayText(code)}</div>
       <div title="The local time there (the clock at the top is the time at your home base)">🕗 ${G.fmtLocal(code, s.time)} local (${G.fmtZone(code, s.time)}) · ${lightIcon(a.lat, a.lon, s.time)} ${lightName(a.lat, a.lon, s.time)} · ${sunText(code, s.time)}</div>
-      ${FG.weather ? `<div title="Weather now (it drifts east and changes over a day or two)">${FG.weather.text(G.airportWeather(code))}</div>` : ''}${rivalsAt(code)}`;
+      ${FG.weather ? `<div title="Weather now (Settings → Weather: made up from the real climate, or the real weather)">${FG.weather.text(G.airportWeather(code))}</div>` : ''}${rivalsAt(code)}`;
     if (a.built && !a.open) {
       h += a.site ? '<div class="warn">🏗 Being built: open it once its checklist (Construction, below) is done.</div>'
         : `<div class="warn">🏗 Under construction – opens ${openDate(code)}.</div>`;
@@ -2176,6 +2176,10 @@
       <h4>On the map</h4>${Object.keys(ui.overlays).map((n) =>
         `<label class="check"><input type="checkbox" data-set="overlay" data-v="${n}" ${ui.map.hasLayer(ui.overlays[n]) ? 'checked' : ''}> ${n}</label>`).join('')}
       <label class="check"><input type="checkbox" data-set="legend" ${set.legend ? 'checked' : ''}> Legend</label>
+      ${FG.weather && FG.weather.setMode ? `<h4>Weather</h4><div class="chips">${[['sim', '🌍 Realistic', 'Made up from the real climate: seasons, monsoons, deserts, fronts, hurricanes and typhoons in their seasons, jet streams. Works offline, follows the game\'s calendar'],
+        ['live', '📡 Live', 'The real weather now, from Open-Meteo (needs the internet)']].map(([v, n, about]) =>
+        `<button class="${FG.weather.mode === v ? 'on' : ''}" data-set="weather" data-v="${v}" title="${about}">${n}</button>`).join('')}</div>
+      ${FG.weather.mode === 'live' ? `<p class="muted small">${FG.weather.liveStatus || 'waiting for the real weather…'} · <a href="https://open-meteo.com/" target="_blank" rel="noopener">Weather data by Open-Meteo.com</a></p>` : ''}` : ''}
       <h4>Livery</h4><div class="row"><span>${FG.livery().name}</span><button data-set="liveries" title="Choose the airline's livery, one for each plane, design your own or get one from the community">🎨 Liveries… <span class="muted">F7</span></button></div>
       <h4>Game</h4>
       <label class="check"><input type="checkbox" data-set="autosave" ${set.autosave ? 'checked' : ''}> Save automatically every 30 s</label>
@@ -2205,6 +2209,7 @@
     if (k === 'base') setBasemap(t.dataset.v);
     if (k === 'overlay') { set.overlays[t.dataset.v] = t.checked; applySettings(); }
     if (k === 'legend') { set.legend = t.checked; applySettings(); }
+    if (k === 'weather') FG.weather.setMode(t.dataset.v);
     if (k === 'autosave') set.autosave = t.checked;
     if (k === 'lite' || k === 'fps') { set[k] = t.checked; applySettings(); }
     if (k === 'sound') FG.sound.set({ on: t.checked });

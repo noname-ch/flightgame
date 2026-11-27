@@ -72,8 +72,20 @@ timetable: a flight from Kathmandu at 07:00 leaves at 07:00 in Kathmandu. The **
 22:00–06:00) is in local time too, and a plane waits at an airport until morning there.
 
 **Weather**: clouds drift over both maps, from fair-weather puffs to grey rain bands and thunderstorms, and the
-storms in the newspaper show up as real storms. It is made up but steady: it drifts east, changes over a day or two,
-is drier in the subtropics, wetter at the equator and colder towards the poles, in winter and at night. Zoomed in,
+storms in the newspaper show up as real storms. It is the whole world's weather as in real life (Settings → Weather):
+- **🌍 Realistic** (the default, works offline): made up from the real climate (NASA's long-term monthly means), so
+  every place has its own seasons by the game's calendar: monsoon rains in India in summer, dry deserts, wet
+  tropics with afternoon thunderstorms, foggy mornings, cold continental winters. Lows with their warm and cold
+  fronts form where they really do (Gulf of Alaska, Colorado, Cape Hatteras, Iceland, Gulf of Genoa, off Japan,
+  the Southern Ocean) and travel east, more of them in winter; hurricanes, typhoons and cyclones form in their own
+  basins and seasons, move west, turn north-east and die over land or cold water. Winds follow the trades, the
+  westerlies and the monsoon and turn round the lows; the jet streams blow up high (further south and stronger in
+  winter). The same for everyone at the same game time.
+- **📡 Live**: the real weather now from [Open-Meteo](https://open-meteo.com/) (clouds, rain, snow, thunderstorms,
+  fog, temperature, wind, gusts, pressure and the winds at FL100 and FL340), a coarse grid of the world and a finer
+  patch where you look. Game time ahead of now looks into the forecast.
+
+The chip and airport panel show temperature, wind, visibility and QNH. Zoomed in,
 rain, snow, fog and lightning show over the map, and a chip at the top says the weather there (also in the
 airport panel and the plane window). In 3D the sky greys over under cloud. Planes **crab** in a crosswind: the
 nose points partly into the wind so they still track their path, and the pilots kick it straight just before
@@ -482,6 +494,10 @@ All content is plain data:
   [GeoNames](https://www.geonames.org/) cities15000 (CC BY 4.0). To rebuild, download
   `airports.csv`, `runways.csv` and `cities15000.txt` into `tools/cache/` and run
   `python3 tools/build_data.py`.
+- `js/data/climate.js` – the real climate on a 5° grid, month by month (temperature, day/night range, rain, cloud,
+  humidity) that the made-up weather follows, built by `python3 tools/build_climate.py` from
+  [NASA POWER](https://power.larc.nasa.gov/) climatology (public domain). The weather model is `js/wxmodel.js`
+  (lows and cyclones in `REGIONS`); live weather comes from [Open-Meteo](https://open-meteo.com/) (CC BY 4.0)
 - `js/data/aircraft.js` – aircraft types (market catalogue) and crew templates; `year`/`endYear` = first
   year in airline service and last year built (story mode)
   and optionally its flight performance (`climbFpm`, `vLofKmh`, `vAppKmh`, `bankDeg`; otherwise its

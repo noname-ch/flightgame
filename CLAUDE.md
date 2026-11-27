@@ -91,9 +91,16 @@ Play online: https://noname-ch.github.io/flightgame/ (GitHub Pages, deployed fro
   after a label, extrusion, circle or the planes costs another 22 MB per tile (six runs reached 2.6 GB low over the
   ground and iPhones reloaded the page; the smoke test checks the order). On touch devices `phoneDrapes` makes the
   textures 1024 px.
-- Weather (looks only, flights never wait for it): game.js `weatherAt(lat, lon, t, lite)` (noise drifting east by
-  `G.WX_DRIFT`, storm events with `weather: 'storm'` or a "Storm …" label), `G.windAt(lat, lon, t, altFt)`,
-  `G.airportWeather(code)`. `G.flightState` returns `crab` (heading = track + crab: ui.js planePosition and view3d
+- Weather (looks only, flights never wait for it): the model is js/wxmodel.js (`FG.wxModel.sample(lat, lon, t, ctx,
+  lite, elevM)`, `aloft`): the real climate (js/data/climate.js, 5° grid × 12 months, built by tools/build_climate.py
+  from NASA POWER) plus weather systems (`REGIONS`: lows and tropical cyclones, spawned per 6 h slot by hash, cached
+  per 10 min) and a texture noise drifting east by `G.WX_DRIFT`; or live (`FG.wxModel.mode = 'live'`, grids from
+  Open-Meteo fetched by js/weather.js `liveTick`, `setLive`). The Rust app's src/weather.rs is the same model number
+  for number: change both together and compare a few samples (its test `weather::tests::samples` prints them).
+  game.js wraps it: `weatherAt(lat, lon, t, lite, elevM)` (storm events with `weather: 'storm'` or a "Storm …"
+  label, placed winds), `G.windAt(lat, lon, t, altFt)`, `G.airportWeather(code)`; `windFrom(lat, lon, day)` is the
+  day's runway wind (the model's surface wind averaged over four times of the day, kept per day; `G.liveArrived()`
+  clears it once when real weather arrives). `G.flightState` returns `crab` (heading = track + crab: ui.js planePosition and view3d
   `attitude` add it), `windFrom`, `windKt`, `gusty`. js/weather.js draws it: `FG.weather.puffs(box, t, max)`, the 2D
   canvas (an `L.Renderer` in the 'clouds' pane, the "Clouds and weather" overlay = `FG.weather.enabled()`), the
   `#wx-fx` CSS overlay and chip; view3d.js draws the same puffs as one `THREE.Points` in planeLayer

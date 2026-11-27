@@ -79,9 +79,9 @@ realistic flight tracks in 2D and 3D, AI rival airlines, random events and a dev
 
 ## The world and the views
 
-- [ ] **Real weather** (M). Made-up weather is drawn now (clouds, rain, snow, fog, wind, crosswind crab:
-  `G.weatherAt`, js/weather.js). Still to do: real wind, rain and fog from a free weather service; low visibility
-  and storms close runways, strong crosswinds rule out short ones.
+- [ ] **Weather that matters** (M). The weather is realistic now (the real climate, fronts, hurricanes, or the real
+  weather live: js/wxmodel.js). Still to do: low visibility and storms close runways, strong crosswinds rule out
+  short ones.
 - [ ] **Cockpit and tower cameras in 3D** (S/M). Next to the 🎥 follow camera: a view from the cockpit and
   one from the control tower of the airport. The hand-flown A350 (P) has a cockpit camera with a HUD already
   (view3d.js `cockpitTick`); still to do: the same for any followed plane, and the tower.
@@ -139,6 +139,9 @@ Recent milestones, newest first (see `git log` for the rest):
   deep rumble, screech, engine start and planes far away are recordings made with ElevenLabs)
 - Weather: clouds in 2D and 3D, rain, snow, fog and lightning up close, a grey sky under cloud, storms from the
   newspaper drawn as storms, and planes crabbing into crosswinds (straightened before touchdown)
+- Real-world weather: made up from the real climate (seasons, monsoons, deserts, fog, lows and fronts from where they
+  form, hurricanes and typhoons in their seasons, trades, westerlies and jet streams), or the real weather live from
+  Open-Meteo (Settings → Weather)
 - Plane stats as in OpenTTD: every plane keeps its records (this year, last year, all time, the last 12 weeks,
   its last flights) in a stats window, opened from its window, its Fleet card or its card clicked again
 - Story mode: start in 1955 (or a later year); 65 more airliners from the 1940s to the 2000s reach the market
