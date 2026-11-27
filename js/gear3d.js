@@ -363,7 +363,8 @@ function leg(l, ground, stretch, mats, out) {
   group.userData = fold ? { axis: fold[0], angle: fold[1] * (fold[0] === 'y' ? l.side : 1) } : { fixed: true };
   out.push(group);
   // the bay of every leg but a jet's main leg (which carries its door) and the tail wheel: open, dark inside,
-  // with a door hanging down on each side
+  // with doors on each side: the long front ones only open while the gear goes up or down and are shut again once
+  // it is down, the short rear ones stay open beside the leg (as on the A320 and most airliners)
   if (l.kind !== 'wing' && l.kind !== 'tail') {
     const half = (across > 1 ? gap / 2 : 0) + w * 0.6 + r * 0.25;
     const long = (rows - 1) * pitch + r * 2.6;   // (a bogie's bay is longer)
@@ -372,12 +373,13 @@ function leg(l, ground, stretch, mats, out) {
     bay.position.set(l.x, l.y + r * 0.15 / stretch, head.z);
     bay.userData = { bay: true };
     out.push(bay);
-    for (const s of [-1, 1]) {
+    for (const s of [-1, 1]) for (const [from, to, transit] of [[-0.15, 0.5, true], [-0.5, -0.15, false]]) {
       const door = new THREE.Group();
-      door.add(new THREE.Mesh(paint(box(V(0, 0, -r * 0.55), r * 0.05, long, r * 1.1), PAINT.door).applyMatrix4(new THREE.Matrix4().makeScale(1, 1 / stretch, 1)), mats.body));
+      const y = (from + to) / 2 * long, length = (to - from) * long - r * 0.04;
+      door.add(new THREE.Mesh(paint(box(V(0, y, -r * 0.55), r * 0.03, length, r * 1.1), PAINT.door).applyMatrix4(new THREE.Matrix4().makeScale(1, 1 / stretch, 1)), mats.body));
       door.position.set(l.x + s * half, l.y + r * 0.2 / stretch, head.z);
       door.rotation.y = -s * 0.12;   // (open: tilted out a little)
-      door.userData = { door: true, open: -s * 0.12, shut: s * Math.PI / 2 };
+      door.userData = { door: true, open: -s * 0.12, shut: s * Math.PI / 2, transit };
       out.push(door);
     }
   }
@@ -423,16 +425,18 @@ export function addGear(scene, raw, file, size, patchFacing, type) {
 }
 
 // Puts the gear `f` of the way down (1: down and locked, 0: up and its doors shut). Going up the legs fold
-// first and the doors shut after them; coming down the doors open first.
+// first and the doors shut after them; coming down the doors open first, and the long front ones shut again at the
+// end.
 export function setGear(gear, f) {
   if (gear.userData.f === f) return;
   gear.userData.f = f;
   const legs = Math.min(1, (1 - f) * 1.33);
   const doors = Math.max(0, Math.min(1, (0.4 - f) / 0.4));
+  const after = Math.max(doors, Math.min(1, Math.max(0, (f - 0.85) / 0.15)));   // (shut again once the gear is down)
   for (const o of gear.children) {
     const u = o.userData;
     if (u.fixed) continue;
-    if (u.door) o.rotation.y = u.open + (u.shut - u.open) * doors;
+    if (u.door) o.rotation.y = u.open + (u.shut - u.open) * (u.transit ? after : doors);
     else if (u.axis) o.rotation[u.axis] = u.angle * legs;
     o.visible = f > 0.01;
   }

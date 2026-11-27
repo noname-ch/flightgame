@@ -186,7 +186,11 @@ Play online: https://noname-ch.github.io/flightgame/ (GitHub Pages, deployed fro
   `livAil`/`livFlap`/`livElev`/`livRud`. Flaps are cut out of the wing's geometry (`cutFlaps`: two straight parts
   fitted to the strips, none behind nacelles that reach past the trailing edge, none on a delta; their vertices are
   their own, `livSurf.w` = flap chord, 0 for the old uncut kind) and slide back and down as they turn; FRAG_BODY
-  paints them in the wing's livery with darker seams (`vLivFlap`, `livFlapSpan`). Thrust reversers: `markEngines` makes
+  paints them in the wing's livery with darker seams (`vLivFlap`, `livFlapSpan`). Slats (`SLATS` per model, the A320's
+  and A320neo's): `cutSlats` cuts the leading edge off (none at the pylon; `detach` gives them vertices of their own),
+  marked as kind 2 with a negative `livSurf.w`; the shader runs them forward and down whenever the flaps are out (18°
+  to 27°, no uniform of their own). Gear doors (gear3d.js): a bay's long front doors are shut again once the gear is
+  down (`transit`), the short rear ones stay open. Thrust reversers: `markEngines` makes
   each jet engine from its cowlings (overlapping ones, and pieces in line behind each other; only round ones with a
   fan or core inside and about the biggest size: not the A350's wing tip) and gives
   their vertices `livEng` (axis x, z, radius, 0 at the lip .. 1 at the exhaust) and `livEngL` (length; a nacelle

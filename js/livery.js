@@ -1014,10 +1014,10 @@ function cutSleeves(meshes) {
 // hinges (cutAlong): elevators from beside the tail cone to the tips, the rudder from a little above the fuselage.
 const STRIPS = 32;
 const SURF_CHORD = { 1: 0.27, 3: 0.32, 4: 0.32 }; // share of the chord that moves (wing, tailplane, fin)
-function markSurfaces(scene, m) {
+function markSurfaces(scene, m, file) {
   const meshes = [];
   scene.traverse((o) => { if (o.isMesh && o.geometry.attributes.position && !o.geometry.userData.livSurfaced) meshes.push(o); });
-  if (meshes.length) findSurfaces(meshes, m);
+  if (meshes.length) findSurfaces(meshes, m, file);
   scene.userData.surfaces = { 1: 0, 2: 0, 3: 0, 4: 0 };
   scene.userData.flapFaces = 0; // faces of the flaps cut out of the wing
   scene.userData.breaks = null; // where the fuselage breaks (bodyBreaks)
@@ -1030,7 +1030,7 @@ function markSurfaces(scene, m) {
     if (o.isMesh) seen.add(o.geometry);
   });
 }
-function findSurfaces(meshes, m) {
+function findSurfaces(meshes, m, file) {
   const hw = m.halfWidth, span = m.span;
   const x0 = 1.25 * hw, xw = (span - x0) / STRIPS;
   const finOn = m.finTop != null;
@@ -1164,6 +1164,7 @@ function findSurfaces(meshes, m) {
   const flapSplit = split > -Infinity ? split : Math.min(...wingE.filter((e) => e).map((e) => e.te)) - 0.03;
   const flapIn = chords.length && !delta ? cutFlaps(meshes, wingH, x0, xw, FLAP_END * span, flapSplit) : null;
   if (flapIn) readFaces(false);
+  const slatIn = SLATS[file] && chords.length && !delta ? cutSlats(meshes, wingE, x0, xw, SLAT_END * span) : null;
   const finH = fill(fin.map((ys) => {
     if (ys.length < 2) return null;
     const le = Math.max(...ys), te = Math.min(...ys);
@@ -1241,6 +1242,7 @@ function findSurfaces(meshes, m) {
       // (on the wing: ailerons on the outer third, out to the tip; flaps inboard of them)
       if (h && h.kind === 1) h = ax > 0.66 * span ? h : ax < FLAP_END * span && !flapIn && !delta ? { ...h, kind: 2 } : null;
       if (flapIn && flapIn.get(o).has(i)) h = flapIn.get(o).get(i);
+      if (slatIn && slatIn.get(o).has(i)) h = slatIn.get(o).get(i);
     } else if (finOn && ax < finX && z > finZ0 && z < finZ1) {
       const c = finH[Math.min(STRIPS - 1, Math.floor((z - finZ0) / zw))];
       if (c && faces.get(o)[i] & 2 && y < c.y && y > c.te - 0.01) h = c;
@@ -1402,6 +1404,118 @@ function cutAlong(meshes, pick, side) {
     g.computeBoundingBox();
     g.computeBoundingSphere();
   }
+}
+
+// The slats (SLATS: the A320's, along each wing's leading edge from beside the fuselage to near the tip, none where
+// the engine's pylon meets the wing): the wing's faces are cut along a line SLAT_CHORD of the chord behind its leading
+// edge (fitted straight over the strips, as the real one is) and at the slats' ends, and what lies ahead of it within
+// the wing's thickness gets vertices of its own (detach). Returns per mesh the slats' vertices -> { kind: 2, y, z,
+// chord }: a flap's kind with a negative chord (they belong to the wing as its flaps do; the shader moves them forward
+// and down, VERT_BODY).
+const SLATS = { a20n: true, a320: true }, SLAT_END = 0.95, SLAT_CHORD = 0.15;
+function cutSlats(meshes, wingE, x0, xw, x1) {
+  const med = (v) => { v.sort((p, q) => p - q); return v[v.length >> 1]; };
+  const strips = wingE.map((e, i) => {
+    if (!e) return null;
+    const x = x0 + (i + 0.5) * xw, c = e.le - e.te;
+    if (x > x1 + xw) return null;
+    const zs = [];
+    for (let k = 0; k < e.zs.length; k += 2) if (e.zs[k] > e.le - 0.25 * c) zs.push(e.zs[k + 1]);
+    return zs.length ? { x, le: e.le, te: e.te, z: med(zs) } : null;
+  }).filter((p) => p);
+  if (strips.length < 4) return null;
+  // (straight lines, Theil-Sen: a nacelle or a fairing in a few strips does not tip them)
+  const fit = (k) => {
+    const sl = [];
+    for (let i = 0; i < strips.length; i++) for (let j = i + 1; j < strips.length; j++) sl.push((strips[j][k] - strips[i][k]) / (strips[j].x - strips[i].x));
+    const m = med(sl), c = med(strips.map((p) => p[k] - m * p.x));
+    return (x) => c + m * x;
+  };
+  const le = fit('le'), te = fit('te'), zl = fit('z');
+  const chord = (ax) => Math.max(0.001, le(ax) - te(ax));
+  const line = (ax) => le(ax) - SLAT_CHORD * chord(ax);
+  // (where something reaches forward of the leading edge near the wing, the pylon and the engine: no slat)
+  const BINS = 64, ahead = new Uint8Array(BINS), bw = (x1 - x0) / BINS;
+  for (const o of meshes) {
+    const pos = o.geometry.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      const ax = Math.abs(pos.getX(i)), y = pos.getY(i), z = pos.getZ(i);
+      if (ax <= x0 || ax >= x1) continue;
+      const c = chord(ax);
+      if (y > le(ax) + 0.03 * c && z < zl(ax) + 0.1 * c && z > zl(ax) - 0.9 * c) ahead[Math.min(BINS - 1, Math.floor((ax - x0) / bw))] = 1;
+    }
+  }
+  const blocked = [];
+  for (let i = 0; i < BINS;) {
+    if (!ahead[i]) { i++; continue; }
+    let j = i;
+    while (j < BINS && ahead[j]) j++;
+    blocked.push([x0 + Math.max(0, i - 1) * bw, x0 + Math.min(BINS, j + 1) * bw]);
+    i = j;
+  }
+  const band = (p) => Math.abs(p[2] - zl(Math.abs(p[0]))) < 0.12 * chord(Math.abs(p[0])) + 0.002;
+  const near = (ps) => (ps.every((p) => p[0] > 0) || ps.every((p) => p[0] < 0)) && ps.every(band) &&
+    ps.some((p) => Math.abs(p[0]) > x0 && Math.abs(p[0]) < x1) && ps.every((p) => p[1] > line(Math.abs(p[0])) - 0.5 * chord(Math.abs(p[0])));
+  cutAlong(meshes, near, (p) => p[1] - line(Math.abs(p[0])));
+  for (const x of [x0, x1, ...blocked.flat()]) cutAlong(meshes, near, (p) => Math.abs(p[0]) - x);
+  const isSlat = (q) => { const ax = Math.abs(q[0]); return ax > x0 && ax < x1 && q[1] > line(ax) && !blocked.some(([p, b]) => ax > p && ax < b); };
+  const parts = detach(meshes, (ps) => near(ps) && isSlat([0, 1, 2].map((k) => (ps[0][k] + ps[1][k] + ps[2][k]) / 3)));
+  const out = new Map();
+  let any = 0;
+  for (const o of meshes) {
+    const pos = o.geometry.attributes.position, mine = new Map();
+    for (const i of parts.get(o.geometry) || []) {
+      const ax = Math.abs(pos.getX(i));
+      mine.set(i, { kind: 2, y: line(ax), z: zl(ax), chord: -SLAT_CHORD * chord(ax) });
+    }
+    any += mine.size;
+    out.set(o, mine);
+  }
+  return any ? out : null;
+}
+
+// Gives the faces `pick(ps)` takes vertices of their own where they share one with other faces, so that they can
+// move apart. Returns per geometry the set of their vertices.
+function detach(meshes, pick) {
+  const out = new Map();
+  for (const o of meshes) {
+    const g = o.geometry;
+    if (out.has(g) || g.groups.length > 1) continue;
+    const pos = g.attributes.position;
+    const idx = g.index ? Array.from(g.index.array) : Array.from({ length: pos.count }, (_, i) => i);
+    const P = (i) => [pos.getX(i), pos.getY(i), pos.getZ(i)];
+    const inPart = new Uint8Array(idx.length / 3);
+    for (let t = 0; t < idx.length; t += 3) if (pick([P(idx[t]), P(idx[t + 1]), P(idx[t + 2])])) inPart[t / 3] = 1;
+    const other = new Set();
+    for (let t = 0; t < idx.length; t += 3) if (!inPart[t / 3]) for (let e = 0; e < 3; e++) other.add(idx[t + e]);
+    const names = Object.keys(g.attributes);
+    const vals = names.map((k) => Array.from(g.attributes[k].array));
+    let count = pos.count;
+    const copy = new Map(), mine = new Set();
+    for (let t = 0; t < idx.length; t += 3) {
+      if (!inPart[t / 3]) continue;
+      for (let e = 0; e < 3; e++) {
+        let v = idx[t + e];
+        if (other.has(v)) {
+          if (!copy.has(v)) {
+            names.forEach((name, n) => { const size = g.attributes[name].itemSize, a = vals[n]; for (let c = 0; c < size; c++) a.push(a[v * size + c]); });
+            copy.set(v, count++);
+          }
+          v = idx[t + e] = copy.get(v);
+        }
+        mine.add(v);
+      }
+    }
+    if (!mine.size) continue;
+    if (copy.size) {
+      names.forEach((name, n) => g.setAttribute(name, new THREE.BufferAttribute(new Float32Array(vals[n]), g.attributes[name].itemSize)));
+      g.setIndex(count > 65535 ? new THREE.Uint32BufferAttribute(idx, 1) : new THREE.Uint16BufferAttribute(idx, 1));
+      g.computeBoundingBox();
+      g.computeBoundingSphere();
+    }
+    out.set(g, mine);
+  }
+  return out;
 }
 
 // The flaps: the wing's faces are cut along the hinge line and at the flap's ends (beside the fuselage and at FLAP_END
@@ -1718,7 +1832,7 @@ export function measure(scene, file, stretch = 1, title = { aspect: 4.3 }, finMa
 
 const VERT_HEAD = `attribute float livPart;
 attribute vec3 livHub;     // of a propeller: its hub (x, z), 1 (else 0, 0, 0)
-attribute vec4 livSurf;    // of a control surface: kind (1 aileron, 2 flap, 3 elevator, 4 rudder), hinge y, z; a flap's chord (0: not cut out)
+attribute vec4 livSurf;    // of a control surface: kind (1 aileron, 2 flap, 3 elevator, 4 rudder), hinge y, z; a flap's chord (0: not cut out; below 0: a slat's)
 uniform float livSpin;     // how far the propellers have turned (radians)
 uniform float livAil;      // aileron (radians, rolling right: the right one up)
 uniform float livFlap;     // flaps (radians, down)
@@ -1807,6 +1921,9 @@ if (livEng.z > 0.0 && livRev > 0.001 && livRevKind > 0.5 &&
 vLivFlap = vec2(0.0);
 if (livSurf.x > 0.5) {
   float livA = livSurf.x < 1.5 ? -livAil * sign(position.x) : livSurf.x < 2.5 ? livFlap : livSurf.x < 3.5 ? livElev : -livRud;
+  // (a slat: out as soon as the flaps are, 18° for take-off and on to 27° with them for landing, as the A320's; nose down)
+  float livSlat = livSurf.x > 1.5 && livSurf.x < 2.5 && livSurf.w < 0.0 ? smoothstep(0.0, 0.1, livFlap) : 0.0;
+  if (livSlat > 0.0) livA = -livSlat * (0.31 + 0.16 * clamp(livFlap / 0.61, 0.0, 1.0));
   float livC = cos(livA);
   float livS = sin(livA);
   if (livSurf.x < 3.5) {
@@ -1820,6 +1937,8 @@ if (livSurf.x > 0.5) {
       livH += vec2(-0.18, -0.08) * livOut * livSurf.w;
       vLivFlap = vec2(1.0, clamp((livSurf.y - position.y) / livSurf.w, 0.0, 1.0));
     }
+    // ... and a slat runs forward and down on its tracks, a slot opening behind it
+    if (livSurf.w < 0.0) livH += vec2(0.45, -0.2) * livSlat * -livSurf.w;
     transformed.yz = livH + vec2(livC * livR.x - livS * livR.y, livS * livR.x + livC * livR.y);
     #if !defined(FLAT_SHADED) && (defined(STANDARD) || defined(PHONG) || defined(LAMBERT) || defined(TOON))
     // (lit as it lies now)
@@ -2242,7 +2361,7 @@ export function paintLivery(scene, file, extra, stretch = 1, livery = FG.livery(
     { aspect: finText.aspect, angle: mark.angle, size: mark.size });
   if (POCKET_WINDOWS[file]) flushWindows(scene, m.halfWidth);
   markEngines(scene, m.halfWidth, file);
-  markSurfaces(scene, m);
+  markSurfaces(scene, m, file);
   const prop = FG.data.props && FG.data.props[file];   // its propellers, if it has any
   const belly = livery.belly;
   const color = (c) => new THREE.Color(c);
