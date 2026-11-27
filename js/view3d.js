@@ -399,7 +399,7 @@ function ownMaterials(model) {
       m.onBeforeCompile = o.material.onBeforeCompile;
       m.customProgramCacheKey = o.material.customProgramCacheKey;
       // (the clone's userData is a JSON copy: the vectors become their own again)
-      for (const k of ['livCut', 'livKeep']) if (m.userData[k]) m.userData[k] = { value: new THREE.Vector4() };
+      for (const k of ['livCut', 'livKeep']) if (m.userData[k]) m.userData[k] = { value: new THREE.Vector4(0, 0, 0, 0) }; // (not THREE's default w = 1: the rudder broken off)
       copies.set(o.material, m);
     }
     o.material = copies.get(o.material);
@@ -1082,6 +1082,7 @@ function terminalColors(night) {
     'carpark', c('#6b7280'), 'hall', c('#9aa7b8'), 'bridge', c('#c3ccd8'), 'glass', lit('#35506a', '#f5c66e'), 'roof', c('#e3e7ed'), 'plant', c('#6d7682'),
     'canopy', c('#dfe5ec'), 'road', c('#3b4048'), 'mast', c('#d1d5db'), c('#8a96a8')]];
 }
+const satSource = { on: false }; // fgsat:// registered (js/scenery.js)
 let demRev = 0; // goes up when airports are levelled again (the tiles are loaded again)
 function demSource(maxzoom) {
   if (FG.flat && !demSource.on) { maplibregl.addProtocol('fgdem', FG.flat.protocol); demSource.on = true; }
@@ -1109,9 +1110,11 @@ function transformStyle(_prev, style) {
   style.sources.terrain = demSource(12);
   style.sources.hillshade = demSource(13);
   // Esri's aerial imagery, the same as the 2D map: sharp down to single aircraft (Sentinel-2 stopped at 10 m).
+  // (through fgsat://, js/scenery.js: from the prepared scenery's cache where an area was prepared, else Esri)
+  if (FG.scenery && FG.scenery.ok && !satSource.on) { maplibregl.addProtocol('fgsat', FG.scenery.protocol); satSource.on = true; }
   style.sources.satellite = {
     type: 'raster', tileSize: 256, maxzoom: 18,
-    tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
+    tiles: [satSource.on ? 'fgsat://{z}/{y}/{x}' : 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
     attribution: 'Imagery &copy; Esri, Maxar, Earthstar Geographics',
   };
   style.terrain = { source: 'terrain', exaggeration: TERRAIN_EXAG };
@@ -2765,7 +2768,7 @@ const planeLayer = {
     e.obj.visible = !pose.gone && !(v.follow && v.cam === 'cockpit') && (!v.clip || pos.x * v.clip[0] + pos.y * v.clip[1] + pos.z * v.clip[2] + v.clip[3] > -0.002);
     // what broke off it (pose.dmg) and the parts falling away or lying on the ground (pose.pieces): pilotPieces
     const d = pose.dmg;
-    if (!e.cut) e.cut = new THREE.Vector4();
+    if (!e.cut) e.cut = new THREE.Vector4(0, 0, 0, 0);
     const body = (d && d.body) || [0, 0]; // (the nose, the tail section broken off: livCut.w bits 2, 4)
     e.cut.set(d ? d.cut[0] || 0 : 0, d ? d.cut[1] || 0 : 0, d ? d.elev || 0 : 0, (d ? d.rud || 0 : 0) + (body[0] ? 2 : 0) + (body[1] ? 4 : 0));
     if (e.obj.userData.nav && e.obj.userData.nav.uCut) { e.obj.userData.nav.uCut.value.x = e.cut.x; e.obj.userData.nav.uCut.value.y = e.cut.y; }
@@ -2781,7 +2784,7 @@ const planeLayer = {
   },
 };
 const pilotOn = () => !!(FG.pilot && FG.pilot.active);
-const NO_PARTS = new THREE.Vector4();
+const NO_PARTS = new THREE.Vector4(0, 0, 0, 0); // (w 0: THREE's Vector4() has w = 1, livCut's bit for a rudder broken off)
 
 // ---------- parts broken off the hand-flown plane ----------
 // The fly page's pose has `pieces`: [{ id, part: { kind: 'wing' | 'elev' | 'rud', side: -1 left | 1 right | 0 both,

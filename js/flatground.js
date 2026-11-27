@@ -23,13 +23,16 @@
   const MAX_TILT = [0.006, 0.015]; // slope of the levelled ground at most, with a runway of 1800 m or more / without
   const LAYOUT_WAIT = 8000; // ms waited for an airport's real layout before it is levelled without one
 
+  // (from the prepared scenery's cache where an area was prepared: js/scenery.js)
+  const get = (url, opts, z, x, y) => (FG.scenery ? FG.scenery.fetch(url, opts, z, x, y) : fetch(url, opts));
+
   // ---------- raw tiles ----------
   const raw = new Map(); // "z/x/y" -> promise of Float32Array heights (m)
   function rawTile(z, x, y) {
     const key = `${z}/${x}/${y}`;
     let p = raw.get(key);
     if (p) { raw.delete(key); raw.set(key, p); return p; } // (to the end: most recently used)
-    p = fetch(URL.replace('{z}', z).replace('{x}', x).replace('{y}', y))
+    p = get(URL.replace('{z}', z).replace('{x}', x).replace('{y}', y), undefined, z, x, y)
       .then((r) => { if (r.status === 404) return null; if (!r.ok) throw new Error(`terrain tile ${r.status}`); return r.blob(); })
       .then((blob) => blob && createImageBitmap(blob, { colorSpaceConversion: 'none', premultiplyAlpha: 'none' }))
       .then(async (img) => {
@@ -427,7 +430,7 @@
     const [z, x, y] = params.url.replace(/^fgdem:\/\//, '').split(/[/?]/).map(Number);
     const mds = await modelsFor(z, x, y).catch(() => []);
     if (!mds.length) {
-      const r = await fetch(URL.replace('{z}', z).replace('{x}', x).replace('{y}', y), { signal: abort && abort.signal });
+      const r = await get(URL.replace('{z}', z).replace('{x}', x).replace('{y}', y), { signal: abort && abort.signal }, z, x, y);
       if (r.ok) return { data: await r.arrayBuffer() };
       throw Object.assign(new Error(`terrain tile ${r.status}`), { status: r.status }); // (MapLibre takes a 404 quietly: the coarser tile shows)
     }

@@ -300,6 +300,11 @@ Buildings in 3D have windows, glass fronts, entrance doors on the landside, hang
 open car park decks, in a few styles that differ from building to building; their roofs take the colour of the
 satellite photo, and the walls are picked to go with it (js/facades.js).
 
+Prepared scenery (js/scenery.js, from Fly it yourself → Scenery → 🗺 Prepare an area…): an area clicked on a map
+whose satellite pictures and heights are kept in the browser (Cache Storage) at the detail picked, the airports in
+it sharper still. The 3D view reads them from there first (satellite through `fgsat://`, heights through
+js/flatground.js), so that ground is sharp and there at once, even offline.
+
 Gates: every airport has an apron beside its longest runway, where nothing is in the way: it keeps clear of
 the other runways and of the real taxiways and buildings there (read off the 3D map the first time the
 airport is looked at in 3D from zoom 13, kept in the browser). Up to size 2 the gates are one row; from size 3

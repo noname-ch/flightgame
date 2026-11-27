@@ -1082,6 +1082,42 @@ try {
     await key('v');
     const again = await evaluate(() => { const c = FG.view3d.map.getCenter(); return { lat: c.lat, lng: c.lng, z: FG.view3d.map.getZoom() }; });
     if (!near(again, 46.91, 7.5) || Math.abs(again.z - 13) > 0.01) errors.push(`3D did not open again where the 2D map was (${JSON.stringify(again)})`);
+    // prepared scenery (js/scenery.js): the picker opens and closes; a small area at coarse detail is kept and read
+    // back through fgsat://; deleting it takes its pictures out again
+    step('prepared scenery: picker, a small area kept and read from the cache, deleted');
+    const sc = await evaluate(() => Promise.race([new Promise((r) => setTimeout(() => r({ err: 'took over 60 s' }), 60000)), (async () => {
+      if (!FG.scenery) return { err: 'FG.scenery missing' };
+      // (paused while it downloads: the game at full speed meanwhile would only add crashes and the like to later steps)
+      const running = FG.ui.speed > 0;
+      if (running) document.getElementById('pause').click();
+      try {
+      FG.scenery.open({ code: 'BRN' });
+      const shown = !!document.querySelector('#scenery .sc-side h2');
+      const est = FG.scenery._estimate({ s: 46.7, w: 7.2, n: 47.1, e: 7.8, zmax: 16 });
+      FG.scenery.close();
+      if (!shown || document.querySelector('#scenery')) return { err: 'the picker did not open and close' };
+      if (!(est.files > 1000 && est.files < 100000)) return { err: `estimate ${est.files} files` };
+      if (!FG.scenery.ok) return { skip: 'no Cache Storage here' };
+      const src = FG.view3d.map.getStyle().sources.satellite.tiles[0];
+      if (!src.startsWith('fgsat://')) return { err: `3D satellite not through fgsat:// (${src})` };
+      const area = { s: 46.91, w: 7.49, n: 46.92, e: 7.51, zmax: 7, name: 'smoke' };
+      FG.scenery._start(area);
+      while (FG.scenery.busy) await new Promise((r) => setTimeout(r, 200));
+      const kept = FG.scenery.areas.find((a) => a.name === 'smoke');
+      const before = FG.scenery.stats.cache;
+      const lr = 46.915 * Math.PI / 180; // (BRN's zoom-7 tile)
+      const [x, y] = [Math.floor((7.5 + 180) / 360 * 128), Math.floor((1 - Math.log(Math.tan(lr) + 1 / Math.cos(lr)) / Math.PI) / 2 * 128)];
+      const got = await FG.scenery.protocol({ url: `fgsat://7/${y}/${x}` }).catch((e) => ({ e: String(e) }));
+      const fromCache = FG.scenery.stats.cache - before;
+      await FG.scenery._remove(FG.scenery.areas.indexOf(kept));
+      return { files: kept && kept.files, complete: kept && kept.complete, bytes: got.data ? got.data.byteLength : got.e, fromCache, left: FG.scenery.areas.length };
+      } finally { if (running && FG.ui.speed === 0) document.getElementById('pause').click(); }
+    })()]));
+    if (sc.err) errors.push(`prepared scenery: ${sc.err}`);
+    else if (sc.skip) warnings.push(`prepared scenery: ${sc.skip}`);
+    else if (!sc.files) warnings.push(`prepared scenery: nothing kept (${JSON.stringify(sc)}: tiles down?)`);
+    else if (sc.fromCache !== 1 || !(sc.bytes > 1000)) errors.push(`prepared scenery: a kept picture not read from the cache (${JSON.stringify(sc)})`);
+    else if (sc.left) errors.push('prepared scenery: the area was not deleted');
     // the ground under airports is levelled (js/flatground.js): Istanbul's runways lie over old mines in the heights
     step('3D ground: Istanbul\'s runways levelled');
     const level = await evaluate(() => Promise.race([new Promise((r) => setTimeout(() => r(null), 30000)), (async () => {

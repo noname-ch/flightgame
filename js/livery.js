@@ -1982,7 +1982,7 @@ export function paintLivery(scene, file, extra, stretch = 1, livery = FG.livery(
     // (each material has its own OWN_UNIFORMS, so an aircraft drawn with copies of them bends, turns its
     // propellers and moves its control surfaces on its own:
     // js/view3d.js ownMaterials)
-    for (const k of OWN_UNIFORMS) o.material.userData[k] = { value: OWN_VEC4[k] ? new THREE.Vector4() : k === 'livLight' ? 1 : 0 };
+    for (const k of OWN_UNIFORMS) o.material.userData[k] = { value: OWN_VEC4[k] ? new THREE.Vector4(0, 0, 0, 0) : k === 'livLight' ? 1 : 0 };
     o.material.userData.livSpanOf = m.span; // (the half span the shader breaks parts off at: js/view3d.js partMiddle)
     o.material.userData.livBreakOf = scene.userData.breaks; // (and where the fuselage breaks, with its half width)
     o.material.userData.livHalfOf = m.halfWidth;
