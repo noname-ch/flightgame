@@ -1268,9 +1268,9 @@ try {
       const m = await import('/js/models3d.js');
       const { inPart, PARTS } = await import('/js/livery.js');
       const out = {};
-      for (const file of ['q400', 'atr42', 'a320', 'a359', 'a333', 'dc3', 'b738']) {
+      for (const file of ['q400', 'atr42', 'a320', 'a20n', 'a359', 'a333', 'dc3', 'b738']) {
         const type = Object.keys(FG.data.models).find((t) => FG.data.models[t] === file);
-        const s = await m.loadModel(type);
+        const s = await m.loadModel(type, undefined, false); // (the full model, also where Chrome draws without a graphics chip)
         // (what turns reaches in to its hub: a ring that doesn't is a cowling, as the 737's inlet lip was)
         const hubs = {};
         s.traverse((o) => {
@@ -1319,29 +1319,29 @@ try {
     });
     // (and the jets' fans: one in each engine, nothing else turning: GitHub issues #8, #9. Not the A350's: its fan is
     // a picture on the cowling, nothing there can turn)
-    for (const file of ['q400', 'atr42', 'a320', 'a333', 'dc3', 'b738']) {
+    for (const file of ['q400', 'atr42', 'a320', 'a20n', 'a333', 'dc3', 'b738']) {
       if (parts[file].props !== 2) errors.push(`3D propellers and fans: ${file} has ${parts[file].props} found, not 2`);
       if (parts[file].hollow) errors.push(`3D propellers and fans: ${file} turns ${parts[file].hollow} ring(s) that do not reach their hub (a cowling?)`);
     }
     // (every model can lose a wing tip, a wing, its elevators and its rudder: the tip a part of the outer wing)
-    for (const file of ['q400', 'atr42', 'a320', 'a359', 'a333', 'dc3', 'b738']) {
+    for (const file of ['q400', 'atr42', 'a320', 'a20n', 'a359', 'a333', 'dc3', 'b738']) {
       const q = parts[file].pieces;
       if (!(q.tip > 0 && q.wing > q.tip && q.elev > 0 && q.rud > 0)) errors.push(`3D broken-off parts: ${file} ${JSON.stringify(q)}`);
       if (!(q.nose > 0 && q.tail > 0) || q.both || q.surfOff || q.wingInTail) errors.push(`3D fuselage sections (js/livery.js bodyBreaks): ${file} ${JSON.stringify(q)}`);
     }
-    for (const file of ['atr42', 'a320']) {
+    for (const file of ['atr42', 'a320', 'a20n']) {
       const missing = ['aileron', 'flap', 'elevator', 'rudder'].filter((_, i) => !(parts[file].surfaces && parts[file].surfaces[i + 1] > 0));
       if (missing.length) errors.push(`3D control surfaces: ${file} has no ${missing.join(', ')}`);
     }
     // (elevators from beside the tail cone out to the tips, the rudder up the whole fin: the A350 had no elevators,
     // the A320's were a few vertices at the tips and its rudder only the top of the fin)
-    for (const file of ['q400', 'atr42', 'a320', 'a359', 'a333', 'dc3']) {
+    for (const file of ['q400', 'atr42', 'a320', 'a20n', 'a359', 'a333', 'dc3']) {
       const { elevIn, rudShare } = parts[file];
       if (!(elevIn < 0.35)) errors.push(`3D elevators: ${file}'s start ${elevIn} of the way out, not beside the fuselage`);
       if (!(rudShare > 0.8)) errors.push(`3D rudder: ${file}'s covers ${rudShare} of the fin's height`);
     }
     // (the flaps are cut out of the wing, so they slide back on their own and are painted apart: cutFlaps)
-    for (const file of ['atr42', 'q400', 'a320']) if (!(parts[file].flapFaces > 0)) errors.push(`3D flaps: ${file} has no flaps cut out of its wing`);
+    for (const file of ['atr42', 'q400', 'a320', 'a20n']) if (!(parts[file].flapFaces > 0)) errors.push(`3D flaps: ${file} has no flaps cut out of its wing`);
 
     step("3D thrust reversers: every type has its kind; each engine found once (the CRJ's nacelle in two pieces, not the A350's wing tip, Concorde's four nozzles in its twin nacelles); they brake harder than brakes alone)");
     const revs = await evaluate(async () => {

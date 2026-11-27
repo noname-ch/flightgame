@@ -65,7 +65,8 @@ const A350_COCKPIT = {
 // black is a band of the same width all round the glass, seen from any side (photos of real A350s on Wikimedia Commons:
 // "Airbus A350 cockpit windows (14274972354).jpg" from the side, "Airbus A350 Front View.jpg" from the front). It is
 // made from the model's own cockpit glass (cockpitMask): every triangle in `region` (from y on, between these z) that
-// is glass: see-through, or of a part without a texture (the A320's frames), or textured dark (the A350's windows,
+// is glass: see-through, or of a part without a texture (the A320's frames) unless its vertices' colours say it is
+// light, or textured dark (the A350's windows,
 // which are triangles of their own on a black patch of its texture). That glass is drawn seen from the side (y, z) and,
 // where it faces forward (the windscreen: `front` and more of its normal along y), seen from the front (x, z), each
 // with what its frames enclose filled in and grown by `border` of the windows' height with round
@@ -78,7 +79,7 @@ const A350_COCKPIT = {
 const MASK_STYLE = { border: 0.07, round: 0.12 };
 const MASKS = {
   a359: { region: { y: 0.44, z: [-0.05, -0.03] }, front: 0.4, outline: A350_COCKPIT, clear: true },
-  a320: { types: ['A320neo'], region: { y: 0.41, z: [-0.056, -0.037] }, front: 0.4 },
+  a20n: { region: { y: 0.405, z: [-0.055, -0.033] }, front: 0.4 },
   a321: { types: ['A321neo', 'A321XLR'], region: { y: 0.42, z: [-0.049, -0.033] }, front: 0.4 },
 };
 // Whether a type flies with the mask (its model's, unless the model's mask is only for some of its types).
@@ -314,7 +315,7 @@ function cockpitGlass(scene, file) {
   const p = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];
   scene.traverse((o) => {
     if (!o.isMesh || !o.geometry.attributes.position) return;
-    const g = o.geometry, pos = g.attributes.position, uv = g.attributes.uv, idx = g.index;
+    const g = o.geometry, pos = g.attributes.position, uv = g.attributes.uv, idx = g.index, col = g.attributes.color;
     const mat = Array.isArray(o.material) ? o.material[0] : o.material;
     const tex = mat.map && uv ? texel(mat.map) : null;
     const n = idx ? idx.count : pos.count;
@@ -322,7 +323,10 @@ function cockpitGlass(scene, file) {
       const j = [0, 1, 2].map((k) => (idx ? idx.getX(i + k) : i + k));
       j.forEach((v, k) => p[k].fromBufferAttribute(pos, v));
       if (p.some((v) => v.y < region.y || v.z < region.z[0] || v.z > region.z[1])) continue;
-      if (tex && !mat.transparent) {
+      if (!tex && col) {
+        // colours in the vertices (a model of plain-coloured parts, baked into one material): glass where they are dark
+        if (j.reduce((s, v) => s + col.getX(v) + col.getY(v) + col.getZ(v), 0) / 9 > 0.05) continue;
+      } else if (tex && !mat.transparent) {
         // textured: glass where it is dark (the middle of the triangle in the texture)
         let u = (uv.getX(j[0]) + uv.getX(j[1]) + uv.getX(j[2])) / 3 % 1, v = (uv.getY(j[0]) + uv.getY(j[1]) + uv.getY(j[2])) / 3 % 1;
         if (u < 0) u += 1;

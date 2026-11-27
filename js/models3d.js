@@ -27,8 +27,7 @@ export function patchFacing(shader) {
 // How to draw a type with its model, which is 1 unit long: `len` (m) along the fuselage and `wide` (m)
 // across it. A type with its own model gets the same for both. A type that borrows a relative's model keeps
 // that model's wing, at a fuselage as thick as its own, and is stretched to its own length: `stretch`.
-export function modelSize(type) {
-  const file = FG.data.models[type];
+export function modelSize(type, file = FG.data.models[type]) {
   const look = FG.data.looks[type];
   if (!file || !look) return null;
   const own = FG.data.modelSize[file];
@@ -579,8 +578,12 @@ function propDiscs(scene, file) {
 // The model of a type painted in a livery (the airline's, FG.livery(), unless another is asked for), 1 unit
 // long: scale it with modelSize(type). The scene is shared, clone() it
 // for every aircraft drawn. Stretched types get their own materials, so the livery can keep its proportions.
-export function loadModel(type, livery = FG.livery()) {
-  const size = modelSize(type);
+// `lite`: a model's light stand-in where it has one (FG.data.liteModels; the A320neo's full model has nearly half a
+// million triangles): true for a small picture (the 2D map's icons), false for the full model always, left out: the
+// stand-in on a device that draws 3D slowly (weakDevice), the full model elsewhere.
+export function loadModel(type, livery = FG.livery(), lite = weakDevice()) {
+  const stand = lite && FG.data.liteModels && FG.data.liteModels[FG.data.models[type]];
+  const size = modelSize(type, stand || undefined);
   const { file, stretch } = size;
   const key = `${file}|${stretch}|${FG.liveries ? FG.liveries.key(livery) : livery.id}|${gearKey(type, file)}|${maskOf(file, type) ? 'mask' : ''}` +
     (FG.data.looks[type].plugs || FG.data.looks[type].sharklets || FG.data.looks[type].fences || FG.data.looks[type].engines ? `|${type}` : '');
@@ -593,6 +596,24 @@ export function loadModel(type, livery = FG.livery()) {
     loads[key].catch((e) => console.warn(`3D model ${file} not loaded`, e));
   }
   return loads[key];
+}
+
+// A phone or tablet, or a browser that draws 3D without a graphics chip (SwiftShader, llvmpipe: as the smoke test's):
+// every frame of half a million triangles there took seconds, and the game stood still.
+let weak = null;
+export function weakDevice() {
+  if (weak === null) {
+    let soft = true;
+    try {
+      const gl = document.createElement('canvas').getContext('webgl');
+      const ext = gl && gl.getExtension('WEBGL_debug_renderer_info');
+      soft = !gl || /swiftshader|llvmpipe|software|basic render/i.test(gl.getParameter(ext ? ext.UNMASKED_RENDERER_WEBGL : gl.RENDERER));
+      const lose = gl && gl.getExtension('WEBGL_lose_context');
+      if (lose) lose.loseContext();
+    } catch (e) { /* no WebGL: soft */ }
+    weak = soft || (typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches);
+  }
+  return weak;
 }
 
 // A type painted in a livery afresh, not kept: the livery designer (js/liverywin.js) paints its draft again on

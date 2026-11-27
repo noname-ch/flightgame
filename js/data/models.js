@@ -8,7 +8,7 @@ FG.data.models = {
   'ERJ145': 'crj700', 'CRJ200': 'crj700', 'CRJ900': 'crj900', 'F100': 'crj900', 'RJ100': 'bae146',
   'E175': 'e170', 'E190': 'e190', 'E195': 'e190', 'E190-E2': 'e190', 'E195-E2': 'e190', 'SSJ100': 'e190',
   'A220-100': 'cs100', 'A220-300': 'cs300',
-  'A318': 'a318', 'A319': 'a319', 'A320': 'a320', 'A320neo': 'a320', 'C919': 'a320',
+  'A318': 'a318', 'A319': 'a319', 'A320': 'a320', 'A320neo': 'a20n', 'C919': 'a320',
   'A321': 'a321', 'A321neo': 'a321', 'A321XLR': 'a321',
   'B737-700': 'b737', 'B737-800': 'b738', 'B737-8': 'b738', 'B737-9': 'b739', 'B757-200': 'b752', 'MD-82': 'crj900',
   'B767-300ER': 'b763', 'A330-200': 'a332', 'A330-300': 'a333', 'A330-900': 'a333',
@@ -40,7 +40,7 @@ FG.data.modelSize = {
   dhc6: [15.75, 1.8], do228: [16.37, 1.8], b1900d: [17.74, 1.9], saab340: [19.7, 2.3], saab2000: [27.3, 2.3],
   atr42: [22.77, 2.9], q400: [32.59, 2.7], crj700: [32.46, 2.7], crj900: [36.36, 2.7], bae146: [28.31, 3.6],
   e170: [29.8, 3.3], e190: [35.83, 3.3], cs100: [35.02, 3.7], cs300: [38.17, 3.7],
-  a318: [31.71, 4.1], a319: [33.89, 4.1], a320: [38.27, 4.1], a321: [44.52, 4.1],
+  a318: [31.71, 4.1], a319: [33.89, 4.1], a320: [38.27, 4.1], a20n: [37.57, 4.14], a321: [44.52, 4.1],
   b737: [34.93, 4.0], b738: [39.42, 4.0], b739: [40.62, 4.0], b752: [46.34, 4.0], b763: [55.2, 5.4],
   a332: [58.36, 5.6], a333: [63.05, 5.6], a343: [63.69, 5.64], a346: [77.12, 5.6], a359: [66.8, 6.1], a380: [72.72, 8.4],
   b788: [56.68, 5.9], b789: [65.9, 5.9], b772: [64.43, 6.2], b773: [74.38, 6.2], b744: [70.94, 6.5], b748: [76.55, 6.5],
@@ -60,6 +60,10 @@ FG.data.plugs = {
 // Where a model's engines are (the right one; the left is mirrored): the box every piece of an engine lies in, and the
 // top of the nacelle at its back, which a type with bigger engines (FG.data.looks `engines`) grows them from
 // (js/models3d.js growEngines).
+// A light model drawn instead of a heavy one where the picture is small (the 2D map's icons: js/icons3d.js) and on
+// phones, tablets and browsers without a graphics chip (js/models3d.js loadModel, weakDevice).
+FG.data.liteModels = { a20n: 'a320' };
+
 FG.data.engineBox = {
   a320: { x: [0.135, 0.195], y: [0.06, 0.205], z: [-0.155, -0.09], at: [0.1645, 0.068, -0.092] },
 };
@@ -101,6 +105,7 @@ FG.data.gear = {
   a318: { main: 'wing', track: 0.95, wheels: '1x2', tyre: 1.17 },
   a319: { main: 'wing', track: 0.95, wheels: '1x2', tyre: 1.17 },
   a320: { main: 'wing', track: 0.95, wheels: '1x2', tyre: 1.17 },
+  a20n: { main: 'wing', track: 0.95, wheels: '1x2', tyre: 1.17 },
   a321: { main: 'wing', track: 0.95, wheels: '1x2', tyre: 1.17 },
   b737: { main: 'wing', track: 0.76, wheels: '1x2', tyre: 1.1 },
   b738: { main: 'wing', track: 0.76, wheels: '1x2', tyre: 1.1 },

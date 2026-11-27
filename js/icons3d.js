@@ -55,7 +55,7 @@ FG.planeIcons = {
     const key = `${type}|${FG.liveries.key(livery)}`;
     if (icons[key] === undefined) {
       icons[key] = null;
-      loadModel(type, livery).then((model) => render(key, type, model), () => {});
+      loadModel(type, livery, true).then((model) => render(key, type, model), () => {});
     }
     return icons[key];
   },

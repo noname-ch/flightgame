@@ -78,12 +78,18 @@ nose in front of the engines and the surfaces as the rear of the wing's, tailpla
 in Blender keeps working as long as it stays 1 unit long and centred (export glTF Binary, +Y Up, no Draco); a
 propeller only turns when it is its own piece (Edit Mode, select it, `P` → Selection).
 
-`a320.glb` has plain wing tips, `a321.glb` wing tip fences. The sharklets of the A320neo, A321neo and A321XLR and the
-A320's wing tip fences are not in the files: `js/models3d.js` (`addWingTips`) builds them onto the wing tips as the model loads,
+`a20n.glb` (A320neo) is [A320neo](https://sketchfab.com/3d-models/a320neo-9ebc0a94ed964c37a0e2a3ad20e509a6) by
+aidos.rakhimzhanov947 on Sketchfab, licensed under **CC BY 4.0**, in full detail (about 470 000 triangles): its own gear
+and wing tip fences taken out, its parts' plain colours put into the vertices (one material), its few mirrored parts'
+faces turned the right way round. Its cockpit glass is found by those colours (dark).
+
+`a320.glb` has plain wing tips, `a321.glb` and `a20n.glb` wing tip fences (`a20n.glb`'s taken out). The sharklets of the
+A320neo, A321neo and A321XLR and the A320's wing tip fences are not in the files: `js/models3d.js` (`addWingTips`) builds them onto the wing tips as the model loads,
 for the types with `sharklets` or `fences` in `js/data/looks.js`. As it loads, `a320.glb` also gets smooth normals where
 its faces were flat facets (`SMOOTH`: the engine cowlings), and `js/livery.js` paints its light see-through window glass
-dark (`DARK_GLASS`) and its doors and exits as seams (`CABIN_DOORS`). The A320neo's bigger engines are the model's grown
-(`growEngines`, looks.js `engines`, where they are: `FG.data.engineBox` in `js/data/models.js`).
+dark (`DARK_GLASS`) and its doors and exits as seams (`CABIN_DOORS`). (`growEngines`, looks.js `engines`, grows a model's engines for a type with
+bigger ones, where they are: `FG.data.engineBox` in `js/data/models.js`; no type uses it since the A320neo has its own
+model.)
 
 ## Making a model from pictures or video (`tools/plane_scan.html`)
 
