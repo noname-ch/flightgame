@@ -253,10 +253,15 @@ function planeModel(type, livery = FG.livery()) {
 const NAV_VS = `
 uniform float uPx; uniform float uTime; uniform float uPhase; uniform vec4 uOn;
 uniform vec3 uCut; // a wing broken off beyond these half spans (left, right; 0: whole), the half span in metres
+uniform float uFlex; uniform vec2 uWing; // the wings' bend (livFlex) and half span and fuselage half width (model units)
 attribute float kind; attribute vec3 tint;
 varying vec3 vCol; varying float vA;
 void main() {
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  // (the wing tip lights go up and down with the bending wing, as js/livery.js bends it)
+  vec3 p = position;
+  float out_ = max(abs(p.x) - 1.1 * uWing.y, 0.0) / max(uWing.x - 1.1 * uWing.y, 0.001);
+  p.z += uFlex * uWing.x * out_ * out_;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
   float t = uTime + uPhase;
   float a = 0.0, size = 5.0;
   if (kind < 0.5) a = uOn.x;
@@ -286,9 +291,15 @@ function navSpotsOf(type, model) {
   const p = new THREE.Vector3();
   let L = null, R = null, aft = null, top = -Infinity, bottom = Infinity, nose = Infinity;
   const tips = [];
+  let wing = [0, 0]; // (the livery's half span and fuselage half width, in the model's units: the wings' bend)
   model.updateMatrixWorld(true);
   model.traverse((o) => {
     if (!o.isMesh || inGear(o)) return;
+    const lu = o.material && o.material.userData;
+    if (!wing[0] && lu && lu.livSpanOf && lu.livHalfOf != null) {
+      const sx = new THREE.Vector3().setFromMatrixScale(o.matrixWorld).x;
+      wing = [lu.livSpanOf * sx, lu.livHalfOf * sx];
+    }
     if (o.userData.nav) {
       // (sharklets and fences, js/models3d.js addWingTips: the wing tip lights sit where the wing ends, not on their tops)
       for (const s of o.userData.nav) tips.push(new THREE.Vector3(s[0], s[1], s[2]).applyMatrix4(o.matrixWorld));
@@ -322,6 +333,7 @@ function navSpotsOf(type, model) {
   add(R.x + 0.1, R.y - 0.3, R.z, 2, white);
   add(0, aft.y - 0.2, aft.z + 0.2, 2, white);
   add(0, 0.35 * len, nose - 0.2, 3, [1, 0.95, 0.82]);
+  out.wing = wing;
   return (navSpots[type] = out);
 }
 function navLights(type, model) {
@@ -339,7 +351,8 @@ function navLights(type, model) {
   g.setAttribute('tint', new THREE.BufferAttribute(tint, 3));
   const m = new THREE.ShaderMaterial({
     uniforms: { uPx: { value: window.devicePixelRatio || 1 }, uTime: { value: 0 }, uPhase: { value: Math.random() * 10 }, uOn: { value: new THREE.Vector4() },
-      uCut: { value: new THREE.Vector3(0, 0, Math.max(1, ...Array.from({ length: n }, (_, i) => Math.abs(spots[i * 7])))) } },
+      uCut: { value: new THREE.Vector3(0, 0, Math.max(1, ...Array.from({ length: n }, (_, i) => Math.abs(spots[i * 7])))) },
+      uFlex: { value: 0 }, uWing: { value: new THREE.Vector2(...(spots.wing || [0, 0])) } },
     vertexShader: NAV_VS, fragmentShader: NAV_FS, transparent: true, depthWrite: false, depthTest: true, blending: THREE.AdditiveBlending,
   });
   const pts = new THREE.Points(g, m);
@@ -1370,6 +1383,7 @@ function placeModel(e, pose, altM, exag, globe, now, lineUp) {
     const kq = 1 - Math.exp(-dt / 0.3), kf = 1 - Math.exp(-dt / 3);
     for (const n of ['ail', 'elev', 'rud']) e.ctl[n] += (c[n] - e.ctl[n]) * kq;
     e.ctl.flap += (c.flap - e.ctl.flap) * kf;
+    if (e.obj.userData.nav) e.obj.userData.nav.uFlex.value = e.flex;
     for (const u of liv) {
       u.livFlex.value = e.flex;
       if (u.livLight) u.livLight.value = 0.15 + 0.85 * light;
