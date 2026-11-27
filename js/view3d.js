@@ -3283,6 +3283,7 @@ function pilotTick() {
 // Cockpit camera: the captain's eyes (about 4.6 m behind the nose, 7.6 m above the wheels on an A350), looking
 // FG.pilot.LOOK_DOWN° under the nose; it pitches and rolls with the plane. The plane itself is not drawn.
 const EYE = { back: 4.6, up: 7.6 };
+const AIM_EYES = 20; // (how far ahead the map's centre is put, in eye heights: cockpitTick)
 // The 3D flight deck (flightgame-fly src/cockpit3d.js) is drawn round the camera for the types it has (the A350s): then the eye
 // sits in the captain's seat, and a drag turns the head (v.look; a double click looks ahead again).
 const cockpitShown = () => !v.noPit && pilotOn() && v.follow && v.cam === 'cockpit' && cockpit3d.has(FG.pilot.type);
@@ -3329,7 +3330,12 @@ function cockpitTick(map, e, pose) {
   const ld = (FG.pilot.LOOK_DOWN || 4) * DEG - lp;
   const ahead2 = comb(nose, Math.cos(yaw), rgt, Math.sin(yaw));
   const dir = comb(ahead2, Math.cos(ld), top, -Math.sin(ld));
-  const aim = [0, 1, 2].map((i) => eye[i] + dir[i] * 2000);
+  // The map's centre goes on the line of sight AIM_EYES eye heights ahead (about 100 m on an A320). MapLibre's near
+  // plane is 1/50 of the view's height in front of the camera, so it grows with that distance, and MapLibre lifts
+  // the camera until the near plane's lower corners clear the ground: aimed 2000 m ahead the near plane was 42 m out
+  // and reached 27 m under the eye, so below 27 m over the runway the camera stopped coming down while the plane
+  // went on, and the landing looked as if it suddenly climbed 20 m. 20 eye heights keep it within half the eye's height.
+  const aim = [0, 1, 2].map((i) => eye[i] + dir[i] * AIM_EYES * E.up);
   const base = pose.altMSL * TERRAIN_EXAG;
   const [cLat, cLon] = offsetLL(pose.lat, pose.lon, eye[0], eye[1]);
   const [aLat, aLon] = offsetLL(pose.lat, pose.lon, aim[0], aim[1]);
