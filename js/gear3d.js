@@ -136,9 +136,9 @@ function layout(scene, gear, unit, len) {
 // Every part is painted with its colour (a vertex colour), so a leg is one mesh.
 const PAINT = {
   tyre: 0x17181b,    // rubber
-  leg: 0xc6cad0,     // the legs' grey paint
+  leg: 0xa9aeb5,     // the legs' grey paint (photographs: mid grey, the piston brighter)
   chrome: 0xeef1f4,  // the shock absorber's piston, pins
-  wheel: 0xc2c7cd,   // the wheels' bare metal
+  wheel: 0xa3a9b0,   // the wheels' bare metal
   dark: 0x2a2c30,    // brakes, hoses, the open gear bays
   door: 0xeceef1,    // gear doors, painted like the fuselage underside
 };

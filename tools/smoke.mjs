@@ -1286,8 +1286,9 @@ try {
       }
       return out;
     });
-    // (and the jets' fans: one in each engine, nothing else turning: GitHub issues #8, #9)
-    for (const file of ['q400', 'atr42', 'a320', 'a359', 'a333', 'dc3', 'b738']) {
+    // (and the jets' fans: one in each engine, nothing else turning: GitHub issues #8, #9. Not the A350's: its fan is
+    // a picture on the cowling, nothing there can turn)
+    for (const file of ['q400', 'atr42', 'a320', 'a333', 'dc3', 'b738']) {
       if (parts[file].props !== 2) errors.push(`3D propellers and fans: ${file} has ${parts[file].props} found, not 2`);
       if (parts[file].hollow) errors.push(`3D propellers and fans: ${file} turns ${parts[file].hollow} ring(s) that do not reach their hub (a cowling?)`);
     }

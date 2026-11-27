@@ -48,7 +48,7 @@ function load(file) {
 // Models shaded in flat facets where the real aircraft is round (the A320's engine cowlings, wing and fuselage
 // fairings: nearly every edge has its faces' own normals): their normals are smoothed across every edge whose faces
 // meet at less than this angle (degrees). Sharper edges (trailing edges, the wing's root) stay sharp.
-const SMOOTH = { a320: 38 };
+const SMOOTH = { a320: 38, a343: 38 };
 function smoothNormals(scene, deg) {
   if (!deg) return scene;
   const cos = Math.cos(deg * Math.PI / 180);
@@ -92,12 +92,16 @@ function rawOf(type, size) {
   const look = FG.data.looks[type];
   const cut = look.plugs && FG.data.plugs && FG.data.plugs[size.file];
   const tips = look.sharklets ? 'sharklets' : look.fences ? 'fences' : null;
-  if (!cut && !tips) return raw(size.file);
+  const bigger = !cut && look.engines && FG.data.engineBox && FG.data.engineBox[size.file];
+  if (!cut && !tips && !bigger) return raw(size.file);
   if (!shapedRaws[type]) {
     // (wing tips on geometry of their own: js/livery.js marks each geometry once, and the plain model's are shared
     // with the types without them)
-    const base = tips
-      ? load(size.file).then((scene) => addWingTips(scene, size, tips))
+    const base = tips || bigger
+      ? load(size.file).then((scene) => {
+        if (bigger) growEngines(scene, bigger, look.engines);
+        return tips ? addWingTips(scene, size, tips) : scene;
+      })
       : raw(size.file);
     shapedRaws[type] = cut ? base.then((scene) => reshape(scene, cut, size.stretch - 1, look.engines || 1, type)) : base;
   }
@@ -161,6 +165,32 @@ function wingSection(meshes, x) {
   return { le, te, chord, up, lo };
 }
 
+// A model's own wing tip devices (the A321's fences) go where sharklets come: every piece that lies wholly within
+// `within` of a wing's tip, on one side (also the tip's lights and the static wicks there).
+function dropTips(scene, within) {
+  let tip = 0;
+  scene.traverse((o) => {
+    const pos = o.isMesh && o.geometry.attributes.position;
+    if (pos) for (let i = 0; i < pos.count; i++) tip = Math.max(tip, Math.abs(pos.getX(i)));
+  });
+  const from = tip - within;
+  scene.traverse((o) => {
+    if (!o.isMesh || !o.geometry.attributes.position) return;
+    const g = o.geometry, pos = g.attributes.position;
+    const root = piecesOf(g);
+    const out = new Map();   // piece -> its side while all of it is beyond `from`, else 0
+    for (let i = 0; i < pos.count; i++) {
+      const r = root(i), x = pos.getX(i), side = Math.sign(x), was = out.get(r);
+      out.set(r, Math.abs(x) > from && (was === undefined || was === side) ? side : 0);
+    }
+    if (![...out.values()].some((v) => v)) return;
+    const idx = g.index ? Array.from(g.index.array) : Array.from({ length: pos.count }, (_, i) => i);
+    const keep = [];
+    for (let t = 0; t < idx.length; t += 3) if (!out.get(root(idx[t]))) keep.push(idx[t], idx[t + 1], idx[t + 2]);
+    g.setIndex(keep);
+  });
+}
+
 // Builds sharklets (`kind` 'sharklets') or wing tip fences ('fences') onto both wing tips of an unpainted model (1 unit
 // long, x = right wing, y = nose, z = up): one mesh of its own, white (js/livery.js paints it: in the wing tips' colour
 // where it stands upright, and it bends with the wing, livFlex). `size`: modelSize, for the metres. Its userData.nav
@@ -168,15 +198,18 @@ function wingSection(meshes, x) {
 function addWingTips(scene, size, kind) {
   const fence = kind === 'fences';
   scene.updateMatrixWorld(true);
+  if (!fence) dropTips(scene, SHARKLET.in / size.wide);
   const meshes = [];
   let wingMat = null, tip = 0;
   const v = new THREE.Vector3();
   scene.traverse((o) => {
     if (!o.isMesh || !o.geometry.attributes.position || o.material.transparent) return;
     meshes.push(o);
-    const pos = o.geometry.attributes.position;
-    for (let i = 0; i < pos.count; i++) {
-      v.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld);
+    const pos = o.geometry.attributes.position, idx = o.geometry.index;
+    // (the vertices its faces use: dropTips leaves the ones it took the faces of)
+    const n = idx ? idx.count : pos.count;
+    for (let k = 0; k < n; k++) {
+      v.fromBufferAttribute(pos, idx ? idx.getX(k) : k).applyMatrix4(o.matrixWorld);
       if (v.x > tip) { tip = v.x; wingMat = o.material; }
     }
   });
@@ -330,6 +363,55 @@ function addWingTips(scene, size, kind) {
   scene.add(mesh);
   // (the wing tips' colour on them only: js/livery.js; on a fence's sides, from just inboard of them)
   scene.userData.wingletX = fence ? tip - 0.15 * ux : tip;
+  return scene;
+}
+
+// The pieces of a geometry (vertices joined by a face or at the same place): root(i) gives a vertex's piece.
+function piecesOf(g) {
+  const pos = g.attributes.position, idx = g.index;
+  const parent = new Int32Array(pos.count).map((_, i) => i);
+  const root = (a) => { while (parent[a] !== a) { parent[a] = parent[parent[a]]; a = parent[a]; } return a; };
+  const join = (a, b) => { a = root(a); b = root(b); if (a !== b) parent[a] = b; };
+  const place = new Map();
+  for (let i = 0; i < pos.count; i++) {
+    const k = `${Math.round(pos.getX(i) * 2e5)},${Math.round(pos.getY(i) * 2e5)},${Math.round(pos.getZ(i) * 2e5)}`;
+    if (place.has(k)) join(i, place.get(k)); else place.set(k, i);
+  }
+  const n = idx ? idx.count : pos.count;
+  for (let t = 0; t < n; t += 3) {
+    const a = idx ? idx.getX(t) : t;
+    join(a, idx ? idx.getX(t + 1) : t + 1);
+    join(a, idx ? idx.getX(t + 2) : t + 2);
+  }
+  return root;
+}
+
+// A type whose engines are bigger than its model's (FG.data.looks `engines`, × the model's; FG.data.engineBox says where the
+// model's are): each piece of the model that lies wholly in an engine's box (cowls, fan, spinner, exhaust; not the
+// pylon or the wing) grows by `grow` from the top of the nacelle at its back, so it reaches forward and down as the
+// A320neo's larger engines do.
+function growEngines(scene, e, grow) {
+  scene.traverse((o) => {
+    if (!o.isMesh || !o.geometry.attributes.position) return;
+    const g = o.geometry, pos = g.attributes.position;
+    const root = piecesOf(g);
+    const inBox = new Map();   // piece -> its side (1 right, -1 left) while all of it is in that engine's box, else 0
+    for (let i = 0; i < pos.count; i++) {
+      const r = root(i), x = Math.abs(pos.getX(i)), y = pos.getY(i), z = pos.getZ(i), side = Math.sign(pos.getX(i));
+      const ok = x >= e.x[0] && x <= e.x[1] && y >= e.y[0] && y <= e.y[1] && z >= e.z[0] && z <= e.z[1];
+      const was = inBox.get(r);
+      inBox.set(r, ok && (was === undefined || was === side) ? side : 0);
+    }
+    let moved = false;
+    for (let i = 0; i < pos.count; i++) {
+      const side = inBox.get(root(i));
+      if (!side) continue;
+      const ax = side * e.at[0];
+      pos.setXYZ(i, ax + (pos.getX(i) - ax) * grow, e.at[1] + (pos.getY(i) - e.at[1]) * grow, e.at[2] + (pos.getZ(i) - e.at[2]) * grow);
+      moved = true;
+    }
+    if (moved) { pos.needsUpdate = true; g.computeBoundingSphere(); g.computeBoundingBox(); }
+  });
   return scene;
 }
 
@@ -501,7 +583,7 @@ export function loadModel(type, livery = FG.livery()) {
   const size = modelSize(type);
   const { file, stretch } = size;
   const key = `${file}|${stretch}|${FG.liveries ? FG.liveries.key(livery) : livery.id}|${gearKey(type, file)}|${maskOf(file, type) ? 'mask' : ''}` +
-    (FG.data.looks[type].plugs || FG.data.looks[type].sharklets || FG.data.looks[type].fences ? `|${type}` : '');
+    (FG.data.looks[type].plugs || FG.data.looks[type].sharklets || FG.data.looks[type].fences || FG.data.looks[type].engines ? `|${type}` : '');
   if (!loads[key]) {
     loads[key] = rawOf(type, size).then((scene) => {
       const copy = scene.clone();

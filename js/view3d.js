@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import { loadModel, modelSize, facing, patchFacing } from './models3d.js';
 import { setGear, setBogies, setOleo } from './gear3d.js';
 import { waterLayer } from './water3d.js';
-import { inPart } from './livery.js';
+import { inPart, regTexture } from './livery.js';
 // The A350s' 3D flight deck lives with Fly it yourself (github.com/noname-ch/flightgame-fly, src/cockpit3d.js): that
 // page sets FG.cockpit3d. The game itself draws no cockpit.
 const cockpit3d = {
@@ -202,8 +202,8 @@ function planePose(p, t, st0) {
 // length (FG.data.looks). Types without a model keep the placeholder. js/models3d.js loads and paints them.
 
 // The aircraft to draw for a type: the placeholder at first, replaced by the glTF model once it has loaded.
-// `livery`: the one to paint it in (FG.livery(p) for a plane; the airline's if none is given).
-function planeModel(type, livery = FG.livery()) {
+// `livery`: the one to paint it in (FG.livery(p) for a plane; the airline's if none is given); `reg`: its registration.
+function planeModel(type, livery = FG.livery(), reg = null) {
   const g = placeholderModel(type);
   const file = D.models[type];
   const look = D.looks && D.looks[type];
@@ -216,7 +216,7 @@ function planeModel(type, livery = FG.livery()) {
     const model = scene.clone();
     const size = modelSize(type);
     model.scale.set(size.wide, size.len, size.wide);
-    g.userData.liv = ownMaterials(model);
+    g.userData.liv = ownMaterials(model, reg);
     g.userData.rev = reverserUniforms(type, scene);
     // On the ground it stands on its wheels: how far they are below its middle (m), and the gear to raise.
     model.updateMatrixWorld(true);
@@ -390,7 +390,7 @@ function setNavLights(e, pose, now, light) {
 // Gives a clone of a model its own copies of the shared livery materials (same shader program), so its wings
 // bend, its propellers turn and its control surfaces move on their own. Returns their userData: the
 // OWN_UNIFORMS of js/livery.js.
-function ownMaterials(model) {
+function ownMaterials(model, reg = null) {
   const copies = new Map();
   model.traverse((o) => {
     if (!o.isMesh || !o.material.userData.livFlex) return;
@@ -400,6 +400,8 @@ function ownMaterials(model) {
       m.customProgramCacheKey = o.material.customProgramCacheKey;
       // (the clone's userData is a JSON copy: the vectors become their own again)
       for (const k of ['livCut', 'livKeep']) if (m.userData[k]) m.userData[k] = { value: new THREE.Vector4(0, 0, 0, 0) }; // (not THREE's default w = 1: the rudder broken off)
+      // (and the plane's registration, painted on its rear fuselage: js/livery.js regTexture)
+      if (m.userData.livReg) m.userData.livReg = { value: regTexture(reg) };
       copies.set(o.material, m);
     }
     o.material = copies.get(o.material);
@@ -2671,7 +2673,7 @@ const planeLayer = {
       const livKey = FG.liveries.key(liv);
       if (!e || e.type !== p.type || e.livery !== livKey) { // (a new plane, or it or the airline changed livery)
         if (e) this.world.remove(e.obj);
-        e = v.planes[p.id] = { obj: planeModel(p.type, liv), type: p.type, livery: livKey, world: new THREE.Vector3() };
+        e = v.planes[p.id] = { obj: planeModel(p.type, liv, p.id), type: p.type, livery: livKey, world: new THREE.Vector3() };
         this.world.add(e.obj);
       }
       if (pilotOn() && p.id === FG.pilot.hideId) { e.obj.visible = false; continue; } // (the player flies it now)
@@ -3648,7 +3650,7 @@ function chaseLayer(cam) {
         const livery = FG.liveries.key(liv);
         if (!e || e.type !== p.type || e.livery !== livery) {
           if (e) this.world.remove(e.obj);
-          e = cam.planes[p.id] = { obj: planeModel(p.type, liv), type: p.type, livery };
+          e = cam.planes[p.id] = { obj: planeModel(p.type, liv, p.id), type: p.type, livery };
           this.world.add(e.obj);
         }
         e.obj.visible = true;

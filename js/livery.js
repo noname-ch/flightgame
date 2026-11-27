@@ -13,8 +13,52 @@ import * as THREE from 'three';
 const TITLE_FROM = { concorde: 0.17 };
 
 const CLEAN = {
-  a380: { y: [-0.3, 0], z: [-0.62, -0.22] },
   b752: { y: [-1, 1], z: [-1, 9] },   // dark stripes and numbers all over the fuselage and fin
+  a359: { y: [0.08, 0.36], z: [-0.7, -0.42] },   // the Airbus house livery's grey "A350 XWB" below the windows
+};
+
+// The A350's cockpit glass, outlined (the outline of the old A350 model's glass, whose nose is the same shape): the
+// model's own glass is a few big faces in a ragged bluish patch of its texture. Seen from the side (y, z) and from the
+// front (x, z), model units; `panes`: its side windows seen from the side, which show through the mask.
+const A350_COCKPIT = {
+  side: [[
+    [0.45182, -0.03265], [0.45464, -0.03271], [0.45914, -0.03323], [0.46323, -0.03398], [0.46461, -0.03438],
+    [0.46542, -0.03478], [0.46934, -0.03824], [0.46957, -0.03813], [0.47591, -0.0447], [0.47539, -0.04545],
+    [0.47516, -0.04533], [0.47545, -0.04475], [0.47228, -0.04147], [0.47239, -0.04199], [0.47504, -0.04481],
+    [0.47032, -0.04406], [0.46565, -0.04314], [0.46432, -0.04354], [0.46265, -0.04435], [0.45844, -0.04527],
+    [0.45504, -0.04585], [0.45159, -0.04579], [0.44893, -0.0451], [0.44651, -0.04337], [0.44617, -0.04297],
+    [0.44611, -0.04262], [0.44565, -0.04182], [0.4453, -0.0398], [0.44571, -0.0372], [0.44646, -0.03536],
+    [0.44778, -0.03398], [0.44957, -0.03294],
+  ]],
+  panes: [[
+    [0.45153, -0.03357], [0.45239, -0.03375], [0.45268, -0.03403], [0.45291, -0.03461], [0.45314, -0.03818],
+    [0.45314, -0.04164], [0.45303, -0.04314], [0.45274, -0.04412], [0.45234, -0.04441], [0.45141, -0.04447],
+    [0.45026, -0.04429], [0.44963, -0.04412], [0.44842, -0.04349], [0.44715, -0.04251], [0.44663, -0.04164],
+    [0.4464, -0.04084], [0.4464, -0.03928], [0.4468, -0.03761], [0.44726, -0.0364], [0.44767, -0.03571],
+    [0.44842, -0.03496], [0.44911, -0.0345], [0.45038, -0.03392]
+  ], [
+    [0.45527, -0.03386], [0.45793, -0.03392], [0.45896, -0.03415], [0.4596, -0.0345], [0.46017, -0.03507],
+    [0.46087, -0.03611], [0.46311, -0.0402], [0.46363, -0.04135], [0.46369, -0.04176], [0.4634, -0.04274],
+    [0.46317, -0.04297], [0.46265, -0.04314], [0.46017, -0.04377], [0.45718, -0.04435], [0.45527, -0.04429],
+    [0.4551, -0.04424], [0.45481, -0.04389], [0.4547, -0.04279], [0.45476, -0.0383], [0.45458, -0.03432],
+    [0.45476, -0.03403]
+  ], [
+    [0.46144, -0.03444], [0.46236, -0.0345], [0.46392, -0.03484], [0.46536, -0.0353], [0.46611, -0.03576],
+    [0.46623, -0.03588], [0.46617, -0.03599], [0.4683, -0.03801], [0.47308, -0.04337], [0.47314, -0.0436],
+    [0.47216, -0.04349], [0.46778, -0.04279], [0.46663, -0.04228], [0.46571, -0.04158], [0.46496, -0.0406],
+    [0.46294, -0.0372], [0.46127, -0.03478], [0.46121, -0.03455],
+  ]],
+  front: [[
+    [-0.01759, -0.03261], [-0.0175, -0.03288], [-0.01732, -0.0327], [-0.01473, -0.03288], [-0.00058, -0.03512],
+    [0.00121, -0.03503], [0.01464, -0.03288], [0.01768, -0.0327], [0.01902, -0.03386], [0.01902, -0.03413],
+    [0.01795, -0.03306], [0.01777, -0.03315], [0.01911, -0.03449], [0.02233, -0.0395], [0.02493, -0.04559],
+    [0.02412, -0.04586], [0.01652, -0.04326], [0.01571, -0.04317], [0.01195, -0.04398], [0.00774, -0.04452],
+    [0.00345, -0.04469], [0.00318, -0.04541], [0.00291, -0.04541], [0.003, -0.04505], [0.00255, -0.04478],
+    [-0.00255, -0.04478], [-0.003, -0.04505], [-0.00291, -0.04541], [-0.00327, -0.04541], [-0.00318, -0.04514],
+    [-0.00345, -0.04469], [-0.00774, -0.04452], [-0.01643, -0.04317], [-0.02225, -0.04532], [-0.02412, -0.04586],
+    [-0.02475, -0.04577], [-0.02493, -0.04559], [-0.02242, -0.03968], [-0.01911, -0.03449], [-0.01759, -0.03297],
+    [-0.01777, -0.03288], [-0.01902, -0.03413], [-0.01902, -0.03386],
+  ]],
 };
 
 // The black mask round the cockpit windows of the newer Airbuses (the A350's "raccoon mask"). As on the real jet the
@@ -28,11 +72,14 @@ const CLEAN = {
 // corners and rounded `round` of it. The shader takes the side's picture where the skin faces sideways and the front's
 // where it faces forward, so the band is as wide from the front as from the side.
 // `types`: only these types of a model shared with older ones (the A320neo family, not the A320ceo).
+// `outline`: the glass given as outlines { side: [[[y, z], ...]], front: [[[x, z], ...]], panes } instead of read off the
+// model; `panes` (y, z) are left out of the side's picture, each less the border (the old A350 model's mask's look).
+// `clear`: the model's own bluish window colour round the mask is painted over in the livery (the A350's ragged patch).
 const MASK_STYLE = { border: 0.07, round: 0.12 };
 const MASKS = {
-  a359: { region: { y: 0.44, z: [-0.05, -0.03] }, front: 0.4 },
+  a359: { region: { y: 0.44, z: [-0.05, -0.03] }, front: 0.4, outline: A350_COCKPIT, clear: true },
   a320: { types: ['A320neo'], region: { y: 0.41, z: [-0.056, -0.037] }, front: 0.4 },
-  a321: { types: ['A321neo', 'A321XLR'], region: { y: 0.42, z: [-0.042, -0.026] }, front: 0.4 },
+  a321: { types: ['A321neo', 'A321XLR'], region: { y: 0.42, z: [-0.049, -0.033] }, front: 0.4 },
 };
 // Whether a type flies with the mask (its model's, unless the model's mask is only for some of its types).
 export const maskOf = (file, type) => { const k = MASKS[file]; return k && (!k.types || k.types.includes(type)) ? k : null; };
@@ -44,7 +91,31 @@ const POCKET_WINDOWS = { atr42: true };
 // Models whose window glass (cabin and cockpit) is a see-through light grey part with the light inside of the skin
 // behind it, so the windows looked like grey dents: from outside, real ones look dark, with the sky's highlights
 // on them. Its colour, how glossy.
-const DARK_GLASS = { a320: { color: 0x0b0e12, roughness: 0.14, metalness: 0.35 } };
+const DARK_GLASS = { a320: { color: 0x0b0e12, roughness: 0.14, metalness: 0.35 }, a321: { color: 0x0b0e12, roughness: 0.14, metalness: 0.35 } };
+
+// The doors and emergency exits of a model, painted as thin dark seams on the fuselage's sides (FRAG_BODY): each its
+// middle [y, z] (model units, read off the model: the A320's beside its window row, whose windows are 0.533 m apart),
+// width and height (m) and side (0 both, 1 right only: the cargo doors). The A320: the front and rear passenger doors
+// (0.81 x 1.85 m), the two overwing exits round their windows (0.51 x 1.0 m), the forward and aft cargo doors and the
+// bulk cargo door on the right, low down.
+const CABIN_DOORS = {
+  a320: [
+    [0.368, -0.055, 0.81, 1.85, 0], [0.1229, -0.0525, 0.51, 1.0, 0], [0.1008, -0.0525, 0.51, 1.0, 0], [-0.2506, -0.055, 0.81, 1.85, 0],
+    [0.262, -0.094, 1.81, 1.24, 1], [-0.168, -0.094, 1.81, 1.24, 1], [-0.215, -0.096, 0.95, 0.95, 1],
+  ],
+};
+const CABIN_DOORS_MAX = 8;
+
+// Inside a jet's inlet, by model: the grey of its bare inner wall (instead of the cowl's livery colour), from the lip
+// back to the fan.
+const INLETS = { a320: 0xb3b8be };
+// Engines by type, as photographs show them: `fan` darkens the fan (the newer engines' dark blades, × the model's
+// colour), `ring` the colour of the fan case's lining round the blade tips (the A320neo's: green).
+const FANS = {
+  'A320neo': { fan: 0.38, ring: 0x7cc4a4 },
+  'A321neo': { fan: 0.38, ring: 0x7cc4a4 },
+  'A321XLR': { fan: 0.38, ring: 0x7cc4a4 },
+};
 
 // The window pockets of a model: patches of the skin inside sharp edges, on the fuselage sides, facing sideways,
 // as big as each other and in a row of at least five at one height. Their floors are moved out to the skin
@@ -145,7 +216,7 @@ function flushWindows(scene, hw) {
   }
 }
 
-const MARKS = { cross: 1, disc: 2, ring: 3, chevron: 4, triangle: 5, text: 6, logo: 6, split: 7 };
+const MARKS = { cross: 1, disc: 2, ring: 3, chevron: 4, triangle: 5, text: 6, logo: 6, split: 7, flag: 8, stripes: 9 };
 // Where a title goes: its middle below the top of the fuselage and its greatest height, in fuselage widths.
 const TITLE_AT = { window: [0.42, 0.46], above: [0.25, 0.22], low: [0.76, 0.3] };
 
@@ -218,12 +289,14 @@ const shapedY = (s, y) => ((y >= s.front ? y + s.add[1] : y <= s.back ? y - s.ad
 // the front (x, z, the windscreen), with where they lie: box y0, z0, 1 / length, 1 / height (front: x0, z0, ...).
 function cockpitMask(scene, file) {
   const k = { ...MASK_STYLE, ...MASKS[file] };
-  const glass = cockpitGlass(scene, file);
+  const shape = scene.userData.shape;
+  // (outlines given: as polygons [x, y, z], the side's y where plugs moved it)
+  const glass = k.outline ? k.outline.side.map((p) => p.map(([y, z]) => [0, shape ? shapedY(shape, y) : y, z])) : cockpitGlass(scene, file);
   if (!glass.length) return null;
   const zs = glass.flat().map((v) => v[2]);
   const h = Math.max(...zs) - Math.min(...zs);
   const border = k.border * h, round = k.round * h;
-  const picture = (key, tris, a, b) => {
+  const picture = (key, tris, a, b, panes = []) => {
     const pad = border + 2 * round + 0.05 * h;
     const as = tris.flat().map((v) => v[a]), bs = tris.flat().map((v) => v[b]);
     const a0 = Math.min(...as) - pad, a1 = Math.max(...as) + pad, b0 = Math.min(...bs) - pad, b1 = Math.max(...bs) + pad;
@@ -262,6 +335,25 @@ function cockpitMask(scene, file) {
           if (i < (ht - 1) * w) todo.push(i + w);
         }
         for (let i = 0; i < al.length; i++) if (!out[i]) al[i] = 255;
+        // ... less the panes given (outline.panes), each shrunk by the border
+        if (panes.length) {
+          const pc = document.createElement('canvas');
+          pc.width = w;
+          pc.height = ht;
+          const px = pc.getContext('2d');
+          px.lineWidth = 2 * border * s;
+          px.lineJoin = 'round';
+          const path = (t) => {
+            px.beginPath();
+            t.forEach((v, i) => (i ? px.lineTo((v[a] - a0) * s, (b1 - v[b]) * s) : px.moveTo((v[a] - a0) * s, (b1 - v[b]) * s)));
+            px.closePath();
+          };
+          for (const t of panes) { path(t); px.fill(); }
+          px.globalCompositeOperation = 'destination-out';
+          for (const t of panes) { path(t); px.stroke(); }
+          const pd = px.getImageData(0, 0, w, ht).data;
+          for (let i = 0; i < al.length; i++) if (pd[4 * i + 3] > 127) al[i] = 0;
+        }
         // ... blurred `round` wide (the shader cuts it at half): every corner rounded. (By hand: not every browser has
         // ctx.filter.)
         const r = Math.max(1, Math.round(round * s));
@@ -284,14 +376,16 @@ function cockpitMask(scene, file) {
       }).texture,
     };
   };
-  const side = picture('side', glass, 1, 2);
+  const sideY = (y) => (shape ? shapedY(shape, y) : y);
+  const side = picture('side', glass, 1, 2, k.outline && k.outline.panes ? k.outline.panes.map((p) => p.map(([y, z]) => [0, sideY(y), z])) : []);
   // (the windscreen: the glass facing forward, `front` and more of its normal along y)
-  const windscreen = glass.filter(([a, b, c]) => {
+  const windscreen = k.outline ? [] : glass.filter(([a, b, c]) => {
     const u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
     const n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
     return Math.abs(n[1]) / (Math.hypot(...n) || 1) > k.front;
   });
-  const front = picture('front', windscreen.length ? windscreen : glass, 0, 2);
+  const front = k.outline ? picture('front', k.outline.front.map((p) => p.map(([x, z]) => [x, 0, z])), 0, 2)
+    : picture('front', windscreen.length ? windscreen : glass, 0, 2);
   return { box: side.box, texture: side.texture, frontBox: front.box, frontTexture: front.texture };
 }
 
@@ -309,6 +403,25 @@ function textMask(text, style = '700') {
     ctx.textBaseline = 'alphabetic';
     ctx.fillText(text, PAD, H - PAD);
   });
+}
+
+// A plane's registration (its id, as "HB-JCA") as an alpha mask of a fixed shape, REG_ASPECT wide for its height, the
+// letters centred (so every plane's fits the same box on the fuselage: regBox). Blank for an id that isn't one.
+const REG_ASPECT = 6;
+const REG_RE = /^[A-Z0-9]{1,2}-?[A-Z0-9]{2,5}$/;
+let blankReg = null;
+export function regTexture(id) {
+  if (!id || !REG_RE.test(id)) {
+    if (!blankReg) { blankReg = new THREE.DataTexture(new Uint8Array(4), 1, 1); blankReg.needsUpdate = true; }
+    return blankReg;
+  }
+  const H = 96;
+  return mask(`reg|${id}`, H * REG_ASPECT, H, (ctx) => {
+    ctx.font = `600 ${Math.round(H * 0.78 / 0.716)}px Arial, Helvetica, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillText(id, H * REG_ASPECT / 2, H * 0.89, H * REG_ASPECT * 0.96);
+  }).texture;
 }
 
 // Simple logos for the fin, drawn in one colour.
@@ -447,11 +560,20 @@ function spinFans(pieces, cowlings, engine, roots, spin) {
   }
   for (const e of engines) {
     const dia = Math.min(e.box[1] - e.box[0], e.box[5] - e.box[4]);
-    const inner = pieces.filter((p) => {
+    // (flat pieces: the blades; where there are none, as on a model whose fan is a picture on a cone, a deeper one, even
+    // one round enough to pass for a cowling if it lies wholly inside a bigger cowling of the engine)
+    const nested = (p) => e.cowls.some((c) => c !== p && c.box[0] <= p.box[0] && c.box[1] >= p.box[1] && c.box[4] <= p.box[4] && c.box[5] >= p.box[5]);
+    const innerOf = (deep) => pieces.filter((p) => {
       const b = p.box, wide = Math.max(b[1] - b[0], b[5] - b[4]);
-      return engine.has(p) && e.cowls.some((c) => c.box === engine.get(p)) && !cowlings.includes(p) &&
-        b[3] - b[2] < 0.3 * wide && wide > 0.08 * dia;
+      return engine.has(p) && e.cowls.some((c) => c.box === engine.get(p)) && (!cowlings.includes(p) || (deep > 0.5 && nested(p))) &&
+        b[3] - b[2] < deep * wide && wide > 0.08 * dia;
     }).sort((p, q) => p.box[2] - q.box[2]);
+    const best = fanRing(innerOf(0.3), dia) || fanRing(innerOf(0.8), dia);
+    if (best) { spin(best.parts, best.box); fans++; }
+  }
+  return fans;
+
+  function fanRing(inner, dia) {
     let best = null;
     for (let i = 0; i < inner.length;) {
       const ring = { parts: [], box: [Infinity, -Infinity, Infinity, -Infinity, Infinity, -Infinity] };
@@ -466,9 +588,8 @@ function spinFans(pieces, cowlings, engine, roots, spin) {
       if (dx / dz < 0.75 || dx / dz > 1.33 || ring.wide < 0.4 * dia || hollow(ring)) continue;
       if (!best || ring.wide > best.wide * 1.05 || (ring.wide > best.wide * 0.95 && ring.box[3] > best.box[3])) best = ring;
     }
-    if (best) { spin(best.parts, best.box); fans++; }
+    return best;
   }
-  return fans;
 }
 
 function markEngines(scene, hw, file) {
@@ -533,7 +654,9 @@ function markEngines(scene, hw, file) {
   for (const p of pieces) {
     const b = p.box;
     const c = [(b[0] + b[1]) / 2, (b[2] + b[3]) / 2, (b[4] + b[5]) / 2];
-    const cowl = cowlings.find(({ box: e }) => c[0] > e[0] && c[0] < e[1] && c[1] > e[2] - 0.1 * (e[3] - e[2]) && c[1] < e[3] + 0.1 * (e[3] - e[2]) && c[2] > e[4] && c[2] < e[5]);
+    const cowl = cowlings.find(({ box: e }) => c[0] > e[0] && c[0] < e[1] && c[1] > e[2] - 0.1 * (e[3] - e[2]) && c[1] < e[3] + 0.1 * (e[3] - e[2]) && c[2] > e[4] && c[2] < e[5]) ||
+      // (or wholly within its width and height just behind it: the exhaust cone sticking out of the back)
+      cowlings.find(({ box: e }) => p.box !== e && c[1] < e[2] && c[1] > e[2] - 0.6 * (e[3] - e[2]) && b[0] >= e[0] && b[1] <= e[1] && b[4] >= e[4] && b[5] <= e[5]);
     if (cowl) engine.set(p, cowl.box);
   }
   scene.userData.engines = cowlings.length;
@@ -633,8 +756,28 @@ function markEngines(scene, hw, file) {
   scene.userData.revX = revs.map((e) => Math.abs(e.x)).sort((a, b) => a - b);
   scene.userData.revEngines = revs.map((e) => ({ x: e.x, y: (e.box[2] + e.box[3]) / 2, z: e.z, r: e.r, len: e.len, ratio: (e.box[1] - e.box[0]) / (e.box[5] - e.box[4]), n: e.cowls.length }));
   const revOf = new Map(revs.flatMap((e) => e.cowls.map((c) => [c.box, e])));
+  // (where the fan turns, along y: the middle of the widest piece that turns, the blades; kept with the geometry, which
+  // is searched once: fanOf)
+  // (all the pieces turning round one hub together: a model may have each blade as a piece of its own)
+  const fans = new Map();   // hub -> box
+  for (const p of pieces) {
+    const at = hubs.get(p.mesh).get(p.root);
+    if (!at) continue;
+    const k = `${at[0]},${at[1]}`;
+    const b = fans.get(k) || [Infinity, -Infinity, Infinity, -Infinity, Infinity, -Infinity];
+    for (let i = 0; i < 6; i += 2) { b[i] = Math.min(b[i], p.box[i]); b[i + 1] = Math.max(b[i + 1], p.box[i + 1]); }
+    fans.set(k, b);
+  }
+  let fanW = 0, fanY = null;
+  for (const b of fans.values()) {
+    const w = Math.max(b[1] - b[0], b[5] - b[4]);
+    if (w > fanW) { fanW = w; fanY = (b[2] + b[3]) / 2; }
+  }
+  const fanR = fanW / 2;
+  if (fanY != null) for (const m of meshes) { m.geometry.userData.livFanY = fanY; m.geometry.userData.livFanR = fanR; }
   for (const [p, cowl] of engine) {
-    marked.get(p.mesh).set(p.root, { box: cowl, own: p.box, inner: !cowlings.some((c) => c === p) });
+    // (what turns is painted as a fan, even a piece round enough to have been taken for a cowling)
+    marked.get(p.mesh).set(p.root, { box: cowl, own: p.box, inner: !cowlings.some((c) => c === p) || hubs.get(p.mesh).has(p.root) });
   }
   for (const m of meshes) {
     const root = roots.get(m);
@@ -646,7 +789,15 @@ function markEngines(scene, hw, file) {
         const e = cowls.get(root[i]);
         if (!e) continue;
         if (!jet) part[i] = 1;
-        else if (e.inner) part[i] = 5;
+        else if (e.inner) {
+          // (what does not turn: in the back half of its cowl the exhaust cone and the core's nozzle, 5.2; ahead of
+          // that, out by the fan's tips, the wall of the inlet and the fan's case, 5.4)
+          const turns = hubs.get(m).has(root[i]);
+          const ax = revOf.get(e.box);
+          if (!turns && e.own[2] + e.own[3] < e.box[2] + e.box[3]) part[i] = 5.2;
+          else if (!turns && ax && fanR && Math.hypot(pos.getX(i) - ax.x, pos.getZ(i) - ax.z) > 0.8 * fanR) part[i] = 5.4;
+          else part[i] = 5;
+        }
         else part[i] = 1.01 + 0.97 * Math.min(1, Math.max(0, (e.box[3] - pos.getY(i)) / (e.box[3] - e.box[2])));
       }
     }
@@ -1482,6 +1633,16 @@ export function measure(scene, file, stretch = 1, title = { aspect: 4.3 }, finMa
     width: d,
     span,
     titleBox: new THREE.Vector4(titleY, titleH * title.aspect / stretch, top - below * d - titleH / 2, titleH),
+    // the registration: letters a tenth of the fuselage high, above the windows, ending a little ahead of where the
+    // fin's colour comes down the rear fuselage
+    regBox: (() => {
+      const h = 0.1 * d, len = h * REG_ASPECT / stretch;
+      const zc = top - 0.24 * d;
+      // (the fin's colour on the rear fuselage ends at this y at that height: livTail)
+      const edge = found ? y1 + (crossZ - zc) * slope : Y(-0.33);
+      const end = Math.max(Y(-0.4), edge + 0.015);
+      return new THREE.Vector4(end + len, len, zc - h / 2, h);
+    })(),
     clean: box ? new THREE.Vector4(box.y[0], box.y[1], top + box.z[0] * d, top + box.z[1] * d) : new THREE.Vector4(),
   };
 }
@@ -1659,6 +1820,7 @@ uniform vec4 livMaskBox;  // ... where it lies: y0, z0, 1 / length, 1 / height (
 uniform sampler2D livMaskTexF; // ... and seen from the front
 uniform vec4 livMaskBoxF; // ... where that lies: x0, z0, 1 / width, 1 / height
 uniform vec3 livMaskColor;
+uniform float livMaskClear; // 1: the model's own bluish window colour round the mask goes (MASKS clear)
 uniform vec3 livLine;
 uniform float livLineW;  // half width of the stripe along the belly's edge
 uniform vec3 livStripe;    // the cheatline along the fuselage: its middle z, half width, and 1 where there is one
@@ -1666,6 +1828,9 @@ uniform vec3 livStripeColor;
 uniform vec3 livColor;    // of the title
 uniform sampler2D livTitle;
 uniform vec4 livTitleBox; // nose-side y, length, bottom z, height
+uniform sampler2D livReg;  // the plane's registration (OWN_UNIFORMS: each plane its own; regTexture)
+uniform vec4 livRegBox;   // where it goes on the rear fuselage: nose-side y, length, bottom z, height
+uniform vec3 livRegColor;
 uniform vec3 livFin;      // the fin is behind this y, above this z, within this |x|
 uniform vec3 livFinColor;
 uniform vec2 livTail;     // the fin's colour on the rear fuselage: behind this y at the fin's foot, slope of the edge
@@ -1673,13 +1838,21 @@ uniform vec3 livCross;    // the mark on the fin: centre y, centre z, half size
 uniform float livMark;    // 1 cross, 2 disc, 3 ring, 4 chevron, 5 triangle, 6 text or logo, 7 split
 uniform vec3 livMarkA;
 uniform vec3 livMarkB;
+uniform vec3 livMarkC;    // a flag's lowest band
 uniform sampler2D livFinText;
 uniform vec4 livFinBox;   // the text or logo on the fin: centre y, centre z, length, height
 uniform float livFinAngle; // it rises by this angle towards the top of the fin
 uniform vec3 livWinglet;
 uniform float livWingletX; // wing tips are beyond this |x|
+uniform vec4 livInlet;     // inside a jet's inlet: its colour, 1 (0: the cowl's paint)
+uniform vec4 livFanCase;   // the fan case's lining round the blade tips: colour, 1 (0: none)
+uniform vec3 livFan;       // where the fan turns (y), × its colour, its radius
+uniform vec4 livDoors[${CABIN_DOORS_MAX}];    // doors and exits (CABIN_DOORS): middle y, z, half width, half height
+uniform float livDoorSide[${CABIN_DOORS_MAX}]; // ... 0 on both sides, 1 on the right only
+uniform vec3 livDoorShape; // how many, the corners' radius, half the seam's width
 uniform float livStretch; // the model is drawn this much longer than it is
 uniform float livNoisy;   // its texture has noisy dark shading (NOISY)
+uniform vec4 livDetail;   // what of its own texture stays: darker than .x .. .y, less coloured than .z .. .w (DETAIL)
 uniform float livHalfWidth; // of the fuselage
 uniform vec4 livClean;    // own details are dropped between these y and between these z
 varying vec3 vLivPos;
@@ -1721,7 +1894,7 @@ if (livTornB > 0.0) discard;
   // dark, colourless parts of the model's own texture stay: windows, tyres, engine intakes
   // (only very dark colourless parts keep their own colour: intakes, glass, tyres. Dark panels and vertex shading
   // that were kept as "detail" showed as black boxes and stripes on wing roots and belly, e.g. ATR42, A220)
-  float detail = (1.0 - smoothstep(0.02, 0.05, lum)) * (1.0 - smoothstep(0.02, 0.06, sat));
+  float detail = (1.0 - smoothstep(livDetail.x, livDetail.y, lum)) * (1.0 - smoothstep(livDetail.z, livDetail.w, sat));
 #ifdef USE_MAP
   // ... in a noisy texture only where it is dark round about too: lone dark texels in the A220's baked shading
   // speckled its wing root black (GitHub issue #7). (Not in every model: small windows would go.)
@@ -1744,6 +1917,8 @@ if (livTornB > 0.0) discard;
     float frontA = fUv.x > 0.0 && fUv.x < 1.0 && fUv.y > 0.0 && fUv.y < 1.0 ? texture2D(livMaskTexF, fUv).a : 0.0;
     float facing = smoothstep(0.35, 0.75, normalize(vLivNor).y);
     float mA = mix(sideA, frontA, facing) - 0.5;
+    // (the model's own ragged bluish patch round its windows: painted over in the livery, the mask is drawn instead)
+    if (livMaskClear > 0.5 && own.b > 1.25 * own.r + 0.01 && lum < 0.55 && mUv.x > -0.3 && mUv.x < 1.3 && mUv.y > -0.3 && mUv.y < 1.3) detail = 0.0;
     if (sideA > 0.0 || frontA > 0.0) {
       float mC = clamp(mA / (fwidth(mA) + 1e-4) + 0.5, 0.0, 1.0);
       paint = mix(paint, livMaskColor, mC);
@@ -1763,10 +1938,22 @@ if (livTornB > 0.0) discard;
     // a window pane: glass, over any title
     own = livGlass;
     detail = 1.0;
+  } else if (vLivPart > 5.3) {
+    // the inlet's wall inside the cowl and the fan's case round the blade tips: the model's own colours (as the fan),
+    // or bare grey (livInlet) with the case's lining round the tips (livFanCase)
+    paint = vec3(lum);
+    detail = 1.0 - smoothstep(0.08, 0.16, sat);
+    if (livInlet.w > 0.5) { paint = livInlet.rgb; detail = 0.0; }
+    if (livFanCase.w > 0.5 && vLivPos.y > livFan.x - 0.3 * livFan.z && vLivPos.y < livFan.x + 0.75 * livFan.z) { paint = livFanCase.rgb; detail = 0.0; }
+  } else if (vLivPart > 5.1) {
+    // the exhaust cone and the core's nozzle behind the fan: dull grey metal, lighter where the model's is
+    paint = vec3(0.17, 0.175, 0.185) + 0.12 * lum;
+    detail = 0.0;
   } else if (vLivPart > 4.5) {
     // inside a jet engine (fan, spinner): the model's own colours, but grey metal where they are the colours of
-    // its own livery
-    paint = vec3(lum);
+    // its own livery (the newer engines' fans darker: livFan.y)
+    paint = vec3(lum) * livFan.y;
+    own *= livFan.y;
     detail = 1.0 - smoothstep(0.08, 0.16, sat);
   }
   else if (vLivPart > 0.5) {
@@ -1817,7 +2004,20 @@ if (livTornB > 0.0) discard;
       float sn = sin(livFinAngle);
       vec2 f = vec2(dot(q, vec2(cs, -side * sn)) / livFinBox.z, dot(q, vec2(side * sn, cs)) / livFinBox.w) + 0.5;
       mark = texture2D(livFinText, clamp(f, 0.0, 1.0)).a * step(0.0, f.x) * step(f.x, 1.0) * step(0.0, f.y) * step(f.y, 1.0);
-    } else mark = step(0.1, p.y + 0.9 * p.x);
+    } else if (livMark < 7.5) mark = step(0.1, p.y + 0.9 * p.x);
+    else if (livMark < 8.5) {
+      // a flag over the fin (the UAE's on Emirates): a bar along the front, three bands behind it, the fin's colour
+      // in the middle one
+      mark = 1.0;
+      markColor = p.x > 0.85 ? livMarkA : p.y > 0.7 ? livMarkB : p.y < -0.7 ? livMarkC : livFinColor;
+    } else {
+      // thin stripes swept back along the fin's leading edge (Air France's): three in .A, then a wider one in .B
+      float u = p.x + 0.9 * p.y;
+      float a = step(1.2, u) * step(u, 1.42) + step(0.86, u) * step(u, 1.02) + step(0.56, u) * step(u, 0.69);
+      float b = step(0.18, u) * step(u, 0.42);
+      mark = max(a, b);
+      markColor = b > 0.5 ? livMarkB : livMarkA;
+    }
     paint = mix(paint, mix(livFinColor, markColor, mark), upright);
   }
   // the title reads from the nose on the left side and towards the nose on the right side
@@ -1825,6 +2025,27 @@ if (livTornB > 0.0) discard;
     (vLivPos.z - livTitleBox.z) / livTitleBox.w);
   float ink = texture2D(livTitle, clamp(t, 0.0, 1.0)).a * step(0.0, t.x) * step(t.x, 1.0) * step(0.0, t.y) * step(t.y, 1.0) * fuselage;
   paint = mix(paint, livColor, ink * upright);
+  // the registration on the rear fuselage above the windows, reading the same way as the title
+  vec2 rg = vec2((vLivPos.x < 0.0 ? livRegBox.x - vLivPos.y : vLivPos.y - livRegBox.x + livRegBox.y) / livRegBox.y,
+    (vLivPos.z - livRegBox.z) / livRegBox.w);
+  float regInk = texture2D(livReg, clamp(rg, 0.0, 1.0)).a * step(0.0, rg.x) * step(rg.x, 1.0) * step(0.0, rg.y) * step(rg.y, 1.0) * fuselage;
+  paint = mix(paint, livRegColor, regInk * upright);
+  // doors and exits (CABIN_DOORS): thin dark seams round rounded rectangles on the fuselage's sides, over the paint and title (no
+  // thinner than about a pixel, and fainter where they would be thinner)
+  if (fuselage > 0.5 && livDoorShape.x > 0.5 && abs(normalize(vLivNor).x) > 0.25) {
+    float seam = 0.0;
+    for (int i = 0; i < ${CABIN_DOORS_MAX}; i++) {
+      if (float(i) >= livDoorShape.x) break;
+      vec4 d = livDoors[i];
+      if (livDoorSide[i] > 0.5 && vLivPos.x < 0.0) continue;
+      vec2 q = abs(vec2(vLivPos.y - d.x, vLivPos.z - d.y)) - (d.zw - livDoorShape.y);
+      float sd = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - livDoorShape.y;
+      float fw = max(fwidth(sd), 1e-7);
+      float w = max(livDoorShape.z, 0.5 * fw);
+      seam = max(seam, (1.0 - smoothstep(w, w + fw, abs(sd))) * clamp(2.0 * livDoorShape.z / fw, 0.3, 1.0));
+    }
+    paint = mix(paint, paint * 0.5, seam);
+  }
   // lettering of the model's own livery goes
   if (vLivPos.y > livClean.x && vLivPos.y < livClean.y && vLivPos.z > livClean.z && vLivPos.z < livClean.w) detail = 0.0;
   diffuseColor.rgb = mix(paint, own, detail);
@@ -1838,10 +2059,15 @@ if (livTornB > 0.0) discard;
 // Models whose texture has dark noise baked into its shading (see FRAG_BODY).
 const NOISY = { cs100: 1, cs300: 1 };
 
+// Models whose windows, doors and panel lines in their texture are dark grey rather than black (the A350's are dark
+// petrol grey): what stays of the texture, by brightness and colourfulness (each a smooth step from .. to). Others:
+// only near black, colourless parts.
+const DETAIL = { a359: [0.1, 0.16, 0.1, 0.16], a380: [0.12, 0.2, 0.02, 0.05] };
+
 // Uniforms each material has its own of (in its userData), for the aircraft drawn with it.
 // livLight: how light it is where the aircraft is (1 day … dark at night, js/view3d.js placeModel).
 // livCut, livKeep: the parts broken off it, or the part it is (PARTS).
-export const OWN_UNIFORMS = ['livFlex', 'livSpin', 'livBlur', 'livAil', 'livFlap', 'livElev', 'livRud', 'livRev', 'livRevKind', 'livRevX', 'livLight', 'livCut', 'livKeep'];
+export const OWN_UNIFORMS = ['livFlex', 'livSpin', 'livBlur', 'livAil', 'livFlap', 'livElev', 'livRud', 'livRev', 'livRevKind', 'livRevX', 'livLight', 'livCut', 'livKeep', 'livReg'];
 const OWN_VEC4 = { livCut: 1, livKeep: 1 };
 
 // The parts of every model that can break off in a crash, read off the same geometry as the control surfaces
@@ -1867,6 +2093,29 @@ export function inPart(part, x, kind, span, y = 0, brk = null, hw = 0) {
   if (!mine) return false;
   if (part.kind === 'wing') return Math.abs(x) > part.cut * span && !(part.out > 0 && Math.abs(x) > part.out * span);
   return part.kind === 'elev' ? kind > 2.5 && kind < 3.5 : kind > 3.5;
+}
+
+// Where a jet model's fans turn (y) and their radius (markEngines), or null.
+function fanOf(scene) {
+  let f = null;
+  scene.traverse((o) => { if (o.isMesh && o.geometry.userData.livFanY != null) f = { y: o.geometry.userData.livFanY, r: o.geometry.userData.livFanR }; });
+  return f;
+}
+
+// The CABIN_DOORS of a model as uniforms (metres into model units by the model's own length, FG.data.modelSize).
+function doorUniforms(file) {
+  const list = (CABIN_DOORS[file] || []).slice(0, CABIN_DOORS_MAX);
+  const real = FG.data.modelSize && FG.data.modelSize[file];
+  const per = real ? 1 / real[0] : 0;   // model units per metre
+  const doors = Array.from({ length: CABIN_DOORS_MAX }, (_, i) => {
+    const d = list[i];
+    return d ? new THREE.Vector4(d[0], d[1], d[2] / 2 * per, d[3] / 2 * per) : new THREE.Vector4();
+  });
+  return {
+    livDoors: { value: doors },
+    livDoorSide: { value: Array.from({ length: CABIN_DOORS_MAX }, (_, i) => (list[i] ? list[i][4] : 0)) },
+    livDoorShape: { value: new THREE.Vector3(per ? list.length : 0, 0.15 * per, 0.012 * per) },
+  };
 }
 
 // Paints a loaded model in a livery (its materials are changed in place; clones of the model share them).
@@ -1919,13 +2168,15 @@ export function paintLivery(scene, file, extra, stretch = 1, livery = FG.livery(
       o.material.needsUpdate = true;
     });
   }
-  const wing = livery.wing == null ? livery.body : livery.wing;
+  // (wings and tailplanes are painted grey on nearly every airliner; engines in the fuselage's colour)
+  const wing = livery.wing == null ? FG.data.wingGrey ?? livery.body : livery.wing;
   const cross = m.cross.clone();
   cross.z *= mark.kind === 'text' || mark.kind === 'logo' ? 1 : mark.size || 1;
+  const fan = fanOf(scene);
   const uniforms = {
     livBody: { value: color(livery.body) },
     livWing: { value: color(wing) },
-    livEngine: { value: color(livery.engine == null ? wing : livery.engine) },
+    livEngine: { value: color(livery.engine == null ? livery.body : livery.engine) },
     livLip: { value: color(0xc8cdd3) },
     livNozzle: { value: color(0x6b7078) },
     livGlass: { value: color(0x1b2128) },
@@ -1943,6 +2194,7 @@ export function paintLivery(scene, file, extra, stretch = 1, livery = FG.livery(
     livMaskBox: { value: cockpit ? cockpit.box : new THREE.Vector4() },
     livMaskTexF: { value: cockpit ? cockpit.frontTexture : title.texture },
     livMaskBoxF: { value: cockpit ? cockpit.frontBox : new THREE.Vector4() },
+    livMaskClear: { value: cockpit && MASKS[file].clear ? 1 : 0 },
     livMaskColor: { value: color(typeof livery.mask === 'string' || typeof livery.mask === 'number' ? livery.mask : 0x16191d) },
     livLine: { value: color(belly && belly.line != null ? belly.line : 0) },
     livLineW: { value: belly && belly.line != null ? (belly.lineWidth || 0.04) * m.width / 2 : 0 },
@@ -1951,6 +2203,9 @@ export function paintLivery(scene, file, extra, stretch = 1, livery = FG.livery(
     livColor: { value: color(livery.titleColor) },
     livTitle: { value: title.texture },
     livTitleBox: { value: m.titleBox },
+    livRegBox: { value: m.regBox },
+    // (dark grey, white on a dark fuselage)
+    livRegColor: { value: color(color(livery.body).getHSL({}).l < 0.4 ? 0xf2f3f5 : 0x30343a) },
     livFin: { value: m.fin },
     livFinColor: { value: color(livery.fin) },
     livTail: { value: livery.tail ? m.tail : new THREE.Vector2(-99, 0) },
@@ -1958,6 +2213,7 @@ export function paintLivery(scene, file, extra, stretch = 1, livery = FG.livery(
     livMark: { value: MARKS[mark.kind] || 0 },
     livMarkA: { value: color(mark.color == null ? livery.fin : mark.color) },
     livMarkB: { value: color(mark.color2 == null ? (mark.color == null ? livery.fin : mark.color) : mark.color2) },
+    livMarkC: { value: color(mark.color3 == null ? livery.fin : mark.color3) },
     livFinText: { value: finText.texture },
     livFinBox: { value: m.finBox },
     livFinAngle: { value: m.finAngle },
@@ -1965,8 +2221,13 @@ export function paintLivery(scene, file, extra, stretch = 1, livery = FG.livery(
     // (sharklets and fences: on them only, js/models3d.js addWingTips)
     livWingletX: { value: livery.winglet == null ? 99 : scene.userData.wingletX || 0.955 * m.span },
     livClean: { value: m.clean },
+    ...doorUniforms(file),
+    livInlet: { value: INLETS[file] != null ? new THREE.Vector4(...color(INLETS[file]).toArray(), 1) : new THREE.Vector4() },
+    livFanCase: { value: FANS[type] && FANS[type].ring != null && fan ? new THREE.Vector4(...color(FANS[type].ring).toArray(), 1) : new THREE.Vector4() },
+    livFan: { value: new THREE.Vector3(fan ? fan.y : 99, FANS[type] && FANS[type].fan || 1, fan ? fan.r : 0) },
     livStretch: { value: stretch },
     livNoisy: { value: NOISY[file] ? 1 : 0 },
+    livDetail: { value: new THREE.Vector4(...(DETAIL[file] || [0.02, 0.05, 0.02, 0.06])) },
     livHalfWidth: { value: m.halfWidth },
     livHalfW: { value: m.halfWidth },
     livBreak: { value: new THREE.Vector4(...(scene.userData.breaks || [9, -9, 0, 0])) },
@@ -1982,7 +2243,7 @@ export function paintLivery(scene, file, extra, stretch = 1, livery = FG.livery(
     // (each material has its own OWN_UNIFORMS, so an aircraft drawn with copies of them bends, turns its
     // propellers and moves its control surfaces on its own:
     // js/view3d.js ownMaterials)
-    for (const k of OWN_UNIFORMS) o.material.userData[k] = { value: OWN_VEC4[k] ? new THREE.Vector4(0, 0, 0, 0) : k === 'livLight' ? 1 : 0 };
+    for (const k of OWN_UNIFORMS) o.material.userData[k] = { value: OWN_VEC4[k] ? new THREE.Vector4(0, 0, 0, 0) : k === 'livLight' ? 1 : k === 'livReg' ? regTexture(null) : 0 };
     o.material.userData.livSpanOf = m.span; // (the half span the shader breaks parts off at: js/view3d.js partMiddle)
     o.material.userData.livBreakOf = scene.userData.breaks; // (and where the fuselage breaks, with its half width)
     o.material.userData.livHalfOf = m.halfWidth;

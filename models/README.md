@@ -48,6 +48,27 @@ Two models come from 3D-print models on [Thingiverse](https://www.thingiverse.co
 engraved windows became dark parts, and both got simple propellers (four and six blades), because the print
 models have none. They have no landing gear.
 
+`a321.glb` (A321, A321neo, A321XLR) is
+[Vietnam Airlines Airbus A321-200](https://sketchfab.com/3d-models/vietnam-airlines-airbus-a321-200-3c78ea05609f4cb5b4d0ab2583021a7f)
+by Dave Love (Sketchfab: Tyler_Dave), licensed under **CC BY 4.0** (Creative Commons Attribution,
+https://creativecommons.org/licenses/by/4.0/). Converted from Sketchfab's glTF: turned and scaled like the others, its
+own landing gear taken out (the game draws its own, which folds away), parts with the same material merged, textures at
+1024 px, materials made matt (some were full metal, which shows black without reflections). In the game it is painted in
+the airline's livery like every model; its own texture gives the windows, doors and panel lines.
+
+`a343.glb` (A340-300) is [Airbus A340-300](https://sketchfab.com/3d-models/airbus-a340-300-2c6bc47ca51a4f8587845f6b1f08269b)
+by CarlosCG31 on Sketchfab, licensed under **CC BY 4.0**, converted the same way (its own gear taken out). Its engine
+cowlings get smooth normals as it loads (`SMOOTH` in `js/models3d.js`).
+
+`a359.glb` (A350-900, and stretched the A350-1000, -2000, -20000) is
+[A350](https://sketchfab.com/3d-models/a350-cdeb75381f434353b0cbe00c9244556e) by manilov.ap, and `a380.glb` (A380-800)
+is [Airbus A380](https://sketchfab.com/3d-models/airbus-a380-98d21f9c8104445f814cef47ef992889) by Brout (davidbroutian),
+both on Sketchfab under **CC BY 4.0**, converted the same way (their own gear taken out; the A380's old
+specular-glossiness material read into a plain one). Their windows and doors are dark grey in their textures, not black:
+`DETAIL` in `js/livery.js` keeps them. The A350's fan is a picture on its cowling, so its fans don't turn. Its cockpit
+glass is a few big faces in a ragged bluish patch of its texture: its black mask is drawn from the old A350 model's
+outline of the glass instead (`A350_COCKPIT` in `js/livery.js`; the two noses are the same shape), the patch painted over.
+
 `icons/` holds the top view of every aircraft type as a plain shape; the 2D map uses it as the aircraft's icon
 (`planeGlyph` in `js/ui.js`). `tools/hangar_shots.html` makes these too.
 
@@ -57,11 +78,12 @@ nose in front of the engines and the surfaces as the rear of the wing's, tailpla
 in Blender keeps working as long as it stays 1 unit long and centred (export glTF Binary, +Y Up, no Draco); a
 propeller only turns when it is its own piece (Edit Mode, select it, `P` → Selection).
 
-`a320.glb` and `a321.glb` have plain wing tips. The sharklets of the A320neo, A321neo and A321XLR and the A320's wing
-tip fences are not in the files: `js/models3d.js` (`addWingTips`) builds them onto the wing tips as the model loads,
+`a320.glb` has plain wing tips, `a321.glb` wing tip fences. The sharklets of the A320neo, A321neo and A321XLR and the
+A320's wing tip fences are not in the files: `js/models3d.js` (`addWingTips`) builds them onto the wing tips as the model loads,
 for the types with `sharklets` or `fences` in `js/data/looks.js`. As it loads, `a320.glb` also gets smooth normals where
 its faces were flat facets (`SMOOTH`: the engine cowlings), and `js/livery.js` paints its light see-through window glass
-dark (`DARK_GLASS`).
+dark (`DARK_GLASS`) and its doors and exits as seams (`CABIN_DOORS`). The A320neo's bigger engines are the model's grown
+(`growEngines`, looks.js `engines`, where they are: `FG.data.engineBox` in `js/data/models.js`).
 
 ## Making a model from pictures or video (`tools/plane_scan.html`)
 

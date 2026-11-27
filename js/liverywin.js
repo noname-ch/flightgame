@@ -205,8 +205,8 @@ function renderDesign() {
       </fieldset>
       <fieldset><legend>Colours</legend>
         ${field('Fuselage', color('body', d.body))}
-        ${field('Wings', color('wing', d.wing == null ? d.body : d.wing))}
-        ${field('Engines', color('engine', d.engine == null ? (d.wing == null ? d.body : d.wing) : d.engine))}
+        ${field('Wings', color('wing', d.wing == null ? FG.data.wingGrey ?? d.body : d.wing))}
+        ${field('Engines', color('engine', d.engine == null ? d.body : d.engine))}
         ${field('Wing tips', color('winglet', d.winglet == null ? d.body : d.winglet))}
         ${field('Fin', color('fin', d.fin))}
         ${check('tail', d.tail, 'Fin colour round the rear fuselage')}

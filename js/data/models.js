@@ -28,7 +28,7 @@ FG.data.models = {
   'TRIDENT': 'crj900', 'DC-9-30': 'crj900', 'B727-200': 'crj900', 'IL-62': 'crj900', 'TU-154': 'crj900',
   'DC-9-50': 'crj900', 'MD-81': 'crj900', 'B717': 'crj900', 'TU-104': 'b752', 'COMET4': 'a346', 'B707-120': 'a346',
   'CV-880': 'a346', 'B720': 'a346', 'DC-8-50': 'a346', 'B707-320B': 'a346', 'DC-8-63': 'a346', 'IL-86': 'a346',
-  'A340-300': 'a346', 'B737-200': 'b737', 'B737-300': 'b737', 'B747-100': 'b744', 'B747-200B': 'b744',
+  'A340-300': 'a343', 'B737-200': 'b737', 'B737-300': 'b737', 'B747-100': 'b744', 'B747-200B': 'b744',
   'B747SP': 'b744', 'DC-10-10': 'b772', 'L-1011': 'b772', 'DC-10-30': 'b772', 'MD-11': 'b772', 'A300': 'a332',
   'A310': 'a332', 'B767-200': 'b763', 'TU-144': 'concorde',
 };
@@ -42,7 +42,7 @@ FG.data.modelSize = {
   e170: [29.8, 3.3], e190: [35.83, 3.3], cs100: [35.02, 3.7], cs300: [38.17, 3.7],
   a318: [31.71, 4.1], a319: [33.89, 4.1], a320: [38.27, 4.1], a321: [44.52, 4.1],
   b737: [34.93, 4.0], b738: [39.42, 4.0], b739: [40.62, 4.0], b752: [46.34, 4.0], b763: [55.2, 5.4],
-  a332: [58.36, 5.6], a333: [63.05, 5.6], a346: [77.12, 5.6], a359: [67.02, 6.1], a380: [72.68, 8.4],
+  a332: [58.36, 5.6], a333: [63.05, 5.6], a343: [63.69, 5.64], a346: [77.12, 5.6], a359: [66.8, 6.1], a380: [72.72, 8.4],
   b788: [56.68, 5.9], b789: [65.9, 5.9], b772: [64.43, 6.2], b773: [74.38, 6.2], b744: [70.94, 6.5], b748: [76.55, 6.5],
   ju52: [19.01, 2.2], dc3: [19.68, 2.4], concorde: [61.77, 3.3],
 };
@@ -53,8 +53,15 @@ FG.data.modelSize = {
 // share of the new length put in ahead of the wing; `body` = |x| within which a triangle is fuselage. `engine`: a box
 // round one engine (|x|, y, z) and the point it grows from (|x|, y, z: the back of the nacelle's top, under the pylon).
 FG.data.plugs = {
-  a359: { front: [0.2856, 0.3649], back: [-0.2687, -0.2016], ahead: 0.55, body: 0.06,
-    engine: { x: [0.115, 0.195], y: [0.05, 0.18], z: [-0.13, -0.062], at: [0.155, 0.06, -0.064] } },
+  a359: { front: [0.25, 0.345], back: [-0.23, -0.2], ahead: 0.55, body: 0.06,
+    engine: { x: [0.12, 0.19], y: [0.045, 0.175], z: [-0.125, -0.056], at: [0.155, 0.081, -0.059] } },
+};
+
+// Where a model's engines are (the right one; the left is mirrored): the box every piece of an engine lies in, and the
+// top of the nacelle at its back, which a type with bigger engines (FG.data.looks `engines`) grows them from
+// (js/models3d.js growEngines).
+FG.data.engineBox = {
+  a320: { x: [0.135, 0.195], y: [0.06, 0.205], z: [-0.155, -0.09], at: [0.1645, 0.068, -0.092] },
 };
 
 // File name of a type's hangar picture and map icon: 'B737-8' -> 'b737-8'.
@@ -102,6 +109,7 @@ FG.data.gear = {
   b763: { main: 'wing', track: 0.92, wheels: '2x2', tyre: 1.17, tilt: -10 },
   a332: { main: 'wing', track: 0.95, wheels: '2x2', tyre: 1.27, tilt: 18 },
   a333: { main: 'wing', track: 0.95, wheels: '2x2', tyre: 1.27, tilt: 18 },
+  a343: { main: 'wing', track: 0.95, wheels: '2x2', tyre: 1.4, body: { track: 0, wheels: '2x2', aft: 0.02 }, tilt: 10 },
   a346: { main: 'wing', track: 0.95, wheels: '2x2', tyre: 1.4, body: { track: 0, wheels: '2x2', aft: 0.02 }, tilt: 10 },
   a359: { main: 'wing', track: 0.89, wheels: '2x2', tyre: 1.4, tilt: 9 },
   a380: { main: 'wing', track: 0.88, wheels: '2x2', tyre: 1.4, nose: 0.1, body: { track: 0.35, wheels: '3x2', aft: 0.05 }, tilt: -8 },

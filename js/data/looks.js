@@ -34,7 +34,7 @@ FG.data.looks = {
   'A318': { len: 31.4, span: 34.1, dia: 4.1, eng: 'uw2' },
   'A319': { len: 33.8, span: 35.8, dia: 4.1, eng: 'uw2', winglet: true },
   'A320': { len: 37.6, span: 35.8, dia: 4.1, eng: 'uw2', winglet: true, fences: true },
-  'A320neo': { len: 37.6, span: 35.8, dia: 4.1, eng: 'uw2', winglet: true, bigFan: true, sharklets: true },
+  'A320neo': { len: 37.6, span: 35.8, dia: 4.1, eng: 'uw2', winglet: true, bigFan: true, sharklets: true, engines: 1.14 },
   'A321': { len: 44.5, span: 35.8, dia: 4.1, eng: 'uw2', winglet: true, gear: 1 },
   'A321neo': { len: 44.5, span: 35.8, dia: 4.1, eng: 'uw2', winglet: true, bigFan: true, sharklets: true },
   'A321XLR': { len: 44.5, span: 35.8, dia: 4.1, eng: 'uw2', winglet: true, bigFan: true, sharklets: true },
