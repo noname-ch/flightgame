@@ -117,6 +117,60 @@ const FANS = {
   'A321XLR': { fan: 0.38, ring: 0x7cc4a4 },
 };
 
+// The window glass of most models is a see-through part (a light grey or tinted material, often a third to four
+// fifths opaque) with the inside of the skin or nothing behind it: the windows looked like grey dents or holes you saw
+// through, and as the livery shader skipped see-through parts they did not break with the fuselage (in a crash the
+// glass hung in the air, or was hidden). Real windows look dark from outside, with the sky's highlights on them: such
+// glass is made solid and glossy and drawn by the livery shader as panes (livPart 6, livGlass), so it is cut where
+// the fuselage breaks. Glass = a see-through part nearly all on the fuselage and not coloured (not a red beacon's or a
+// green light's lens); once per geometry.
+function solidGlass(scene, hw) {
+  const cabin = { panes: false, strip: null };
+  scene.traverse((o) => {
+    if (!o.isMesh || !o.material.transparent || !o.geometry.attributes.position) return;
+    const g = o.geometry, pos = g.attributes.position;
+    if (g.userData.livGlass == null) {
+      const c = o.material.color, sat = Math.max(c.r, c.g, c.b) - Math.min(c.r, c.g, c.b);
+      let on = 0;
+      for (let i = 0; i < pos.count; i++) if (Math.abs(pos.getX(i)) < 1.2 * hw) on++;
+      g.userData.livGlass = pos.count > 8 && on >= 0.85 * pos.count && sat < 0.3;
+      if (g.userData.livGlass) {
+        // (along the cabin: its windows, or a strip of glass all along it in a few faces, the 737s')
+        let y0 = Infinity, y1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+        for (let i = 0; i < pos.count; i++) {
+          const y = pos.getY(i), z = pos.getZ(i);
+          if (y < y0) y0 = y; if (y > y1) y1 = y; if (z < z0) z0 = z; if (z > z1) z1 = z;
+        }
+        g.userData.livCabin = y1 - y0 > 0.2 ? (pos.count < 120 ? (z0 + z1) / 2 : true) : false;
+        const part = g.attributes.livPart || new THREE.BufferAttribute(new Float32Array(pos.count), 1);
+        part.array.fill(6);
+        part.needsUpdate = true;
+        g.setAttribute('livPart', part);
+      }
+    }
+    if (!g.userData.livGlass) return;
+    const strip = typeof g.userData.livCabin === 'number';
+    if (strip) cabin.strip = g.userData.livCabin; else if (g.userData.livCabin) cabin.panes = true;
+    const mat = o.material;
+    mat.transparent = false;
+    mat.opacity = 1;
+    mat.depthWrite = true;
+    mat.alphaMap = null;
+    // (a strip is painted the fuselage's colour between its windows: less glossy)
+    if (mat.roughness != null) { mat.roughness = strip ? 0.3 : 0.12; mat.metalness = strip ? 0.15 : 0.45; }
+    mat.needsUpdate = true;
+  });
+  return cabin;
+}
+
+// The cabin windows the shader draws (FRAG_BODY, livWin): a row of rounded panes of the real size [width, height,
+// pitch] in metres along each side, on models whose windows are only painted in their texture (light grey and a
+// few pixels: under the livery they were gone, or showed as faint rings), and between them a strip of glass is
+// painted over (the 737s'). Not on models with panes of their own (the A320's glass), dark windows kept from their
+// texture (DETAIL) or flushed pockets (POCKET_WINDOWS). The 787's are the biggest of any airliner.
+const WINDOWS = { b788: [0.28, 0.47, 0.61], b789: [0.28, 0.47, 0.61] };
+const WINDOW = [0.25, 0.36, 0.53];
+
 // The window pockets of a model: patches of the skin inside sharp edges, on the fuselage sides, facing sideways,
 // as big as each other and in a row of at least five at one height. Their floors are moved out to the skin
 // around them; markEngines then marks them as glass (livPart 6). Once per geometry.
@@ -1202,8 +1256,12 @@ function findSurfaces(meshes, m) {
 // Where the fuselage breaks in a crash (PARTS body; the shader: livBreak): across it a little ahead of the wing's
 // root (the nose section: inside 1.25 half widths, so the engines stay on the wing), and between the wing's trailing
 // edge and the tailplane, swept back with them out to the tailplane's tips (the tail section, with a tail's engines).
-// [nose y, tail y at 1.25 half widths, how far back the tail line runs per unit out, the tail section's reach in |x|];
-// y is along the model (its length 1). A delta (Concorde) has no tail section; no wing found: no breaks.
+// [nose y, tail y at 1.25 half widths, how far back the tail line runs per unit out, the tail section's reach in |x|,
+// cockpit y, tail cone y]; y is along the model (its length 1). Two more cracks split those sections again, as real
+// fuselages break in a hard crash (at the forward doors and in front of the tailplanes): across the nose section
+// behind the cockpit (the cockpit y; ahead of it the cockpit section), and across the tail section ahead of the
+// tailplanes (the tail cone y, inside 1.25 half widths; behind it the tail cone with the tailplanes and the fin). A
+// delta (Concorde) has no tail section, an aircraft with its engines on the tail no tail cone; no wing found: no breaks.
 function bodyBreaks(wingE, tail, tipX, x0, xw, span, delta, engY1) {
   const strip = (ax) => Math.max(0, Math.min(wingE.length - 1, Math.floor((ax - x0) / xw)));
   const wingAt = (ax) => {
@@ -1212,10 +1270,11 @@ function bodyBreaks(wingE, tail, tipX, x0, xw, span, delta, engY1) {
     return null;
   };
   const root = wingAt(x0);
-  if (!root) return [9, -9, 0, 0];
+  if (!root) return [9, -9, 0, 0, 9, -9];
   const nose = Math.min(0.42, root.le + 0.05);
-  if (delta) return [nose, -9, 0, 0];
-  let y0, k = 0.3, reach = 0.42 * span;
+  const cockpit = nose < 0.4 ? nose + 0.55 * (0.5 - nose) : 9;
+  if (delta) return [nose, -9, 0, 0, cockpit, -9];
+  let y0, k = 0.3, reach = 0.42 * span, cone = -9;
   if (tail && tipX > x0) {
     const a = Math.min(x0, 0.5 * tipX), te0 = root.te, le0 = tail.le(a);
     const teT = (wingAt(tipX) || root).te, leT = tail.le(0.95 * tipX);
@@ -1223,10 +1282,13 @@ function bodyBreaks(wingE, tail, tipX, x0, xw, span, delta, engY1) {
     const yT = teT - 0.4 * Math.max(0.02, teT - leT);
     k = Math.max(0, Math.min(1.2, (y0 - yT) / Math.max(1e-3, 0.95 * tipX - x0)));
     reach = 1.08 * tipX;
+    // (three quarters of the way from the wing's trailing edge to the tailplane's leading edge at its root)
+    const le = tail.le(Math.min(x0, 0.5 * tipX));
+    if (te0 - le0 > 0.04 && le < y0 - 0.04) cone = Math.max(le + 0.02, y0 - 0.35 * (te0 - le0));
   } else y0 = root.te - 0.1;
   // (engines on the tail go with it: the line ahead of them, but behind the wing)
-  if (engY1 > -1) y0 = Math.min(Math.max(y0, engY1 + 0.01), root.te - 0.005);
-  return [nose, y0, k, reach];
+  if (engY1 > -1) { y0 = Math.min(Math.max(y0, engY1 + 0.01), root.te - 0.005); cone = -9; }
+  return [nose, y0, k, reach, cockpit, cone];
 }
 
 // Every face of these meshes but engines' and propellers': fn([a, b, c] as [x, y, z], unit normal [x, y, z]
@@ -1632,6 +1694,9 @@ export function measure(scene, file, stretch = 1, title = { aspect: 4.3 }, finMa
     top,
     width: d,
     span,
+    // the cabin's window row (WINDOWS): its middle a little below half the height of the rear fuselage (a 747's hump
+    // is above it), from behind the cockpit to ahead of the tail
+    windows: [crown - 0.43 * d, Y(0.365), Y(-0.34)],
     titleBox: new THREE.Vector4(titleY, titleH * title.aspect / stretch, top - below * d - titleH / 2, titleH),
     // the registration: letters a tenth of the fuselage high, above the windows, ending a little ahead of where the
     // fin's colour comes down the rear fuselage
@@ -1675,13 +1740,16 @@ uniform float livHalfW;    // half width of the fuselage
 // elevators and the rudder (livSurf kinds 3 and 4).
 uniform vec4 livCut;       // broken off and not drawn: wing beyond livCut.x (left) / .y (right) half spans (0: whole),
                            // elevators .z (1 left, 2 right, 3 both), .w the rudder and fuselage sections
-                           // (bits: 1 rudder, 2 nose section, 4 tail section: bodyBreaks)
+                           // (bits: 1 rudder, 2 nose section, 4 tail section, 8 cockpit, 16 tail cone: bodyBreaks)
 uniform vec4 livKeep;      // a broken-off part drawn on its own: kind (0 none, 1 wing, 2 elevators, 3 rudder, 4 a
-                           // fuselage section), side (-1 left, 1 right, 0 both; a section: 1 nose, -1 tail), the
-                           // break (half spans) for a wing; .w a wing's tip broken before, a section's parts gone
-                           // before it broke off (bits: 1 elevators, 2 rudder)
+                           // fuselage section), side (-1 left, 1 right, 0 both; a section: 1 nose, -1 tail,
+                           // 2 cockpit, -2 tail cone), the break (half spans) for a wing; .w a wing's tip broken
+                           // before, a section's parts gone before it broke off (bits: 1 elevators, 2 rudder, 4 the
+                           // cockpit or the tail cone beyond it, a section of its own)
 uniform vec4 livBreak;     // where the fuselage breaks (bodyBreaks): nose y, tail y, its sweep back, its reach in |x|
+uniform vec2 livBreak2;    // ... and the cracks behind the cockpit (y; 9: none) and ahead of the tail cone (y; -9: none)
 varying float vLivBody;    // into a broken-off fuselage section (> 0: not drawn), in model units
+varying float vLivBodyK;   // a fuselage section drawn on its own: outside it (> 0: not drawn)
 varying float vLivWing;    // past the break (> 0: not drawn), in model units
 varying float vLivGone;    // 1 on a part that is not drawn, -1 on one that is
 varying float vLivOut;     // a broken-off wing part whose tip had broken off before (livKeep.w): past that (> 0) not drawn`;
@@ -1774,10 +1842,13 @@ if (livSurf.x > 0.5) {
   vLivGone = -1.0;
   vLivOut = -1e4;
   vLivBody = -1e4;
-  // (how far into the nose section and into the tail section: > 0 in it)
+  vLivBodyK = -1e4;
+  // (how far into the nose section, the cockpit, the tail section and the tail cone: > 0 in it)
   float livAX = abs(position.x), livX0 = 1.25 * livHalfW;
   float livNoseD = livAX < livX0 ? position.y - livBreak.x : -1.0;
+  float livCockD = livAX < livX0 ? position.y - livBreak2.x : -1.0;
   float livTailD = livAX < livBreak.w ? livBreak.y - livBreak.z * max(livAX - livX0, 0.0) - position.y : -1.0;
+  float livConeD = livAX < livX0 ? livBreak2.y - position.y : livTailD;
   if (livKeep.x > 0.5) {
     bool livMine = livKeep.y == 0.0 || livKeep.y == livSideX;
     if (livKeep.x < 1.5) {
@@ -1785,8 +1856,14 @@ if (livSurf.x > 0.5) {
       if (livKeep.w > 0.0) vLivOut = abs(position.x) - livKeep.w * livSpan; // (its own tip came off before)
     } else if (livKeep.x < 3.5) vLivGone = livMine && (livKeep.x < 2.5 ? livEl : livRu) ? -1.0 : 1.0;
     else {
-      vLivBody = livKeep.y > 0.0 ? -livNoseD : -livTailD;
-      if ((livEl && mod(livKeep.w, 2.0) > 0.5) || (livRu && livKeep.w > 1.5)) vLivGone = 1.0;
+      // (a section: outside its own line not drawn; with the cockpit or the tail cone beyond it a piece of its own, not
+      // past that line either)
+      bool livEnd = mod(floor(livKeep.w / 4.0), 2.0) > 0.5;
+      if (livKeep.y > 1.5) vLivBodyK = -livCockD;
+      else if (livKeep.y > 0.0) { vLivBodyK = -livNoseD; if (livEnd) vLivBody = livCockD; }
+      else if (livKeep.y > -1.5) { vLivBodyK = -livTailD; if (livEnd) vLivBody = livConeD; }
+      else vLivBodyK = -livConeD;
+      if ((livEl && mod(livKeep.w, 2.0) > 0.5) || (livRu && mod(floor(livKeep.w / 2.0), 2.0) > 0.5)) vLivGone = 1.0;
     }
   } else {
     float livAt = livSideX < 0.0 ? livCut.x : livCut.y;
@@ -1795,7 +1872,8 @@ if (livSurf.x > 0.5) {
     if (livEl && (livE > 2.5 || (livSideX < 0.0 ? (livE > 0.5 && livE < 1.5) : (livE > 1.5 && livE < 2.5)))) vLivGone = 1.0;
     float livB = livCut.w;
     if (livRu && mod(livB, 2.0) > 0.5) vLivGone = 1.0;
-    vLivBody = max(mod(floor(livB / 2.0), 2.0) > 0.5 ? livNoseD : -1e4, livB > 3.5 ? livTailD : -1e4);
+    vLivBody = max(max(mod(floor(livB / 2.0), 2.0) > 0.5 ? livNoseD : -1e4, mod(floor(livB / 4.0), 2.0) > 0.5 ? livTailD : -1e4),
+      max(mod(floor(livB / 8.0), 2.0) > 0.5 ? livCockD : -1e4, mod(floor(livB / 16.0), 2.0) > 0.5 ? livConeD : -1e4));
   }
 }`;
 const FRAG_HEAD = `
@@ -1851,6 +1929,9 @@ uniform vec4 livDoors[${CABIN_DOORS_MAX}];    // doors and exits (CABIN_DOORS): 
 uniform float livDoorSide[${CABIN_DOORS_MAX}]; // ... 0 on both sides, 1 on the right only
 uniform vec3 livDoorShape; // how many, the corners' radius, half the seam's width
 uniform float livStretch; // the model is drawn this much longer than it is
+uniform vec4 livWin;      // the cabin windows drawn (WINDOWS): 0 none, 1 on the fuselage, 2 on its strip of glass; their
+                          // middle z, half height, half width
+uniform vec3 livWinY;     // ... from this y back to this y, this far apart
 uniform float livNoisy;   // its texture has noisy dark shading (NOISY)
 uniform vec4 livDetail;   // what of its own texture stays: darker than .x .. .y, less coloured than .z .. .w (DETAIL)
 uniform float livHalfWidth; // of the fuselage
@@ -1867,6 +1948,7 @@ varying float vLivWing;
 varying float vLivGone;
 varying float vLivOut;
 varying float vLivBody;
+varying float vLivBodyK;
 // A break across the fuselage is torn round it, the same on both sides of it.
 float livTearB(vec3 p) {
   float a = sin(p.x * 53.0 / livSpan + p.z * 71.0 / livSpan + 0.4) * 0.5 + sin(p.z * 167.0 / livSpan + 0.7) * 0.3 + sin(p.x * 389.0 / livSpan - p.z * 211.0 / livSpan) * 0.2;
@@ -1878,6 +1960,17 @@ float livTear(vec3 p) {
   float a = sin(p.y * 61.0 / livSpan + 1.3) * 0.5 + sin(p.y * 157.0 / livSpan + p.z * 90.0 / livSpan) * 0.35 + sin(p.y * 409.0 / livSpan + 2.1) * 0.15;
   return a * 0.018 * livSpan;
 }
+// How much of a cabin window (livWin) is here: 1 in the glass, 0 outside, smooth over about a pixel.
+float livWindow(vec3 p) {
+  if (p.y > livWinY.x || p.y < livWinY.y) return 0.0;
+  float c = livWinY.x - (floor((livWinY.x - p.y) / livWinY.z) + 0.5) * livWinY.z;
+  vec2 h = vec2(livWin.w, livWin.z);
+  float r = 0.9 * min(h.x, h.y);
+  vec2 q = abs(vec2(p.y - c, p.z - livWin.y)) - (h - r);
+  float sd = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
+  float fw = max(fwidth(sd), 1e-7);
+  return 1.0 - smoothstep(-0.5 * fw, 0.5 * fw, sd);
+}
 uniform vec3 livFlapSpan; // the flaps are between these |x|, in two parts split FLAP_BREAK of the way out
 `;
 const FRAG_BODY = `
@@ -1885,7 +1978,7 @@ const FRAG_BODY = `
 float livTorn = vLivWing + (livKeep.x > 0.5 ? -1.0 : 1.0) * livTear(vLivPos);
 if (livTorn > 0.0 || vLivOut + livTear(vLivPos) > 0.0) discard;
 if (livKeep.x > 1.5 ? vLivGone > 0.98 : vLivGone > -0.98) discard;
-float livTornB = vLivBody + (livKeep.x > 3.5 ? -1.0 : 1.0) * livTearB(vLivPos);
+float livTornB = max(vLivBody + livTearB(vLivPos), vLivBodyK - livTearB(vLivPos));
 if (livTornB > 0.0) discard;
 {
   vec3 own = diffuseColor.rgb;
@@ -1935,9 +2028,10 @@ if (livTornB > 0.0) discard;
     paint = mix(paint, paint * 0.45 + 0.03, min(seam, 1.0));
   }
   if (vLivPart > 5.5) {
-    // a window pane: glass, over any title
+    // a window pane: glass, over any title (a strip of glass along the cabin: only its windows, livWin)
     own = livGlass;
     detail = 1.0;
+    if (livWin.x > 1.5 && vLivPos.y < livWinY.x + livWinY.z && vLivPos.y > livWinY.y - livWinY.z) detail = livWindow(vLivPos);
   } else if (vLivPart > 5.3) {
     // the inlet's wall inside the cowl and the fan's case round the blade tips: the model's own colours (as the fan),
     // or bare grey (livInlet) with the case's lining round the tips (livFanCase)
@@ -2046,13 +2140,23 @@ if (livTornB > 0.0) discard;
     }
     paint = mix(paint, paint * 0.5, seam);
   }
+  // the cabin windows, where the model has none of its own that show (WINDOWS), over the paint and the title; its own
+  // faint ones round them go
+  if (livWin.x > 0.5 && livWin.x < 1.5 && fuselage > 0.5 && vLivPart < 0.5 && abs(normalize(vLivNor).x) > 0.4) {
+    float win = livWindow(vLivPos);
+    paint = mix(paint, livGlass, win);
+    if (abs(vLivPos.z - livWin.y) < 2.0 * livWin.z && vLivPos.y < livWinY.x + livWinY.z && vLivPos.y > livWinY.y - livWinY.z) detail = 0.0;
+  }
+  // windows painted in the model's own texture (kept as its dark detail on the fuselage's sides): darker, as glass looks
+  // from outside, not dark grey
+  if (fuselage > 0.5 && vLivPart < 0.5 && abs(vLivPos.z - livWin.y) < 3.0 * livWin.z) own *= mix(1.0, 0.4, upright);
   // lettering of the model's own livery goes
   if (vLivPos.y > livClean.x && vLivPos.y < livClean.y && vLivPos.z > livClean.z && vLivPos.z < livClean.w) detail = 0.0;
   diffuseColor.rgb = mix(paint, own, detail);
   // along a tear: bare torn metal and soot, the inside of the wing dark
   float livEdge = 1.0 - smoothstep(0.0, 0.03 * livSpan, -max(livTorn, livTornB));
   if (livEdge > 0.0) diffuseColor.rgb = mix(diffuseColor.rgb, mix(vec3(0.05, 0.045, 0.04), vec3(0.42, 0.42, 0.4), step(0.6, fract(vLivPos.z * 300.0 / livSpan + vLivPos.y * 40.0 / livSpan))), livEdge);
-  if (!gl_FrontFacing && (vLivWing > -1e3 || vLivBody > -1e3)) diffuseColor.rgb *= 0.25;
+  if (!gl_FrontFacing && (vLivWing > -1e3 || vLivBody > -1e3 || vLivBodyK > -1e3)) diffuseColor.rgb *= 0.25;
   diffuseColor.rgb *= livLight;
 }`;
 
@@ -2077,17 +2181,22 @@ const OWN_VEC4 = { livCut: 1, livKeep: 1 };
 export const PARTS = {
   tip: { cut: 0.8 },
   wing: { cut: 0.5 },
-  body: { nose: 1, tail: -1 }, // (the fuselage: across it ahead of the wing and behind it, bodyBreaks)
+  body: { nose: 1, tail: -1, cockpit: 2, cone: -2 }, // (the fuselage: across it ahead of the wing and behind it, behind
+                                                      // the cockpit and ahead of the tailplanes: bodyBreaks)
 };
 // Which vertices a part has, as the shader decides (for the part's middle, which it turns about as it falls):
-// part { kind: 'wing' | 'elev' | 'rud' | 'body', side: -1 | 1 | 0 (a body section: 1 nose, -1 tail), cut, out (a wing
-// part: where its tip broke off before, 0: none) }; x, the vertex's livSurf kind, the model's half span; y, where the
+// part { kind: 'wing' | 'elev' | 'rud' | 'body', side: -1 | 1 | 0 (a body section: 1 nose, -1 tail, 2 cockpit, -2 tail
+// cone), cut, out (a wing part: where its tip broke off before, 0: none; a body section: livKeep.w bits) }; x, the vertex's livSurf kind, the model's half span; y, where the
 // fuselage breaks (bodyBreaks) and its half width, for a body section.
 export function inPart(part, x, kind, span, y = 0, brk = null, hw = 0) {
   if (part.kind === 'body') {
     if (!brk) return false;
-    const ax = Math.abs(x), x0 = 1.25 * hw;
-    return part.side > 0 ? ax < x0 && y > brk[0] : ax < brk[3] && y < brk[1] - brk[2] * Math.max(ax - x0, 0);
+    const ax = Math.abs(x), x0 = 1.25 * hw, end = ((part.out || 0) & 4) > 0;
+    const nose = ax < x0 && y > brk[0], cockpit = ax < x0 && y > (brk[4] ?? 9);
+    const tail = ax < brk[3] && y < brk[1] - brk[2] * Math.max(ax - x0, 0), cone = ax < x0 ? y < (brk[5] ?? -9) : tail;
+    if (part.side > 1.5) return cockpit;
+    if (part.side < -1.5) return cone;
+    return part.side > 0 ? nose && !(end && cockpit) : tail && !(end && cone);
   }
   const mine = !part.side || Math.sign(x || 1) === part.side;
   if (!mine) return false;
@@ -2168,6 +2277,10 @@ export function paintLivery(scene, file, extra, stretch = 1, livery = FG.livery(
       o.material.needsUpdate = true;
     });
   }
+  const cabin = solidGlass(scene, m.halfWidth);
+  const winMode = cabin.strip != null ? 2 : cabin.panes || DETAIL[file] || POCKET_WINDOWS[file] ? 0 : 1;
+  const [winW, winH, winP] = WINDOWS[file] || WINDOW;
+  const perM = FG.data.modelSize && FG.data.modelSize[file] ? 1 / FG.data.modelSize[file][0] : 0;
   // (wings and tailplanes are painted grey on nearly every airliner; engines in the fuselage's colour)
   const wing = livery.wing == null ? FG.data.wingGrey ?? livery.body : livery.wing;
   const cross = m.cross.clone();
@@ -2179,7 +2292,7 @@ export function paintLivery(scene, file, extra, stretch = 1, livery = FG.livery(
     livEngine: { value: color(livery.engine == null ? livery.body : livery.engine) },
     livLip: { value: color(0xc8cdd3) },
     livNozzle: { value: color(0x6b7078) },
-    livGlass: { value: color(0x1b2128) },
+    livGlass: { value: color(0x080a0d) },   // (window glass from outside: nearly black)
     livProp: { value: prop ? new THREE.Vector4(prop.x, prop.z, prop.y, prop.r) : new THREE.Vector4() },
     livPropShape: { value: prop ? new THREE.Vector3(prop.t, prop.tip, prop.r * 0.25) : new THREE.Vector3() },
     livPropColor: { value: color(prop && prop.blade || 0x1c1d20) },
@@ -2226,11 +2339,14 @@ export function paintLivery(scene, file, extra, stretch = 1, livery = FG.livery(
     livFanCase: { value: FANS[type] && FANS[type].ring != null && fan ? new THREE.Vector4(...color(FANS[type].ring).toArray(), 1) : new THREE.Vector4() },
     livFan: { value: new THREE.Vector3(fan ? fan.y : 99, FANS[type] && FANS[type].fan || 1, fan ? fan.r : 0) },
     livStretch: { value: stretch },
+    livWin: { value: new THREE.Vector4(perM ? winMode : 0, winMode === 2 ? cabin.strip : m.windows[0], winH / 2 * perM, winW / 2 * perM / stretch) },
+    livWinY: { value: new THREE.Vector3(m.windows[1], m.windows[2], winP * perM / stretch) },
     livNoisy: { value: NOISY[file] ? 1 : 0 },
     livDetail: { value: new THREE.Vector4(...(DETAIL[file] || [0.02, 0.05, 0.02, 0.06])) },
     livHalfWidth: { value: m.halfWidth },
     livHalfW: { value: m.halfWidth },
-    livBreak: { value: new THREE.Vector4(...(scene.userData.breaks || [9, -9, 0, 0])) },
+    livBreak: { value: new THREE.Vector4(...(scene.userData.breaks || [9, -9, 0, 0]).slice(0, 4)) },
+    livBreak2: { value: new THREE.Vector2(...(scene.userData.breaks || [0, 0, 0, 0, 9, -9]).slice(4, 6)) },
     livSpan: { value: m.span },
     livFlapSpan: { value: new THREE.Vector3(1.25 * m.halfWidth, FLAP_END * m.span, 1.25 * m.halfWidth + FLAP_BREAK * (FLAP_END * m.span - 1.25 * m.halfWidth)) },
   };

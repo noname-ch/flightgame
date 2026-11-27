@@ -2771,11 +2771,13 @@ const planeLayer = {
     // what broke off it (pose.dmg) and the parts falling away or lying on the ground (pose.pieces): pilotPieces
     const d = pose.dmg;
     if (!e.cut) e.cut = new THREE.Vector4(0, 0, 0, 0);
-    const body = (d && d.body) || [0, 0]; // (the nose, the tail section broken off: livCut.w bits 2, 4)
-    e.cut.set(d ? d.cut[0] || 0 : 0, d ? d.cut[1] || 0 : 0, d ? d.elev || 0 : 0, (d ? d.rud || 0 : 0) + (body[0] ? 2 : 0) + (body[1] ? 4 : 0));
+    // (the nose, the tail section, the cockpit, the tail cone broken off: livCut.w bits 2, 4, 8, 16)
+    const body = (d && d.body) || [0, 0];
+    e.cut.set(d ? d.cut[0] || 0 : 0, d ? d.cut[1] || 0 : 0, d ? d.elev || 0 : 0,
+      (d ? d.rud || 0 : 0) + (body[0] ? 2 : 0) + (body[1] ? 4 : 0) + (body[2] ? 8 : 0) + (body[3] ? 16 : 0));
     if (e.obj.userData.nav && e.obj.userData.nav.uCut) { e.obj.userData.nav.uCut.value.x = e.cut.x; e.obj.userData.nav.uCut.value.y = e.cut.y; }
-    // broken across the fuselage: what isn't cut with it (the window strips, glass) goes
-    const broken = !!(body[0] || body[1]);
+    // broken across the fuselage: what isn't cut with it (the window strips; the glass is: js/livery.js solidGlass) goes
+    const broken = body.some(Boolean);
     if (e.broken !== broken && e.obj.userData.liv) {
       e.broken = broken;
       e.obj.traverse((o) => { if (o.isMesh && !(o.material.userData && o.material.userData.livFlex)) o.visible = !broken; });
@@ -2789,7 +2791,8 @@ const pilotOn = () => !!(FG.pilot && FG.pilot.active);
 const NO_PARTS = new THREE.Vector4(0, 0, 0, 0); // (w 0: THREE's Vector4() has w = 1, livCut's bit for a rudder broken off)
 
 // ---------- parts broken off the hand-flown plane ----------
-// The fly page's pose has `pieces`: [{ id, part: { kind: 'wing' | 'elev' | 'rud', side: -1 left | 1 right | 0 both,
+// The fly page's pose has `pieces`: [{ id, part: { kind: 'wing' | 'elev' | 'rud' | 'body', side: -1 left | 1 right | 0 both
+// (a fuselage section: 1 nose, -1 tail, 2 cockpit, -2 tail cone; out: livKeep.w bits),
 // cut: half spans, for a wing, out: where its own tip broke off before }, d: [east, north, up] metres moved since it
 // broke off (up from the wheels' height there), rot: [yaw, roll, pitch] radians turned since then (about up, the nose
 // and the wing as they were), down: lying on the ground }]. Each is the plane's own model with
@@ -2815,7 +2818,7 @@ function pilotPieces(layer, e, pose, globe, now, liv) {
     const ud = pc.obj.userData;
     if (!ud.liv) continue; // (still loading: its placeholder is not drawn)
     if (!pc.mid) {
-      // the part's middle in the model, which it turns about; the rest of the model (glass, gear, lights) goes
+      // the part's middle in the model, which it turns about; the rest of the model (gear, lights) goes
       pc.mid = partMiddle(pc.obj, q.part);
       pc.obj.traverse((o) => {
         if ((o.isMesh && !(o.material.userData && o.material.userData.livFlex)) || o.isPoints || o.name === 'gear') o.visible = false;
